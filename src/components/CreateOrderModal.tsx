@@ -28,8 +28,8 @@ import {
   Link2,
   Navigation,
   Check,
-  AlertCircle,
   HelpCircle,
+  Loader2,
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import type { CustomerRecord, UserRecord, OrderPriority, OrderItem } from '@/types/delivery'
@@ -98,6 +98,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [newCustName, setNewCustName] = useState('')
   const [newCustPhone, setNewCustPhone] = useState('')
 
+  // Search input controlled state
+  const [addressSearchQuery, setAddressSearchQuery] = useState('')
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false)
+
   // Split Address Fields
   const [streetAndNumber, setStreetAndNumber] = useState('')
   const [neighborhood, setNeighborhood] = useState('')
@@ -123,11 +127,12 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const markerInstanceRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const autocompleteInstanceRef = useRef<any>(null)
+  const isReverseGeocodingRef = useRef<boolean>(false)
 
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''
   const [isMapsLoaded, setIsMapsLoaded] = useState(false)
 
-  // Helper to check window.google
+  // Helper to check window.google safely
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getGoogle = (): any => {
     return typeof window !== 'undefined'
@@ -222,58 +227,80 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     return null
   }
 
+  // Helper to safely populate address fields from Google Place or Geocode results
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const populateAddressFromComponents = (components: any[], fallbackFormatted?: string) => {
+    let streetName = ''
+    let streetNumber = ''
+    let neighborhoodName = ''
+    let cityName = ''
+    let stateCode = ''
+    let postal = ''
+
+    if (Array.isArray(components)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      components.forEach((comp: any) => {
+        const types: string[] = comp.types || []
+        if (types.includes('route')) streetName = comp.long_name
+        if (types.includes('street_number')) streetNumber = comp.long_name
+        if (
+          types.includes('sublocality') ||
+          types.includes('sublocality_level_1') ||
+          types.includes('neighborhood')
+        ) {
+          neighborhoodName = comp.long_name
+        }
+        if (types.includes('administrative_area_level_2') || types.includes('locality')) {
+          cityName = comp.long_name
+        }
+        if (types.includes('administrative_area_level_1')) {
+          stateCode = comp.short_name
+        }
+        if (types.includes('postal_code')) {
+          postal = comp.long_name
+        }
+      })
+    }
+
+    if (streetName) {
+      setStreetAndNumber(streetNumber ? `${streetName}, ${streetNumber}` : streetName)
+    } else if (fallbackFormatted) {
+      // If no discrete route found, use first part of formatted address
+      const firstSegment = fallbackFormatted.split(',')[0] || fallbackFormatted
+      setStreetAndNumber(firstSegment)
+    }
+
+    if (neighborhoodName) setNeighborhood(neighborhoodName)
+    if (cityName) setCity(cityName)
+    if (stateCode && BRAZILIAN_STATES.includes(stateCode.toUpperCase())) {
+      setUfState(stateCode.toUpperCase())
+    }
+    if (postal) setPostalCode(postal)
+  }
+
   // Reverse geocode to fill separate address fields
   const reverseGeocode = useCallback((lat: number, lng: number) => {
     const google = getGoogle()
     if (!google?.maps?.Geocoder) return
+    if (isReverseGeocodingRef.current) return
 
-    const geocoder = new google.maps.Geocoder()
-    geocoder.geocode({ location: { lat, lng } }, (results: any[], status: string) => {
-      if (status === 'OK' && results?.[0]) {
-        const place = results[0]
-        let streetName = ''
-        let streetNumber = ''
-        let neighborhoodName = ''
-        let cityName = ''
-        let stateCode = ''
-        let postal = ''
-
-        place.address_components?.forEach((comp: any) => {
-          const types: string[] = comp.types || []
-          if (types.includes('route')) streetName = comp.long_name
-          if (types.includes('street_number')) streetNumber = comp.long_name
-          if (
-            types.includes('sublocality') ||
-            types.includes('sublocality_level_1') ||
-            types.includes('neighborhood')
-          ) {
-            neighborhoodName = comp.long_name
-          }
-          if (types.includes('administrative_area_level_2') || types.includes('locality')) {
-            cityName = comp.long_name
-          }
-          if (types.includes('administrative_area_level_1')) {
-            stateCode = comp.short_name
-          }
-          if (types.includes('postal_code')) {
-            postal = comp.long_name
-          }
-        })
-
-        if (streetName) {
-          setStreetAndNumber(streetNumber ? `${streetName}, ${streetNumber}` : streetName)
+    isReverseGeocodingRef.current = true
+    try {
+      const geocoder = new google.maps.Geocoder()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      geocoder.geocode({ location: { lat, lng } }, (results: any[], status: string) => {
+        isReverseGeocodingRef.current = false
+        if (status === 'OK' && results?.[0]) {
+          populateAddressFromComponents(results[0].address_components, results[0].formatted_address)
         }
-        if (neighborhoodName) setNeighborhood(neighborhoodName)
-        if (cityName) setCity(cityName)
-        if (stateCode && BRAZILIAN_STATES.includes(stateCode.toUpperCase())) {
-          setUfState(stateCode.toUpperCase())
-        }
-        if (postal) setPostalCode(postal)
-      }
-    })
+      })
+    } catch (err) {
+      isReverseGeocodingRef.current = false
+      console.warn('Geocoding error:', err)
+    }
   }, [])
 
-  // Update map marker and center
+  // Update map marker and center safely without infinite loops
   const updateMapPosition = useCallback(
     (lat: number, lng: number, zoomLevel = 16, shouldReverseGeocode = false) => {
       setSelectedCoords({ lat, lng })
@@ -296,7 +323,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             animation: google.maps.Animation.DROP,
           })
 
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           markerInstanceRef.current.addListener('dragend', (evt: any) => {
+            if (!evt?.latLng) return
             const newLat = evt.latLng.lat()
             const newLng = evt.latLng.lng()
             setSelectedCoords({ lat: newLat, lng: newLng })
@@ -340,7 +369,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         })
         markerInstanceRef.current = marker
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         marker.addListener('dragend', (evt: any) => {
+          if (!evt?.latLng) return
           const newLat = evt.latLng.lat()
           const newLng = evt.latLng.lng()
           setSelectedCoords({ lat: newLat, lng: newLng })
@@ -348,7 +379,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           reverseGeocode(newLat, newLng)
         })
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         map.addListener('click', (evt: any) => {
+          if (!evt?.latLng) return
           const clickLat = evt.latLng.lat()
           const clickLng = evt.latLng.lng()
           updateMapPosition(clickLat, clickLng, map.getZoom() || 16, true)
@@ -383,47 +416,16 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         const lat = place.geometry.location.lat()
         const lng = place.geometry.location.lng()
 
-        let streetName = ''
-        let streetNumber = ''
-        let neighborhoodName = ''
-        let cityName = ''
-        let stateCode = ''
-        let postal = ''
+        populateAddressFromComponents(
+          place.address_components || [],
+          place.formatted_address || place.name || '',
+        )
 
-        place.address_components?.forEach((comp: any) => {
-          const types: string[] = comp.types || []
-          if (types.includes('route')) streetName = comp.long_name
-          if (types.includes('street_number')) streetNumber = comp.long_name
-          if (
-            types.includes('sublocality') ||
-            types.includes('sublocality_level_1') ||
-            types.includes('neighborhood')
-          ) {
-            neighborhoodName = comp.long_name
-          }
-          if (types.includes('administrative_area_level_2') || types.includes('locality')) {
-            cityName = comp.long_name
-          }
-          if (types.includes('administrative_area_level_1')) {
-            stateCode = comp.short_name
-          }
-          if (types.includes('postal_code')) {
-            postal = comp.long_name
-          }
-        })
-
-        const streetVal = streetName
-          ? streetNumber
-            ? `${streetName}, ${streetNumber}`
-            : streetName
-          : place.name || ''
-        setStreetAndNumber(streetVal)
-        if (neighborhoodName) setNeighborhood(neighborhoodName)
-        if (cityName) setCity(cityName)
-        if (stateCode && BRAZILIAN_STATES.includes(stateCode.toUpperCase())) {
-          setUfState(stateCode.toUpperCase())
+        // Set input display value
+        if (autocompleteInputRef.current) {
+          const val = place.formatted_address || place.name || ''
+          setAddressSearchQuery(val)
         }
-        if (postal) setPostalCode(postal)
 
         updateMapPosition(lat, lng, 16, false)
         toast.success('Endereço preenchido com sucesso!')
@@ -432,6 +434,57 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       console.error('Error attaching Places Autocomplete:', err)
     }
   }, [updateMapPosition])
+
+  // Manual fallback geocode when user presses Enter or clicks search button
+  const handleManualAddressSearch = () => {
+    const query = addressSearchQuery.trim() || autocompleteInputRef.current?.value.trim()
+    if (!query) {
+      toast.info('Digite um endereço para buscar.')
+      return
+    }
+
+    setIsSearchingAddress(true)
+    const google = getGoogle()
+    if (google?.maps?.Geocoder) {
+      const geocoder = new google.maps.Geocoder()
+      geocoder.geocode(
+        { address: query, componentRestrictions: { country: 'br' } },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (results: any[], status: string) => {
+          setIsSearchingAddress(false)
+          if (status === 'OK' && results?.[0]?.geometry?.location) {
+            const loc = results[0].geometry.location
+            const lat = loc.lat()
+            const lng = loc.lng()
+            populateAddressFromComponents(
+              results[0].address_components || [],
+              results[0].formatted_address || query,
+            )
+            updateMapPosition(lat, lng, 16, false)
+            toast.success('Endereço localizado com sucesso!')
+          } else {
+            toast.error(
+              'Não foi possível localizar este endereço com precisão. Você pode preencher os campos abaixo manualmente ou arrastar o pino no mapa.',
+            )
+          }
+        },
+      )
+    } else {
+      setIsSearchingAddress(false)
+      // Basic fallback without geocoder: parse street and number
+      setStreetAndNumber(query)
+      toast.info('Texto transferido para o campo de Logradouro.')
+    }
+  }
+
+  // Cleanup references on modal close
+  useEffect(() => {
+    if (!open) {
+      mapInstanceRef.current = null
+      markerInstanceRef.current = null
+      autocompleteInstanceRef.current = null
+    }
+  }, [open])
 
   // Initialize Map and Autocomplete when modal opens and maps API is ready
   useEffect(() => {
@@ -474,10 +527,15 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           const geocoder = new google.maps.Geocoder()
           geocoder.geocode(
             { address: locationLinkInput, componentRestrictions: { country: 'br' } },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (results: any[], status: string) => {
               if (status === 'OK' && results?.[0]?.geometry?.location) {
                 const loc = results[0].geometry.location
-                updateMapPosition(loc.lat(), loc.lng(), 16, true)
+                populateAddressFromComponents(
+                  results[0].address_components || [],
+                  results[0].formatted_address || locationLinkInput,
+                )
+                updateMapPosition(loc.lat(), loc.lng(), 16, false)
                 toast.success('Localização encontrada pelo texto do link/endereço!')
                 setLocationLinkInput('')
               } else {
@@ -651,6 +709,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setPriority('normal')
       setNotes('')
       setItems([{ name: '', qty: 1, price: 0 }])
+      setAddressSearchQuery('')
       setStreetAndNumber('')
       setNeighborhood('')
       setCity('')
@@ -780,13 +839,38 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                       Digite rua ou comércio para preencher tudo
                     </span>
                   </div>
-                  <div className="relative">
-                    <Input
-                      ref={autocompleteInputRef}
-                      placeholder="Comece a digitar o endereço, ex: Av. Paulista, 1000..."
-                      className="bg-white dark:bg-slate-800 text-xs pl-8 pr-4 shadow-sm border-blue-200 focus:border-blue-500"
-                    />
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        ref={autocompleteInputRef}
+                        value={addressSearchQuery}
+                        onChange={(e) => setAddressSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            handleManualAddressSearch()
+                          }
+                        }}
+                        placeholder="Comece a digitar o endereço, ex: Av. Paulista, 1000..."
+                        className="bg-white dark:bg-slate-800 text-xs pl-8 pr-4 shadow-sm border-blue-200 focus:border-blue-500"
+                      />
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleManualAddressSearch}
+                      disabled={isSearchingAddress || !addressSearchQuery.trim()}
+                      className="text-xs font-semibold gap-1 whitespace-nowrap bg-white hover:bg-slate-100 dark:bg-slate-800"
+                    >
+                      {isSearchingAddress ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Search className="h-3.5 w-3.5" />
+                      )}
+                      Buscar
+                    </Button>
                   </div>
                 </div>
 
@@ -822,7 +906,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                       disabled={isParsingLink || !locationLinkInput.trim()}
                       className="text-xs font-semibold gap-1 whitespace-nowrap bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-300"
                     >
-                      <Crosshair className="h-3.5 w-3.5" />
+                      {isParsingLink ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Crosshair className="h-3.5 w-3.5" />
+                      )}
                       Carregar Ponto
                     </Button>
                   </div>

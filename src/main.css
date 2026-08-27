@@ -115,6 +115,57 @@
   }
 }
 
+/* Google Maps Places Autocomplete Dropdown styling and z-index fix for Radix UI modals */
+.pac-container {
+  z-index: 99999 !important;
+  border-radius: 0.5rem;
+  margin-top: 4px;
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.2),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e2e8f0;
+  font-family: inherit;
+  pointer-events: auto !important;
+}
+
+.dark .pac-container {
+  background-color: #0f172a;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+.pac-item {
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  border-top: 1px solid #f1f5f9;
+}
+
+.dark .pac-item {
+  border-top-color: #1e293b;
+  color: #cbd5e1;
+}
+
+.pac-item:hover,
+.pac-item-selected {
+  background-color: #f0fdf4;
+}
+
+.dark .pac-item:hover,
+.dark .pac-item-selected {
+  background-color: #1e293b;
+}
+
+.pac-item-query {
+  font-size: 13px;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.dark .pac-item-query {
+  color: #f8fafc;
+}
+
 @layer utilities {
   /* KEEP ALL THE ANIMATIONS CLASSES THAT ARE USED BELOW */
   @keyframes accordion-down {
