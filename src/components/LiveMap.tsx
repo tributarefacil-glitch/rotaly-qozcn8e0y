@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { MapPin, Navigation, User, Package, AlertCircle } from 'lucide-react'
+import { loadGoogleMapsScript, onGoogleMapsAuthError } from '@/lib/googleMaps'
 
 export interface MapMarkerItem {
   id: string
@@ -40,23 +41,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     typeof window !== 'undefined' ? (window as unknown as { google?: any }).google : undefined
   const isGoogleLoaded = !!getGoogle()?.maps
 
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''
+  const [mapsLoaded, setMapsLoaded] = useState(false)
 
   useEffect(() => {
-    // If Google Maps script is not yet in the document and we have an API key or want standard loader
-    if (!isGoogleLoaded && !document.getElementById('google-maps-script')) {
-      const script = document.createElement('script')
-      script.id = 'google-maps-script'
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry`
-      script.async = true
-      script.defer = true
-      script.onload = () => {
+    loadGoogleMapsScript().then((success) => {
+      setMapsLoaded(success)
+      if (success) {
         initGoogleMap()
       }
-      document.head.appendChild(script)
-    } else if (isGoogleLoaded) {
-      initGoogleMap()
-    }
+    })
   }, [])
 
   const initGoogleMap = () => {

@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Plus,
   Trash2,
@@ -30,11 +31,24 @@ import {
   Check,
   HelpCircle,
   Loader2,
+  AlertTriangle,
+  Building2,
+  Sparkles,
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import type { CustomerRecord, UserRecord, OrderPriority, OrderItem } from '@/types/delivery'
 import { useAuth } from '@/contexts/AuthContext'
 import { toast } from 'sonner'
+import {
+  BRAZILIAN_STATES,
+  loadGoogleMapsScript,
+  onGoogleMapsAuthError,
+  parseGoogleAddressComponents,
+  lookupViaCep,
+  fallbackGeocodeAddress,
+  fallbackReverseGeocode,
+  normalizeBrazilianUF,
+} from '@/lib/googleMaps'
 
 interface CreateOrderModalProps {
   open: boolean
@@ -43,37 +57,6 @@ interface CreateOrderModalProps {
   couriers: UserRecord[]
   onOrderCreated: () => void
 }
-
-// Brazilian States list
-const BRAZILIAN_STATES = [
-  'AC',
-  'AL',
-  'AP',
-  'AM',
-  'BA',
-  'CE',
-  'DF',
-  'ES',
-  'GO',
-  'MA',
-  'MT',
-  'MS',
-  'MG',
-  'PA',
-  'PB',
-  'PR',
-  'PE',
-  'PI',
-  'RJ',
-  'RN',
-  'RS',
-  'RO',
-  'RR',
-  'SC',
-  'SP',
-  'SE',
-  'TO',
-]
 
 // Fallback Default Center (São Paulo / Brazil center)
 const DEFAULT_CENTER = { lat: -23.55052, lng: -46.633308 }
@@ -102,7 +85,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
   const [isSearchingAddress, setIsSearchingAddress] = useState(false)
 
-  // Split Address Fields
+  // Split Address Fields (Rua e Número, Bairro, Cidade, UF e CEP)
   const [streetAndNumber, setStreetAndNumber] = useState('')
   const [neighborhood, setNeighborhood] = useState('')
   const [city, setCity] = useState('')
@@ -118,6 +101,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [locationLinkInput, setLocationLinkInput] = useState('')
   const [isParsingLink, setIsParsingLink] = useState(false)
 
+  // Google Maps state & warnings
+  const [isMapsLoaded, setIsMapsLoaded] = useState(false)
+  const [mapsAuthWarning, setMapsAuthWarning] = useState<string | null>(null)
+  const [isLoadingViaCep, setIsLoadingViaCep] = useState(false)
+
   // Map & Autocomplete refs
   const autocompleteInputRef = useRef<HTMLInputElement>(null)
   const mapContainerRef = useRef<HTMLDivElement>(null)
@@ -129,9 +117,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const autocompleteInstanceRef = useRef<any>(null)
   const isReverseGeocodingRef = useRef<boolean>(false)
 
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''
-  const [isMapsLoaded, setIsMapsLoaded] = useState(false)
-
   // Helper to check window.google safely
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getGoogle = (): any => {
@@ -140,41 +125,29 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       : undefined
   }
 
-  // Load Google Maps script if not loaded
+  // Listen for Google Maps Authentication Errors (BillingNotEnabled / Quotas)
+  useEffect(() => {
+    const unsubscribe = onGoogleMapsAuthError((msg) => {
+      setMapsAuthWarning(msg)
+    })
+    return unsubscribe
+  }, [])
+
+  // Load Google Maps script when modal opens
   useEffect(() => {
     if (!open) return
 
-    const google = getGoogle()
-    if (google?.maps?.places) {
-      setIsMapsLoaded(true)
-      return
-    }
+    let isMounted = true
+    loadGoogleMapsScript().then((success) => {
+      if (isMounted) {
+        setIsMapsLoaded(success)
+      }
+    })
 
-    if (!document.getElementById('google-maps-script')) {
-      const script = document.createElement('script')
-      script.id = 'google-maps-script'
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry`
-      script.async = true
-      script.defer = true
-      script.onload = () => {
-        setIsMapsLoaded(true)
-      }
-      script.onerror = () => {
-        console.warn('Google Maps script failed to load. Interactive fallback will be used.')
-      }
-      document.head.appendChild(script)
-    } else {
-      // Check periodically if script is ready
-      const checkInterval = setInterval(() => {
-        const g = getGoogle()
-        if (g?.maps?.places) {
-          setIsMapsLoaded(true)
-          clearInterval(checkInterval)
-        }
-      }, 300)
-      return () => clearInterval(checkInterval)
+    return () => {
+      isMounted = false
     }
-  }, [open, apiKey])
+  }, [open])
 
   // Parse Google Maps / Waze / WhatsApp coordinates link
   const parseCoordinatesFromText = (text: string): { lat: number; lng: number } | null => {
@@ -227,78 +200,98 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     return null
   }
 
-  // Helper to safely populate address fields from Google Place or Geocode results
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const populateAddressFromComponents = (components: any[], fallbackFormatted?: string) => {
-    let streetName = ''
-    let streetNumber = ''
-    let neighborhoodName = ''
-    let cityName = ''
-    let stateCode = ''
-    let postal = ''
+  // Populate address fields robustly
+  const applyAddressData = useCallback(
+    (parsed: {
+      streetAndNumber?: string
+      street?: string
+      number?: string
+      neighborhood?: string
+      city?: string
+      state?: string
+      postalCode?: string
+      complement?: string
+    }) => {
+      if (parsed.streetAndNumber) {
+        setStreetAndNumber(parsed.streetAndNumber)
+      } else if (parsed.street) {
+        setStreetAndNumber(parsed.number ? `${parsed.street}, ${parsed.number}` : parsed.street)
+      }
 
-    if (Array.isArray(components)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      components.forEach((comp: any) => {
-        const types: string[] = comp.types || []
-        if (types.includes('route')) streetName = comp.long_name
-        if (types.includes('street_number')) streetNumber = comp.long_name
-        if (
-          types.includes('sublocality') ||
-          types.includes('sublocality_level_1') ||
-          types.includes('neighborhood')
-        ) {
-          neighborhoodName = comp.long_name
-        }
-        if (types.includes('administrative_area_level_2') || types.includes('locality')) {
-          cityName = comp.long_name
-        }
-        if (types.includes('administrative_area_level_1')) {
-          stateCode = comp.short_name
-        }
-        if (types.includes('postal_code')) {
-          postal = comp.long_name
-        }
-      })
-    }
+      if (parsed.neighborhood) {
+        setNeighborhood(parsed.neighborhood)
+      }
 
-    if (streetName) {
-      setStreetAndNumber(streetNumber ? `${streetName}, ${streetNumber}` : streetName)
-    } else if (fallbackFormatted) {
-      // If no discrete route found, use first part of formatted address
-      const firstSegment = fallbackFormatted.split(',')[0] || fallbackFormatted
-      setStreetAndNumber(firstSegment)
-    }
+      if (parsed.city) {
+        setCity(parsed.city)
+      }
 
-    if (neighborhoodName) setNeighborhood(neighborhoodName)
-    if (cityName) setCity(cityName)
-    if (stateCode && BRAZILIAN_STATES.includes(stateCode.toUpperCase())) {
-      setUfState(stateCode.toUpperCase())
-    }
-    if (postal) setPostalCode(postal)
-  }
-
-  // Reverse geocode to fill separate address fields
-  const reverseGeocode = useCallback((lat: number, lng: number) => {
-    const google = getGoogle()
-    if (!google?.maps?.Geocoder) return
-    if (isReverseGeocodingRef.current) return
-
-    isReverseGeocodingRef.current = true
-    try {
-      const geocoder = new google.maps.Geocoder()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      geocoder.geocode({ location: { lat, lng } }, (results: any[], status: string) => {
-        isReverseGeocodingRef.current = false
-        if (status === 'OK' && results?.[0]) {
-          populateAddressFromComponents(results[0].address_components, results[0].formatted_address)
+      if (parsed.state) {
+        const uf = normalizeBrazilianUF(parsed.state)
+        if (uf && BRAZILIAN_STATES.includes(uf)) {
+          setUfState(uf)
         }
-      })
-    } catch (err) {
+      }
+
+      if (parsed.postalCode) {
+        setPostalCode(parsed.postalCode)
+      }
+
+      if (parsed.complement) {
+        setComplement(parsed.complement)
+      }
+    },
+    [],
+  )
+
+  // Reverse geocode to fill separate address fields (Google Maps Geocoder with Nominatim fallback)
+  const reverseGeocode = useCallback(
+    async (lat: number, lng: number) => {
+      if (isReverseGeocodingRef.current) return
+      isReverseGeocodingRef.current = true
+
+      const google = getGoogle()
+      let handled = false
+
+      if (google?.maps?.Geocoder) {
+        try {
+          const geocoder = new google.maps.Geocoder()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await new Promise<void>((resolve) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            geocoder.geocode({ location: { lat, lng } }, (results: any[], status: string) => {
+              if (status === 'OK' && results?.[0]) {
+                const parsed = parseGoogleAddressComponents(
+                  results[0].address_components || [],
+                  results[0].formatted_address,
+                )
+                applyAddressData(parsed)
+                handled = true
+              }
+              resolve()
+            })
+          })
+        } catch (err) {
+          console.warn('[Google Geocoder] Geocoding exception:', err)
+        }
+      }
+
+      // If Google geocoder was not available or failed, use OpenStreetMap Nominatim fallback
+      if (!handled) {
+        try {
+          const fallbackData = await fallbackReverseGeocode(lat, lng)
+          if (fallbackData) {
+            applyAddressData(fallbackData)
+          }
+        } catch (err) {
+          console.warn('Fallback reverse geocode error:', err)
+        }
+      }
+
       isReverseGeocodingRef.current = false
-      console.warn('Geocoding error:', err)
-    }
-  }, [])
+    },
+    [applyAddressData],
+  )
 
   // Update map marker and center safely without infinite loops
   const updateMapPosition = useCallback(
@@ -308,30 +301,34 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
       const google = getGoogle()
       if (mapInstanceRef.current && google?.maps) {
-        const pos = new google.maps.LatLng(lat, lng)
-        mapInstanceRef.current.setCenter(pos)
-        mapInstanceRef.current.setZoom(zoomLevel)
+        try {
+          const pos = new google.maps.LatLng(lat, lng)
+          mapInstanceRef.current.setCenter(pos)
+          mapInstanceRef.current.setZoom(zoomLevel)
 
-        if (markerInstanceRef.current) {
-          markerInstanceRef.current.setPosition(pos)
-        } else {
-          markerInstanceRef.current = new google.maps.Marker({
-            position: pos,
-            map: mapInstanceRef.current,
-            draggable: true,
-            title: 'Arraste para ajustar o ponto exato de entrega',
-            animation: google.maps.Animation.DROP,
-          })
+          if (markerInstanceRef.current) {
+            markerInstanceRef.current.setPosition(pos)
+          } else {
+            markerInstanceRef.current = new google.maps.Marker({
+              position: pos,
+              map: mapInstanceRef.current,
+              draggable: true,
+              title: 'Arraste para ajustar o ponto exato de entrega',
+              animation: google.maps.Animation.DROP,
+            })
 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          markerInstanceRef.current.addListener('dragend', (evt: any) => {
-            if (!evt?.latLng) return
-            const newLat = evt.latLng.lat()
-            const newLng = evt.latLng.lng()
-            setSelectedCoords({ lat: newLat, lng: newLng })
-            setHasLocationPinned(true)
-            reverseGeocode(newLat, newLng)
-          })
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            markerInstanceRef.current.addListener('dragend', (evt: any) => {
+              if (!evt?.latLng) return
+              const newLat = evt.latLng.lat()
+              const newLng = evt.latLng.lng()
+              setSelectedCoords({ lat: newLat, lng: newLng })
+              setHasLocationPinned(true)
+              reverseGeocode(newLat, newLng)
+            })
+          }
+        } catch (e) {
+          console.warn('Error updating map marker position:', e)
         }
       }
 
@@ -416,10 +413,12 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         const lat = place.geometry.location.lat()
         const lng = place.geometry.location.lng()
 
-        populateAddressFromComponents(
+        const parsed = parseGoogleAddressComponents(
           place.address_components || [],
           place.formatted_address || place.name || '',
         )
+
+        applyAddressData(parsed)
 
         // Set input display value
         if (autocompleteInputRef.current) {
@@ -433,10 +432,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     } catch (err) {
       console.error('Error attaching Places Autocomplete:', err)
     }
-  }, [updateMapPosition])
+  }, [applyAddressData, updateMapPosition])
 
   // Manual fallback geocode when user presses Enter or clicks search button
-  const handleManualAddressSearch = () => {
+  const handleManualAddressSearch = async () => {
     const query = addressSearchQuery.trim() || autocompleteInputRef.current?.value.trim()
     if (!query) {
       toast.info('Digite um endereço para buscar.')
@@ -444,36 +443,112 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
 
     setIsSearchingAddress(true)
+    let found = false
+
+    // 1. If it looks like a CEP (e.g. 01310-100 or 8 digits)
+    const cepDigits = query.replace(/\D/g, '')
+    if (cepDigits.length === 8 && /^\d+$/.test(cepDigits)) {
+      const viaCepResult = await lookupViaCep(cepDigits)
+      if (viaCepResult) {
+        applyAddressData(viaCepResult)
+        toast.success(`Endereço localizado via CEP ${cepDigits}!`)
+        found = true
+        // Geocode coordinates via Google or Nominatim
+        const fullAddrQuery = `${viaCepResult.street}, ${viaCepResult.neighborhood}, ${viaCepResult.city} - ${viaCepResult.state}, Brasil`
+        const nom = await fallbackGeocodeAddress(fullAddrQuery)
+        if (nom) {
+          updateMapPosition(nom.lat, nom.lng, 16, false)
+        }
+        setIsSearchingAddress(false)
+        return
+      }
+    }
+
+    // 2. Try Google Maps Geocoder if loaded
     const google = getGoogle()
     if (google?.maps?.Geocoder) {
-      const geocoder = new google.maps.Geocoder()
-      geocoder.geocode(
-        { address: query, componentRestrictions: { country: 'br' } },
+      try {
+        const geocoder = new google.maps.Geocoder()
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (results: any[], status: string) => {
-          setIsSearchingAddress(false)
-          if (status === 'OK' && results?.[0]?.geometry?.location) {
-            const loc = results[0].geometry.location
-            const lat = loc.lat()
-            const lng = loc.lng()
-            populateAddressFromComponents(
-              results[0].address_components || [],
-              results[0].formatted_address || query,
-            )
-            updateMapPosition(lat, lng, 16, false)
-            toast.success('Endereço localizado com sucesso!')
-          } else {
-            toast.error(
-              'Não foi possível localizar este endereço com precisão. Você pode preencher os campos abaixo manualmente ou arrastar o pino no mapa.',
-            )
-          }
-        },
-      )
-    } else {
-      setIsSearchingAddress(false)
+        await new Promise<void>((resolve) => {
+          geocoder.geocode(
+            { address: query, componentRestrictions: { country: 'br' } },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (results: any[], status: string) => {
+              if (status === 'OK' && results?.[0]?.geometry?.location) {
+                const loc = results[0].geometry.location
+                const lat = loc.lat()
+                const lng = loc.lng()
+                const parsed = parseGoogleAddressComponents(
+                  results[0].address_components || [],
+                  results[0].formatted_address || query,
+                )
+                applyAddressData(parsed)
+                updateMapPosition(lat, lng, 16, false)
+                toast.success('Endereço localizado no Google Maps!')
+                found = true
+              }
+              resolve()
+            },
+          )
+        })
+      } catch (e) {
+        console.warn('Google geocoding failed:', e)
+      }
+    }
+
+    // 3. Try Fallback Geocoding (Nominatim / OpenStreetMap)
+    if (!found) {
+      try {
+        const fallbackRes = await fallbackGeocodeAddress(query)
+        if (fallbackRes) {
+          applyAddressData(fallbackRes.parsed)
+          updateMapPosition(fallbackRes.lat, fallbackRes.lng, 16, false)
+          toast.success('Endereço localizado via base geográfica!')
+          found = true
+        }
+      } catch (err) {
+        console.warn('Fallback geocode failed:', err)
+      }
+    }
+
+    setIsSearchingAddress(false)
+
+    if (!found) {
       // Basic fallback without geocoder: parse street and number
       setStreetAndNumber(query)
-      toast.info('Texto transferido para o campo de Logradouro.')
+      toast.info(
+        'Texto transferido para o logradouro. Preencha os campos ou informe o CEP para autocompletar.',
+      )
+    }
+  }
+
+  // Automatic CEP lookup when user finishes typing 8 digits in CEP field
+  const handleCepChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    let raw = e.target.value.replace(/\D/g, '')
+    if (raw.length > 8) raw = raw.slice(0, 8)
+
+    // Format display as 00000-000
+    const formatted = raw.length > 5 ? `${raw.slice(0, 5)}-${raw.slice(5)}` : raw
+    setPostalCode(formatted)
+
+    if (raw.length === 8) {
+      setIsLoadingViaCep(true)
+      const res = await lookupViaCep(raw)
+      setIsLoadingViaCep(false)
+      if (res) {
+        applyAddressData(res)
+        toast.success(`CEP ${formatted} preenchido!`)
+        // Also locate coordinates
+        const fullAddr = `${res.street}, ${res.neighborhood}, ${res.city} - ${res.state}`
+        fallbackGeocodeAddress(fullAddr).then((geo) => {
+          if (geo) {
+            updateMapPosition(geo.lat, geo.lng, 16, false)
+          }
+        })
+      } else {
+        toast.error('CEP não encontrado. Digite os dados manualmente.')
+      }
     }
   }
 
@@ -508,7 +583,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   }
 
   // Handle parsing coordinates link or WhatsApp text
-  const handleApplyLocationLink = () => {
+  const handleApplyLocationLink = async () => {
     if (!locationLinkInput.trim()) return
 
     setIsParsingLink(true)
@@ -523,32 +598,44 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       } else {
         // Try fallback: Geocode address string if it was text
         const google = getGoogle()
+        let handled = false
         if (google?.maps?.Geocoder) {
           const geocoder = new google.maps.Geocoder()
-          geocoder.geocode(
-            { address: locationLinkInput, componentRestrictions: { country: 'br' } },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (results: any[], status: string) => {
-              if (status === 'OK' && results?.[0]?.geometry?.location) {
-                const loc = results[0].geometry.location
-                populateAddressFromComponents(
-                  results[0].address_components || [],
-                  results[0].formatted_address || locationLinkInput,
-                )
-                updateMapPosition(loc.lat(), loc.lng(), 16, false)
-                toast.success('Localização encontrada pelo texto do link/endereço!')
-                setLocationLinkInput('')
-              } else {
-                toast.error(
-                  'Não foi possível extrair coordenadas deste link. Cole o link do Google Maps ou coordenadas lat,lng.',
-                )
-              }
-            },
-          )
-        } else {
-          toast.error(
-            'Formato não reconhecido. Cole um link do Google Maps (ex: https://maps.app.goo.gl/...) ou coordenadas.',
-          )
+          await new Promise<void>((resolve) => {
+            geocoder.geocode(
+              { address: locationLinkInput, componentRestrictions: { country: 'br' } },
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (results: any[], status: string) => {
+                if (status === 'OK' && results?.[0]?.geometry?.location) {
+                  const loc = results[0].geometry.location
+                  const parsed = parseGoogleAddressComponents(
+                    results[0].address_components || [],
+                    results[0].formatted_address || locationLinkInput,
+                  )
+                  applyAddressData(parsed)
+                  updateMapPosition(loc.lat(), loc.lng(), 16, false)
+                  toast.success('Localização encontrada pelo texto do link/endereço!')
+                  setLocationLinkInput('')
+                  handled = true
+                }
+                resolve()
+              },
+            )
+          })
+        }
+
+        if (!handled) {
+          const fallbackRes = await fallbackGeocodeAddress(locationLinkInput)
+          if (fallbackRes) {
+            applyAddressData(fallbackRes.parsed)
+            updateMapPosition(fallbackRes.lat, fallbackRes.lng, 16, false)
+            toast.success('Localização encontrada com sucesso!')
+            setLocationLinkInput('')
+          } else {
+            toast.error(
+              'Não foi possível extrair coordenadas deste link. Cole o link do Google Maps ou coordenadas lat,lng.',
+            )
+          }
         }
       }
     } catch (e) {
@@ -628,7 +715,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
       const combinedAddress = getFullFormattedAddress()
       if (!streetAndNumber.trim() && !combinedAddress.trim()) {
-        toast.error('Preencha ao menos o logradouro e número ou busque pelo endereço.')
+        toast.error('Preencha ao menos a Rua e Número ou busque pelo endereço.')
         return
       }
 
@@ -740,6 +827,22 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-5 py-2">
+          {/* Billing / Auth error notice banner (non-intrusive fallback helper) */}
+          {mapsAuthWarning && (
+            <Alert className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200 py-2.5">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <AlertDescription className="text-xs">
+                <strong>Aviso de Mapa:</strong> A chave do Google Maps precisa de faturamento ativo
+                no Google Cloud Console.
+                <span className="font-semibold text-emerald-700 dark:text-emerald-400 ml-1">
+                  O modo inteligente está ativo:
+                </span>{' '}
+                você pode digitar o CEP para preencher o endereço automaticamente (Rua, Bairro,
+                Cidade e UF) ou arrastar o pino.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Customer Selection or Creation Box */}
           <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
             <div className="flex items-center justify-between">
@@ -833,10 +936,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                       <Search className="h-3.5 w-3.5 text-blue-600" />
-                      Buscar Endereço (Autocompletar Google Maps)
+                      Buscar Endereço (Autocompletar Google Maps / CEP)
                     </Label>
                     <span className="text-[10px] text-slate-400">
-                      Digite rua ou comércio para preencher tudo
+                      Digite rua, CEP ou local para preencher tudo
                     </span>
                   </div>
                   <div className="flex gap-2">
@@ -851,7 +954,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                             handleManualAddressSearch()
                           }
                         }}
-                        placeholder="Comece a digitar o endereço, ex: Av. Paulista, 1000..."
+                        placeholder="Comece a digitar o endereço ou CEP, ex: Av. Paulista, 1000..."
                         className="bg-white dark:bg-slate-800 text-xs pl-8 pr-4 shadow-sm border-blue-200 focus:border-blue-500"
                       />
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
@@ -916,7 +1019,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   </div>
                 </div>
 
-                {/* 3. Separate Address Fields */}
+                {/* 3. Separate Address Fields (Rua, Número, Bairro, Cidade, UF, CEP) */}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-12 pt-1">
                   {/* Rua e Número */}
                   <div className="sm:col-span-8">
@@ -992,17 +1095,33 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
                   {/* CEP */}
                   <div className="sm:col-span-2">
-                    <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      CEP
-                    </Label>
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        CEP
+                      </Label>
+                      {isLoadingViaCep && (
+                        <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
+                      )}
+                    </div>
                     <Input
                       placeholder="00000-000"
                       value={postalCode}
-                      onChange={(e) => setPostalCode(e.target.value)}
-                      className="mt-1 bg-white dark:bg-slate-800 text-xs"
+                      onChange={handleCepChange}
+                      maxLength={9}
+                      className="mt-1 bg-white dark:bg-slate-800 text-xs font-mono"
                     />
                   </div>
                 </div>
+
+                {/* Helper badge explaining auto-fill status */}
+                {(streetAndNumber || neighborhood || city || postalCode) && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 bg-slate-100 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <Sparkles className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+                    <span>
+                      Endereço formatado: <strong>{getFullFormattedAddress()}</strong>
+                    </span>
+                  </div>
+                )}
 
                 {/* 4. Interactive Location Picker Map */}
                 <div className="space-y-1.5 pt-2">
@@ -1042,7 +1161,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         <MapPin className="h-8 w-8 text-blue-400 animate-bounce mb-2" />
                         <p className="text-xs font-semibold">Carregando Mapa de Localização...</p>
                         <p className="text-[11px] text-slate-400 mt-1">
-                          Você pode digitar o endereço acima ou arrastar quando o mapa inicializar.
+                          Você pode preencher o CEP ou endereço acima enquanto o mapa conecta.
                         </p>
                       </div>
                     )}
