@@ -151,50 +151,73 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
   // Parse Google Maps / Waze / WhatsApp coordinates link
   const parseCoordinatesFromText = (text: string): { lat: number; lng: number } | null => {
-    const raw = text.trim()
+    let raw = text.trim()
     if (!raw) return null
 
-    // Pattern 1: "@-23.55052,-46.633308" or "!3d-23.55052!4d-46.633308" (Google Maps URL)
-    const atMatch = raw.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
+    try {
+      raw = decodeURIComponent(raw)
+    } catch {
+      // keep raw
+    }
+
+    // Pattern 1: @-23.55052,-46.633308 or @-23.55052,-46.633308,17z
+    const atMatch = raw.match(/@\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)/)
     if (atMatch) {
       const lat = parseFloat(atMatch[1])
       const lng = parseFloat(atMatch[2])
-      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng }
+      if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+        return { lat, lng }
+      }
     }
 
-    const data3dMatch = raw.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
+    // Pattern 2: !3d-23.55052!4d-46.633308 (Google Maps place URLs)
+    const data3dMatch = raw.match(/!3d\s*([+-]?\d+\.\d+)\s*!4d\s*([+-]?\d+\.\d+)/)
     if (data3dMatch) {
       const lat = parseFloat(data3dMatch[1])
       const lng = parseFloat(data3dMatch[2])
-      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng }
+      if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+        return { lat, lng }
+      }
     }
 
-    // Pattern 2: q=-23.55052,-46.633308 or ll=-23.55052,-46.633308 or query=-23.55052,-46.633308
+    // Pattern 3: q=-23.55052,-46.633308 or ll=-23.55052,-46.633308 or destination=... or loc:...
     const queryMatch = raw.match(
-      /(?:q|ll|query|destination|loc)=([+-]?\d+\.\d+)[,%20]+([+-]?\d+\.\d+)/i,
+      /(?:q|ll|query|destination|loc|center|daddr|saddr)=([+-]?\d+\.\d+)[,\s%20]+([+-]?\d+\.\d+)/i,
     )
     if (queryMatch) {
       const lat = parseFloat(queryMatch[1])
       const lng = parseFloat(queryMatch[2])
+      if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+        return { lat, lng }
+      }
+    }
+
+    // Pattern 4: geo:-23.55052,-46.633308 or geo:0,0?q=-23.55052,-46.633308
+    const geoMatch = raw.match(/geo:\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)/i)
+    if (geoMatch) {
+      const lat = parseFloat(geoMatch[1])
+      const lng = parseFloat(geoMatch[2])
+      if (!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+        return { lat, lng }
+      }
+    }
+
+    // Pattern 5: Waze link https://waze.com/ul?ll=-23.55052,-46.633308 or /ul?q=...
+    const wazeMatch = raw.match(/waze\.com\/.*ll=([+-]?\d+\.\d+)[,\s%20]+([+-]?\d+\.\d+)/i)
+    if (wazeMatch) {
+      const lat = parseFloat(wazeMatch[1])
+      const lng = parseFloat(wazeMatch[2])
       if (!isNaN(lat) && !isNaN(lng)) return { lat, lng }
     }
 
-    // Pattern 3: Bare lat, lng pair (e.g. "-23.55052, -46.633308" or "-23.55052 -46.633308")
-    const bareMatch = raw.match(/^([+-]?\d{1,2}\.\d+)[,\s]+([+-]?\d{1,3}\.\d+)$/)
+    // Pattern 6: Bare lat, lng pair (e.g. "-23.55052, -46.633308" or "-23.550520 -46.633308")
+    const bareMatch = raw.match(/([+-]?\d{1,2}\.\d+)[,\s]+([+-]?\d{1,3}\.\d+)/)
     if (bareMatch) {
       const lat = parseFloat(bareMatch[1])
       const lng = parseFloat(bareMatch[2])
       if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
         return { lat, lng }
       }
-    }
-
-    // Pattern 4: WhatsApp location link (https://maps.google.com/?q=-23.55052,-46.633308)
-    const waMatch = raw.match(/q=(-?\d+\.\d+),(-?\d+\.\d+)/)
-    if (waMatch) {
-      const lat = parseFloat(waMatch[1])
-      const lng = parseFloat(waMatch[2])
-      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng }
     }
 
     return null
@@ -282,6 +305,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           const fallbackData = await fallbackReverseGeocode(lat, lng)
           if (fallbackData) {
             applyAddressData(fallbackData)
+            handled = true
           }
         } catch (err) {
           console.warn('Fallback reverse geocode error:', err)
@@ -383,6 +407,17 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           const clickLng = evt.latLng.lng()
           updateMapPosition(clickLat, clickLng, map.getZoom() || 16, true)
         })
+
+        // Trigger resize event after short delay so map tiles render completely
+        setTimeout(() => {
+          if (google?.maps?.event && mapInstanceRef.current) {
+            google.maps.event.trigger(mapInstanceRef.current, 'resize')
+          }
+        }, 100)
+      } else {
+        // If map already exists, trigger resize and recenter
+        google.maps.event?.trigger(mapInstanceRef.current, 'resize')
+        mapInstanceRef.current.setCenter(selectedCoords)
       }
     } catch (err) {
       console.error('Error initializing Google Map in modal:', err)
@@ -584,58 +619,69 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
   // Handle parsing coordinates link or WhatsApp text
   const handleApplyLocationLink = async () => {
-    if (!locationLinkInput.trim()) return
+    const inputVal = locationLinkInput.trim()
+    if (!inputVal) return
 
     setIsParsingLink(true)
     try {
-      const coords = parseCoordinatesFromText(locationLinkInput)
+      // 1. Direct coordinate extraction (Maps URLs, WhatsApp pins, lat/lng strings)
+      const coords = parseCoordinatesFromText(inputVal)
       if (coords) {
         updateMapPosition(coords.lat, coords.lng, 17, true)
         toast.success(
-          `Localização identificada (${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)})`,
+          `Localização identificada (${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}) e campos preenchidos!`,
         )
         setLocationLinkInput('')
-      } else {
-        // Try fallback: Geocode address string if it was text
-        const google = getGoogle()
-        let handled = false
-        if (google?.maps?.Geocoder) {
-          const geocoder = new google.maps.Geocoder()
-          await new Promise<void>((resolve) => {
-            geocoder.geocode(
-              { address: locationLinkInput, componentRestrictions: { country: 'br' } },
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (results: any[], status: string) => {
-                if (status === 'OK' && results?.[0]?.geometry?.location) {
-                  const loc = results[0].geometry.location
-                  const parsed = parseGoogleAddressComponents(
-                    results[0].address_components || [],
-                    results[0].formatted_address || locationLinkInput,
-                  )
-                  applyAddressData(parsed)
-                  updateMapPosition(loc.lat(), loc.lng(), 16, false)
-                  toast.success('Localização encontrada pelo texto do link/endereço!')
-                  setLocationLinkInput('')
-                  handled = true
-                }
-                resolve()
-              },
-            )
-          })
-        }
+        return
+      }
 
-        if (!handled) {
-          const fallbackRes = await fallbackGeocodeAddress(locationLinkInput)
-          if (fallbackRes) {
-            applyAddressData(fallbackRes.parsed)
-            updateMapPosition(fallbackRes.lat, fallbackRes.lng, 16, false)
-            toast.success('Localização encontrada com sucesso!')
-            setLocationLinkInput('')
-          } else {
-            toast.error(
-              'Não foi possível extrair coordenadas deste link. Cole o link do Google Maps ou coordenadas lat,lng.',
-            )
-          }
+      // 2. Check if the link contains a text query like /search/Rua+Exemplo+123 or ?q=Rua+Exemplo
+      let cleanQuery = inputVal
+      const queryMatch =
+        inputVal.match(/(?:q|query|place|search)\/([^?&#]+)/i) ||
+        inputVal.match(/[?&](?:q|query|daddr)=([^&#]+)/i)
+      if (queryMatch && queryMatch[1]) {
+        cleanQuery = decodeURIComponent(queryMatch[1].replace(/\+/g, ' '))
+      }
+
+      const google = getGoogle()
+      let handled = false
+      if (google?.maps?.Geocoder) {
+        const geocoder = new google.maps.Geocoder()
+        await new Promise<void>((resolve) => {
+          geocoder.geocode(
+            { address: cleanQuery, componentRestrictions: { country: 'br' } },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (results: any[], status: string) => {
+              if (status === 'OK' && results?.[0]?.geometry?.location) {
+                const loc = results[0].geometry.location
+                const parsed = parseGoogleAddressComponents(
+                  results[0].address_components || [],
+                  results[0].formatted_address || cleanQuery,
+                )
+                applyAddressData(parsed)
+                updateMapPosition(loc.lat(), loc.lng(), 16, false)
+                toast.success('Localização encontrada pelo texto do link/endereço!')
+                setLocationLinkInput('')
+                handled = true
+              }
+              resolve()
+            },
+          )
+        })
+      }
+
+      if (!handled) {
+        const fallbackRes = await fallbackGeocodeAddress(cleanQuery)
+        if (fallbackRes) {
+          applyAddressData(fallbackRes.parsed)
+          updateMapPosition(fallbackRes.lat, fallbackRes.lng, 16, false)
+          toast.success('Localização encontrada com sucesso!')
+          setLocationLinkInput('')
+        } else {
+          toast.error(
+            'Não foi possível extrair coordenadas deste link. Cole o link do Google Maps ou coordenadas lat,lng.',
+          )
         }
       }
     } catch (e) {

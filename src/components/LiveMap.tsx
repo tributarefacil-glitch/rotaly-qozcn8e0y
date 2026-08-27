@@ -78,6 +78,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             },
           ],
         })
+      } else {
+        google.maps.event?.trigger(mapInstanceRef.current, 'resize')
+        mapInstanceRef.current.setCenter({ lat: center.lat, lng: center.lng })
       }
       renderGoogleMarkers()
     } catch (err) {

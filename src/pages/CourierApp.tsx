@@ -47,6 +47,8 @@ export default function CourierApp() {
     try {
       const allOrders = await deliveryService.getOrders(
         user?.id ? `courier_id = '${user.id}' || courier_id = ''` : '',
+        '-updated',
+        'customer_id,courier_id,seller_id',
       )
       setOrders(allOrders)
     } catch (err) {
@@ -331,8 +333,15 @@ export default function CourierApp() {
                       <MapPin className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
                       <div>
                         <p className="font-medium text-white">
-                          {customer?.address || 'Endereço a confirmar'}
+                          {customer?.street
+                            ? `${customer.street}${customer.complement ? `, ${customer.complement}` : ''} - ${customer.neighborhood || ''}, ${customer.city || ''} (${customer.state || ''})`
+                            : customer?.address || 'Endereço a confirmar'}
                         </p>
+                        {customer?.postal_code && (
+                          <p className="text-slate-400 text-[10px] font-mono mt-0.5">
+                            CEP: {customer.postal_code}
+                          </p>
+                        )}
                         {customer?.phone && (
                           <p className="text-slate-400 text-[11px] mt-0.5">📞 {customer.phone}</p>
                         )}
@@ -416,7 +425,9 @@ export default function CourierApp() {
                       <p className="text-xs font-semibold text-white mt-1 truncate">
                         {customer?.name || 'Cliente'}
                       </p>
-                      <p className="text-[10px] text-slate-400 truncate">{customer?.address}</p>
+                      <p className="text-[10px] text-slate-400 truncate">
+                        {customer?.street || customer?.address}
+                      </p>
                     </div>
 
                     <Button

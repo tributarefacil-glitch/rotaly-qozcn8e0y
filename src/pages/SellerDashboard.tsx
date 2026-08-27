@@ -20,6 +20,7 @@ import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import { CreateOrderModal } from '@/components/CreateOrderModal'
+import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -40,6 +41,7 @@ export default function SellerDashboard() {
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
+  const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
@@ -161,7 +163,7 @@ export default function SellerDashboard() {
               </p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
               <Button
                 variant="outline"
                 size="sm"
@@ -170,6 +172,13 @@ export default function SellerDashboard() {
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 Atualizar
+              </Button>
+              <Button
+                onClick={() => setIsOptimizerModalOpen(true)}
+                className="h-9 gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold text-xs shadow-md shadow-indigo-500/20"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Otimizar Rotas da Frota
               </Button>
               <Button
                 onClick={() => setIsCreateModalOpen(true)}
@@ -450,6 +459,17 @@ export default function SellerDashboard() {
         customers={customers}
         couriers={couriers}
         onOrderCreated={loadData}
+      />
+
+      {/* Multi-Courier Route Optimizer Assistant Modal */}
+      <RouteOptimizerModal
+        open={isOptimizerModalOpen}
+        onOpenChange={setIsOptimizerModalOpen}
+        orders={orders}
+        couriers={couriers}
+        customers={customers}
+        locations={locations}
+        onRoutesApplied={loadData}
       />
     </div>
   )

@@ -188,14 +188,33 @@ export function parseGoogleAddressComponents(
     })
   }
 
-  // Fallback parsing from formatted address if street is empty
+  // If streetNumber was not in components but fallbackFormatted has it (e.g. "Rua Tal, 123 - ...")
+  if (!streetNumber && fallbackFormatted) {
+    // Try to extract number after comma or space: e.g. "Rua ABC, 123", "Av. Brasil 450", "R. X, 10 B"
+    const numMatch = fallbackFormatted.match(
+      /(?:,\s*|\s+nº\s*|\s+n°\s*|\s+num\s*|\s+N\s*)(\d+[\w\s\-/]*?)(?=\s*[,-]|\s*$)/i,
+    )
+    if (numMatch && numMatch[1]) {
+      const extractedNum = numMatch[1].trim()
+      // Only keep if it looks like a number
+      if (/^\d+/.test(extractedNum)) {
+        streetNumber = extractedNum
+      }
+    }
+  }
+
   let streetAndNumber = ''
   if (streetName) {
     streetAndNumber = streetNumber ? `${streetName}, ${streetNumber}` : streetName
   } else if (fallbackFormatted) {
     // Usually formatted as "Rua Exemplo, 123 - Bairro, Cidade - UF, 00000-000, Brazil"
-    const parts = fallbackFormatted.split(',')
-    streetAndNumber = (parts[0] || '').trim()
+    const firstSegment = fallbackFormatted.split('-')[0] || ''
+    const parts = firstSegment.split(',')
+    if (parts.length >= 2) {
+      streetAndNumber = `${parts[0].trim()}, ${parts[1].trim()}`
+    } else {
+      streetAndNumber = (parts[0] || '').trim()
+    }
   }
 
   const normalizedState = normalizeBrazilianUF(stateCode)
@@ -235,7 +254,8 @@ export function onGoogleMapsAuthError(cb: (errorMsg: string) => void) {
  * Registers window.gm_authFailure handler to detect billing / key issues cleanly.
  */
 export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
-  const keyToUse = apiKey || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''
+  const keyToUse =
+    apiKey || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyDKQXAMUR4ChVy8lKw61HgjDlHuOt3Ea94'
 
   // Register gm_authFailure hook globally if not yet registered
   if (typeof window !== 'undefined') {
@@ -383,15 +403,20 @@ export async function fallbackGeocodeAddress(
     const lng = parseFloat(item.lon)
     const addr = item.address || {}
 
-    const street = addr.road || addr.street || ''
-    const num = addr.house_number || ''
+    const street = addr.road || addr.street || addr.pedestrian || addr.footway || ''
+    let num = addr.house_number || ''
+    if (!num) {
+      const queryNumMatch = query.match(/,\s*(\d+)/) || query.match(/\s+(\d+)\s*(?:,|$)/)
+      if (queryNumMatch) num = queryNumMatch[1]
+    }
     const streetAndNumber = street
       ? num
         ? `${street}, ${num}`
         : street
       : query.split(',')[0] || ''
-    const neighborhood = addr.suburb || addr.neighbourhood || addr.city_district || ''
-    const city = addr.city || addr.town || addr.municipality || addr.village || ''
+    const neighborhood =
+      addr.suburb || addr.neighbourhood || addr.city_district || addr.subdistrict || ''
+    const city = addr.city || addr.town || addr.municipality || addr.village || addr.county || ''
     const state = normalizeBrazilianUF(
       addr.state || addr['ISO3166-2-lvl4']?.replace('BR-', '') || '',
     )
@@ -436,11 +461,12 @@ export async function fallbackReverseGeocode(
     if (!data || !data.address) return null
 
     const addr = data.address
-    const street = addr.road || addr.street || ''
+    const street = addr.road || addr.street || addr.pedestrian || addr.footway || ''
     const num = addr.house_number || ''
     const streetAndNumber = street ? (num ? `${street}, ${num}` : street) : ''
-    const neighborhood = addr.suburb || addr.neighbourhood || addr.city_district || ''
-    const city = addr.city || addr.town || addr.municipality || addr.village || ''
+    const neighborhood =
+      addr.suburb || addr.neighbourhood || addr.city_district || addr.subdistrict || ''
+    const city = addr.city || addr.town || addr.municipality || addr.village || addr.county || ''
     const state = normalizeBrazilianUF(
       addr.state || addr['ISO3166-2-lvl4']?.replace('BR-', '') || '',
     )

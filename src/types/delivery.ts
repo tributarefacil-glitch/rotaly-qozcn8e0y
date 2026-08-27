@@ -108,3 +108,19 @@ export interface OptimizedRouteResult {
   estimated_duration_minutes: number
   stops_count: number
 }
+
+export interface CourierOptimizationPlan {
+  courier: UserRecord
+  color: string
+  orders: OrderRecord[]
+  stops: OptimizedStop[]
+  total_distance_km: string
+  estimated_duration_minutes: number
+}
+
+export interface MultiCourierOptimizationResult {
+  courierPlans: CourierOptimizationPlan[]
+  unassignedOrders: OrderRecord[]
+  totalOrders: number
+  totalDistanceKm: string
+}
