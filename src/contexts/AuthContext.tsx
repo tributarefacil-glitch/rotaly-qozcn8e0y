@@ -54,7 +54,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [])
 
   const login = async (email: string, pass: string) => {
-    const authData = await pb.collection('users').authWithPassword(email.trim(), pass)
+    const cleanEmail = email.trim().toLowerCase()
+    const authData = await pb.collection('users').authWithPassword(cleanEmail, pass)
     const authUser = authData.record as unknown as UserRecord
     setUser(authUser)
     setToken(authData.token)

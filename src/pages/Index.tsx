@@ -59,17 +59,22 @@ export default function Index() {
     userEmail: string,
     forcedRole: 'admin' | 'seller' | 'courier',
   ) => {
-    setEmail(userEmail)
+    const cleanEmail = userEmail.trim().toLowerCase()
+    setEmail(cleanEmail)
     setPassword('Skip@Pass')
     setSelectedProfile(forcedRole)
     try {
       setIsLoading(true)
-      const loggedUser = await login(userEmail, 'Skip@Pass')
+      const loggedUser = await login(cleanEmail, 'Skip@Pass')
       toast.success(`Bem-vindo, ${loggedUser.name || 'Usuário'}!`)
       redirectByRoleAndStatus(loggedUser.role || forcedRole, loggedUser.status)
     } catch (err: unknown) {
-      console.error(err)
-      toast.error('Falha ao autenticar com as credenciais rápidas.')
+      console.error('Quick login error:', err)
+      const msg = getErrorMessage(
+        err,
+        'Falha ao autenticar com as credenciais rápidas. Verifique se o usuário e senha (Skip@Pass) estão corretos.',
+      )
+      toast.error(msg)
     } finally {
       setIsLoading(false)
     }
@@ -83,6 +88,11 @@ export default function Index() {
       return
     }
 
+    if (password.length < 8) {
+      toast.error('A senha deve ter pelo menos 8 caracteres.')
+      return
+    }
+
     setIsLoading(true)
     try {
       const loggedUser = await login(trimmedEmail, password)
@@ -92,7 +102,7 @@ export default function Index() {
       console.error('Login error:', err)
       const msg = getErrorMessage(
         err,
-        'Credenciais inválidas. Verifique seu e-mail e senha cadastrados.',
+        'Credenciais inválidas. Verifique seu e-mail e senha cadastrados (mínimo 8 caracteres, padrão: Skip@Pass).',
       )
       toast.error(msg)
     } finally {

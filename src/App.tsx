@@ -22,7 +22,7 @@ function ProtectedRoute({
   children: React.ReactNode
   allowedRoles?: ('admin' | 'seller' | 'courier')[]
 }) {
-  const { user, role, isLoading } = useAuth()
+  const { user, role, isLoading, isAuthenticated } = useAuth()
 
   if (isLoading) {
     return (
@@ -32,7 +32,7 @@ function ProtectedRoute({
     )
   }
 
-  if (!user) {
+  if (!isAuthenticated || !user) {
     return <Navigate to="/login" replace />
   }
 
