@@ -1,7 +1,8 @@
 import type { RecordModel } from 'pocketbase'
 
 export type UserRole = 'admin' | 'seller' | 'courier'
-export type UserStatus = 'active' | 'idle' | 'busy'
+export type UserStatus = 'active' | 'inactive' | 'pending' | 'idle' | 'busy'
+export type VehicleType = 'moto' | 'carro' | 'van' | 'caminhao'
 
 export interface UserRecord extends RecordModel {
   email: string
@@ -9,6 +10,13 @@ export interface UserRecord extends RecordModel {
   role?: UserRole
   status?: UserStatus
   avatar?: string
+  phone?: string
+  vehicle_type?: VehicleType
+  vehicle_model?: string
+  vehicle_year?: number
+  vehicle_plate?: string
+  documents?: string[]
+  selfie?: string
 }
 
 export interface CustomerRecord extends RecordModel {

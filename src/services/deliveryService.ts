@@ -67,7 +67,15 @@ export const deliveryService = {
   async getCouriers() {
     return pb.collection<UserRecord>('users').getFullList({
       filter: "role = 'courier'",
-      sort: 'name',
+      sort: '-created',
+      requestKey: null,
+    })
+  },
+
+  async getSellers() {
+    return pb.collection<UserRecord>('users').getFullList({
+      filter: "role = 'seller'",
+      sort: '-created',
       requestKey: null,
     })
   },
@@ -79,19 +87,36 @@ export const deliveryService = {
     })
   },
 
-  async updateUser(id: string, data: Partial<UserRecord>) {
+  async updateUser(id: string, data: Partial<UserRecord> | FormData) {
     return pb.collection<UserRecord>('users').update(id, data)
   },
 
-  async createUser(data: {
-    email: string
-    password: string
-    passwordConfirm: string
-    name?: string
-    role?: 'admin' | 'seller' | 'courier'
-    status?: 'active' | 'idle' | 'busy'
-    [key: string]: unknown
-  }) {
+  async deleteUser(id: string) {
+    return pb.collection<UserRecord>('users').delete(id)
+  },
+
+  async createUser(
+    data:
+      | {
+          email: string
+          password: string
+          passwordConfirm: string
+          name?: string
+          role?: 'admin' | 'seller' | 'courier'
+          status?: 'active' | 'inactive' | 'pending' | 'idle' | 'busy'
+          phone?: string
+          vehicle_type?: string
+          vehicle_model?: string
+          vehicle_year?: number
+          vehicle_plate?: string
+          [key: string]: unknown
+        }
+      | FormData,
+  ) {
+    if (data instanceof FormData) {
+      return pb.collection<UserRecord>('users').create(data)
+    }
+
     const { verified: _omittedVerified, ...rest } = data
     const payload: Record<string, unknown> = {
       ...rest,
@@ -106,6 +131,21 @@ export const deliveryService = {
     }
 
     return pb.collection<UserRecord>('users').create(payload)
+  },
+
+  // Password Reset Native PocketBase
+  async requestPasswordReset(email: string) {
+    return pb.collection('users').requestPasswordReset(email.trim().toLowerCase())
+  },
+
+  async confirmPasswordReset(token: string, password: string, passwordConfirm: string) {
+    return pb.collection('users').confirmPasswordReset(token.trim(), password, passwordConfirm)
+  },
+
+  // Helper to build file URL from PocketBase record
+  getFileUrl(record: UserRecord, filename: string) {
+    if (!filename) return ''
+    return pb.files.getURL(record, filename)
   },
 
   // Locations

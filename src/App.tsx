@@ -5,13 +5,16 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import Layout from './components/Layout'
 import Index from './pages/Index'
+import RegisterPage from './pages/RegisterPage'
+import ForgotPasswordPage from './pages/ForgotPasswordPage'
+import PendingApprovalPage from './pages/PendingApprovalPage'
 import SellerDashboard from './pages/SellerDashboard'
 import CourierApp from './pages/CourierApp'
 import AdminDashboard from './pages/AdminDashboard'
 import PublicTrackingPage from './pages/PublicTrackingPage'
 import NotFound from './pages/NotFound'
 
-// Role Guard Component
+// Role Guard Component with User Status verification
 function ProtectedRoute({
   children,
   allowedRoles,
@@ -30,7 +33,12 @@ function ProtectedRoute({
   }
 
   if (!user) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/login" replace />
+  }
+
+  // Check courier approval status: pending or inactive couriers are directed to pending approval page
+  if (role === 'courier' && (user.status === 'pending' || user.status === 'inactive')) {
+    return <Navigate to="/pending-approval" replace />
   }
 
   if (allowedRoles && !allowedRoles.includes(role)) {
@@ -52,8 +60,12 @@ const App = () => (
           {/* Public Track Route */}
           <Route path="/track/:tracking_code" element={<PublicTrackingPage />} />
 
-          {/* Root Login / Public Gateway */}
+          {/* Authentication & Access Routes */}
           <Route path="/" element={<Index />} />
+          <Route path="/login" element={<Index />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/pending-approval" element={<PendingApprovalPage />} />
 
           {/* Protected Seller & Admin Routes */}
           <Route

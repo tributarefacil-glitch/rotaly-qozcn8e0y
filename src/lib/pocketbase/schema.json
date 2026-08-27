@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-27T22:16:17.407Z",
+  "generatedAt": "2026-08-27T22:36:01.701Z",
   "collections": [
     {
       "name": "users",
@@ -7,8 +7,8 @@
       "apiRules": {
         "list": "@request.auth.id != ''",
         "view": "@request.auth.id != '' || @request.auth.id = ''",
-        "create": "@request.auth.role = 'admin' || @request.auth.id = ''",
-        "update": "@request.auth.id != ''",
+        "create": "",
+        "update": "@request.auth.id = id || @request.auth.role = 'admin'",
         "delete": "@request.auth.role = 'admin'"
       },
       "fields": [
@@ -50,7 +50,50 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["active", "idle", "busy"]
+          "selectValues": ["active", "inactive", "pending", "idle", "busy"]
+        },
+        {
+          "name": "phone",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "vehicle_type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["moto", "carro", "van", "caminhao"]
+        },
+        {
+          "name": "vehicle_model",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "vehicle_year",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "vehicle_plate",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "documents",
+          "type": "file",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "selfie",
+          "type": "file",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
