@@ -83,8 +83,30 @@ export const deliveryService = {
     return pb.collection<UserRecord>('users').update(id, data)
   },
 
-  async createUser(data: Record<string, unknown>) {
-    return pb.collection<UserRecord>('users').create(data)
+  async createUser(data: {
+    email: string
+    password: string
+    passwordConfirm: string
+    name?: string
+    role?: 'admin' | 'seller' | 'courier'
+    status?: 'active' | 'idle' | 'busy'
+    [key: string]: unknown
+  }) {
+    const payload: Record<string, unknown> = {
+      ...data,
+      email: data.email.trim().toLowerCase(),
+      // Ensure verified flag is true by default for admin created users
+      verified: true,
+    }
+
+    // Auto-generate username from email if not provided
+    if (!payload.username) {
+      const emailPrefix = data.email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '')
+      const randomSuffix = Math.floor(1000 + Math.random() * 9000)
+      payload.username = `${emailPrefix || 'user'}_${randomSuffix}`
+    }
+
+    return pb.collection<UserRecord>('users').create(payload)
   },
 
   // Locations

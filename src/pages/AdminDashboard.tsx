@@ -20,6 +20,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { deliveryService } from '@/services/deliveryService'
 import type { OrderRecord, UserRecord, NotificationRecord } from '@/types/delivery'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -78,30 +79,41 @@ export default function AdminDashboard() {
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newUserName.trim() || !newUserEmail.trim()) {
+    const trimmedName = newUserName.trim()
+    const trimmedEmail = newUserEmail.trim()
+
+    if (!trimmedName || !trimmedEmail) {
       toast.error('Preencha nome e e-mail.')
+      return
+    }
+
+    if (!newUserPassword || newUserPassword.length < 8) {
+      toast.error('A senha deve ter pelo menos 8 caracteres.')
       return
     }
 
     setIsCreatingUser(true)
     try {
       await deliveryService.createUser({
-        name: newUserName.trim(),
-        email: newUserEmail.trim(),
+        name: trimmedName,
+        email: trimmedEmail,
         password: newUserPassword,
         passwordConfirm: newUserPassword,
         role: newUserRole,
         status: 'active',
       })
 
-      toast.success(`Usuário ${newUserName} (${newUserRole}) criado com sucesso!`)
+      toast.success(
+        `Usuário ${trimmedName} (${newUserRole === 'courier' ? 'Entregador' : 'Vendedor'}) cadastrado com sucesso!`,
+      )
       setIsNewUserModalOpen(false)
       setNewUserName('')
       setNewUserEmail('')
+      setNewUserPassword('Skip@Pass')
       loadData()
     } catch (err: unknown) {
       console.error('Error creating user:', err)
-      const msg = err instanceof Error ? err.message : 'Falha ao criar usuário'
+      const msg = getErrorMessage(err, 'Falha ao cadastrar novo usuário.')
       toast.error(msg)
     } finally {
       setIsCreatingUser(false)
@@ -562,12 +574,20 @@ export default function AdminDashboard() {
             </div>
 
             <div>
-              <Label className="text-xs font-semibold">Senha Inicial</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Senha Inicial</Label>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Mínimo 8 caracteres
+                </span>
+              </div>
               <Input
                 type="password"
                 value={newUserPassword}
                 onChange={(e) => setNewUserPassword(e.target.value)}
+                placeholder="Mínimo 8 caracteres"
                 className="mt-1 text-xs"
+                minLength={8}
+                required
               />
             </div>
 
