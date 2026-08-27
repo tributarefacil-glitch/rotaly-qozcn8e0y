@@ -92,11 +92,10 @@ export const deliveryService = {
     status?: 'active' | 'idle' | 'busy'
     [key: string]: unknown
   }) {
+    const { verified: _omittedVerified, ...rest } = data
     const payload: Record<string, unknown> = {
-      ...data,
+      ...rest,
       email: data.email.trim().toLowerCase(),
-      // Ensure verified flag is true by default for admin created users
-      verified: true,
     }
 
     // Auto-generate username from email if not provided

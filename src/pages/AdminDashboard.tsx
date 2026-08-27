@@ -87,6 +87,12 @@ export default function AdminDashboard() {
       return
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(trimmedEmail)) {
+      toast.error('Por favor, insira um e-mail válido.')
+      return
+    }
+
     if (!newUserPassword || newUserPassword.length < 8) {
       toast.error('A senha deve ter pelo menos 8 caracteres.')
       return

@@ -2,6 +2,71 @@ import { ClientResponseError } from 'pocketbase'
 
 export type FieldErrors = Record<string, string>
 
+const FIELD_TRANSLATIONS: Record<string, string> = {
+  email: 'E-mail',
+  password: 'Senha',
+  passwordConfirm: 'Confirmação de senha',
+  name: 'Nome',
+  username: 'Nome de usuário',
+  role: 'Perfil de acesso',
+  status: 'Status',
+  verified: 'Status de verificação',
+  oldPassword: 'Senha antiga',
+  title: 'Título',
+  message: 'Mensagem',
+  phone: 'Telefone',
+  address: 'Endereço',
+  customer_id: 'Cliente',
+  courier_id: 'Entregador',
+  seller_id: 'Vendedor',
+  tracking_code: 'Código de rastreio',
+}
+
+function translateErrorMessage(field: string, msg: string): string {
+  const fieldName = FIELD_TRANSLATIONS[field] || field
+  const lower = msg.toLowerCase().trim()
+
+  if (
+    lower.includes("values don't match") ||
+    lower.includes('values dont match') ||
+    lower.includes('value does not match')
+  ) {
+    if (field === 'passwordConfirm' || field === 'password') {
+      return 'As senhas digitadas não coincidem.'
+    }
+    if (field === 'verified') {
+      return 'Não foi possível alterar o status de verificação da conta.'
+    }
+    return `O campo "${fieldName}" contém um valor inválido ou divergente.`
+  }
+
+  if (
+    lower.includes('must be unique') ||
+    lower.includes('already exists') ||
+    lower.includes('unique')
+  ) {
+    return `Este ${fieldName.toLowerCase()} já está em uso.`
+  }
+
+  if (
+    lower.includes('required') ||
+    lower.includes('cannot be blank') ||
+    lower.includes('must not be empty')
+  ) {
+    return `O campo ${fieldName} é obrigatório.`
+  }
+
+  if (lower.includes('min') && (lower.includes('characters') || lower.includes('length'))) {
+    return `O campo ${fieldName} não atinge o tamanho mínimo necessário.`
+  }
+
+  if (lower.includes('invalid email') || lower.includes('must be a valid email')) {
+    return 'Por favor, forneça um endereço de e-mail válido.'
+  }
+
+  return `${fieldName}: ${msg}`
+}
+
 export function extractFieldErrors(error: unknown): FieldErrors {
   if (!(error instanceof ClientResponseError)) return {}
   const data = error.response?.data
@@ -20,54 +85,31 @@ export function extractFieldErrors(error: unknown): FieldErrors {
   return errors
 }
 
-export function getErrorMessage(
-  error: unknown,
-  fallbackMessage = 'Ocorreu um erro inesperado.',
-): string {
+export function getErrorMessage(error: unknown, fallback = 'Ocorreu um erro inesperado.'): string {
   if (!(error instanceof ClientResponseError)) {
-    return error instanceof Error ? error.message : fallbackMessage
+    return error instanceof Error ? error.message : fallback
   }
 
-  const fieldErrors = extractFieldErrors(error)
-  const entries = Object.entries(fieldErrors)
+  const rawFieldErrors = extractFieldErrors(error)
+  const entries = Object.entries(rawFieldErrors)
 
   if (entries.length > 0) {
-    const translated = entries.map(([field, msg]) => {
-      let fieldLabel = field
-      if (field === 'email') fieldLabel = 'E-mail'
-      else if (field === 'password') fieldLabel = 'Senha'
-      else if (field === 'passwordConfirm') fieldLabel = 'Confirmação de senha'
-      else if (field === 'name') fieldLabel = 'Nome'
-      else if (field === 'role') fieldLabel = 'Perfil'
-      else if (field === 'username') fieldLabel = 'Nome de usuário'
-
-      let msgText = msg
-      if (msg.includes('Value must be between 8 and')) {
-        msgText = 'A senha deve ter no mínimo 8 caracteres.'
-      } else if (
-        msg.includes('Value must be unique') ||
-        msg.includes('already exists') ||
-        msg.includes('unique constraint')
-      ) {
-        msgText = 'já está em uso no sistema.'
-      } else if (msg.includes('cannot be blank') || msg.includes('required')) {
-        msgText = 'é obrigatório.'
-      } else if (msg.includes('Value must be a valid email address')) {
-        msgText = 'deve ser um endereço de e-mail válido.'
-      }
-
-      return `${fieldLabel}: ${msgText}`
-    })
-
-    return translated.join(' | ')
+    const translatedMessages = entries.map(([field, rawMsg]) =>
+      translateErrorMessage(field, rawMsg),
+    )
+    return translatedMessages.join('\n')
   }
 
-  if (error.message) {
-    if (error.message.includes('Failed to create record')) {
-      return 'Não foi possível cadastrar o usuário. Verifique os dados informados (mínimo de 8 caracteres para a senha e e-mail único).'
+  if (error.response?.message && typeof error.response.message === 'string') {
+    const mainMsg = error.response.message
+    if (mainMsg.toLowerCase().includes('failed to create record')) {
+      return 'Falha ao criar o registro. Verifique os dados informados.'
     }
-    return error.message
+    if (mainMsg.toLowerCase().includes('failed to authenticate')) {
+      return 'E-mail ou senha incorretos.'
+    }
+    return mainMsg
   }
 
-  return fallbackMessage
+  return error.message || fallback
 }
