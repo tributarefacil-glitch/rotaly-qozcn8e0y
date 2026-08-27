@@ -23,6 +23,12 @@ export interface CustomerRecord extends RecordModel {
   name: string
   phone: string
   address: string
+  street?: string
+  neighborhood?: string
+  city?: string
+  state?: string
+  postal_code?: string
+  complement?: string
   lat?: number
   lng?: number
 }

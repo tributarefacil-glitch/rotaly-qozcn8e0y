@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-27T22:49:45.740Z",
+  "generatedAt": "2026-08-27T23:04:17.864Z",
   "collections": [
     {
       "name": "users",
@@ -155,6 +155,42 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "street",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "neighborhood",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "city",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "state",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "postal_code",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "complement",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
