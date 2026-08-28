@@ -1,0 +1,33 @@
+{
+  "short_name": "Entregas",
+  "name": "Gestão de Entregas & Logística Express",
+  "description": "Aplicativo de gestão logística, despacho e rastreamento em tempo real de pedidos e frotas.",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#090d16",
+  "theme_color": "#2563eb",
+  "lang": "pt-BR",
+  "categories": ["business", "logistics", "productivity", "utilities"]
+}

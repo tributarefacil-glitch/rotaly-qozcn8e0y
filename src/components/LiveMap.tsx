@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { MapPin, Navigation, User, Package, AlertCircle } from 'lucide-react'
-import { loadGoogleMapsScript, onGoogleMapsAuthError } from '@/lib/googleMaps'
+import { MapPin, Navigation, User, Package, AlertCircle, Compass, Layers } from 'lucide-react'
+import {
+  loadGoogleMapsScript,
+  onGoogleMapsAuthError,
+  isGoogleMapsAuthError,
+} from '@/lib/googleMaps'
 
 export interface MapMarkerItem {
   id: string
@@ -42,14 +46,24 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const isGoogleLoaded = !!getGoogle()?.maps
 
   const [mapsLoaded, setMapsLoaded] = useState(false)
+  const [authError, setAuthError] = useState(isGoogleMapsAuthError())
 
   useEffect(() => {
+    const unsub = onGoogleMapsAuthError(() => {
+      setAuthError(true)
+      setMapsLoaded(false)
+    })
+
     loadGoogleMapsScript().then((success) => {
-      setMapsLoaded(success)
-      if (success) {
+      if (success && !isGoogleMapsAuthError()) {
+        setMapsLoaded(true)
         initGoogleMap()
+      } else {
+        setMapsLoaded(false)
       }
     })
+
+    return unsub
   }, [])
 
   const initGoogleMap = () => {
@@ -150,11 +164,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       style={{ height }}
     >
       {/* Google map container */}
-      <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-10" />
+      <div
+        ref={mapContainerRef}
+        className={`absolute inset-0 w-full h-full ${mapsLoaded && !authError ? 'z-10 opacity-100' : 'z-0 opacity-0 pointer-events-none'}`}
+      />
 
-      {/* Fallback interactive stylish vector map canvas if Google maps is unavailable */}
-      {!isGoogleLoaded && (
-        <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white z-0 select-none overflow-hidden">
+      {/* Fallback interactive stylish vector map canvas if Google maps is unavailable or auth failed */}
+      {(!mapsLoaded || authError) && (
+        <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white z-10 select-none overflow-hidden">
           {/* Subtle grid lines background */}
           <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:24px_24px]" />
 

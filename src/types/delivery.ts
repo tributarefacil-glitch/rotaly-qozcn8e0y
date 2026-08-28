@@ -22,6 +22,8 @@ export interface UserRecord extends RecordModel {
 export interface CustomerRecord extends RecordModel {
   name: string
   phone: string
+  phone2?: string
+  phone3?: string
   address: string
   street?: string
   neighborhood?: string

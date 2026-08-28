@@ -55,6 +55,84 @@ export const deliveryService = {
     })
   },
 
+  /**
+   * Searches for customer by any of their up to 3 phone numbers (digits normalized).
+   * Excludes a specific customerId if passed (useful during customer edits).
+   */
+  async findCustomerByPhone(
+    rawPhone: string,
+    excludeCustomerId?: string,
+  ): Promise<CustomerRecord | null> {
+    const digits = rawPhone.replace(/\D/g, '')
+    if (!digits || digits.length < 8) return null
+
+    try {
+      // Direct query with exact or clean match across phone, phone2 and phone3
+      const filter = `phone ~ '${digits}' || phone2 ~ '${digits}' || phone3 ~ '${digits}' || phone = '${rawPhone}'`
+      const records = await pb.collection<CustomerRecord>('customers').getList(1, 20, {
+        filter,
+        sort: '-created',
+        requestKey: null,
+      })
+
+      if (records.items.length > 0) {
+        // Find the record where stripped phone matches stripped digits exactly or as national suffix
+        const candidates = excludeCustomerId
+          ? records.items.filter((c) => c.id !== excludeCustomerId)
+          : records.items
+
+        const match = candidates.find((c) => {
+          const d1 = (c.phone || '').replace(/\D/g, '')
+          const d2 = (c.phone2 || '').replace(/\D/g, '')
+          const d3 = (c.phone3 || '').replace(/\D/g, '')
+          return (
+            (d1 &&
+              (d1 === digits ||
+                (d1.length >= 8 &&
+                  digits.length >= 8 &&
+                  (d1.endsWith(digits) || digits.endsWith(d1))))) ||
+            (d2 &&
+              (d2 === digits ||
+                (d2.length >= 8 &&
+                  digits.length >= 8 &&
+                  (d2.endsWith(digits) || digits.endsWith(d2))))) ||
+            (d3 &&
+              (d3 === digits ||
+                (d3.length >= 8 &&
+                  digits.length >= 8 &&
+                  (d3.endsWith(digits) || digits.endsWith(d3)))))
+          )
+        })
+        return match || null
+      }
+      return null
+    } catch (e) {
+      console.warn('findCustomerByPhone search error:', e)
+      return null
+    }
+  },
+
+  /**
+   * Checks if any of the given phone numbers already belongs to another customer.
+   * Returns conflicting CustomerRecord if duplicate found, or null if all phones are unique.
+   */
+  async checkPhoneConflict(
+    phones: (string | undefined | null)[],
+    excludeCustomerId?: string,
+  ): Promise<{ conflict: boolean; customer?: CustomerRecord; duplicatePhone?: string }> {
+    for (const p of phones) {
+      if (!p) continue
+      const digits = p.replace(/\D/g, '')
+      if (digits.length >= 8) {
+        const found = await this.findCustomerByPhone(p, excludeCustomerId)
+        if (found) {
+          return { conflict: true, customer: found, duplicatePhone: p }
+        }
+      }
+    }
+    return { conflict: false }
+  },
+
   async createCustomer(data: Partial<CustomerRecord>) {
     return pb.collection<CustomerRecord>('customers').create(data)
   },

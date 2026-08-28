@@ -34,6 +34,9 @@ import {
   AlertTriangle,
   Building2,
   Sparkles,
+  Phone,
+  UserCheck,
+  Edit3,
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import type { CustomerRecord, UserRecord, OrderPriority, OrderItem } from '@/types/delivery'
@@ -43,6 +46,7 @@ import {
   BRAZILIAN_STATES,
   loadGoogleMapsScript,
   onGoogleMapsAuthError,
+  isGoogleMapsAuthError,
   parseGoogleAddressComponents,
   lookupViaCep,
   fallbackGeocodeAddress,
@@ -76,10 +80,15 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [notes, setNotes] = useState<string>('')
   const [items, setItems] = useState<OrderItem[]>([{ name: '', qty: 1, price: 0 }])
 
-  // New Customer inline state
+  // Customer inline state
   const [isAddingCustomer, setIsAddingCustomer] = useState(true)
+  const [existingMatchedCustomerId, setExistingMatchedCustomerId] = useState<string | null>(null)
+  const [isSearchingPhone, setIsSearchingPhone] = useState(false)
   const [newCustName, setNewCustName] = useState('')
   const [newCustPhone, setNewCustPhone] = useState('')
+  const [newCustPhone2, setNewCustPhone2] = useState('')
+  const [newCustPhone3, setNewCustPhone3] = useState('')
+  const [showExtraPhones, setShowExtraPhones] = useState(false)
 
   // Search input controlled state
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
@@ -140,7 +149,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     let isMounted = true
     loadGoogleMapsScript().then((success) => {
       if (isMounted) {
-        setIsMapsLoaded(success)
+        setIsMapsLoaded(success && !isGoogleMapsAuthError())
       }
     })
 
@@ -148,6 +157,94 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       isMounted = false
     }
   }, [open])
+
+  // Populate customer fields helper
+  const populateCustomerForm = useCallback((cust: CustomerRecord) => {
+    setExistingMatchedCustomerId(cust.id)
+    setNewCustName(cust.name || '')
+    setNewCustPhone(cust.phone || '')
+    setNewCustPhone2(cust.phone2 || '')
+    setNewCustPhone3(cust.phone3 || '')
+    if (cust.phone2 || cust.phone3) {
+      setShowExtraPhones(true)
+    }
+
+    setStreetAndNumber(cust.street || cust.address?.split(',')[0] || '')
+    setNeighborhood(cust.neighborhood || '')
+    setCity(cust.city || '')
+    if (cust.state) {
+      const uf = normalizeBrazilianUF(cust.state)
+      if (uf && BRAZILIAN_STATES.includes(uf)) {
+        setUfState(uf)
+      }
+    }
+    setPostalCode(cust.postal_code || '')
+    setComplement(cust.complement || '')
+
+    if (cust.lat && cust.lng) {
+      setSelectedCoords({ lat: cust.lat, lng: cust.lng })
+      setHasLocationPinned(true)
+    }
+  }, [])
+
+  // Auto-lookup existing customer by typed phone
+  const checkCustomerByPhoneDebounced = useCallback(
+    async (phoneInput: string) => {
+      const cleanDigits = phoneInput.replace(/\D/g, '')
+      if (cleanDigits.length < 8) return
+
+      // 1. Check in loaded customers array first (search phone1, phone2, phone3)
+      const localMatch = customers.find((c) => {
+        const d1 = (c.phone || '').replace(/\D/g, '')
+        const d2 = (c.phone2 || '').replace(/\D/g, '')
+        const d3 = (c.phone3 || '').replace(/\D/g, '')
+        return (
+          (d1 && (d1 === cleanDigits || (d1.length >= 8 && (d1.endsWith(cleanDigits) || cleanDigits.endsWith(d1))))) ||
+          (d2 && (d2 === cleanDigits || (d2.length >= 8 && (d2.endsWith(cleanDigits) || cleanDigits.endsWith(d2))))) ||
+          (d3 && (d3 === cleanDigits || (d3.length >= 8 && (d3.endsWith(cleanDigits) || cleanDigits.endsWith(d3)))))
+        )
+      })
+
+      if (localMatch) {
+        populateCustomerForm(localMatch)
+        toast.success(`Cliente localizado: "${localMatch.name}". Cadastro completo carregado e pronto para edição!`)
+        return
+      }
+
+      // 2. Query backend across phone, phone2, phone3
+      setIsSearchingPhone(true)
+      try {
+        const found = await deliveryService.findCustomerByPhone(phoneInput)
+        if (found) {
+          populateCustomerForm(found)
+          toast.success(`Cliente localizado: "${found.name}". Cadastro completo carregado e pronto para edição!`)
+        }
+      } catch (e) {
+        console.warn('Error querying customer by phone:', e)
+      } finally {
+        setIsSearchingPhone(false)
+      }
+    },
+    [customers, populateCustomerForm],
+  )
+
+  // Phone input handler with auto-search debounce
+  const phoneDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  const handlePhoneInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value
+    setNewCustPhone(val)
+
+    if (phoneDebounceRef.current) {
+      clearTimeout(phoneDebounceRef.current)
+    }
+
+    const digits = val.replace(/\D/g, '')
+    if (digits.length >= 8) {
+      phoneDebounceRef.current = setTimeout(() => {
+        checkCustomerByPhoneDebounced(val)
+      }, 500)
+    }
+  }
 
   // Parse Google Maps / Waze / WhatsApp coordinates link
   const parseCoordinatesFromText = (text: string): { lat: number; lng: number } | null => {
@@ -752,10 +849,16 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
     let finalCustomerId = customerId
 
-    // If creating a new inline customer
+    // If using inline customer form (New or existing matched by phone/editing)
     if (isAddingCustomer) {
       if (!newCustName.trim()) {
         toast.error('Preencha o nome do cliente.')
+        return
+      }
+
+      const mainPhone = newCustPhone.trim()
+      if (!mainPhone) {
+        toast.error('Preencha ao menos um telefone de contato para o cliente.')
         return
       }
 
@@ -765,26 +868,67 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         return
       }
 
-      try {
-        const customerData: Partial<CustomerRecord> = {
-          name: newCustName.trim(),
-          phone: newCustPhone.trim() || '(11) 90000-0000',
-          address: combinedAddress || streetAndNumber.trim(),
-          street: streetAndNumber.trim(),
-          neighborhood: neighborhood.trim(),
-          city: city.trim(),
-          state: ufState.trim(),
-          postal_code: postalCode.trim(),
-          complement: complement.trim(),
-          lat: selectedCoords.lat,
-          lng: selectedCoords.lng,
-        }
+      const customerPayload: Partial<CustomerRecord> = {
+        name: newCustName.trim(),
+        phone: mainPhone,
+        phone2: newCustPhone2.trim() || undefined,
+        phone3: newCustPhone3.trim() || undefined,
+        address: combinedAddress || streetAndNumber.trim(),
+        street: streetAndNumber.trim(),
+        neighborhood: neighborhood.trim(),
+        city: city.trim(),
+        state: ufState.trim(),
+        postal_code: postalCode.trim(),
+        complement: complement.trim(),
+        lat: selectedCoords.lat,
+        lng: selectedCoords.lng,
+      }
 
-        const createdCustomer = await deliveryService.createCustomer(customerData)
-        finalCustomerId = createdCustomer.id
+      try {
+        // Validate phone uniqueness across all 3 phone fields against other customers
+        const phonesToValidate = [
+          mainPhone,
+          newCustPhone2.trim() || undefined,
+          newCustPhone3.trim() || undefined,
+        ]
+
+        if (existingMatchedCustomerId) {
+          // Check if any of the phones belong to ANOTHER customer (conflict)
+          const conflictCheck = await deliveryService.checkPhoneConflict(
+            phonesToValidate,
+            existingMatchedCustomerId,
+          )
+          if (conflictCheck.conflict && conflictCheck.customer) {
+            toast.error(
+              `O telefone ${conflictCheck.duplicatePhone} já está cadastrado para o cliente "${conflictCheck.customer.name}". Não é permitido cadastrar o mesmo telefone para clientes diferentes.`,
+            )
+            return
+          }
+
+          // Update existing customer record directly
+          await deliveryService.updateCustomer(existingMatchedCustomerId, customerPayload)
+          finalCustomerId = existingMatchedCustomerId
+          toast.success(`Cadastro do cliente "${newCustName.trim()}" atualizado com sucesso!`)
+        } else {
+          // Check if any of the phones already belongs to an existing customer
+          const conflictCheck = await deliveryService.checkPhoneConflict(phonesToValidate)
+          if (conflictCheck.conflict && conflictCheck.customer) {
+            // Found existing customer by one of the phones -> update their record instead of duplicating
+            await deliveryService.updateCustomer(conflictCheck.customer.id, customerPayload)
+            finalCustomerId = conflictCheck.customer.id
+            toast.info(
+              `Telefone vinculado ao cliente "${conflictCheck.customer.name}". Cadastro atualizado sem duplicidade!`,
+            )
+          } else {
+            // Create new customer
+            const created = await deliveryService.createCustomer(customerPayload)
+            finalCustomerId = created.id
+            toast.success(`Novo cliente "${created.name}" cadastrado com sucesso!`)
+          }
+        }
       } catch (err) {
-        console.error('Error creating customer:', err)
-        toast.error('Erro ao cadastrar novo cliente.')
+        console.error('Error saving customer:', err)
+        toast.error('Erro ao salvar dados do cliente.')
         return
       }
     }
@@ -838,6 +982,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
       // Reset form
       setCustomerId('')
+      setExistingMatchedCustomerId(null)
       setCourierId('unassigned')
       setPriority('normal')
       setNotes('')
@@ -850,6 +995,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setComplement('')
       setNewCustName('')
       setNewCustPhone('')
+      setNewCustPhone2('')
+      setNewCustPhone3('')
+      setShowExtraPhones(false)
       setLocationLinkInput('')
       setHasLocationPinned(false)
       setSelectedCoords(DEFAULT_CENTER)
@@ -918,21 +1066,23 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   <SelectContent>
                     {customers.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {c.name} — {c.address}
+                        {c.name} — {c.phone} ({c.address})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
 
                 {customerId && (
-                  <div className="rounded-lg bg-white p-3 border border-slate-200 text-xs dark:bg-slate-800 dark:border-slate-700">
+                  <div className="rounded-lg bg-white p-3 border border-slate-200 text-xs dark:bg-slate-800 dark:border-slate-700 flex items-start justify-between">
                     {(() => {
                       const sel = customers.find((c) => c.id === customerId)
                       if (!sel) return null
                       return (
                         <div className="space-y-1">
                           <p className="font-bold text-slate-900 dark:text-white">{sel.name}</p>
-                          <p className="text-slate-600 dark:text-slate-300">📞 {sel.phone}</p>
+                          <p className="text-slate-600 dark:text-slate-300">
+                            📞 {sel.phone} {sel.phone2 ? `| 2: ${sel.phone2}` : ''} {sel.phone3 ? `| 3: ${sel.phone3}` : ''}
+                          </p>
                           <p className="text-slate-600 dark:text-slate-300">📍 {sel.address}</p>
                           {sel.lat && sel.lng && (
                             <Badge
@@ -945,12 +1095,57 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         </div>
                       )
                     })()}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const sel = customers.find((c) => c.id === customerId)
+                        if (sel) {
+                          populateCustomerForm(sel)
+                          setIsAddingCustomer(true)
+                        }
+                      }}
+                      className="h-7 text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                    >
+                      <Edit3 className="h-3.5 w-3.5" /> Editar Dados
+                    </Button>
                   </div>
                 )}
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Name & Phone */}
+                {/* Notice if editing existing matched customer */}
+                {existingMatchedCustomerId && (
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <UserCheck className="h-4 w-4 text-emerald-600" />
+                      Cliente identificado! Você pode editar nome, telefones e endereço diretamente aqui.
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setExistingMatchedCustomerId(null)
+                        setNewCustName('')
+                        setNewCustPhone('')
+                        setNewCustPhone2('')
+                        setNewCustPhone3('')
+                        setStreetAndNumber('')
+                        setNeighborhood('')
+                        setCity('')
+                        setPostalCode('')
+                        setComplement('')
+                      }}
+                      className="h-6 text-[11px] text-slate-500 hover:text-slate-700 px-2"
+                    >
+                      Limpar
+                    </Button>
+                  </div>
+                )}
+
+                {/* Name & Primary Phone */}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
@@ -965,16 +1160,68 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     />
                   </div>
                   <div>
-                    <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Telefone de Contato (WhatsApp)
-                    </Label>
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <Phone className="h-3 w-3 text-blue-600" /> Telefone Principal (WhatsApp) <span className="text-rose-500">*</span>
+                      </Label>
+                      {isSearchingPhone && (
+                        <span className="text-[10px] text-blue-600 flex items-center gap-1">
+                          <Loader2 className="h-2.5 w-2.5 animate-spin" /> buscando...
+                        </span>
+                      )}
+                    </div>
                     <Input
                       placeholder="Ex: (11) 98765-4321"
                       value={newCustPhone}
-                      onChange={(e) => setNewCustPhone(e.target.value)}
+                      onChange={handlePhoneInputChange}
                       className="mt-1 bg-white dark:bg-slate-800 text-xs"
+                      required
                     />
                   </div>
+                </div>
+
+                {/* Additional Phones (Up to 3 phones support) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowExtraPhones(!showExtraPhones)}
+                      className="h-6 px-1.5 text-[11px] text-indigo-600 hover:text-indigo-700"
+                    >
+                      {showExtraPhones
+                        ? '− Ocultar telefones secundários'
+                        : '+ Adicionar telefone 2 e 3 (até 3 números)'}
+                    </Button>
+                  </div>
+
+                  {showExtraPhones && (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 p-2.5 rounded-lg bg-white/70 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
+                      <div>
+                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                          Telefone 2 (Secundário / Fixo / Comercial)
+                        </Label>
+                        <Input
+                          placeholder="Ex: (11) 3456-7890"
+                          value={newCustPhone2}
+                          onChange={(e) => setNewCustPhone2(e.target.value)}
+                          className="mt-1 bg-white dark:bg-slate-900 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                          Telefone 3 (Recado / Outro)
+                        </Label>
+                        <Input
+                          placeholder="Ex: (11) 91234-5678"
+                          value={newCustPhone3}
+                          onChange={(e) => setNewCustPhone3(e.target.value)}
+                          className="mt-1 bg-white dark:bg-slate-900 text-xs"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 1. Google Places Autocomplete Search Bar */}

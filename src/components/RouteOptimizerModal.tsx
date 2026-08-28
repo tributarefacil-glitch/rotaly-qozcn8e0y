@@ -38,7 +38,11 @@ import type {
   MultiCourierOptimizationResult,
   OptimizedStop,
 } from '@/types/delivery'
-import { loadGoogleMapsScript } from '@/lib/googleMaps'
+import {
+  loadGoogleMapsScript,
+  onGoogleMapsAuthError,
+  isGoogleMapsAuthError,
+} from '@/lib/googleMaps'
 import { toast } from 'sonner'
 
 interface RouteOptimizerModalProps {
@@ -126,6 +130,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [isApplying, setIsApplying] = useState(false)
   const [activeCourierTab, setActiveCourierTab] = useState<string>('all')
+  const [searchCourierFilter, setSearchCourierFilter] = useState<string>('')
+  const [vehicleFilter, setVehicleFilter] = useState<string>('all')
 
   // Optimization Result
   const [optimizationResult, setOptimizationResult] =
@@ -137,6 +143,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const mapInstanceRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markersAndPolylinesRef = useRef<any[]>([])
+  const [isMapsLoaded, setIsMapsLoaded] = useState(false)
+  const [mapsAuthError, setMapsAuthError] = useState(isGoogleMapsAuthError())
 
   const getGoogle = () =>
     typeof window !== 'undefined' ? (window as unknown as { google?: any }).google : undefined
@@ -149,9 +157,19 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         activeIds.length > 0 ? activeIds : couriers.slice(0, 3).map((c) => c.id),
       )
       setOptimizationResult(null)
-      loadGoogleMapsScript()
+      loadGoogleMapsScript().then((success) => {
+        setIsMapsLoaded(success && !isGoogleMapsAuthError())
+      })
     }
   }, [open, couriers])
+
+  useEffect(() => {
+    const unsub = onGoogleMapsAuthError(() => {
+      setMapsAuthError(true)
+      setIsMapsLoaded(false)
+    })
+    return unsub
+  }, [])
 
   const toggleCourierSelection = (id: string) => {
     setSelectedCourierIds((prev) =>
@@ -160,12 +178,29 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }
 
   const selectAllCouriers = () => {
-    setSelectedCourierIds(couriers.map((c) => c.id))
+    setSelectedCourierIds(filteredCouriers.map((c) => c.id))
   }
 
   const deselectAllCouriers = () => {
     setSelectedCourierIds([])
   }
+
+  const selectOnlyCourier = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedCourierIds([id])
+  }
+
+  // Filtered couriers for smart search & filtering
+  const filteredCouriers = useMemo(() => {
+    return couriers.filter((c) => {
+      const matchesSearch =
+        c.name.toLowerCase().includes(searchCourierFilter.toLowerCase()) ||
+        (c.vehicle_model || '').toLowerCase().includes(searchCourierFilter.toLowerCase()) ||
+        (c.vehicle_plate || '').toLowerCase().includes(searchCourierFilter.toLowerCase())
+      const matchesVehicle = vehicleFilter === 'all' || c.vehicle_type === vehicleFilter
+      return matchesSearch && matchesVehicle
+    })
+  }, [couriers, searchCourierFilter, vehicleFilter])
 
   // Multi-Courier Geographic K-Means Clustering + Nearest Neighbor Sequencing Algorithm
   const runRouteOptimization = async () => {
@@ -603,7 +638,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               <div className="flex items-center gap-2">
                 <Users className="h-4 w-4 text-indigo-600" />
                 <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                  1. Selecione os Entregadores Ativos ({selectedCourierIds.length} selecionados)
+                  1. Seleção Individual de Entregadores ({selectedCourierIds.length} selecionados)
                 </Label>
               </div>
 
@@ -625,38 +660,100 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   onClick={deselectAllCouriers}
                   className="h-6 px-2 text-[11px] text-slate-500 hover:text-slate-700"
                 >
-                  Desmarcar
+                  Desmarcar Todos
                 </Button>
               </div>
             </div>
 
-            {/* Courier Toggles Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-              {couriers.map((courier, idx) => {
+            {/* Smart Filters (Search & Vehicle Type) */}
+            <div className="flex flex-col sm:flex-row items-center gap-2">
+              <input
+                type="text"
+                placeholder="Filtrar por nome, veículo ou placa..."
+                value={searchCourierFilter}
+                onChange={(e) => setSearchCourierFilter(e.target.value)}
+                className="h-7 px-2.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white w-full sm:w-60 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setVehicleFilter('all')}
+                  className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                    vehicleFilter === 'all'
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  Todos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVehicleFilter('moto')}
+                  className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                    vehicleFilter === 'moto'
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  🛵 Moto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVehicleFilter('carro')}
+                  className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                    vehicleFilter === 'carro'
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  🚗 Carro
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVehicleFilter('van')}
+                  className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                    vehicleFilter === 'van'
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  🚐 Van
+                </button>
+              </div>
+            </div>
+
+            {/* Courier Toggles Grid - Permite marcar e desmarcar individualmente CADA entregador */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
+              {filteredCouriers.map((courier, idx) => {
                 const isSelected = selectedCourierIds.includes(courier.id)
                 const palette = COURIER_PALETTE[idx % COURIER_PALETTE.length]
                 const isBusy = courier.status === 'busy'
 
                 return (
-                  <div
+                  <label
                     key={courier.id}
-                    onClick={() => toggleCourierSelection(courier.id)}
-                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none ${
+                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none group relative ${
                       isSelected
-                        ? 'border-indigo-500 bg-indigo-50/70 shadow-sm dark:bg-indigo-950/40 dark:border-indigo-500'
-                        : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900'
+                        ? 'border-indigo-500 bg-indigo-50/80 shadow-sm dark:bg-indigo-950/50 dark:border-indigo-500 ring-2 ring-indigo-500/30'
+                        : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-80 hover:opacity-100'
                     }`}
                   >
                     <Checkbox
+                      id={`courier-chk-${courier.id}`}
                       checked={isSelected}
                       onCheckedChange={() => toggleCourierSelection(courier.id)}
-                      className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                      className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4"
                     />
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-1">
                         <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                          🛵 {courier.name}
+                          {courier.vehicle_type === 'carro'
+                            ? '🚗'
+                            : courier.vehicle_type === 'van'
+                              ? '🚐'
+                              : '🛵'}{' '}
+                          {courier.name}
                         </p>
                         <span
                           className="h-2.5 w-2.5 rounded-full shrink-0"
@@ -664,13 +761,29 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           title={`Cor da rota: ${palette.name}`}
                         />
                       </div>
-                      <p className="text-[10px] text-slate-500 truncate">
-                        {isBusy ? '⚠️ Ocupado' : '🟢 Disponível'} • {courier.vehicle_type || 'Moto'}
-                      </p>
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 mt-0.5">
+                        <span className="truncate">
+                          {isBusy ? '⚠️ Ocupado' : '🟢 Disponível'} •{' '}
+                          {courier.vehicle_model || courier.vehicle_type || 'Moto'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => selectOnlyCourier(courier.id, e)}
+                          className="text-[9px] text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline font-semibold ml-1 shrink-0"
+                          title="Marcar somente este entregador"
+                        >
+                          Só este
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  </label>
                 )
               })}
+              {filteredCouriers.length === 0 && (
+                <div className="col-span-full py-4 text-center text-xs text-slate-400">
+                  Nenhum entregador corresponde ao filtro de busca.
+                </div>
+              )}
             </div>
 
             {/* Action Bar: Run Optimizer */}
@@ -722,7 +835,78 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
             {/* Google Map Display Container */}
             <div className="relative w-full h-64 sm:h-72 rounded-2xl overflow-hidden border border-slate-300 dark:border-slate-700 shadow-inner bg-slate-900">
-              <div ref={mapContainerRef} className="w-full h-full" />
+              <div
+                ref={mapContainerRef}
+                className={`w-full h-full ${isMapsLoaded && !mapsAuthError ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+              />
+
+              {/* Fallback canvas overlay if Google Maps is not available or auth error */}
+              {(!isMapsLoaded || mapsAuthError) && (
+                <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white z-10 select-none overflow-hidden">
+                  <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#6366f1_1px,transparent_1px)] [background-size:20px_20px]" />
+
+                  {/* Visual Route Lines */}
+                  <svg className="absolute inset-0 w-full h-full opacity-30 pointer-events-none">
+                    <path
+                      d="M 50,120 Q 200,50 400,100 T 750,180"
+                      fill="none"
+                      stroke="#8b5cf6"
+                      strokeWidth="3"
+                      strokeDasharray="4,4"
+                    />
+                    <path
+                      d="M 80,200 Q 300,240 550,160 T 800,90"
+                      fill="none"
+                      stroke="#2563eb"
+                      strokeWidth="3"
+                      strokeDasharray="4,4"
+                    />
+                  </svg>
+
+                  <div className="relative z-20 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5 bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700">
+                      <Sparkles className="h-3.5 w-3.5 text-indigo-400" /> Distribuição Espacial de
+                      Entregas
+                    </span>
+                    {optimizationResult && (
+                      <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
+                        {optimizationResult.courierPlans.length} rotas otimizadas
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Nodes breakdown on visual map */}
+                  <div className="relative z-20 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {optimizationResult?.courierPlans.slice(0, 6).map((plan) => (
+                      <div
+                        key={plan.courier.id}
+                        className="bg-slate-900/90 backdrop-blur p-2 rounded-lg border border-slate-700 text-[11px] space-y-1"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: plan.color }}
+                          />
+                          <strong className="text-white truncate">{plan.courier.name}</strong>
+                        </div>
+                        <p className="text-slate-400 text-[10px]">
+                          {plan.stops.length} paradas • {plan.total_distance_km} km
+                        </p>
+                      </div>
+                    ))}
+                    {!optimizationResult && (
+                      <div className="col-span-full text-center text-xs text-slate-400 py-6">
+                        Clique em &quot;Calcular &amp; Otimizar Distribuição&quot; para traçar as
+                        rotas dos entregadores.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative z-20 text-[10px] text-slate-400">
+                    💡 Sistema calcula sequenciamento TSP e agrupamento balanceado por proximidade.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

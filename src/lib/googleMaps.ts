@@ -236,6 +236,10 @@ let googleMapsLoadingPromise: Promise<boolean> | null = null
 let googleMapsAuthError = false
 const authErrorListeners: Array<(errorMsg: string) => void> = []
 
+export function isGoogleMapsAuthError(): boolean {
+  return googleMapsAuthError
+}
+
 export function onGoogleMapsAuthError(cb: (errorMsg: string) => void) {
   authErrorListeners.push(cb)
   if (googleMapsAuthError) {
@@ -254,8 +258,8 @@ export function onGoogleMapsAuthError(cb: (errorMsg: string) => void) {
  * Registers window.gm_authFailure handler to detect billing / key issues cleanly.
  */
 export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
-  const keyToUse =
-    apiKey || import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyDKQXAMUR4ChVy8lKw61HgjDlHuOt3Ea94'
+  const envKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim()
+  const keyToUse = apiKey?.trim() || envKey || 'AIzaSyDKQXAMUR4ChVy8lKw61HgjDlHuOt3Ea94'
 
   // Register gm_authFailure hook globally if not yet registered
   if (typeof window !== 'undefined') {
@@ -265,10 +269,9 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
       const originalAuthFailure = win.gm_authFailure
       win.gm_authFailure = () => {
         googleMapsAuthError = true
-        console.error(
+        console.warn(
           '[Google Maps Alert] Falha na autenticação da chave do Google Maps (gm_authFailure). ' +
-            'Motivos comuns: Billing não ativado no Google Cloud Console, restrição de HTTP Referrer ou cota atingida. ' +
-            'O app fornecerá preenchimento automático por CEP (ViaCEP) e fallback para não travar o fluxo.',
+            'Modo de mapa interativo inteligente ativado com fallback de CEP/Nominatim.',
         )
         authErrorListeners.forEach((fn) =>
           fn(
@@ -286,7 +289,7 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
   // If already loaded
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (typeof window !== 'undefined' && (window as any).google?.maps?.places) {
-    return Promise.resolve(true)
+    return Promise.resolve(!googleMapsAuthError)
   }
 
   if (googleMapsLoadingPromise) {
@@ -301,7 +304,7 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if ((window as any).google?.maps?.places) {
-      resolve(true)
+      resolve(!googleMapsAuthError)
       return
     }
 
@@ -312,13 +315,13 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if ((window as any).google?.maps?.places) {
           clearInterval(checkInterval)
-          resolve(true)
+          resolve(!googleMapsAuthError)
         }
       }, 200)
       setTimeout(() => {
         clearInterval(checkInterval)
         resolve(false)
-      }, 10000)
+      }, 8000)
       return
     }
 
@@ -331,7 +334,7 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
     script.onload = () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if ((window as any).google?.maps) {
-        resolve(true)
+        resolve(!googleMapsAuthError)
       } else {
         resolve(false)
       }
