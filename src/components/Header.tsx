@@ -111,26 +111,26 @@ export const Header: React.FC = () => {
   }[role]
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b bg-white/95 px-4 backdrop-blur transition-all dark:bg-slate-900/95 sm:px-6">
+    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between bg-[#0052CC] text-white px-4 shadow-sm transition-all sm:px-6">
       {/* Left section: App Brand & Status */}
       <div className="flex items-center gap-3">
         <Link to="/" className="flex items-center gap-2.5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-900 to-blue-600 text-white shadow-md shadow-blue-500/20">
-            <Truck className="h-5 w-5" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-white border border-white/20 shadow-sm">
+            <Truck className="h-5 w-5 text-[#FF6B35]" />
           </div>
           <div className="hidden flex-col sm:flex">
-            <span className="text-base font-bold leading-none tracking-tight text-slate-900 dark:text-white">
-              Gestão de Entregas
+            <span className="font-heading text-lg font-black leading-none tracking-wider text-white">
+              LOGHYPE
             </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              Logística em Tempo Real
+            <span className="font-sans text-[11px] text-white/80">
+              Entrega rápida, confiança garantida
             </span>
           </div>
         </Link>
-        <div className="hidden md:flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/80 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300">
+        <div className="hidden md:flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-medium text-white">
           <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#00AA44] opacity-75"></span>
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#00AA44]"></span>
           </span>
           GPS & Realtime Ativo
         </div>
@@ -139,13 +139,13 @@ export const Header: React.FC = () => {
       {/* Center section: Global Tracking Code Search */}
       <div className="mx-2 max-w-md flex-1 sm:mx-6">
         <form onSubmit={handleSearch} className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/60" />
           <Input
             type="text"
             placeholder="Rastrear entrega (ex: TRK-2025-001)..."
             value={searchTracking}
             onChange={(e) => setSearchTracking(e.target.value)}
-            className="h-9 w-full rounded-full border-slate-200 bg-slate-50/80 pl-9 pr-4 text-xs shadow-inner transition focus:border-blue-500 focus:bg-white dark:border-slate-800 dark:bg-slate-800/80"
+            className="h-9 w-full rounded-md border border-white/20 bg-white/10 pl-9 pr-4 text-xs text-white placeholder:text-white/60 transition focus:border-white focus:bg-white/20 focus:ring-0"
           />
         </form>
       </div>
@@ -156,25 +156,31 @@ export const Header: React.FC = () => {
         <Popover open={isNotifOpen} onOpenChange={setIsNotifOpen}>
           <PopoverTrigger asChild>
             <Button
-              variant="outline"
+              variant="ghost"
               size="icon"
-              className="relative h-9 w-9 rounded-full border-slate-200 bg-slate-50 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800"
+              className="relative h-9 w-9 rounded-md border border-white/20 bg-white/10 hover:bg-white/20 text-white"
             >
-              <Bell className="h-4 w-4 text-slate-600 dark:text-slate-300" />
+              <Bell className="h-4 w-4 text-white" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white ring-2 ring-white">
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#FF6B35] px-1 text-[10px] font-bold text-white ring-2 ring-[#0052CC]">
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </span>
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-80 sm:w-96 p-0 shadow-xl">
-            <div className="flex items-center justify-between border-b p-3 bg-slate-50 dark:bg-slate-800/50">
+          <PopoverContent
+            align="end"
+            className="w-80 sm:w-96 p-0 shadow-xl border-slate-200 bg-white text-[#1a1a1a]"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 p-3 bg-[#F5F5F5]">
               <div className="flex items-center gap-2">
-                <Bell className="h-4 w-4 text-slate-700 dark:text-slate-200" />
-                <span className="font-semibold text-sm">Notificações</span>
+                <Bell className="h-4 w-4 text-[#0052CC]" />
+                <span className="font-heading font-bold text-sm text-[#1a1a1a]">Notificações</span>
                 {unreadCount > 0 && (
-                  <Badge variant="secondary" className="text-xs px-1.5 py-0">
+                  <Badge
+                    variant="secondary"
+                    className="text-xs px-1.5 py-0 bg-orange-100 text-[#FF6B35] border-orange-200 font-bold"
+                  >
                     {unreadCount} novas
                   </Badge>
                 )}
@@ -184,14 +190,14 @@ export const Header: React.FC = () => {
                   variant="ghost"
                   size="sm"
                   onClick={handleMarkAllAsRead}
-                  className="h-7 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                  className="h-7 text-xs text-[#0052CC] hover:text-[#003E99] font-semibold"
                 >
                   Marcar lidas
                 </Button>
               )}
             </div>
 
-            <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+            <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
               {notifications.length === 0 ? (
                 <div className="p-6 text-center text-xs text-slate-500">
                   Nenhuma notificação no momento.
@@ -200,24 +206,22 @@ export const Header: React.FC = () => {
                 notifications.slice(0, 10).map((n) => (
                   <div
                     key={n.id}
-                    className={`p-3 transition hover:bg-slate-50/80 dark:hover:bg-slate-800/60 ${
-                      !n.read ? 'bg-blue-50/40 dark:bg-blue-950/20' : ''
+                    className={`p-3 transition hover:bg-blue-50/40 ${
+                      !n.read ? 'bg-blue-50/70' : ''
                     }`}
                   >
                     <div className="flex items-start gap-2.5">
                       <div className="mt-0.5">
                         {n.type === 'off_route' && (
-                          <AlertTriangle className="h-4 w-4 text-rose-500" />
+                          <AlertTriangle className="h-4 w-4 text-[#E74C3C]" />
                         )}
-                        {n.type === 'delay' && <Clock className="h-4 w-4 text-amber-500" />}
-                        {n.type === 'order' && <Truck className="h-4 w-4 text-blue-500" />}
-                        {n.type === 'system' && <Radio className="h-4 w-4 text-emerald-500" />}
+                        {n.type === 'delay' && <Clock className="h-4 w-4 text-[#FF6B35]" />}
+                        {n.type === 'order' && <Truck className="h-4 w-4 text-[#0052CC]" />}
+                        {n.type === 'system' && <Radio className="h-4 w-4 text-[#00AA44]" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
-                            {n.title}
-                          </p>
+                          <p className="text-xs font-bold text-[#1a1a1a] truncate">{n.title}</p>
                           <span className="text-[10px] text-slate-400">
                             {new Date(n.created).toLocaleTimeString([], {
                               hour: '2-digit',
@@ -225,7 +229,7 @@ export const Header: React.FC = () => {
                             })}
                           </span>
                         </div>
-                        <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                        <p className="mt-0.5 text-xs text-slate-600 leading-relaxed font-sans">
                           {n.message}
                         </p>
                       </div>
@@ -235,9 +239,9 @@ export const Header: React.FC = () => {
               )}
             </div>
 
-            <div className="border-t p-2 text-center bg-slate-50 dark:bg-slate-800/50">
-              <span className="text-[11px] text-slate-500">
-                Push Real-time via PocketBase ativo
+            <div className="border-t border-slate-200 p-2 text-center bg-[#F5F5F5]">
+              <span className="text-[11px] text-slate-500 font-medium">
+                Push Real-time LOGHYPE ativo
               </span>
             </div>
           </PopoverContent>
@@ -248,18 +252,16 @@ export const Header: React.FC = () => {
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="flex items-center gap-2 pl-2 pr-2 sm:pr-3 py-1.5 h-auto rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="flex items-center gap-2 pl-2 pr-2 sm:pr-3 py-1.5 h-auto rounded-md hover:bg-white/10 text-white"
             >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-white text-xs font-semibold uppercase">
-                {user?.name ? user.name.slice(0, 2) : 'US'}
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#0052CC] text-xs font-black uppercase shadow-sm">
+                {user?.name ? user.name.slice(0, 2) : 'LH'}
               </div>
               <div className="hidden text-left sm:block">
-                <p className="text-xs font-semibold leading-none text-slate-900 dark:text-white">
+                <p className="font-heading text-xs font-bold leading-none text-white">
                   {user?.name || 'Usuário'}
                 </p>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-none mt-1">
-                  {user?.email}
-                </p>
+                <p className="text-[10px] text-white/80 leading-none mt-1">{user?.email}</p>
               </div>
             </Button>
           </DropdownMenuTrigger>

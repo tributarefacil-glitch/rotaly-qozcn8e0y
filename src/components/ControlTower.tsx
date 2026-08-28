@@ -502,40 +502,44 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
       {/* Metrics Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="border-l-4 border-l-blue-500 shadow-sm">
+        <Card className="border border-slate-200 border-l-4 border-l-[#0052CC] bg-white shadow-brand rounded-card">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <p className="font-heading text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Total do Dia
                 </p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{metrics.total}</p>
+                <p className="font-heading text-2xl font-black text-[#1a1a1a] mt-1">
+                  {metrics.total}
+                </p>
               </div>
-              <div className="p-2.5 bg-blue-50 rounded-full text-blue-600">
+              <div className="p-2.5 bg-blue-50 rounded-card text-[#0052CC] border border-blue-100">
                 <Package className="h-5 w-5" />
               </div>
             </div>
-            <div className="mt-2 text-xs text-gray-500 flex items-center justify-between">
+            <div className="mt-2 text-xs text-slate-500 flex items-center justify-between font-sans">
               <span>{metrics.pending} pendentes</span>
               <span>{couriers.length} entregadores</span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-emerald-500 shadow-sm">
+        <Card className="border border-slate-200 border-l-4 border-l-[#00AA44] bg-white shadow-brand rounded-card">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <p className="font-heading text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Entregues
                 </p>
-                <p className="text-2xl font-bold text-emerald-600 mt-1">{metrics.delivered}</p>
+                <p className="font-heading text-2xl font-black text-[#00AA44] mt-1">
+                  {metrics.delivered}
+                </p>
               </div>
-              <div className="p-2.5 bg-emerald-50 rounded-full text-emerald-600">
+              <div className="p-2.5 bg-emerald-50 rounded-card text-[#00AA44] border border-emerald-100">
                 <CheckCircle2 className="h-5 w-5" />
               </div>
             </div>
-            <div className="mt-2 text-xs text-emerald-700 font-medium">
+            <div className="mt-2 text-xs text-[#00AA44] font-semibold font-sans">
               {metrics.total > 0
                 ? `${Math.round((metrics.delivered / metrics.total) * 100)}% de taxa de conclusão`
                 : '0% concluído'}
@@ -543,40 +547,44 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-amber-500 shadow-sm">
+        <Card className="border border-slate-200 border-l-4 border-l-[#FF6B35] bg-white shadow-brand rounded-card">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <p className="font-heading text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Em Rota
                 </p>
-                <p className="text-2xl font-bold text-amber-600 mt-1">{metrics.inTransit}</p>
+                <p className="font-heading text-2xl font-black text-[#FF6B35] mt-1">
+                  {metrics.inTransit}
+                </p>
               </div>
-              <div className="p-2.5 bg-amber-50 rounded-full text-amber-600">
+              <div className="p-2.5 bg-orange-50 rounded-card text-[#FF6B35] border border-orange-100">
                 <Navigation className="h-5 w-5" />
               </div>
             </div>
-            <div className="mt-2 text-xs text-amber-700">
+            <div className="mt-2 text-xs text-[#FF6B35] font-semibold font-sans">
               {courierMapData.filter((c) => c.statusColor === 'yellow').length} entregadores em
               trânsito
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-l-4 border-l-red-500 shadow-sm">
+        <Card className="border border-slate-200 border-l-4 border-l-[#E74C3C] bg-white shadow-brand rounded-card">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <p className="font-heading text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Problemas
                 </p>
-                <p className="text-2xl font-bold text-red-600 mt-1">{metrics.issues}</p>
+                <p className="font-heading text-2xl font-black text-[#E74C3C] mt-1">
+                  {metrics.issues}
+                </p>
               </div>
-              <div className="p-2.5 bg-red-50 rounded-full text-red-600">
+              <div className="p-2.5 bg-red-50 rounded-card text-[#E74C3C] border border-red-100">
                 <AlertTriangle className="h-5 w-5" />
               </div>
             </div>
-            <div className="mt-2 text-xs text-red-700 font-medium">
+            <div className="mt-2 text-xs text-[#E74C3C] font-semibold font-sans">
               {metrics.issues > 0 ? 'Atenção necessária' : 'Sem ocorrências no momento'}
             </div>
           </CardContent>
@@ -585,26 +593,26 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
       {/* TOP SECTION: MAPA INTERATIVO (60% da experiência de monitoramento) */}
       <Card className="shadow-md overflow-hidden border">
-        <CardHeader className="bg-gray-50/80 border-b py-3 px-4 flex flex-row items-center justify-between">
+        <CardHeader className="bg-[#F5F5F5] border-b border-slate-200 py-3 px-4 flex flex-row items-center justify-between">
           <div className="flex items-center gap-2">
-            <Activity className="h-5 w-5 text-blue-600" />
-            <CardTitle className="text-base font-semibold">
+            <Activity className="h-5 w-5 text-[#0052CC]" />
+            <CardTitle className="font-heading text-base font-bold text-[#1a1a1a]">
               Mapa de Localização dos Entregadores
             </CardTitle>
           </div>
           {/* Legenda de cores */}
-          <div className="flex items-center gap-3 text-xs">
+          <div className="flex items-center gap-3 text-xs font-sans">
             <div className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-full bg-emerald-500 inline-block"></span>
-              <span className="text-gray-600">Verde: Ativo / Disponível</span>
+              <span className="h-3 w-3 rounded-full bg-[#00AA44] inline-block"></span>
+              <span className="text-slate-600">Verde: Ativo / Disponível</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-full bg-amber-500 inline-block"></span>
-              <span className="text-gray-600">Amarelo: Em Rota</span>
+              <span className="h-3 w-3 rounded-full bg-[#FF6B35] inline-block"></span>
+              <span className="text-slate-600">Laranja: Em Rota</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-full bg-red-500 inline-block"></span>
-              <span className="text-gray-600">Vermelho: Problema</span>
+              <span className="h-3 w-3 rounded-full bg-[#E74C3C] inline-block"></span>
+              <span className="text-slate-600">Vermelho: Problema</span>
             </div>
           </div>
         </CardHeader>
@@ -695,12 +703,15 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             )}
 
             {/* Quick Courier Cards Overlay Drawer on Top Right */}
-            <div className="hidden lg:block absolute top-3 right-3 max-h-[430px] w-80 bg-white/95 backdrop-blur-sm shadow-xl rounded-lg border p-3 overflow-y-auto space-y-2 z-10">
-              <div className="flex items-center justify-between pb-2 border-b">
-                <span className="text-xs font-bold text-gray-700 uppercase">
+            <div className="hidden lg:block absolute top-3 right-3 max-h-[430px] w-80 bg-white/95 backdrop-blur-sm shadow-xl rounded-card border border-slate-200 p-3 overflow-y-auto space-y-2 z-10 font-sans">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <span className="font-heading text-xs font-bold text-[#1a1a1a] uppercase">
                   Entregadores Conectados ({courierMapData.length})
                 </span>
-                <Badge variant="secondary" className="text-[10px]">
+                <Badge
+                  variant="secondary"
+                  className="text-[10px] bg-emerald-50 text-[#00AA44] font-bold border-emerald-200"
+                >
                   {courierMapData.filter((c) => c.statusColor === 'green').length} livres
                 </Badge>
               </div>
@@ -709,59 +720,59 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                   <div
                     key={item.courier.id}
                     onClick={() => setSelectedCourier(item.courier)}
-                    className="p-2.5 rounded-md border border-gray-100 hover:border-blue-200 hover:bg-blue-50/50 cursor-pointer transition text-xs"
+                    className="p-2.5 rounded-card border border-slate-200 hover:border-[#0052CC]/50 hover:bg-blue-50/50 cursor-pointer transition text-xs bg-white"
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 font-medium text-gray-800">
+                      <div className="flex items-center gap-1.5 font-medium text-[#1a1a1a]">
                         <span
                           className={`h-2.5 w-2.5 rounded-full ${
                             item.statusColor === 'green'
-                              ? 'bg-emerald-500'
+                              ? 'bg-[#00AA44]'
                               : item.statusColor === 'yellow'
-                                ? 'bg-amber-500'
-                                : 'bg-red-500'
+                                ? 'bg-[#FF6B35]'
+                                : 'bg-[#E74C3C]'
                           }`}
                         />
-                        <span className="truncate max-w-[140px]">
+                        <span className="truncate max-w-[140px] font-semibold">
                           {item.courier.name || item.courier.email}
                         </span>
                       </div>
-                      <span className="text-[10px] text-gray-500 flex items-center gap-1">
+                      <span className="text-[10px] text-slate-500 flex items-center gap-1">
                         {renderVehicleIcon(item.vehicle)}
                         {formatVehicle(item.vehicle)}
                       </span>
                     </div>
 
-                    <div className="mt-1 text-[11px] text-gray-500 flex items-center justify-between">
+                    <div className="mt-1 text-[11px] text-slate-600 flex items-center justify-between font-sans">
                       <span>{item.statusLabel}</span>
-                      <span className="text-blue-600 font-medium">
+                      <span className="text-[#0052CC] font-bold">
                         {item.activeOrdersCount} pendentes
                       </span>
                     </div>
 
-                    <div className="mt-2 pt-1.5 border-t border-gray-100 flex gap-1.5">
+                    <div className="mt-2 pt-1.5 border-t border-slate-100 flex gap-1.5">
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-6 text-[11px] px-2 py-0 text-emerald-700 hover:bg-emerald-50 w-1/2"
+                        className="h-6 text-[11px] px-2 py-0 text-[#00AA44] hover:bg-emerald-50 w-1/2 rounded-input font-semibold"
                         onClick={(e) => {
                           e.stopPropagation()
                           openWhatsApp(item.courier.phone)
                         }}
                       >
-                        <MessageCircle className="h-3 w-3 mr-1 text-emerald-600" />
+                        <MessageCircle className="h-3 w-3 mr-1 text-[#00AA44]" />
                         WhatsApp
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-6 text-[11px] px-2 py-0 text-blue-700 hover:bg-blue-50 w-1/2"
+                        className="h-6 text-[11px] px-2 py-0 text-[#0052CC] hover:bg-blue-50 w-1/2 rounded-input font-semibold"
                         onClick={(e) => {
                           e.stopPropagation()
                           makePhoneCall(item.courier.phone)
                         }}
                       >
-                        <Phone className="h-3 w-3 mr-1 text-blue-600" />
+                        <Phone className="h-3 w-3 mr-1 text-[#0052CC]" />
                         Ligar
                       </Button>
                     </div>
@@ -774,14 +785,14 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       </Card>
 
       {/* BOTTOM SECTION: LISTA DE ENTREGAS COM FILTROS */}
-      <Card className="shadow-sm">
-        <CardHeader className="p-4 border-b">
+      <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
+        <CardHeader className="p-4 border-b border-slate-200">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div>
-              <CardTitle className="text-lg font-semibold text-gray-900">
+              <CardTitle className="font-heading text-lg font-bold text-[#1a1a1a]">
                 Entregas em Andamento & Histórico do Dia
               </CardTitle>
-              <p className="text-xs text-gray-500 mt-0.5">
+              <p className="font-sans text-xs text-slate-500 mt-0.5">
                 Exibindo {filteredOrders.length} de {todayOrders.length} entregas cadastradas
               </p>
             </div>

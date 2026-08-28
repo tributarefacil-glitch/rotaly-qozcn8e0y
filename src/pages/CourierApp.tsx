@@ -243,18 +243,28 @@ export default function CourierApp() {
           </div>
 
           {/* Quick Metrics Bar */}
-          <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-slate-800/80 text-center">
-            <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800">
-              <p className="text-[10px] uppercase font-bold text-slate-400">Em Rota</p>
-              <p className="text-lg font-black text-amber-400 mt-0.5">{activeDeliveries.length}</p>
+          <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-slate-200 text-center">
+            <div className="p-2 rounded-card bg-white border border-slate-200 shadow-brand">
+              <p className="font-heading text-[10px] uppercase font-bold text-slate-500">Em Rota</p>
+              <p className="font-heading text-lg font-black text-[#FF6B35] mt-0.5">
+                {activeDeliveries.length}
+              </p>
             </div>
-            <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800">
-              <p className="text-[10px] uppercase font-bold text-slate-400">Aguardando</p>
-              <p className="text-lg font-black text-blue-400 mt-0.5">{pendingDeliveries.length}</p>
+            <div className="p-2 rounded-card bg-white border border-slate-200 shadow-brand">
+              <p className="font-heading text-[10px] uppercase font-bold text-slate-500">
+                Aguardando
+              </p>
+              <p className="font-heading text-lg font-black text-[#0052CC] mt-0.5">
+                {pendingDeliveries.length}
+              </p>
             </div>
-            <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800">
-              <p className="text-[10px] uppercase font-bold text-slate-400">Entregues</p>
-              <p className="text-lg font-black text-emerald-400 mt-0.5">{completedToday.length}</p>
+            <div className="p-2 rounded-card bg-white border border-slate-200 shadow-brand">
+              <p className="font-heading text-[10px] uppercase font-bold text-slate-500">
+                Entregues
+              </p>
+              <p className="font-heading text-lg font-black text-[#00AA44] mt-0.5">
+                {completedToday.length}
+              </p>
             </div>
           </div>
         </div>
@@ -278,7 +288,7 @@ export default function CourierApp() {
             variant="outline"
             size="icon"
             onClick={loadCourierOrders}
-            className="h-12 w-12 rounded-xl border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300"
+            className="h-12 w-12 rounded-card border-slate-200 bg-white hover:bg-slate-50 text-[#0052CC]"
           >
             <RefreshCw className="h-4 w-4" />
           </Button>
@@ -286,38 +296,36 @@ export default function CourierApp() {
 
         {/* AI Route Sequence Preview (If Optimized) */}
         {optimizedRoute && (
-          <div className="rounded-2xl border border-indigo-500/40 bg-indigo-950/30 p-4 space-y-3">
+          <div className="rounded-card border border-blue-200 bg-blue-50/70 p-4 space-y-3 shadow-brand">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-indigo-300 font-bold text-xs">
-                <Zap className="h-4 w-4 text-amber-400" />
-                <span>
-                  Sequência Recomendada pelo Copilot ({optimizedRoute.stops_count} paradas)
-                </span>
+              <div className="flex items-center gap-2 text-[#0052CC] font-bold text-xs font-heading">
+                <Zap className="h-4 w-4 text-[#FF6B35]" />
+                <span>Sequência Recomendada LOGHYPE ({optimizedRoute.stops_count} paradas)</span>
               </div>
-              <Badge className="bg-indigo-600 text-white text-[10px]">
+              <Badge className="bg-[#0052CC] text-white text-[10px] font-bold">
                 {optimizedRoute.total_distance_km} km • ~{optimizedRoute.estimated_duration_minutes}{' '}
                 min
               </Badge>
             </div>
 
-            <div className="space-y-1.5 text-xs text-slate-300">
+            <div className="space-y-1.5 text-xs text-slate-700 font-sans">
               {optimizedRoute.optimized_orders.map((stop, idx) => (
                 <div
                   key={stop.id}
-                  className="flex items-center justify-between p-2 rounded-lg bg-slate-900/80 border border-slate-800"
+                  className="flex items-center justify-between p-2 rounded-md bg-white border border-slate-200 shadow-xs"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-purple-600 text-white font-bold text-[10px]">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#0052CC] text-white font-bold text-[10px]">
                       {idx + 1}
                     </span>
                     <div>
-                      <p className="font-semibold text-white">{stop.customer_name}</p>
-                      <p className="text-[10px] text-slate-400 truncate max-w-[200px]">
+                      <p className="font-semibold text-[#1a1a1a]">{stop.customer_name}</p>
+                      <p className="text-[10px] text-slate-500 truncate max-w-[200px]">
                         {stop.address}
                       </p>
                     </div>
                   </div>
-                  <span className="text-[10px] text-indigo-300 font-mono">
+                  <span className="text-[10px] text-[#0052CC] font-mono font-semibold">
                     +{stop.step_distance_meters}m
                   </span>
                 </div>
@@ -329,21 +337,21 @@ export default function CourierApp() {
         {/* REQUISITO 1: FLUXO DO ENTREGADOR (Bloqueio Sequencial) */}
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Clock className="h-4 w-4 text-amber-400" />
+            <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-[#1a1a1a] flex items-center gap-1.5">
+              <Clock className="h-4 w-4 text-[#FF6B35]" />
               Rota de Entregas ({activeDeliveries.length})
             </h3>
             {activeDeliveries.length > 0 && (
-              <span className="text-[11px] font-semibold text-amber-400">
+              <span className="font-heading text-[11px] font-bold text-[#FF6B35]">
                 1 ativa • {subsequentDeliveries.length} na fila
               </span>
             )}
           </div>
 
           {activeDeliveries.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center text-slate-400 space-y-2">
-              <p className="text-xs">Nenhuma entrega em trânsito no momento.</p>
-              <p className="text-[11px] text-slate-500">
+            <div className="rounded-card border border-dashed border-slate-300 bg-[#F5F5F5] p-8 text-center text-slate-500 space-y-2">
+              <p className="text-xs font-semibold">Nenhuma entrega em trânsito no momento.</p>
+              <p className="text-[11px] text-slate-400">
                 Veja abaixo os pedidos pendentes para iniciar sua rota.
               </p>
             </div>
@@ -353,58 +361,58 @@ export default function CourierApp() {
               {currentActiveDelivery && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 px-1">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-slate-950 font-black text-[11px]">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#00AA44] text-white font-black text-[11px]">
                       1
                     </span>
-                    <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide">
+                    <span className="font-heading text-xs font-bold text-[#00AA44] uppercase tracking-wide">
                       Entrega Atual (Disponível para Finalização)
                     </span>
                   </div>
 
-                  <Card className="border-2 border-emerald-500 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/30 text-white shadow-2xl overflow-hidden rounded-2xl ring-4 ring-emerald-500/10">
-                    <CardHeader className="p-4 pb-2 flex flex-row items-start justify-between border-b border-slate-800/80">
+                  <Card className="border-2 border-[#00AA44] bg-white text-[#1a1a1a] shadow-brand overflow-hidden rounded-card">
+                    <CardHeader className="p-4 pb-2 flex flex-row items-start justify-between border-b border-slate-100 bg-emerald-50/40">
                       <div>
                         <div className="flex items-center gap-2">
-                          <Badge className="bg-emerald-500 text-slate-950 font-bold text-xs animate-pulse">
+                          <Badge className="bg-[#00AA44] text-white font-bold text-xs animate-pulse">
                             EM ANDAMENTO
                           </Badge>
-                          <span className="font-mono font-bold text-xs text-amber-400">
+                          <span className="font-mono font-bold text-xs text-[#0052CC]">
                             {currentActiveDelivery.tracking_code}
                           </span>
                           {currentActiveDelivery.priority === 'urgent' && (
-                            <Badge variant="destructive" className="text-[10px]">
+                            <Badge variant="destructive" className="text-[10px] bg-[#E74C3C]">
                               URGENTE
                             </Badge>
                           )}
                         </div>
-                        <CardTitle className="text-base font-bold text-white mt-1.5">
+                        <CardTitle className="font-heading text-base font-bold text-[#1a1a1a] mt-1.5">
                           {currentActiveDelivery.expand?.customer_id?.name || 'Cliente'}
                         </CardTitle>
                       </div>
 
-                      <div className="text-right font-bold text-sm text-emerald-400">
+                      <div className="font-heading text-right font-black text-sm text-[#00AA44]">
                         R$ {Number(currentActiveDelivery.total_price || 0).toFixed(2)}
                       </div>
                     </CardHeader>
 
-                    <CardContent className="p-4 space-y-3">
+                    <CardContent className="p-4 space-y-3 font-sans">
                       {/* Destination Address */}
-                      <div className="flex items-start gap-2.5 text-xs text-slate-300">
-                        <MapPin className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="flex items-start gap-2.5 text-xs text-slate-700">
+                        <MapPin className="h-4 w-4 text-[#FF6B35] shrink-0 mt-0.5" />
                         <div>
-                          <p className="font-medium text-white">
+                          <p className="font-medium text-[#1a1a1a]">
                             {currentActiveDelivery.expand?.customer_id?.street
                               ? `${currentActiveDelivery.expand.customer_id.street}${currentActiveDelivery.expand.customer_id.complement ? `, ${currentActiveDelivery.expand.customer_id.complement}` : ''} - ${currentActiveDelivery.expand.customer_id.neighborhood || ''}, ${currentActiveDelivery.expand.customer_id.city || ''} (${currentActiveDelivery.expand.customer_id.state || ''})`
                               : currentActiveDelivery.expand?.customer_id?.address ||
                                 'Endereço a confirmar'}
                           </p>
                           {currentActiveDelivery.expand?.customer_id?.postal_code && (
-                            <p className="text-slate-400 text-[10px] font-mono mt-0.5">
+                            <p className="text-slate-500 text-[10px] font-mono mt-0.5">
                               CEP: {currentActiveDelivery.expand.customer_id.postal_code}
                             </p>
                           )}
                           {currentActiveDelivery.expand?.customer_id?.phone && (
-                            <p className="text-slate-400 text-[11px] mt-0.5">
+                            <p className="text-slate-600 text-[11px] mt-0.5">
                               📞 {currentActiveDelivery.expand.customer_id.phone}
                             </p>
                           )}
@@ -413,8 +421,8 @@ export default function CourierApp() {
 
                       {/* Notes / Instructions */}
                       {currentActiveDelivery.notes && (
-                        <div className="rounded-lg bg-slate-900/90 p-2.5 text-[11px] text-slate-300 border border-slate-800">
-                          <span className="font-semibold text-amber-400">Instruções: </span>
+                        <div className="rounded-md bg-[#F5F5F5] p-2.5 text-[11px] text-slate-700 border border-slate-200">
+                          <span className="font-semibold text-[#FF6B35]">Instruções: </span>
                           {currentActiveDelivery.notes}
                         </div>
                       )}
@@ -431,9 +439,9 @@ export default function CourierApp() {
                               currentActiveDelivery.expand?.customer_id?.lng,
                             )
                           }
-                          className="h-12 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-2"
+                          className="h-12 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs rounded-input shadow-brand flex items-center justify-center gap-2"
                         >
-                          <Compass className="h-4 w-4" />
+                          <Compass className="h-4 w-4 text-[#FF6B35]" />
                           <span>Abrir no Google Maps</span>
                         </Button>
 
@@ -444,7 +452,7 @@ export default function CourierApp() {
                             setSelectedOrderForConfirmation(currentActiveDelivery)
                             setIsConfirmModalOpen(true)
                           }}
-                          className="h-12 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2"
+                          className="h-12 bg-[#00AA44] hover:bg-[#008837] text-white font-bold text-xs rounded-input shadow-brand flex items-center justify-center gap-2"
                         >
                           <CheckCircle className="h-4 w-4" />
                           <span>Finalizar / Informar Motivo</span>
@@ -460,12 +468,12 @@ export default function CourierApp() {
                 <div className="space-y-2 pt-3">
                   <div className="flex items-center gap-2 px-1">
                     <Lock className="h-4 w-4 text-slate-400" />
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">
+                    <span className="font-heading text-xs font-bold text-slate-500 uppercase tracking-wide">
                       Próximas Entregas na Fila (Bloqueadas até concluir a atual)
                     </span>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-2 font-sans">
                     {subsequentDeliveries.map((order, idx) => {
                       const customer = order.expand?.customer_id
                       const stopNumber = idx + 2
@@ -473,42 +481,42 @@ export default function CourierApp() {
                       return (
                         <div
                           key={order.id}
-                          className="p-3.5 rounded-2xl border border-slate-800 bg-slate-950/60 opacity-75 backdrop-blur flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative overflow-hidden"
+                          className="p-3.5 rounded-card border border-slate-200 bg-[#F5F5F5] opacity-80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative overflow-hidden"
                         >
                           <div className="flex items-start gap-3">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-slate-400 font-bold text-xs shrink-0 mt-0.5">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-slate-700 font-bold text-xs shrink-0 mt-0.5">
                               {stopNumber}
                             </span>
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs font-bold text-slate-400">
+                                <span className="font-mono text-xs font-bold text-[#0052CC]">
                                   {order.tracking_code}
                                 </span>
                                 <Badge
                                   variant="outline"
-                                  className="text-[10px] bg-slate-900 border-slate-700 text-slate-400 flex items-center gap-1"
+                                  className="text-[10px] bg-white border-slate-300 text-slate-600 flex items-center gap-1 font-bold"
                                 >
                                   <Lock className="h-2.5 w-2.5" />
                                   Na fila (#{stopNumber})
                                 </Badge>
                               </div>
-                              <p className="text-xs font-semibold text-slate-200 mt-1 truncate">
+                              <p className="text-xs font-semibold text-[#1a1a1a] mt-1 truncate">
                                 {customer?.name || 'Cliente'}
                               </p>
-                              <p className="text-[10px] text-slate-400 truncate">
+                              <p className="text-[10px] text-slate-500 truncate">
                                 {customer?.street || customer?.address}
                               </p>
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-800/80">
-                            <span className="text-xs font-bold text-slate-300">
+                          <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200">
+                            <span className="font-heading text-xs font-bold text-[#1a1a1a]">
                               R$ {Number(order.total_price || 0).toFixed(2)}
                             </span>
                             <Button
                               disabled
                               size="sm"
-                              className="h-8 px-3 bg-slate-800 text-slate-500 font-semibold text-[11px] rounded-lg cursor-not-allowed flex items-center gap-1.5"
+                              className="h-8 px-3 bg-slate-200 text-slate-500 font-semibold text-[11px] rounded-input cursor-not-allowed flex items-center gap-1.5"
                             >
                               <Lock className="h-3 w-3" />
                               Bloqueado
@@ -527,35 +535,35 @@ export default function CourierApp() {
         {/* PENDING ORDERS (Waiting to be started) */}
         {pendingDeliveries.length > 0 && (
           <div className="space-y-3 pt-2">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5 px-1">
-              <CheckSquare className="h-4 w-4 text-blue-400" />
+            <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-[#1a1a1a] flex items-center gap-1.5 px-1">
+              <CheckSquare className="h-4 w-4 text-[#0052CC]" />
               Pedidos Aguardando Coleta / Início ({pendingDeliveries.length})
             </h3>
 
-            <div className="space-y-2.5">
+            <div className="space-y-2.5 font-sans">
               {pendingDeliveries.map((order) => {
                 const customer = order.expand?.customer_id
                 return (
                   <div
                     key={order.id}
-                    className="p-3.5 rounded-2xl border border-slate-800 bg-slate-950/80 flex items-center justify-between gap-3 hover:border-slate-700 transition"
+                    className="p-3.5 rounded-card border border-slate-200 bg-white shadow-brand flex items-center justify-between gap-3 hover:border-[#0052CC]/40 transition"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-blue-400">
+                        <span className="font-mono text-xs font-bold text-[#0052CC]">
                           {order.tracking_code}
                         </span>
                         <Badge
                           variant="outline"
-                          className="text-[10px] border-blue-500/30 text-blue-400"
+                          className="text-[10px] border-[#0052CC]/30 text-[#0052CC] font-bold bg-blue-50"
                         >
                           Pendente
                         </Badge>
                       </div>
-                      <p className="text-xs font-semibold text-white mt-1 truncate">
+                      <p className="text-xs font-semibold text-[#1a1a1a] mt-1 truncate">
                         {customer?.name || 'Cliente'}
                       </p>
-                      <p className="text-[10px] text-slate-400 truncate">
+                      <p className="text-[10px] text-slate-500 truncate">
                         {customer?.street || customer?.address}
                       </p>
                     </div>
@@ -575,7 +583,7 @@ export default function CourierApp() {
                           toast.error('Erro ao iniciar entrega.')
                         }
                       }}
-                      className="h-10 px-4 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shrink-0"
+                      className="h-10 px-4 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs rounded-input shrink-0 shadow-brand"
                     >
                       Iniciar
                     </Button>

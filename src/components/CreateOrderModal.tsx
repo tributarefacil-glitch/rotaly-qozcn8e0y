@@ -1090,9 +1090,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900 dark:text-white">
-            <ShoppingBag className="h-5 w-5 text-blue-600" />
-            Registrar Nova Venda & Entrega
+          <DialogTitle className="flex items-center gap-2 text-lg font-bold text-[#1a1a1a] font-heading">
+            <ShoppingBag className="h-5 w-5 text-[#FF6B35]" />
+            Registrar Nova Venda & Entrega LOGHYPE
           </DialogTitle>
         </DialogHeader>
 

@@ -170,14 +170,23 @@ export default function CourierFuelPage() {
             onValueChange={(v) => setPeriodFilter(v as 'all' | 'month' | 'week')}
             className="w-full"
           >
-            <TabsList className="grid grid-cols-3 bg-slate-950 border border-slate-800 h-10 p-1">
-              <TabsTrigger value="all" className="text-xs data-[state=active]:bg-purple-600">
+            <TabsList className="grid grid-cols-3 bg-[#F5F5F5] border border-slate-200 h-10 p-1 rounded-card font-heading">
+              <TabsTrigger
+                value="all"
+                className="text-xs data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-input font-bold"
+              >
                 Todo o Período
               </TabsTrigger>
-              <TabsTrigger value="month" className="text-xs data-[state=active]:bg-purple-600">
+              <TabsTrigger
+                value="month"
+                className="text-xs data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-input font-bold"
+              >
                 Este Mês
               </TabsTrigger>
-              <TabsTrigger value="week" className="text-xs data-[state=active]:bg-purple-600">
+              <TabsTrigger
+                value="week"
+                className="text-xs data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-input font-bold"
+              >
                 Últimos 7 dias
               </TabsTrigger>
             </TabsList>
@@ -185,23 +194,23 @@ export default function CourierFuelPage() {
         </div>
 
         {/* MAIN CURRENT ACCOUNT BALANCE CARD */}
-        <Card className="border-2 border-slate-800 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 shadow-2xl relative overflow-hidden rounded-2xl">
+        <Card className="border border-slate-200 bg-white shadow-brand relative overflow-hidden rounded-card">
           <div
             className={`absolute top-0 left-0 right-0 h-1.5 ${
-              isPositive ? 'bg-emerald-500' : 'bg-rose-500'
+              isPositive ? 'bg-[#00AA44]' : 'bg-[#E74C3C]'
             }`}
           />
 
           <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-600/20 border border-purple-500/30 text-purple-400">
+              <div className="flex h-9 w-9 items-center justify-center rounded-card bg-blue-50 border border-blue-200 text-[#0052CC]">
                 <Wallet className="h-5 w-5" />
               </div>
               <div>
-                <CardTitle className="text-xs uppercase tracking-wider text-slate-400 font-bold">
+                <CardTitle className="font-heading text-xs uppercase tracking-wider text-slate-500 font-bold">
                   Saldo da Minha Conta Corrente
                 </CardTitle>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-slate-500 font-sans">
                   Adiantamentos recebidos − Custo de rota realizada
                 </p>
               </div>
@@ -210,26 +219,26 @@ export default function CourierFuelPage() {
             <Badge
               className={`text-[10px] font-bold ${
                 isPositive
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                  : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  ? 'bg-emerald-50 text-[#00AA44] border-emerald-200'
+                  : 'bg-red-50 text-[#E74C3C] border-red-200'
               }`}
             >
               {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
             </Badge>
           </CardHeader>
 
-          <CardContent className="p-4 pt-1 space-y-4">
+          <CardContent className="p-4 pt-1 space-y-4 font-sans">
             {/* Big Balance Number */}
-            <div className="flex items-baseline justify-between border-b border-slate-800/80 pb-3">
+            <div className="flex items-baseline justify-between border-b border-slate-100 pb-3">
               <div>
                 <span
-                  className={`text-3xl sm:text-4xl font-black font-mono tracking-tight ${
-                    isPositive ? 'text-emerald-400' : 'text-rose-400'
+                  className={`font-heading text-3xl sm:text-4xl font-black font-mono tracking-tight ${
+                    isPositive ? 'text-[#00AA44]' : 'text-[#E74C3C]'
                   }`}
                 >
                   R$ {balance.toFixed(2)}
                 </span>
-                <span className="block text-[10px] text-slate-400 mt-0.5">
+                <span className="block text-[10px] text-slate-500 mt-0.5">
                   {isPositive
                     ? 'Você ainda possui saldo de combustível adiantado pela empresa.'
                     : 'Gasto em rotas superou os adiantamentos atuais.'}
@@ -240,42 +249,44 @@ export default function CourierFuelPage() {
             {/* Inflow vs Outflow Metrics Grid */}
             <div className="grid grid-cols-2 gap-3">
               {/* Adiantamentos Recebidos (+) */}
-              <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/20 space-y-1">
-                <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
+              <div className="p-3 rounded-card bg-emerald-50/50 border border-emerald-200 space-y-1">
+                <div className="flex items-center gap-1.5 text-[#00AA44] text-xs font-semibold font-heading">
                   <ArrowDownLeft className="h-4 w-4" />
                   <span>Adiantamentos Recebidos</span>
                 </div>
-                <p className="text-xl font-bold font-mono text-emerald-300">
+                <p className="text-xl font-bold font-mono text-[#00AA44]">
                   + R$ {totalAdvances.toFixed(2)}
                 </p>
-                <p className="text-[10px] text-slate-400">
+                <p className="text-[10px] text-slate-500">
                   {filteredAdvances.length} lançamento(s) efetuados
                 </p>
               </div>
 
               {/* Gasto em Rotas (-) */}
-              <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/20 space-y-1">
-                <div className="flex items-center gap-1.5 text-amber-400 text-xs font-semibold">
+              <div className="p-3 rounded-card bg-orange-50/50 border border-orange-200 space-y-1">
+                <div className="flex items-center gap-1.5 text-[#FF6B35] text-xs font-semibold font-heading">
                   <ArrowUpRight className="h-4 w-4" />
                   <span>Gasto em Rotas Oficiais</span>
                 </div>
-                <p className="text-xl font-bold font-mono text-amber-300">
+                <p className="text-xl font-bold font-mono text-[#FF6B35]">
                   - R$ {totalSpent.toFixed(2)}
                 </p>
-                <p className="text-[10px] text-slate-400">
+                <p className="text-[10px] text-slate-500">
                   {totalRouteKm.toFixed(1)} km em {filteredOrders.length} entregas
                 </p>
               </div>
             </div>
 
             {/* Current Pricing Rule Summary */}
-            <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-[11px] text-slate-400 flex items-start gap-2">
-              <Info className="h-4 w-4 text-purple-400 shrink-0 mt-0.5" />
+            <div className="p-3 rounded-card bg-[#F5F5F5] border border-slate-200 text-[11px] text-slate-600 flex items-start gap-2">
+              <Info className="h-4 w-4 text-[#0052CC] shrink-0 mt-0.5" />
               <div>
-                <p className="text-slate-300 font-semibold">Regra de Cálculo de Combustível:</p>
+                <p className="text-[#1a1a1a] font-semibold font-heading">
+                  Regra de Cálculo de Combustível:
+                </p>
                 <p className="mt-0.5">
                   R$ {fuelPrice.toFixed(2)} / Litro ÷ {fuelConsumption.toFixed(1)} km/L ={' '}
-                  <strong className="text-purple-300">
+                  <strong className="text-[#0052CC]">
                     R$ {(fuelPrice / (fuelConsumption || 1)).toFixed(4)} por km percorrido
                   </strong>
                   .
@@ -288,15 +299,15 @@ export default function CourierFuelPage() {
         {/* DETAILED ADVANCES HISTORY (Adiantamentos recebidos) */}
         <div className="space-y-3 pt-2">
           <div className="flex items-center justify-between px-1">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <Receipt className="h-4 w-4 text-emerald-400" />
+            <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-[#1a1a1a] flex items-center gap-1.5">
+              <Receipt className="h-4 w-4 text-[#00AA44]" />
               Histórico de Adiantamentos Recebidos ({filteredAdvances.length})
             </h3>
           </div>
 
           {filteredAdvances.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center text-slate-400 space-y-2">
-              <Fuel className="h-8 w-8 mx-auto text-slate-600" />
+            <div className="rounded-card border border-dashed border-slate-200 bg-white p-8 text-center text-slate-400 space-y-2">
+              <Fuel className="h-8 w-8 mx-auto text-slate-400" />
               <p className="text-xs font-medium">
                 Nenhum adiantamento registrado para este período.
               </p>
@@ -305,29 +316,29 @@ export default function CourierFuelPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 font-sans">
               {filteredAdvances.map((adv) => (
                 <div
                   key={adv.id}
-                  className="p-3.5 rounded-2xl border border-slate-800 bg-slate-950/80 flex items-center justify-between gap-3 hover:border-slate-700 transition"
+                  className="p-3.5 rounded-card border border-slate-200 bg-white shadow-brand flex items-center justify-between gap-3 hover:border-slate-300 transition"
                 >
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-950/80 border border-emerald-500/30 text-emerald-400 shrink-0 mt-0.5">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-card bg-emerald-50 border border-emerald-200 text-[#00AA44] shrink-0 mt-0.5">
                       <ArrowDownLeft className="h-5 w-5" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-white font-mono">
+                        <span className="font-bold text-sm text-[#00AA44] font-mono">
                           + R$ {Number(adv.amount || 0).toFixed(2)}
                         </span>
                         <Badge
                           variant="outline"
-                          className="text-[9px] uppercase font-mono bg-slate-900 border-slate-700 text-slate-300"
+                          className="text-[9px] uppercase font-mono bg-slate-100 border-slate-200 text-slate-700"
                         >
                           {adv.payment_method || 'PIX'}
                         </Badge>
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
+                      <p className="text-xs text-slate-600 mt-0.5">
                         {adv.notes || 'Adiantamento de combustível para rotas'}
                       </p>
                       <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-1">
@@ -342,7 +353,7 @@ export default function CourierFuelPage() {
                   </div>
 
                   <div className="text-right shrink-0">
-                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-semibold bg-emerald-950/40 px-2 py-1 rounded-md border border-emerald-500/20">
+                    <span className="inline-flex items-center gap-1 text-[10px] text-[#00AA44] font-semibold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200">
                       <CheckCircle2 className="h-3 w-3" />
                       Recebido
                     </span>
@@ -356,18 +367,18 @@ export default function CourierFuelPage() {
         {/* OFFICIAL ROUTE DELIVERIES (Gasto por Rota) */}
         <div className="space-y-3 pt-4">
           <div className="flex items-center justify-between px-1">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-              <RouteIcon className="h-4 w-4 text-purple-400" />
+            <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-[#1a1a1a] flex items-center gap-1.5">
+              <RouteIcon className="h-4 w-4 text-[#0052CC]" />
               Detalhamento de Km & Consumo por Entrega ({filteredOrders.length})
             </h3>
           </div>
 
           {filteredOrders.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-800 p-6 text-center text-slate-500 text-xs">
+            <div className="rounded-card border border-dashed border-slate-200 bg-white p-6 text-center text-slate-400 text-xs">
               Nenhuma entrega computada para este período.
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 font-sans">
               {filteredOrders.map((order) => {
                 const distKm =
                   typeof order.distance_km === 'number' && order.distance_km > 0
@@ -378,28 +389,28 @@ export default function CourierFuelPage() {
                 return (
                   <div
                     key={order.id}
-                    className="p-3 rounded-xl border border-slate-800/80 bg-slate-950/60 flex items-center justify-between text-xs"
+                    className="p-3 rounded-card border border-slate-200 bg-white shadow-brand flex items-center justify-between text-xs"
                   >
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-slate-300">
+                        <span className="font-mono font-bold text-[#0052CC]">
                           {order.tracking_code}
                         </span>
                         <Badge
                           variant="outline"
-                          className="text-[9px] bg-slate-900 border-slate-700 text-slate-400"
+                          className="text-[9px] bg-slate-100 border-slate-200 text-slate-700"
                         >
                           {order.status === 'delivered' ? '✓ Entregue' : 'Em Andamento'}
                         </Badge>
                       </div>
-                      <p className="text-[11px] text-slate-400 truncate max-w-[200px] mt-0.5">
+                      <p className="text-[11px] text-slate-500 truncate max-w-[200px] mt-0.5">
                         {order.expand?.customer_id?.name || 'Cliente'}
                       </p>
                     </div>
 
                     <div className="text-right">
-                      <p className="font-bold text-amber-300 font-mono">- R$ {cost.toFixed(2)}</p>
-                      <p className="text-[10px] text-slate-400">
+                      <p className="font-bold text-[#FF6B35] font-mono">- R$ {cost.toFixed(2)}</p>
+                      <p className="text-[10px] text-slate-500">
                         {distKm > 0 ? `${distKm.toFixed(1)} km` : 'Km N/D'}
                       </p>
                     </div>

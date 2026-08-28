@@ -329,19 +329,21 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
 
         <div className="space-y-4 py-2">
           {/* Resumo da entrega */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-900/50">
-            <p className="font-semibold text-slate-800 dark:text-slate-200">
+          <div className="rounded-card border border-slate-200 bg-[#F5F5F5] p-3 text-xs">
+            <p className="font-heading font-bold text-[#1a1a1a]">
               Cliente: {order.expand?.customer_id?.name || 'Cliente'}
             </p>
-            <p className="text-slate-500 mt-0.5">Endereço: {order.expand?.customer_id?.address}</p>
-            <p className="text-slate-700 dark:text-slate-300 font-bold mt-1">
+            <p className="font-sans text-slate-600 mt-0.5">
+              Endereço: {order.expand?.customer_id?.address}
+            </p>
+            <p className="font-heading text-[#0052CC] font-bold mt-1">
               Valor Total: R$ {Number(order.total_price || 0).toFixed(2)}
             </p>
           </div>
 
           {/* Motivos de Finalização (Preservando Finalizada, Erro de Endereço, Cliente Ausente) */}
           <div className="space-y-2">
-            <Label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+            <Label className="font-heading text-xs font-bold uppercase tracking-wider text-[#1a1a1a]">
               Selecione o Motivo de Finalização *
             </Label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -419,14 +421,14 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               </div>
 
               {/* 1. CAMPO: CÂMERA / FOTO DO CLIENTE RECEBENDO O PRODUTO (OBRIGATÓRIA) */}
-              <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800">
+              <div className="space-y-2 p-3 bg-[#F5F5F5] rounded-card border border-slate-200">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <Camera className="h-4 w-4 text-purple-600" />
-                    1. Foto do Cliente Recebendo o Produto <span className="text-rose-500">*</span>
+                  <Label className="font-heading text-xs font-bold text-[#1a1a1a] flex items-center gap-1.5">
+                    <Camera className="h-4 w-4 text-[#0052CC]" />
+                    1. Foto do Cliente Recebendo o Produto <span className="text-[#E74C3C]">*</span>
                   </Label>
                   {photoPreview && (
-                    <span className="text-[10px] font-medium text-emerald-600 flex items-center gap-1">
+                    <span className="text-[10px] font-bold text-[#00AA44] flex items-center gap-1">
                       <CheckCircle2 className="h-3.5 w-3.5" /> Foto capturada
                     </span>
                   )}
@@ -437,36 +439,36 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-14 flex flex-col items-center justify-center gap-1 border-purple-200 hover:bg-purple-50 text-purple-700 dark:border-purple-800 dark:hover:bg-purple-950/30"
+                      className="h-14 flex flex-col items-center justify-center gap-1 border-blue-200 bg-white hover:bg-blue-50 text-[#0052CC] rounded-input"
                       onClick={() => cameraInputRef.current?.click()}
                     >
-                      <Camera className="h-5 w-5" />
+                      <Camera className="h-5 w-5 text-[#FF6B35]" />
                       <span className="text-xs font-bold">Tirar Foto</span>
                     </Button>
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-14 flex flex-col items-center justify-center gap-1 border-slate-200 hover:bg-slate-100 text-slate-700 dark:border-slate-700"
+                      className="h-14 flex flex-col items-center justify-center gap-1 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-input"
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      <ImageIcon className="h-5 w-5 text-blue-500" />
+                      <ImageIcon className="h-5 w-5 text-[#0052CC]" />
                       <span className="text-xs font-bold">Galeria / Arquivo</span>
                     </Button>
                   </div>
                 ) : (
-                  <div className="relative rounded-lg border border-emerald-300 dark:border-emerald-800 bg-slate-950 p-2 flex items-center justify-between">
+                  <div className="relative rounded-md border border-emerald-300 bg-white p-2 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <img
                         src={photoPreview}
                         alt="Comprovante de entrega"
-                        className="h-14 w-20 object-cover rounded border border-slate-700"
+                        className="h-14 w-20 object-cover rounded border border-slate-200"
                       />
                       <div className="text-xs">
-                        <p className="font-bold text-white flex items-center gap-1">
-                          <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+                        <p className="font-bold text-[#1a1a1a] flex items-center gap-1">
+                          <CheckCircle className="h-3.5 w-3.5 text-[#00AA44]" />
                           Foto Anexada
                         </p>
-                        <p className="text-[10px] text-slate-400">
+                        <p className="text-[10px] text-slate-500">
                           {photoFile?.name || 'foto_comprovante.jpg'}
                         </p>
                       </div>
@@ -477,7 +479,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                         variant="ghost"
                         size="sm"
                         onClick={() => cameraInputRef.current?.click()}
-                        className="text-slate-300 hover:text-white hover:bg-slate-800 h-8 px-2 text-xs"
+                        className="text-slate-600 hover:text-[#0052CC] h-8 px-2 text-xs"
                       >
                         Trocar
                       </Button>
@@ -486,7 +488,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                         variant="ghost"
                         size="sm"
                         onClick={handleClearPhoto}
-                        className="text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 h-8 px-2 text-xs"
+                        className="text-[#E74C3C] hover:bg-red-50 h-8 px-2 text-xs"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -496,11 +498,11 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               </div>
 
               {/* 2. CAMPO: ASSINATURA DIGITAL CANVAS (OBRIGATÓRIA) */}
-              <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-800">
+              <div className="space-y-2 p-3 bg-[#F5F5F5] rounded-card border border-slate-200">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <PenLine className="h-4 w-4 text-indigo-600" />
-                    2. Assinatura Digital do Cliente <span className="text-rose-500">*</span>
+                  <Label className="font-heading text-xs font-bold text-[#1a1a1a] flex items-center gap-1.5">
+                    <PenLine className="h-4 w-4 text-[#0052CC]" />
+                    2. Assinatura Digital do Cliente <span className="text-[#E74C3C]">*</span>
                   </Label>
                   <Button
                     type="button"
@@ -514,7 +516,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                   </Button>
                 </div>
 
-                <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 overflow-hidden relative touch-none">
+                <div className="border-2 border-dashed border-slate-300 rounded-md bg-white overflow-hidden relative touch-none">
                   <canvas
                     ref={canvasRef}
                     width={440}
@@ -537,7 +539,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               </div>
             </div>
           ) : (
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2.5">
+            <div className="p-3 rounded-card bg-orange-50 border border-orange-200 text-[#FF6B35] text-xs flex items-center gap-2.5 font-sans">
               <AlertTriangle className="h-5 w-5 shrink-0" />
               <span>
                 {reason === 'address_error'

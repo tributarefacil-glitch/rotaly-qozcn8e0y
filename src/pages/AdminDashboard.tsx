@@ -567,7 +567,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const maxDayVolume = Math.max(...volumeByDay, 40)
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col">
+    <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col font-sans">
       <Header />
 
       <div className="flex flex-1">
@@ -593,16 +593,18 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 variant="outline"
                 size="sm"
                 onClick={loadData}
-                className="h-9 gap-1.5 text-xs"
+                className="h-9 gap-1.5 text-xs text-slate-700 border-slate-200 hover:bg-slate-50 rounded-input"
               >
-                <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                <RefreshCw
+                  className={`h-3.5 w-3.5 text-[#0052CC] ${isLoading ? 'animate-spin' : ''}`}
+                />
                 Atualizar
               </Button>
               <Button
                 onClick={() => setIsNewUserModalOpen(true)}
                 className="h-9 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
               >
-                <UserPlus className="h-4 w-4" />
+                <UserPlus className="h-4 w-4 text-[#FF6B35]" />
                 Cadastrar Usuário
               </Button>
             </div>
@@ -616,66 +618,66 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
             }
             className="space-y-6"
           >
-            <TabsList className="bg-slate-200/80 dark:bg-slate-900 p-1 border border-slate-300/60 dark:border-slate-800 rounded-xl flex flex-wrap gap-1">
+            <TabsList className="bg-[#F5F5F5] p-1 border border-slate-200 rounded-card flex flex-wrap gap-1 font-heading">
               <TabsTrigger
                 value="overview"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800"
+                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input"
               >
-                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
                 Visão Geral
               </TabsTrigger>
               <TabsTrigger
                 value="control-tower"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-emerald-800 dark:text-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/40"
+                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input text-[#00AA44] bg-emerald-50/50"
               >
-                <Compass className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
+                <Compass className="h-3.5 w-3.5 mr-1.5 text-[#00AA44]" />
                 Torre de Controle
               </TabsTrigger>
               <TabsTrigger
                 value="reports"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-blue-700 dark:text-blue-400"
+                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input text-[#0052CC]"
               >
-                <PieChart className="h-3.5 w-3.5 mr-1.5 text-blue-500" />
+                <PieChart className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
                 Relatórios Operacionais
               </TabsTrigger>
               <TabsTrigger
                 value="fuel"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-emerald-700 dark:text-emerald-400"
+                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input text-[#00AA44]"
               >
-                <Wallet className="h-3.5 w-3.5 mr-1.5 text-emerald-500" />
+                <Wallet className="h-3.5 w-3.5 mr-1.5 text-[#00AA44]" />
                 Controle de Combustível
               </TabsTrigger>
               <TabsTrigger
                 value="deviations"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-amber-700 dark:text-amber-400"
+                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input text-[#FF6B35]"
               >
-                <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-amber-500" />
+                <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-[#FF6B35]" />
                 Desvios & Paradas ({offRouteEvents.length})
               </TabsTrigger>
               <TabsTrigger
                 value="settings"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800"
+                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input"
               >
                 <Settings className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
                 Parâmetros R$/L e km/L
               </TabsTrigger>
               <TabsTrigger
                 value="couriers"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 relative"
+                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input relative"
               >
-                <Truck className="h-3.5 w-3.5 mr-1.5" />
+                <Truck className="h-3.5 w-3.5 mr-1.5 text-[#FF6B35]" />
                 Entregadores ({couriers.length})
                 {pendingCouriers.length > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold">
+                  <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-[#FF6B35] text-white text-[10px] font-bold">
                     {pendingCouriers.length} pendentes
                   </span>
                 )}
               </TabsTrigger>
               <TabsTrigger
                 value="sellers"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800"
+                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input"
               >
-                <Users className="h-3.5 w-3.5 mr-1.5" />
+                <Users className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
                 Vendedores ({sellers.length})
               </TabsTrigger>
             </TabsList>
@@ -1238,20 +1240,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               {/* KPI CARDS */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* KPI 1: Total Sales */}
-                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Vendas Totais (Mês)
                       </span>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-card bg-blue-50 text-[#0052CC] border border-blue-100">
                         <DollarSign className="h-4 w-4" />
                       </div>
                     </div>
-                    <p className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+                    <p className="font-heading text-2xl font-black text-[#1a1a1a] mt-2">
                       R$ {totalSales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </p>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-emerald-600">
+                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
                       <TrendingUp className="h-3.5 w-3.5" />
                       <span>+18.4% em relação à semana anterior</span>
                     </div>
@@ -1259,61 +1261,59 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 </Card>
 
                 {/* KPI 2: Average Delivery Time */}
-                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Tempo Médio de Entrega
                       </span>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-card bg-orange-50 text-[#FF6B35] border border-orange-100">
                         <Clock className="h-4 w-4" />
                       </div>
                     </div>
-                    <p className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-                      27.4 min
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-emerald-600">
+                    <p className="font-heading text-2xl font-black text-[#1a1a1a] mt-2">27.4 min</p>
+                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
                       <TrendingUp className="h-3.5 w-3.5" />
-                      <span>-4.2 min (otimização de rota ativa)</span>
+                      <span>-4.2 min (otimização de rota LOGHYPE)</span>
                     </div>
                   </CardContent>
                 </Card>
 
                 {/* KPI 3: Courier Utilization Rate */}
-                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Entregadores Ativos
                       </span>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-card bg-blue-50 text-[#0052CC] border border-blue-100">
                         <Truck className="h-4 w-4" />
                       </div>
                     </div>
-                    <p className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+                    <p className="font-heading text-2xl font-black text-[#0052CC] mt-2">
                       {activeCouriers.length}
                     </p>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs text-amber-600 font-medium">
+                    <div className="flex items-center gap-1.5 mt-2 text-xs text-[#FF6B35] font-semibold">
                       <span>{pendingCouriers.length} aguardando aprovação</span>
                     </div>
                   </CardContent>
                 </Card>
 
                 {/* KPI 4: Success Delivery Rate */}
-                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
                         Taxa de Sucesso (SLA)
                       </span>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-card bg-emerald-50 text-[#00AA44] border border-emerald-100">
                         <CheckCircle2 className="h-4 w-4" />
                       </div>
                     </div>
-                    <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-2">
+                    <p className="font-heading text-2xl font-black text-[#00AA44] mt-2">
                       {successRate}%
                     </p>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-emerald-600">
+                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
                       <span>99.2% dentro do horário estimado</span>
                     </div>
                   </CardContent>
@@ -1322,20 +1322,21 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
               {/* Pending Approvals Alert Banner */}
               {pendingCouriers.length > 0 && (
-                <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+                <div className="rounded-card border border-orange-200 bg-orange-50/80 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-brand">
                   <div className="flex items-center gap-3.5">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shrink-0">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#FF6B35] text-white font-bold shrink-0">
                       <AlertCircle className="h-6 w-6" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      <h3 className="font-heading text-sm font-bold text-[#1a1a1a]">
                         {pendingCouriers.length}{' '}
                         {pendingCouriers.length === 1
                           ? 'novo entregador aguarda aprovação de documentos'
                           : 'novos entregadores aguardam aprovação de documentos'}
                       </h3>
-                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
-                        Verifique a CNH e a foto de selfie para liberar o acesso ao aplicativo.
+                      <p className="font-sans text-xs text-slate-600 mt-0.5">
+                        Verifique a CNH e a foto de selfie para liberar o acesso ao aplicativo
+                        LOGHYPE.
                       </p>
                     </div>
                   </div>
@@ -1345,7 +1346,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       setActiveTab('couriers')
                       setCourierStatusFilter('pending')
                     }}
-                    className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shrink-0 shadow-md shadow-amber-500/20"
+                    className="bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shrink-0 shadow-brand rounded-input"
                   >
                     Analisar Cadastros Pendentes →
                   </Button>
@@ -1355,20 +1356,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               {/* CHARTS ROW (Weekly Trends + Status Distribution) */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Chart 1 */}
-                <Card className="lg:col-span-8 border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="lg:col-span-8 border border-slate-200 bg-white shadow-brand rounded-card">
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <div>
-                        <CardTitle className="text-base font-bold text-slate-900 dark:text-white">
+                        <CardTitle className="font-heading text-base font-bold text-[#1a1a1a]">
                           Tendência Semanal de Volume de Entregas
                         </CardTitle>
-                        <CardDescription className="text-xs">
+                        <CardDescription className="text-xs text-slate-500 font-sans">
                           Distribuição diária de pedidos despachados e concluídos.
                         </CardDescription>
                       </div>
                       <Badge
                         variant="outline"
-                        className="text-xs text-blue-600 bg-blue-50 border-blue-200"
+                        className="text-xs text-[#0052CC] bg-blue-50 border-blue-200 font-bold"
                       >
                         Meta: 25/dia
                       </Badge>
@@ -1386,18 +1387,18 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             key={idx}
                             className="flex-1 flex flex-col items-center gap-2 h-full justify-end group"
                           >
-                            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="text-[11px] font-bold text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity font-mono">
                               {val}
                             </span>
                             <div
-                              className={`w-full max-w-[48px] rounded-t-xl transition-all duration-500 ease-out ${
+                              className={`w-full max-w-[48px] rounded-t-md transition-all duration-300 ${
                                 isToday
-                                  ? 'bg-gradient-to-t from-blue-600 to-indigo-500 shadow-lg shadow-blue-500/30'
-                                  : 'bg-slate-200 group-hover:bg-blue-400 dark:bg-slate-800 dark:group-hover:bg-slate-700'
+                                  ? 'bg-[#0052CC] shadow-sm'
+                                  : 'bg-[#FF6B35] group-hover:bg-[#E5531E]'
                               }`}
                               style={{ height: `${heightPercent}%` }}
                             />
-                            <span className="text-[10px] text-slate-500 font-medium truncate">
+                            <span className="text-[10px] text-slate-500 font-medium truncate font-heading">
                               {daysOfWeek[idx]}
                             </span>
                           </div>
@@ -1408,25 +1409,23 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 </Card>
 
                 {/* Chart 2 */}
-                <Card className="lg:col-span-4 border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+                <Card className="lg:col-span-4 border border-slate-200 bg-white shadow-brand rounded-card flex flex-col justify-between">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base font-bold text-slate-900 dark:text-white">
+                    <CardTitle className="font-heading text-base font-bold text-[#1a1a1a]">
                       Status dos Pedidos
                     </CardTitle>
-                    <CardDescription className="text-xs">
+                    <CardDescription className="text-xs text-slate-500 font-sans">
                       Proporção de entregas na operação atual.
                     </CardDescription>
                   </CardHeader>
 
-                  <CardContent className="space-y-3 pt-2">
-                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900">
+                  <CardContent className="space-y-3 pt-2 font-sans">
+                    <div className="flex items-center justify-between p-2.5 rounded-card bg-emerald-50/60 border border-emerald-200">
                       <div className="flex items-center gap-2">
-                        <span className="h-3 w-3 rounded-full bg-emerald-500"></span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                          Entregues
-                        </span>
+                        <span className="h-3 w-3 rounded-full bg-[#00AA44]"></span>
+                        <span className="text-xs font-semibold text-slate-800">Entregues</span>
                       </div>
-                      <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                      <span className="text-xs font-bold text-[#00AA44]">
                         {deliveredOrders.length} (
                         {totalOrders > 0
                           ? Math.round((deliveredOrders.length / totalOrders) * 100)
@@ -1435,14 +1434,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900">
+                    <div className="flex items-center justify-between p-2.5 rounded-card bg-orange-50/60 border border-orange-200">
                       <div className="flex items-center gap-2">
-                        <span className="h-3 w-3 rounded-full bg-amber-500"></span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                          Em Trânsito
-                        </span>
+                        <span className="h-3 w-3 rounded-full bg-[#FF6B35]"></span>
+                        <span className="text-xs font-semibold text-slate-800">Em Trânsito</span>
                       </div>
-                      <span className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                      <span className="text-xs font-bold text-[#FF6B35]">
                         {inTransitOrders.length} (
                         {totalOrders > 0
                           ? Math.round((inTransitOrders.length / totalOrders) * 100)
@@ -1451,14 +1448,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900">
+                    <div className="flex items-center justify-between p-2.5 rounded-card bg-blue-50/60 border border-blue-200">
                       <div className="flex items-center gap-2">
-                        <span className="h-3 w-3 rounded-full bg-blue-500"></span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                          Pendentes
-                        </span>
+                        <span className="h-3 w-3 rounded-full bg-[#0052CC]"></span>
+                        <span className="text-xs font-semibold text-slate-800">Pendentes</span>
                       </div>
-                      <span className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                      <span className="text-xs font-bold text-[#0052CC]">
                         {pendingOrders.length} (
                         {totalOrders > 0
                           ? Math.round((pendingOrders.length / totalOrders) * 100)
@@ -1468,24 +1463,24 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </div>
 
                     <div className="pt-2">
-                      <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                      <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
                         <div
                           style={{
                             width: `${(deliveredOrders.length / Math.max(1, totalOrders)) * 100}%`,
                           }}
-                          className="bg-emerald-500"
+                          className="bg-[#00AA44]"
                         />
                         <div
                           style={{
                             width: `${(inTransitOrders.length / Math.max(1, totalOrders)) * 100}%`,
                           }}
-                          className="bg-amber-500"
+                          className="bg-[#FF6B35]"
                         />
                         <div
                           style={{
                             width: `${(pendingOrders.length / Math.max(1, totalOrders)) * 100}%`,
                           }}
-                          className="bg-blue-500"
+                          className="bg-[#0052CC]"
                         />
                       </div>
                     </div>

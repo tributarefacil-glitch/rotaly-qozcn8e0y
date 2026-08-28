@@ -19,7 +19,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 
-
 export default function PendingApprovalPage() {
   const { user, refreshUser, logout } = useAuth()
   const navigate = useNavigate()

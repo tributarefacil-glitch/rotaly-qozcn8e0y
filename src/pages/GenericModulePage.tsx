@@ -20,9 +20,9 @@ export default function GenericModulePage({
             <h1 className="font-heading text-2xl font-bold text-[#1a1a1a]">{title}</h1>
             <p className="font-sans text-sm text-slate-600">{description}</p>
           </div>{' '}
-          <div className="p-12 rounded-2xl border border-dashed border-slate-300 text-center dark:border-slate-800">
-            <p className="text-sm font-semibold text-slate-600 dark:text-slate-400">
-              Módulo sincronizado diretamente com o banco de dados e mapa ao vivo.
+          <div className="p-12 rounded-card border border-dashed border-slate-200 bg-[#F5F5F5] text-center shadow-xs">
+            <p className="font-sans text-sm font-semibold text-slate-600">
+              Módulo LOGHYPE sincronizado diretamente com o banco de dados e mapa ao vivo.
             </p>
           </div>
         </main>

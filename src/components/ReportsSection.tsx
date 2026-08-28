@@ -294,15 +294,15 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
   return (
     <div className="space-y-6" id="reports-export-area">
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2">
-            <BarChart2 className="h-6 w-6 text-blue-600" />
-            <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-              Relatórios & Inteligência Operacional
+            <BarChart2 className="h-6 w-6 text-[#0052CC]" />
+            <h1 className="font-heading text-2xl font-bold tracking-tight text-[#1a1a1a]">
+              Relatórios & Inteligência Operacional LOGHYPE
             </h1>
           </div>
-          <p className="text-sm text-gray-500">
+          <p className="font-sans text-sm text-slate-600">
             Análise aprofundada de desempenho, custos, tempo e ocorrências de entrega.
           </p>
         </div>
@@ -314,11 +314,11 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
             value={period}
             onValueChange={(v) => setPeriod(v as 'today' | 'week' | 'month' | 'all')}
           >
-            <SelectTrigger className="h-9 w-[150px] text-xs font-semibold bg-white border-blue-200">
-              <Calendar className="h-3.5 w-3.5 mr-1.5 text-blue-600" />
+            <SelectTrigger className="h-9 w-[150px] text-xs font-semibold bg-white border-slate-200 rounded-input">
+              <Calendar className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="bg-white">
               <SelectItem value="today">Hoje</SelectItem>
               <SelectItem value="week">Últimos 7 dias</SelectItem>
               <SelectItem value="month">Último Mês</SelectItem>
@@ -331,9 +331,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
             size="sm"
             variant="outline"
             onClick={handleExportPDF}
-            className="h-9 text-xs gap-1.5 font-medium"
+            className="h-9 text-xs gap-1.5 font-medium border-slate-200 hover:bg-slate-50 rounded-input text-slate-700"
           >
-            <Download className="h-3.5 w-3.5 text-red-600" />
+            <Download className="h-3.5 w-3.5 text-[#E74C3C]" />
             Exportar PDF
           </Button>
 
@@ -342,12 +342,12 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
             size="sm"
             variant="outline"
             onClick={handleShareLink}
-            className="h-9 text-xs gap-1.5 font-medium"
+            className="h-9 text-xs gap-1.5 font-medium border-slate-200 hover:bg-slate-50 rounded-input text-slate-700"
           >
             {copiedLink ? (
-              <Check className="h-3.5 w-3.5 text-emerald-600" />
+              <Check className="h-3.5 w-3.5 text-[#00AA44]" />
             ) : (
-              <Share2 className="h-3.5 w-3.5 text-blue-600" />
+              <Share2 className="h-3.5 w-3.5 text-[#0052CC]" />
             )}
             {copiedLink ? 'Copiado!' : 'Compartilhar'}
           </Button>
@@ -357,9 +357,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
             size="sm"
             variant="outline"
             onClick={handlePrint}
-            className="h-9 text-xs gap-1.5 font-medium"
+            className="h-9 text-xs gap-1.5 font-medium border-slate-200 hover:bg-slate-50 rounded-input text-slate-700"
           >
-            <Printer className="h-3.5 w-3.5 text-gray-700" />
+            <Printer className="h-3.5 w-3.5 text-slate-600" />
             Imprimir
           </Button>
         </div>
@@ -367,55 +367,55 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
 
       {/* 1. RESUMO DO PERÍODO */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="shadow-sm border-l-4 border-l-blue-600">
+        <Card className="border border-slate-200 border-l-4 border-l-[#0052CC] bg-white shadow-brand rounded-card">
           <CardContent className="p-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <p className="font-heading text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Total de Entregas
             </p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{summary.total}</p>
-            <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+            <p className="font-heading text-2xl font-bold text-[#1a1a1a] mt-1">{summary.total}</p>
+            <p className="font-sans text-xs text-slate-500 mt-1 flex items-center gap-1">
               <span>{summary.inTransit} em rota</span> • <span>{summary.pending} pendentes</span>
             </p>
           </CardContent>
         </Card>
 
-        <Card className="shadow-sm border-l-4 border-l-emerald-600">
+        <Card className="border border-slate-200 border-l-4 border-l-[#00AA44] bg-white shadow-brand rounded-card">
           <CardContent className="p-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <p className="font-heading text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Bem-Sucedidas (%)
             </p>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">
+            <p className="font-heading text-2xl font-bold text-[#00AA44] mt-1">
               {summary.successRate.toFixed(1)}%
             </p>
-            <p className="text-xs text-emerald-700 mt-1 font-medium">
+            <p className="font-sans text-xs text-[#00AA44] mt-1 font-semibold">
               {summary.successful} entregas finalizadas
             </p>
           </CardContent>
         </Card>
 
-        <Card className="shadow-sm border-l-4 border-l-amber-500">
+        <Card className="border border-slate-200 border-l-4 border-l-[#FF6B35] bg-white shadow-brand rounded-card">
           <CardContent className="p-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <p className="font-heading text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Com Problema (%)
             </p>
-            <p className="text-2xl font-bold text-amber-600 mt-1">
+            <p className="font-heading text-2xl font-bold text-[#FF6B35] mt-1">
               {summary.problemRate.toFixed(1)}%
             </p>
-            <p className="text-xs text-amber-700 mt-1 font-medium">
+            <p className="font-sans text-xs text-[#FF6B35] mt-1 font-semibold">
               {summary.problem} ocorrências registradas
             </p>
           </CardContent>
         </Card>
 
-        <Card className="shadow-sm border-l-4 border-l-rose-500">
+        <Card className="border border-slate-200 border-l-4 border-l-[#E74C3C] bg-white shadow-brand rounded-card">
           <CardContent className="p-4">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <p className="font-heading text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Canceladas (%)
             </p>
-            <p className="text-2xl font-bold text-rose-600 mt-1">
+            <p className="font-heading text-2xl font-bold text-[#E74C3C] mt-1">
               {summary.cancelRate.toFixed(1)}%
             </p>
-            <p className="text-xs text-rose-700 mt-1 font-medium">
+            <p className="font-sans text-xs text-[#E74C3C] mt-1 font-semibold">
               {summary.cancelled} cancelamentos
             </p>
           </CardContent>

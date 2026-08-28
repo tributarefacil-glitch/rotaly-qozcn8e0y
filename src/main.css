@@ -1,7 +1,7 @@
 /* Global styles - Theme, font, utilities, animations and global components */
 
-/* CHANGE THE FONT BELOW TO WHATEVER YOU WANT */
-@import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap');
+/* LOGHYPE Design System Fonts: Montserrat & Inter */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@400;500;600;700;800;900&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -9,36 +9,36 @@
 
 @layer base {
   :root {
-    /* Change the colors to match the design system */
+    /* LOGHYPE Theme Colors: Primary #0052CC, Secondary #FF6B35, Success #00AA44, Alert #E74C3C */
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --foreground: 0 0% 10%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 0 0% 10%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 0 0% 10%;
 
-    --primary: 222.2 84% 4.9%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 216 100% 40%; /* #0052CC */
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 98%;
-    --secondary-foreground: 222.2 84% 4.9%;
+    --secondary: 16 100% 60%; /* #FF6B35 */
+    --secondary-foreground: 0 0% 100%;
 
-    --muted: 210 40% 98%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 0 0% 96%; /* #F5F5F5 */
+    --muted-foreground: 0 0% 45%;
 
-    --accent: 210 40% 98%;
-    --accent-foreground: 222.2 84% 4.9%;
+    --accent: 16 100% 60%; /* #FF6B35 */
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 6 78% 57%; /* #E74C3C */
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 0 0% 90%; /* #E5E5E5 */
+    --input: 0 0% 90%;
+    --ring: 216 100% 40%;
 
-    --radius: 0.5rem;
+    --radius: 0.5rem; /* 8px */
 
     --sidebar-background: 0 0% 98%;
 
@@ -112,6 +112,27 @@
   section[aria-label='Notifications alt+T'] {
     padding: 0 !important;
     margin: 0 !important;
+  }
+
+  body {
+    background-color: #ffffff;
+    color: #1a1a1a;
+    font-family:
+      'Inter',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: 'Montserrat', sans-serif;
   }
 }
 

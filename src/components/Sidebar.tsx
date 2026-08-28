@@ -93,10 +93,10 @@ export const Sidebar: React.FC = () => {
   })
 
   return (
-    <aside className="hidden md:flex h-[calc(100vh-4rem)] w-64 flex-col border-r bg-slate-900 text-slate-100 dark:bg-slate-950">
+    <aside className="hidden md:flex h-[calc(100vh-4rem)] w-64 flex-col border-r border-slate-200 bg-[#F5F5F5] text-[#1a1a1a]">
       {/* Navigation Links */}
       <div className="flex-1 space-y-1 p-4 overflow-y-auto">
-        <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+        <div className="px-3 py-2 font-heading text-xs font-bold uppercase tracking-wider text-slate-500">
           Menu Principal
         </div>
         <nav className="space-y-1">
@@ -108,24 +108,28 @@ export const Sidebar: React.FC = () => {
               <NavLink
                 key={item.href}
                 to={item.href}
-                className={`group flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
+                className={`group flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium transition-all ${
                   isActive
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30 font-semibold'
-                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                    ? 'bg-[#0052CC] text-white shadow-sm font-semibold'
+                    : 'text-slate-700 hover:bg-white hover:text-[#0052CC] hover:shadow-xs'
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <Icon
                     className={`h-4 w-4 transition-colors ${
-                      isActive ? 'text-white' : 'text-slate-400 group-hover:text-white'
+                      isActive ? 'text-[#FF6B35]' : 'text-[#0052CC] group-hover:text-[#FF6B35]'
                     }`}
                   />
-                  <span>{item.title}</span>
+                  <span className={isActive ? 'font-bold' : ''}>{item.title}</span>
                 </div>
                 {item.badge && (
                   <Badge
                     variant="secondary"
-                    className="bg-slate-800 text-[10px] text-slate-300 border border-slate-700"
+                    className={`text-[10px] font-bold ${
+                      isActive
+                        ? 'bg-white text-[#0052CC]'
+                        : 'bg-white text-[#FF6B35] border border-orange-200 shadow-xs'
+                    }`}
                   >
                     {item.badge}
                   </Badge>
@@ -137,13 +141,15 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* AI Assistant Promo Widget in Sidebar */}
-      <div className="p-4 border-t border-slate-800">
-        <div className="rounded-xl bg-gradient-to-br from-blue-900/50 to-indigo-900/40 p-3 border border-blue-500/20 shadow-lg">
+      <div className="p-4 border-t border-slate-200 bg-white/70">
+        <div className="rounded-lg bg-blue-50/70 p-3 border border-blue-200 shadow-xs">
           <div className="flex items-center gap-2 mb-1.5">
-            <Sparkles className="h-4 w-4 text-blue-400 animate-pulse" />
-            <span className="text-xs font-semibold text-blue-200">Copilot Logístico IA</span>
+            <Sparkles className="h-4 w-4 text-[#FF6B35] animate-pulse" />
+            <span className="font-heading text-xs font-bold text-[#0052CC]">
+              LOGHYPE Copilot IA
+            </span>
           </div>
-          <p className="text-[11px] text-slate-300 leading-relaxed">
+          <p className="font-sans text-[11px] text-slate-600 leading-relaxed">
             Consulte rotas, frotas e atrasos a qualquer momento pelo chat flutuante.
           </p>
         </div>

@@ -27,7 +27,6 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
-import { LoghypeLogo } from '@/components/LoghypeLogo'
 
 export default function PublicTrackingPage() {
   const { tracking_code } = useParams<{ tracking_code: string }>()
@@ -155,14 +154,19 @@ export default function PublicTrackingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between">
+    <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col justify-between font-sans">
       {/* Public Header */}
-      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-800 bg-slate-950/90 px-4 backdrop-blur sm:px-6">
+      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between bg-[#0052CC] text-white px-4 shadow-sm sm:px-6">
         <Link to="/" className="flex items-center gap-2.5">
-          <LoghypeLogo variant="compact" size="sm" theme="white" />
-          <span className="text-xs font-semibold text-white/80 border-l border-white/20 pl-2 hidden sm:inline">
-            Rastreio Público
-          </span>
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-white border border-white/20">
+            <Truck className="h-5 w-5 text-[#FF6B35]" />
+          </div>
+          <div>
+            <span className="font-heading text-base font-bold text-white block leading-none">
+              LOGHYPE
+            </span>
+            <span className="font-sans text-[10px] text-white/80">Rastreamento Público</span>
+          </div>
         </Link>
 
         <div className="flex items-center gap-2">
@@ -170,13 +174,17 @@ export default function PublicTrackingPage() {
             variant="ghost"
             size="sm"
             onClick={loadOrder}
-            className="text-xs text-slate-400 hover:text-white"
+            className="text-xs text-white/80 hover:text-white hover:bg-white/10 rounded-input"
           >
-            <RefreshCw className="h-3.5 w-3.5 mr-1" />
+            <RefreshCw className="h-3.5 w-3.5 mr-1 text-white" />
             Atualizar
           </Button>
           <Link to="/">
-            <Button size="sm" variant="outline" className="text-xs border-slate-700 text-slate-300">
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs border-white/20 bg-white/10 text-white hover:bg-white/20 rounded-input"
+            >
               <ArrowLeft className="h-3.5 w-3.5 mr-1" />
               Início / Login
             </Button>
@@ -205,20 +213,20 @@ export default function PublicTrackingPage() {
         ) : (
           <div className="space-y-6">
             {/* Status Summary Banner */}
-            <div className="rounded-3xl border border-blue-500/30 bg-gradient-to-br from-slate-900 to-blue-950/40 p-6 shadow-2xl backdrop-blur relative overflow-hidden">
+            <div className="rounded-card border border-blue-200 bg-blue-50/60 p-6 shadow-brand relative overflow-hidden">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-bold text-blue-400">
+                    <span className="font-mono text-sm font-bold text-[#0052CC]">
                       {order.tracking_code}
                     </span>
                     <Badge
-                      className={`text-xs ${
+                      className={`text-xs font-bold ${
                         order.status === 'delivered'
-                          ? 'bg-emerald-600'
+                          ? 'bg-[#00AA44] text-white'
                           : order.status === 'in_transit'
-                            ? 'bg-amber-500 text-slate-950 font-bold animate-pulse'
-                            : 'bg-blue-600'
+                            ? 'bg-[#FF6B35] text-white animate-pulse'
+                            : 'bg-[#0052CC] text-white'
                       }`}
                     >
                       {order.status === 'delivered'
@@ -228,79 +236,79 @@ export default function PublicTrackingPage() {
                           : 'PEDIDO CONFIRMADO'}
                     </Badge>
                   </div>
-                  <h1 className="text-2xl font-black text-white mt-1">
+                  <h1 className="font-heading text-2xl font-black text-[#1a1a1a] mt-1">
                     {order.status === 'delivered'
                       ? 'Sua encomenda foi entregue!'
                       : order.status === 'in_transit'
                         ? 'O entregador está a caminho do seu endereço.'
                         : 'Seu pedido está sendo preparado para envio.'}
                   </h1>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="font-sans text-xs text-slate-600 mt-1">
                     Previsão de Chegada (ETA):{' '}
-                    <span className="font-bold text-white">{getEtaString()}</span>
+                    <span className="font-bold text-[#0052CC]">{getEtaString()}</span>
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3 self-start sm:self-center p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-600 text-white">
-                    <Truck className="h-5 w-5" />
+                <div className="flex items-center gap-3 self-start sm:self-center p-3 rounded-card bg-white border border-slate-200 shadow-brand">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-card bg-blue-50 text-[#0052CC] border border-blue-100">
+                    <Truck className="h-5 w-5 text-[#FF6B35]" />
                   </div>
                   <div>
-                    <p className="text-[11px] text-slate-400">Entregador Responsável</p>
-                    <p className="text-xs font-bold text-white">
-                      {courier?.name || 'Equipe de Logística'}
+                    <p className="text-[11px] text-slate-500 font-sans">Entregador Responsável</p>
+                    <p className="text-xs font-bold text-[#1a1a1a] font-heading">
+                      {courier?.name || 'Equipe de Logística LOGHYPE'}
                     </p>
                   </div>
                 </div>
               </div>
 
               {/* VERTICAL / HORIZONTAL STEPPER TIMELINE */}
-              <div className="mt-8 pt-6 border-t border-slate-800/80 grid grid-cols-3 gap-2 relative">
+              <div className="mt-8 pt-6 border-t border-slate-200 grid grid-cols-3 gap-2 relative">
                 {/* Step 1 */}
-                <div className="flex flex-col items-center text-center space-y-1.5">
+                <div className="flex flex-col items-center text-center space-y-1.5 font-sans">
                   <div
                     className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${
                       order.status === 'pending' ||
                       order.status === 'in_transit' ||
                       order.status === 'delivered'
-                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
-                        : 'bg-slate-800 text-slate-500'
+                        ? 'bg-[#0052CC] text-white shadow-sm'
+                        : 'bg-slate-200 text-slate-500'
                     }`}
                   >
                     <Package className="h-4 w-4" />
                   </div>
-                  <p className="text-xs font-bold text-white">1. Confirmado</p>
-                  <p className="text-[10px] text-slate-400">Pedido registrado</p>
+                  <p className="text-xs font-bold text-[#1a1a1a] font-heading">1. Confirmado</p>
+                  <p className="text-[10px] text-slate-500">Pedido registrado</p>
                 </div>
 
                 {/* Step 2 */}
-                <div className="flex flex-col items-center text-center space-y-1.5">
+                <div className="flex flex-col items-center text-center space-y-1.5 font-sans">
                   <div
                     className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${
                       order.status === 'in_transit' || order.status === 'delivered'
-                        ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30'
-                        : 'bg-slate-800 text-slate-500'
+                        ? 'bg-[#FF6B35] text-white shadow-sm'
+                        : 'bg-slate-200 text-slate-500'
                     }`}
                   >
                     <Truck className="h-4 w-4" />
                   </div>
-                  <p className="text-xs font-bold text-white">2. Em Rota</p>
-                  <p className="text-[10px] text-slate-400">Despachado com GPS</p>
+                  <p className="text-xs font-bold text-[#1a1a1a] font-heading">2. Em Rota</p>
+                  <p className="text-[10px] text-slate-500">Despachado com GPS</p>
                 </div>
 
                 {/* Step 3 */}
-                <div className="flex flex-col items-center text-center space-y-1.5">
+                <div className="flex flex-col items-center text-center space-y-1.5 font-sans">
                   <div
                     className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${
                       order.status === 'delivered'
-                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/30'
-                        : 'bg-slate-800 text-slate-500'
+                        ? 'bg-[#00AA44] text-white shadow-sm'
+                        : 'bg-slate-200 text-slate-500'
                     }`}
                   >
                     <CheckCircle2 className="h-4 w-4" />
                   </div>
-                  <p className="text-xs font-bold text-white">3. Entregue</p>
-                  <p className="text-[10px] text-slate-400">Comprovante OK</p>
+                  <p className="text-xs font-bold text-[#1a1a1a] font-heading">3. Entregue</p>
+                  <p className="text-[10px] text-slate-500">Comprovante OK</p>
                 </div>
               </div>
             </div>
@@ -334,29 +342,31 @@ export default function PublicTrackingPage() {
 
             {/* Delivery Destination & Package Details */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2 text-xs">
-                <span className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">
+              <div className="rounded-card border border-slate-200 bg-white p-4 space-y-2 text-xs shadow-brand">
+                <span className="font-heading font-bold text-slate-500 uppercase tracking-wider text-[10px]">
                   Local de Entrega
                 </span>
-                <p className="text-sm font-semibold text-white">{customer?.name || 'Cliente'}</p>
-                <p className="text-slate-300">{customer?.address}</p>
+                <p className="text-sm font-semibold text-[#1a1a1a]">
+                  {customer?.name || 'Cliente'}
+                </p>
+                <p className="text-slate-600">{customer?.address}</p>
                 {order.notes && (
-                  <p className="text-amber-300 text-[11px] pt-1">Nota: {order.notes}</p>
+                  <p className="text-[#FF6B35] text-[11px] pt-1">Nota: {order.notes}</p>
                 )}
               </div>
 
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2 text-xs">
-                <span className="font-bold text-slate-400 uppercase tracking-wider text-[10px]">
+              <div className="rounded-card border border-slate-200 bg-white p-4 space-y-2 text-xs shadow-brand">
+                <span className="font-heading font-bold text-slate-500 uppercase tracking-wider text-[10px]">
                   Resumo do Pedido
                 </span>
-                <p className="text-slate-300">
+                <p className="text-slate-600">
                   Data: {new Date(order.created).toLocaleDateString('pt-BR')} às{' '}
                   {new Date(order.created).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
                   })}
                 </p>
-                <p className="text-sm font-bold text-emerald-400">
+                <p className="text-sm font-bold text-[#00AA44] font-heading">
                   Valor Total: R$ {Number(order.total_price || 0).toFixed(2)}
                 </p>
               </div>
@@ -364,40 +374,42 @@ export default function PublicTrackingPage() {
 
             {/* REQUISITO 4: SEÇÃO DE AVALIAÇÃO DO CLIENTE (Entregador & Vendedor) */}
             {order.status === 'delivered' && (
-              <div className="rounded-3xl border border-amber-500/30 bg-gradient-to-br from-slate-900 via-slate-950 to-amber-950/30 p-6 shadow-2xl backdrop-blur space-y-5">
-                <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 shadow-lg shadow-amber-500/20">
+              <div className="rounded-card border border-orange-200 bg-orange-50/40 p-6 shadow-brand space-y-5">
+                <div className="flex items-center gap-3 border-b border-orange-100 pb-4">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#FF6B35] text-white shadow-brand">
                     <HeartHandshake className="h-6 w-6" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-white flex items-center gap-2">
-                      Avalie sua Experiência de Entrega
-                      <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[10px]">
+                    <h3 className="font-heading text-base font-bold text-[#1a1a1a] flex items-center gap-2">
+                      Avalie sua Experiência de Entrega LOGHYPE
+                      <Badge className="bg-orange-100 text-[#FF6B35] border-orange-200 text-[10px] font-bold">
                         Feedback do Cliente
                       </Badge>
                     </h3>
-                    <p className="text-xs text-slate-400">
+                    <p className="font-sans text-xs text-slate-600">
                       Sua opinião nos ajuda a melhorar a agilidade e atendimento da nossa equipe.
                     </p>
                   </div>
                 </div>
 
                 {hasSubmittedReview || existingReview ? (
-                  <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs space-y-2 text-center">
+                  <div className="p-4 rounded-card bg-emerald-50 border border-emerald-200 text-[#00AA44] text-xs space-y-2 text-center">
                     <div className="flex justify-center">
-                      <div className="h-10 w-10 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center font-bold">
+                      <div className="h-10 w-10 rounded-full bg-[#00AA44] text-white flex items-center justify-center font-bold">
                         <Check className="h-6 w-6" />
                       </div>
                     </div>
-                    <h4 className="font-bold text-sm text-white">Avaliação Registrada!</h4>
-                    <p className="text-slate-300">
+                    <h4 className="font-heading font-bold text-sm text-[#1a1a1a]">
+                      Avaliação Registrada!
+                    </h4>
+                    <p className="text-slate-700 font-sans">
                       Você avaliou o entregador com{' '}
                       <strong>{existingReview?.courier_rating || courierRating} estrelas</strong> e
                       o vendedor/atendimento com{' '}
                       <strong>{existingReview?.seller_rating || sellerRating} estrelas</strong>.
                     </p>
                     {existingReview?.comment && (
-                      <p className="italic text-slate-400 text-[11px] pt-1">
+                      <p className="italic text-slate-500 text-[11px] pt-1 font-sans">
                         &ldquo;{existingReview.comment}&rdquo;
                       </p>
                     )}
@@ -406,17 +418,17 @@ export default function PublicTrackingPage() {
                   <form onSubmit={handleSubmitReview} className="space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       {/* Avaliação do Entregador */}
-                      <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                      <div className="p-4 rounded-card bg-white border border-slate-200 space-y-2 shadow-xs">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                            <Truck className="h-4 w-4 text-purple-400" />
+                          <span className="font-heading text-xs font-bold text-[#1a1a1a] flex items-center gap-1.5">
+                            <Truck className="h-4 w-4 text-[#FF6B35]" />
                             Avaliar Entregador
                           </span>
-                          <span className="text-xs font-bold text-amber-400">
+                          <span className="text-xs font-bold text-[#FF6B35]">
                             {courierRating} / 5
                           </span>
                         </div>
-                        <p className="text-[11px] text-slate-400">
+                        <p className="text-[11px] text-slate-500 font-sans">
                           {courier?.name
                             ? `Como foi o atendimento de ${courier.name}?`
                             : 'Pontualidade e cuidado com a entrega'}
@@ -433,7 +445,7 @@ export default function PublicTrackingPage() {
                                 className={`h-7 w-7 ${
                                   star <= courierRating
                                     ? 'fill-amber-400 text-amber-400'
-                                    : 'text-slate-700'
+                                    : 'text-slate-300'
                                 }`}
                               />
                             </button>
@@ -442,17 +454,17 @@ export default function PublicTrackingPage() {
                       </div>
 
                       {/* Avaliação do Vendedor / Loja */}
-                      <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                      <div className="p-4 rounded-card bg-white border border-slate-200 space-y-2 shadow-xs">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                            <Package className="h-4 w-4 text-blue-400" />
+                          <span className="font-heading text-xs font-bold text-[#1a1a1a] flex items-center gap-1.5">
+                            <Package className="h-4 w-4 text-[#0052CC]" />
                             Avaliar Vendedor & Loja
                           </span>
-                          <span className="text-xs font-bold text-amber-400">
+                          <span className="text-xs font-bold text-[#0052CC]">
                             {sellerRating} / 5
                           </span>
                         </div>
-                        <p className="text-[11px] text-slate-400">
+                        <p className="text-[11px] text-slate-500 font-sans">
                           {order.expand?.seller_id?.name
                             ? `Como foi a experiência com ${order.expand.seller_id.name}?`
                             : 'Agilidade de despacho e qualidade do produto'}
@@ -469,7 +481,7 @@ export default function PublicTrackingPage() {
                                 className={`h-7 w-7 ${
                                   star <= sellerRating
                                     ? 'fill-amber-400 text-amber-400'
-                                    : 'text-slate-700'
+                                    : 'text-slate-300'
                                 }`}
                               />
                             </button>
@@ -479,16 +491,16 @@ export default function PublicTrackingPage() {
                     </div>
 
                     {/* Comentário Opcional */}
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
-                        <MessageSquare className="h-3.5 w-3.5 text-blue-400" />
+                    <div className="space-y-1.5 font-sans">
+                      <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 font-heading">
+                        <MessageSquare className="h-3.5 w-3.5 text-[#0052CC]" />
                         Deixe um elogio ou observação (opcional)
                       </label>
                       <Textarea
                         value={reviewComment}
                         onChange={(e) => setReviewComment(e.target.value)}
                         placeholder="Ex: Entrega super rápida, entregador muito educado e atencioso!"
-                        className="bg-slate-950 border-slate-800 text-xs text-white resize-none"
+                        className="bg-[#F5F5F5] border-slate-200 text-xs text-[#1a1a1a] focus:bg-white resize-none rounded-input"
                         rows={2}
                       />
                     </div>
@@ -497,7 +509,7 @@ export default function PublicTrackingPage() {
                       <Button
                         type="submit"
                         disabled={isSubmittingReview}
-                        className="bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-slate-950 font-black text-xs h-10 px-6 rounded-xl shadow-lg shadow-amber-500/25"
+                        className="bg-[#FF6B35] hover:bg-[#E5531E] text-white font-black text-xs h-10 px-6 rounded-input shadow-brand"
                       >
                         {isSubmittingReview ? 'Enviando...' : 'Enviar Avaliação da Entrega'}
                       </Button>
@@ -511,7 +523,7 @@ export default function PublicTrackingPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800/80 bg-slate-950/90 py-4 px-6 text-center text-xs text-slate-500">
+      <footer className="border-t border-slate-200 bg-[#F5F5F5] py-4 px-6 text-center text-xs text-slate-600 font-sans">
         <p>LOGHYPE — Entrega rápida, confiança garantida • Rastreio em Tempo Real</p>
       </footer>
     </div>

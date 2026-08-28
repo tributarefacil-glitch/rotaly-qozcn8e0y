@@ -35,7 +35,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { LoghypeLogo } from '@/components/LoghypeLogo'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
@@ -239,8 +238,18 @@ export default function RegisterPage() {
       {/* Header */}
       <header className="relative z-10 w-full border-b border-slate-200 bg-white shadow-subtle px-6 py-3.5">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-3">
-            <LoghypeLogo variant="full" size="sm" showSlogan theme="dark" />
+          <Link to="/" className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#0052CC] text-white shadow-brand">
+              <Truck className="h-5 w-5 text-[#FF6B35]" />
+            </div>
+            <div>
+              <span className="font-heading text-lg font-black leading-none tracking-wider text-[#0052CC] block">
+                LOGHYPE
+              </span>
+              <span className="font-sans text-[10px] text-slate-500">
+                Entrega rápida, confiança garantida
+              </span>
+            </div>
           </Link>
 
           <Button

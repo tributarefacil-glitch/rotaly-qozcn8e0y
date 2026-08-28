@@ -189,7 +189,7 @@ export const AiLogisticsAssistant: React.FC = () => {
 
   return (
     <div className="fixed bottom-6 right-6 z-50 w-96 max-w-[calc(100vw-2rem)] shadow-2xl transition-all">
-      <Card className="border-slate-800 bg-slate-900/95 text-white backdrop-blur shadow-2xl overflow-hidden flex flex-col h-[520px]">
+      <Card className="border border-slate-200 bg-white text-[#1a1a1a] shadow-brand rounded-modal overflow-hidden flex flex-col h-[520px]">
         {/* Header */}
         <CardHeader className="flex flex-row items-center justify-between border-b border-slate-200 p-3.5 bg-[#F5F5F5] rounded-t-modal">
           <div className="flex items-center gap-2.5">
@@ -216,7 +216,7 @@ export const AiLogisticsAssistant: React.FC = () => {
               variant="ghost"
               size="icon"
               onClick={() => setIsOpen(false)}
-              className="h-7 w-7 text-slate-400 hover:text-white"
+              className="h-7 w-7 text-slate-500 hover:text-slate-900 rounded-input"
             >
               <X className="h-4 w-4" />
             </Button>
@@ -224,36 +224,36 @@ export const AiLogisticsAssistant: React.FC = () => {
         </CardHeader>
 
         {/* Messages Body */}
-        <CardContent className="flex-1 overflow-y-auto p-4 space-y-3" ref={scrollRef}>
+        <CardContent className="flex-1 overflow-y-auto p-4 space-y-3 font-sans" ref={scrollRef}>
           {messages.map((m) => (
             <div
               key={m.id}
               className={`flex gap-2.5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               {m.role === 'assistant' && (
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white text-xs">
-                  <Bot className="h-3.5 w-3.5" />
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#0052CC] text-white text-xs shadow-xs">
+                  <Bot className="h-3.5 w-3.5 text-[#FF6B35]" />
                 </div>
               )}
               <div
-                className={`rounded-2xl px-3.5 py-2.5 text-xs max-w-[82%] leading-relaxed ${
+                className={`rounded-card px-3.5 py-2.5 text-xs max-w-[82%] leading-relaxed ${
                   m.role === 'user'
-                    ? 'bg-blue-600 text-white rounded-br-xs font-medium'
-                    : 'bg-slate-800/90 text-slate-200 border border-slate-700 rounded-bl-xs'
+                    ? 'bg-[#0052CC] text-white font-medium shadow-xs'
+                    : 'bg-[#F5F5F5] text-[#1a1a1a] border border-slate-200'
                 }`}
               >
                 {m.content ? (
                   <div className="whitespace-pre-wrap">{m.content}</div>
                 ) : (
                   <div className="flex items-center gap-1.5 py-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-bounce"></span>
-                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-bounce [animation-delay:0.2s]"></span>
-                    <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-bounce [animation-delay:0.4s]"></span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#0052CC] animate-bounce"></span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#FF6B35] animate-bounce [animation-delay:0.2s]"></span>
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#00AA44] animate-bounce [animation-delay:0.4s]"></span>
                   </div>
                 )}
               </div>
               {m.role === 'user' && (
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-700 text-white text-xs">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#FF6B35] text-white text-xs shadow-xs">
                   <User className="h-3.5 w-3.5" />
                 </div>
               )}
@@ -263,7 +263,7 @@ export const AiLogisticsAssistant: React.FC = () => {
           {/* Quick Prompts Suggestions */}
           {messages.length <= 2 && (
             <div className="pt-2 space-y-1.5">
-              <p className="text-[10px] uppercase font-semibold tracking-wider text-slate-400">
+              <p className="font-heading text-[10px] uppercase font-bold tracking-wider text-slate-500">
                 Sugestões Rápidas:
               </p>
               <div className="flex flex-col gap-1.5">
@@ -271,7 +271,7 @@ export const AiLogisticsAssistant: React.FC = () => {
                   <button
                     key={idx}
                     onClick={() => handleSendMessage(q)}
-                    className="text-left text-[11px] p-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition"
+                    className="text-left text-[11px] p-2 rounded-input bg-[#F5F5F5] hover:bg-slate-200/80 border border-slate-200 text-slate-700 hover:text-[#0052CC] transition font-sans"
                   >
                     ⚡ {q}
                   </button>
@@ -282,7 +282,7 @@ export const AiLogisticsAssistant: React.FC = () => {
         </CardContent>
 
         {/* Input Footer */}
-        <div className="p-3 border-t border-slate-800 bg-slate-950/80">
+        <div className="p-3 border-t border-slate-200 bg-white">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -296,13 +296,13 @@ export const AiLogisticsAssistant: React.FC = () => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={isLoading}
-              className="h-9 bg-slate-800/80 border-slate-700 text-xs text-white placeholder:text-slate-400 focus:border-blue-500"
+              className="h-9 bg-[#F5F5F5] border-slate-200 text-xs text-[#1a1a1a] placeholder:text-slate-400 focus:bg-white rounded-input"
             />
             <Button
               type="submit"
               size="icon"
               disabled={isLoading || !input.trim()}
-              className="h-9 w-9 shrink-0 bg-blue-600 hover:bg-blue-500 text-white"
+              className="h-9 w-9 shrink-0 bg-[#0052CC] hover:bg-[#003E99] text-white rounded-input shadow-brand"
             >
               <Send className="h-4 w-4" />
             </Button>

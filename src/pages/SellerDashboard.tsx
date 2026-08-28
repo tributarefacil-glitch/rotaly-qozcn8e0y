@@ -559,7 +559,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                         placeholder="Filtrar por código ou cliente..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="h-9 pl-8 text-xs bg-slate-50 dark:bg-slate-800"
+                        className="h-9 pl-8 text-xs bg-[#F5F5F5] border-slate-200 rounded-input focus:bg-white"
                       />
                     </div>
                   </div>
@@ -567,19 +567,19 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
                 {/* Orders Table */}
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                  <table className="w-full text-left text-xs border-collapse font-sans">
                     <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 uppercase tracking-wider">
-                        <th className="py-3 px-3 font-semibold">Código</th>
-                        <th className="py-3 px-3 font-semibold">Cliente & Destino</th>
-                        <th className="py-3 px-3 font-semibold">Entregador / Fila</th>
-                        <th className="py-3 px-3 font-semibold">Status / Motivo</th>
-                        <th className="py-3 px-3 font-semibold">Prioridade</th>
-                        <th className="py-3 px-3 font-semibold text-right">Valor Total</th>
-                        <th className="py-3 px-3 font-semibold text-right">Ações da Venda</th>
+                      <tr className="border-b border-slate-200 bg-[#F5F5F5] text-slate-600 font-heading uppercase tracking-wider">
+                        <th className="py-3 px-3 font-bold">Código</th>
+                        <th className="py-3 px-3 font-bold">Cliente & Destino</th>
+                        <th className="py-3 px-3 font-bold">Entregador / Fila</th>
+                        <th className="py-3 px-3 font-bold">Status / Motivo</th>
+                        <th className="py-3 px-3 font-bold">Prioridade</th>
+                        <th className="py-3 px-3 font-bold text-right">Valor Total</th>
+                        <th className="py-3 px-3 font-bold text-right">Ações da Venda</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    <tbody className="divide-y divide-slate-100">
                       {filteredOrders.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="py-8 text-center text-slate-400">
@@ -595,7 +595,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                             pending: (
                               <Badge
                                 variant="outline"
-                                className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300"
+                                className="bg-blue-50 text-[#0052CC] border-[#0052CC]/30 font-bold"
                               >
                                 Pendente
                               </Badge>
@@ -603,7 +603,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                             in_transit: (
                               <Badge
                                 variant="outline"
-                                className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 animate-pulse"
+                                className="bg-orange-50 text-[#FF6B35] border-[#FF6B35]/30 font-bold animate-pulse"
                               >
                                 🛵 Em Trânsito
                               </Badge>
@@ -611,7 +611,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                             delivered: (
                               <Badge
                                 variant="outline"
-                                className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                className="bg-emerald-50 text-[#00AA44] border-[#00AA44]/30 font-bold"
                               >
                                 ✓ Entregue
                               </Badge>
@@ -619,7 +619,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                             cancelled: (
                               <Badge
                                 variant="outline"
-                                className="bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400"
+                                className="bg-slate-100 text-slate-600 border-slate-200"
                               >
                                 Cancelado
                               </Badge>
@@ -627,39 +627,39 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                           }[order.status]
 
                           const priorityBadge = {
-                            urgent: <span className="text-rose-600 font-bold">🔴 Urgente</span>,
-                            high: <span className="text-amber-600 font-medium">🟡 Alta</span>,
-                            normal: <span className="text-slate-500">🟢 Normal</span>,
+                            urgent: <span className="text-[#E74C3C] font-bold">🔴 Urgente</span>,
+                            high: <span className="text-[#FF6B35] font-medium">🟡 Alta</span>,
+                            normal: <span className="text-[#00AA44]">🟢 Normal</span>,
                           }[order.priority || 'normal']
 
                           return (
                             <tr
                               key={order.id}
-                              className="hover:bg-slate-50/80 dark:hover:bg-slate-800/60 transition group cursor-pointer"
+                              className="hover:bg-blue-50/40 transition group cursor-pointer"
                               onClick={() => setSelectedMarkerId(`order-${order.id}`)}
                             >
-                              <td className="py-3 px-3 font-mono font-bold text-slate-900 dark:text-white">
+                              <td className="py-3 px-3 font-mono font-bold text-[#0052CC]">
                                 {order.tracking_code}
                               </td>
                               <td className="py-3 px-3">
-                                <p className="font-semibold text-slate-800 dark:text-slate-200">
+                                <p className="font-semibold text-[#1a1a1a]">
                                   {customer?.name || 'Cliente'}
                                 </p>
-                                <p className="text-[11px] text-slate-400 truncate max-w-xs">
+                                <p className="text-[11px] text-slate-500 truncate max-w-xs">
                                   {customer?.address || 'Endereço não cadastrado'}
                                 </p>
                               </td>
-                              <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
+                              <td className="py-3 px-3 text-slate-700">
                                 {courier ? (
                                   <div className="flex items-center gap-1.5">
-                                    <span className="h-2 w-2 rounded-full bg-purple-500 shrink-0"></span>
-                                    <span className="font-semibold text-slate-900 dark:text-white">
+                                    <span className="h-2 w-2 rounded-full bg-[#FF6B35] shrink-0"></span>
+                                    <span className="font-semibold text-[#1a1a1a]">
                                       {courier.name}
                                     </span>
                                     {order.sequence && (
                                       <Badge
                                         variant="outline"
-                                        className="text-[9px] px-1 py-0 bg-slate-100 dark:bg-slate-800"
+                                        className="text-[9px] px-1 py-0 bg-blue-50 text-[#0052CC] border-blue-200 font-bold"
                                       >
                                         #{order.sequence}
                                       </Badge>
@@ -674,7 +674,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                   {statusBadge}
                                   {order.completion_reason &&
                                     order.completion_reason !== 'delivered' && (
-                                      <span className="block text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-0.5">
+                                      <span className="block text-[10px] text-[#FF6B35] font-medium mt-0.5">
                                         {order.completion_reason === 'address_error'
                                           ? '⚠️ Erro de Endereço'
                                           : '⚠️ Cliente Ausente'}
@@ -683,7 +683,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                 </div>
                               </td>
                               <td className="py-3 px-3 text-xs">{priorityBadge}</td>
-                              <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">
+                              <td className="py-3 px-3 text-right font-bold text-[#1a1a1a]">
                                 R$ {Number(order.total_price || 0).toFixed(2)}
                               </td>
                               <td
@@ -698,16 +698,16 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                     onClick={(e) =>
                                       handleCopyTrackingLink(order.tracking_code, order.id, e)
                                     }
-                                    className={`h-7 px-2 text-[11px] gap-1 transition-all ${
+                                    className={`h-7 px-2 text-[11px] gap-1 transition-all rounded-input ${
                                       copiedOrderId === order.id
-                                        ? 'bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 font-bold'
-                                        : 'text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-900 dark:text-blue-400'
+                                        ? 'bg-emerald-50 border-emerald-300 text-[#00AA44] font-bold'
+                                        : 'text-[#0052CC] border-[#0052CC]/30 hover:bg-blue-50'
                                     }`}
                                     title="Copiar link de rastreamento para enviar ao cliente"
                                   >
                                     {copiedOrderId === order.id ? (
                                       <>
-                                        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                        <CheckCircle2 className="h-3 w-3 text-[#00AA44]" />
                                         <span>Copiado!</span>
                                       </>
                                     ) : (
@@ -723,7 +723,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                     to={`/track/${order.tracking_code}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 text-xs px-1.5 py-1"
+                                    className="inline-flex items-center gap-1 text-slate-500 hover:text-[#0052CC] text-xs px-1.5 py-1 rounded-input"
                                     title="Abrir página de rastreio em nova aba"
                                   >
                                     <span>Abrir</span>
@@ -738,10 +738,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                         setSelectedOrderForAddToRoute(order)
                                         setIsAddToRouteModalOpen(true)
                                       }}
-                                      className="h-7 px-2 text-[11px] text-purple-600 border-purple-200 hover:bg-purple-50 dark:border-purple-800 gap-1"
+                                      className="h-7 px-2 text-[11px] text-[#0052CC] border-[#0052CC]/30 hover:bg-blue-50 gap-1 rounded-input font-medium"
                                       title="Adicionar à rota de um entregador em andamento"
                                     >
-                                      <UserPlus className="h-3 w-3" />+ Rota
+                                      <UserPlus className="h-3 w-3 text-[#FF6B35]" />+ Rota
                                     </Button>
                                   )}
 
@@ -751,7 +751,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                       variant="outline"
                                       size="sm"
                                       onClick={(e) => handleRemoveFromRoute(order.id, e)}
-                                      className="h-7 px-2 text-[11px] text-amber-600 border-amber-200 hover:bg-amber-50 dark:border-amber-800 gap-1"
+                                      className="h-7 px-2 text-[11px] text-[#FF6B35] border-[#FF6B35]/30 hover:bg-orange-50 gap-1 rounded-input font-medium"
                                       title="Retirar da rota e voltar para pendente"
                                     >
                                       <Undo2 className="h-3 w-3" />
@@ -765,7 +765,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                       variant="outline"
                                       size="sm"
                                       onClick={(e) => handleCancelOrder(order.id, e)}
-                                      className="h-7 px-2 text-[11px] text-rose-600 border-rose-200 hover:bg-rose-50 dark:border-rose-800 gap-1"
+                                      className="h-7 px-2 text-[11px] text-[#E74C3C] border-[#E74C3C]/30 hover:bg-red-50 gap-1 rounded-input font-medium"
                                       title="Cancelar entrega"
                                     >
                                       <Ban className="h-3 w-3" />
@@ -812,13 +812,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
       {/* MODAL: Adicionar Entrega a Rota JÁ INICIADA do Entregador */}
       <Dialog open={isAddToRouteModalOpen} onOpenChange={setIsAddToRouteModalOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md bg-white text-[#1a1a1a] border-slate-200 rounded-modal">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-white">
-              <UserPlus className="h-5 w-5 text-indigo-600" />
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-[#1a1a1a] font-heading">
+              <UserPlus className="h-5 w-5 text-[#0052CC]" />
               Adicionar Entrega à Rota em Andamento
             </DialogTitle>
-            <DialogDescription className="text-xs">
+            <DialogDescription className="text-xs text-slate-500 font-sans">
               A nova entrega entrará automaticamente no <strong>FIM da fila</strong> do entregador
               selecionado e ele receberá um alerta sonoro e notificação push instantânea.
             </DialogDescription>
@@ -826,11 +826,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
           {selectedOrderForAddToRoute && (
             <div className="space-y-3.5 py-2">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border text-xs space-y-1">
-                <p className="font-bold text-slate-900 dark:text-white">
+              <div className="p-3 rounded-card bg-[#F5F5F5] border border-slate-200 text-xs space-y-1">
+                <p className="font-bold text-[#1a1a1a]">
                   Pedido: {selectedOrderForAddToRoute.tracking_code}
                 </p>
-                <p className="text-slate-600 dark:text-slate-300">
+                <p className="text-slate-600">
                   Cliente:{' '}
                   {customers.find((c) => c.id === selectedOrderForAddToRoute.customer_id)?.name ||
                     'Cliente'}
@@ -876,7 +876,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               type="button"
               disabled={isAddingToRoute || !targetCourierId}
               onClick={handleConfirmAddToActiveRoute}
-              className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs"
+              className="bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs rounded-input shadow-brand"
             >
               {isAddingToRoute ? 'Enviando...' : 'Despachar para o Fim da Fila'}
             </Button>
