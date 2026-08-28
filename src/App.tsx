@@ -73,7 +73,23 @@ const App = () => (
             path="/seller"
             element={
               <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                <SellerDashboard />
+                <SellerDashboard defaultTab="overview" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/control-tower"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                <SellerDashboard defaultTab="control-tower" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reports"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                <SellerDashboard defaultTab="reports" />
               </ProtectedRoute>
             }
           />
@@ -81,7 +97,7 @@ const App = () => (
             path="/orders"
             element={
               <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                <SellerDashboard />
+                <SellerDashboard defaultTab="overview" />
               </ProtectedRoute>
             }
           />
@@ -89,7 +105,7 @@ const App = () => (
             path="/routes"
             element={
               <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                <SellerDashboard />
+                <SellerDashboard defaultTab="control-tower" />
               </ProtectedRoute>
             }
           />
@@ -97,7 +113,7 @@ const App = () => (
             path="/customers"
             element={
               <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                <SellerDashboard />
+                <SellerDashboard defaultTab="overview" />
               </ProtectedRoute>
             }
           />

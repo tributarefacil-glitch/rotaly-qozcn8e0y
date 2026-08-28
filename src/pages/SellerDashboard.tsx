@@ -22,6 +22,8 @@ import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import { CreateOrderModal } from '@/components/CreateOrderModal'
 import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
+import { ControlTower } from '@/components/ControlTower'
+import { ReportsSection } from '@/components/ReportsSection'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
 import type {
@@ -67,7 +69,11 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-export default function SellerDashboard() {
+interface SellerDashboardProps {
+  defaultTab?: 'overview' | 'control-tower' | 'reports'
+}
+
+export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashboardProps) {
   const { user } = useAuth()
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
@@ -79,6 +85,15 @@ export default function SellerDashboard() {
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [mainViewTab, setMainViewTab] = useState<'overview' | 'control-tower' | 'reports'>(
+    defaultTab,
+  )
+
+  useEffect(() => {
+    if (defaultTab) {
+      setMainViewTab(defaultTab)
+    }
+  }, [defaultTab])
 
   // Modal: Adicionar Entrega à Rota Já Iniciada de um Entregador
   const [isAddToRouteModalOpen, setIsAddToRouteModalOpen] = useState(false)
@@ -328,7 +343,8 @@ export default function SellerDashboard() {
                 Painel do Vendedor & Frotas
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-                Acompanhamento em tempo real de pedidos, mapa interativo e inserção ágil de vendas.
+                Acompanhamento em tempo real de pedidos, mapa interativo, Torre de Controle e
+                Relatórios.
               </p>
             </div>
 
@@ -359,359 +375,415 @@ export default function SellerDashboard() {
             </div>
           </div>
 
-          {/* KPI Summary Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Em Trânsito
-                  </p>
-                  <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
-                    {inTransitCount}
-                  </p>
-                </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:bg-amber-950/40">
-                  <Truck className="h-5 w-5" />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Pendentes
-                  </p>
-                  <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
-                    {pendingCount}
-                  </p>
-                </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:bg-blue-950/40">
-                  <Clock className="h-5 w-5" />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Concluídas
-                  </p>
-                  <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-                    {deliveredCount}
-                  </p>
-                </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:bg-emerald-950/40">
-                  <CheckCircle className="h-5 w-5" />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Volume Total
-                  </p>
-                  <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
-                    R$ {totalRevenue.toFixed(2)}
-                  </p>
-                </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:bg-purple-950/40">
-                  <TrendingUp className="h-5 w-5" />
-                </div>
-              </CardContent>
-            </Card>
+          {/* Navigation Tabs between Overview, Control Tower and Reports */}
+          <div className="flex border-b border-slate-200 dark:border-slate-800 gap-2">
+            <button
+              onClick={() => setMainViewTab('overview')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
+                mainViewTab === 'overview'
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              }`}
+            >
+              Painel Geral & Pedidos
+            </button>
+            <button
+              onClick={() => setMainViewTab('control-tower')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
+                mainViewTab === 'control-tower'
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              }`}
+            >
+              Torre de Controle
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping inline-block ml-0.5" />
+            </button>
+            <button
+              onClick={() => setMainViewTab('reports')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
+                mainViewTab === 'reports'
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              }`}
+            >
+              Relatórios Operacionais
+            </button>
           </div>
 
-          {/* Full-width Interactive Live Map */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-blue-600" />
-                <h2 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                  Mapa da Frota & Destinos ao Vivo
-                </h2>
-              </div>
-              <span className="text-xs text-slate-500">
-                {couriers.length} entregadores monitorados • {orders.length} pedidos
-              </span>
-            </div>
-
-            <LiveMap
-              markers={mapMarkers}
-              selectedMarkerId={selectedMarkerId}
-              onSelectMarker={(m) => {
-                setSelectedMarkerId(m.id)
-                if (m.tracking_code) {
-                  setSearchQuery(m.tracking_code)
-                }
-              }}
-              height="440px"
+          {/* TAB 1: TORRE DE CONTROLE (MÓDULO 1) */}
+          {mainViewTab === 'control-tower' && (
+            <ControlTower
+              orders={orders}
+              couriers={couriers}
+              onRefresh={loadData}
+              userRole="seller"
             />
-          </div>
+          )}
 
-          {/* Orders Management Table with Filters */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 space-y-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <Package className="h-5 w-5 text-blue-600" />
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  Gerenciador de Pedidos ({filteredOrders.length})
-                </h3>
+          {/* TAB 2: RELATÓRIOS (MÓDULO 4) */}
+          {mainViewTab === 'reports' && <ReportsSection orders={orders} couriers={couriers} />}
+
+          {/* TAB 3: VISÃO GERAL & GESTÃO DE PEDIDOS (PRESERVANDO FLUXO ORIGINAL) */}
+          {mainViewTab === 'overview' && (
+            <div className="space-y-6">
+              {/* KPI Summary Cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardContent className="p-4 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                        Em Trânsito
+                      </p>
+                      <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
+                        {inTransitCount}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:bg-amber-950/40">
+                      <Truck className="h-5 w-5" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardContent className="p-4 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                        Pendentes
+                      </p>
+                      <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
+                        {pendingCount}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:bg-blue-950/40">
+                      <Clock className="h-5 w-5" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardContent className="p-4 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                        Concluídas
+                      </p>
+                      <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+                        {deliveredCount}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:bg-emerald-950/40">
+                      <CheckCircle className="h-5 w-5" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardContent className="p-4 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                        Volume Total
+                      </p>
+                      <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+                        R$ {totalRevenue.toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:bg-purple-950/40">
+                      <TrendingUp className="h-5 w-5" />
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
 
-              {/* Status Filters & Search */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                <Tabs
-                  value={selectedStatus}
-                  onValueChange={setSelectedStatus}
-                  className="w-full sm:w-auto"
-                >
-                  <TabsList className="grid grid-cols-4 h-9">
-                    <TabsTrigger value="all" className="text-xs">
-                      Todos ({orders.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="pending" className="text-xs">
-                      Pendentes ({pendingCount})
-                    </TabsTrigger>
-                    <TabsTrigger value="in_transit" className="text-xs">
-                      Em Trânsito ({inTransitCount})
-                    </TabsTrigger>
-                    <TabsTrigger value="delivered" className="text-xs">
-                      Entregues ({deliveredCount})
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-
-                <div className="relative min-w-[200px]">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                  <Input
-                    placeholder="Filtrar por código ou cliente..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-9 pl-8 text-xs bg-slate-50 dark:bg-slate-800"
-                  />
+              {/* Full-width Interactive Live Map */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-blue-600" />
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      Mapa da Frota & Destinos ao Vivo
+                    </h2>
+                  </div>
+                  <span className="text-xs text-slate-500">
+                    {couriers.length} entregadores monitorados • {orders.length} pedidos
+                  </span>
                 </div>
+
+                <LiveMap
+                  markers={mapMarkers}
+                  selectedMarkerId={selectedMarkerId}
+                  onSelectMarker={(m) => {
+                    setSelectedMarkerId(m.id)
+                    if (m.tracking_code) {
+                      setSearchQuery(m.tracking_code)
+                    }
+                  }}
+                  height="440px"
+                />
               </div>
-            </div>
 
-            {/* Orders Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 uppercase tracking-wider">
-                    <th className="py-3 px-3 font-semibold">Código</th>
-                    <th className="py-3 px-3 font-semibold">Cliente & Destino</th>
-                    <th className="py-3 px-3 font-semibold">Entregador / Fila</th>
-                    <th className="py-3 px-3 font-semibold">Status / Motivo</th>
-                    <th className="py-3 px-3 font-semibold">Prioridade</th>
-                    <th className="py-3 px-3 font-semibold text-right">Valor Total</th>
-                    <th className="py-3 px-3 font-semibold text-right">Ações da Venda</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {filteredOrders.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-400">
-                        Nenhum pedido encontrado para o filtro aplicado.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredOrders.map((order) => {
-                      const customer = customers.find((c) => c.id === order.customer_id)
-                      const courier = couriers.find((c) => c.id === order.courier_id)
+              {/* Orders Management Table with Filters */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <Package className="h-5 w-5 text-blue-600" />
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                      Gerenciador de Pedidos ({filteredOrders.length})
+                    </h3>
+                  </div>
 
-                      const statusBadge = {
-                        pending: (
-                          <Badge
-                            variant="outline"
-                            className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300"
-                          >
-                            Pendente
-                          </Badge>
-                        ),
-                        in_transit: (
-                          <Badge
-                            variant="outline"
-                            className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 animate-pulse"
-                          >
-                            🛵 Em Trânsito
-                          </Badge>
-                        ),
-                        delivered: (
-                          <Badge
-                            variant="outline"
-                            className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300"
-                          >
-                            ✓ Entregue
-                          </Badge>
-                        ),
-                        cancelled: (
-                          <Badge
-                            variant="outline"
-                            className="bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400"
-                          >
-                            Cancelado
-                          </Badge>
-                        ),
-                      }[order.status]
+                  {/* Status Filters & Search */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <Tabs
+                      value={selectedStatus}
+                      onValueChange={setSelectedStatus}
+                      className="w-full sm:w-auto"
+                    >
+                      <TabsList className="grid grid-cols-4 h-9">
+                        <TabsTrigger value="all" className="text-xs">
+                          Todos ({orders.length})
+                        </TabsTrigger>
+                        <TabsTrigger value="pending" className="text-xs">
+                          Pendentes ({pendingCount})
+                        </TabsTrigger>
+                        <TabsTrigger value="in_transit" className="text-xs">
+                          Em Trânsito ({inTransitCount})
+                        </TabsTrigger>
+                        <TabsTrigger value="delivered" className="text-xs">
+                          Entregues ({deliveredCount})
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
 
-                      const priorityBadge = {
-                        urgent: <span className="text-rose-600 font-bold">🔴 Urgente</span>,
-                        high: <span className="text-amber-600 font-medium">🟡 Alta</span>,
-                        normal: <span className="text-slate-500">🟢 Normal</span>,
-                      }[order.priority || 'normal']
+                    <div className="relative min-w-[200px]">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                      <Input
+                        placeholder="Filtrar por código ou cliente..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="h-9 pl-8 text-xs bg-slate-50 dark:bg-slate-800"
+                      />
+                    </div>
+                  </div>
+                </div>
 
-                      return (
-                        <tr
-                          key={order.id}
-                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/60 transition group cursor-pointer"
-                          onClick={() => setSelectedMarkerId(`order-${order.id}`)}
-                        >
-                          <td className="py-3 px-3 font-mono font-bold text-slate-900 dark:text-white">
-                            {order.tracking_code}
-                          </td>
-                          <td className="py-3 px-3">
-                            <p className="font-semibold text-slate-800 dark:text-slate-200">
-                              {customer?.name || 'Cliente'}
-                            </p>
-                            <p className="text-[11px] text-slate-400 truncate max-w-xs">
-                              {customer?.address || 'Endereço não cadastrado'}
-                            </p>
-                          </td>
-                          <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
-                            {courier ? (
-                              <div className="flex items-center gap-1.5">
-                                <span className="h-2 w-2 rounded-full bg-purple-500 shrink-0"></span>
-                                <span className="font-semibold text-slate-900 dark:text-white">
-                                  {courier.name}
-                                </span>
-                                {order.sequence && (
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[9px] px-1 py-0 bg-slate-100 dark:bg-slate-800"
-                                  >
-                                    #{order.sequence}
-                                  </Badge>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="text-slate-400 italic">Não atribuído</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-3">
-                            <div>
-                              {statusBadge}
-                              {order.completion_reason &&
-                                order.completion_reason !== 'delivered' && (
-                                  <span className="block text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-0.5">
-                                    {order.completion_reason === 'address_error'
-                                      ? '⚠️ Erro de Endereço'
-                                      : '⚠️ Cliente Ausente'}
-                                  </span>
-                                )}
-                            </div>
-                          </td>
-                          <td className="py-3 px-3 text-xs">{priorityBadge}</td>
-                          <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">
-                            R$ {Number(order.total_price || 0).toFixed(2)}
-                          </td>
-                          <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                              {/* Copiar Link de Rastreio Rápido para o Vendedor */}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) =>
-                                  handleCopyTrackingLink(order.tracking_code, order.id, e)
-                                }
-                                className={`h-7 px-2 text-[11px] gap-1 transition-all ${
-                                  copiedOrderId === order.id
-                                    ? 'bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 font-bold'
-                                    : 'text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-900 dark:text-blue-400'
-                                }`}
-                                title="Copiar link de rastreamento para enviar ao cliente"
-                              >
-                                {copiedOrderId === order.id ? (
-                                  <>
-                                    <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
-                                    <span>Copiado!</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <ExternalLink className="h-3 w-3" />
-                                    <span>Copiar Link</span>
-                                  </>
-                                )}
-                              </Button>
-
-                              {/* Link Rastreio Público */}
-                              <Link
-                                to={`/track/${order.tracking_code}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 text-xs px-1.5 py-1"
-                                title="Abrir página de rastreio em nova aba"
-                              >
-                                <span>Abrir</span>
-                              </Link>
-
-                              {/* Adicionar a Rota Já Iniciada */}
-                              {order.status === 'pending' && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    setSelectedOrderForAddToRoute(order)
-                                    setIsAddToRouteModalOpen(true)
-                                  }}
-                                  className="h-7 px-2 text-[11px] text-purple-600 border-purple-200 hover:bg-purple-50 dark:border-purple-800 gap-1"
-                                  title="Adicionar à rota de um entregador em andamento"
-                                >
-                                  <UserPlus className="h-3 w-3" />+ Rota
-                                </Button>
-                              )}
-
-                              {/* Retirar da Rota */}
-                              {order.status === 'in_transit' && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={(e) => handleRemoveFromRoute(order.id, e)}
-                                  className="h-7 px-2 text-[11px] text-amber-600 border-amber-200 hover:bg-amber-50 dark:border-amber-800 gap-1"
-                                  title="Retirar da rota e voltar para pendente"
-                                >
-                                  <Undo2 className="h-3 w-3" />
-                                  Retirar
-                                </Button>
-                              )}
-
-                              {/* Cancelar Entrega */}
-                              {order.status !== 'cancelled' && order.status !== 'delivered' && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={(e) => handleCancelOrder(order.id, e)}
-                                  className="h-7 px-2 text-[11px] text-rose-600 border-rose-200 hover:bg-rose-50 dark:border-rose-800 gap-1"
-                                  title="Cancelar entrega"
-                                >
-                                  <Ban className="h-3 w-3" />
-                                  Cancelar
-                                </Button>
-                              )}
-                            </div>
+                {/* Orders Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 uppercase tracking-wider">
+                        <th className="py-3 px-3 font-semibold">Código</th>
+                        <th className="py-3 px-3 font-semibold">Cliente & Destino</th>
+                        <th className="py-3 px-3 font-semibold">Entregador / Fila</th>
+                        <th className="py-3 px-3 font-semibold">Status / Motivo</th>
+                        <th className="py-3 px-3 font-semibold">Prioridade</th>
+                        <th className="py-3 px-3 font-semibold text-right">Valor Total</th>
+                        <th className="py-3 px-3 font-semibold text-right">Ações da Venda</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {filteredOrders.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-slate-400">
+                            Nenhum pedido encontrado para o filtro aplicado.
                           </td>
                         </tr>
-                      )
-                    })
-                  )}
-                </tbody>
-              </table>
+                      ) : (
+                        filteredOrders.map((order) => {
+                          const customer = customers.find((c) => c.id === order.customer_id)
+                          const courier = couriers.find((c) => c.id === order.courier_id)
+
+                          const statusBadge = {
+                            pending: (
+                              <Badge
+                                variant="outline"
+                                className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300"
+                              >
+                                Pendente
+                              </Badge>
+                            ),
+                            in_transit: (
+                              <Badge
+                                variant="outline"
+                                className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 animate-pulse"
+                              >
+                                🛵 Em Trânsito
+                              </Badge>
+                            ),
+                            delivered: (
+                              <Badge
+                                variant="outline"
+                                className="bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300"
+                              >
+                                ✓ Entregue
+                              </Badge>
+                            ),
+                            cancelled: (
+                              <Badge
+                                variant="outline"
+                                className="bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400"
+                              >
+                                Cancelado
+                              </Badge>
+                            ),
+                          }[order.status]
+
+                          const priorityBadge = {
+                            urgent: <span className="text-rose-600 font-bold">🔴 Urgente</span>,
+                            high: <span className="text-amber-600 font-medium">🟡 Alta</span>,
+                            normal: <span className="text-slate-500">🟢 Normal</span>,
+                          }[order.priority || 'normal']
+
+                          return (
+                            <tr
+                              key={order.id}
+                              className="hover:bg-slate-50/80 dark:hover:bg-slate-800/60 transition group cursor-pointer"
+                              onClick={() => setSelectedMarkerId(`order-${order.id}`)}
+                            >
+                              <td className="py-3 px-3 font-mono font-bold text-slate-900 dark:text-white">
+                                {order.tracking_code}
+                              </td>
+                              <td className="py-3 px-3">
+                                <p className="font-semibold text-slate-800 dark:text-slate-200">
+                                  {customer?.name || 'Cliente'}
+                                </p>
+                                <p className="text-[11px] text-slate-400 truncate max-w-xs">
+                                  {customer?.address || 'Endereço não cadastrado'}
+                                </p>
+                              </td>
+                              <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
+                                {courier ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="h-2 w-2 rounded-full bg-purple-500 shrink-0"></span>
+                                    <span className="font-semibold text-slate-900 dark:text-white">
+                                      {courier.name}
+                                    </span>
+                                    {order.sequence && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[9px] px-1 py-0 bg-slate-100 dark:bg-slate-800"
+                                      >
+                                        #{order.sequence}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 italic">Não atribuído</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3">
+                                <div>
+                                  {statusBadge}
+                                  {order.completion_reason &&
+                                    order.completion_reason !== 'delivered' && (
+                                      <span className="block text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-0.5">
+                                        {order.completion_reason === 'address_error'
+                                          ? '⚠️ Erro de Endereço'
+                                          : '⚠️ Cliente Ausente'}
+                                      </span>
+                                    )}
+                                </div>
+                              </td>
+                              <td className="py-3 px-3 text-xs">{priorityBadge}</td>
+                              <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">
+                                R$ {Number(order.total_price || 0).toFixed(2)}
+                              </td>
+                              <td
+                                className="py-3 px-3 text-right"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                  {/* Copiar Link de Rastreio Rápido para o Vendedor */}
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) =>
+                                      handleCopyTrackingLink(order.tracking_code, order.id, e)
+                                    }
+                                    className={`h-7 px-2 text-[11px] gap-1 transition-all ${
+                                      copiedOrderId === order.id
+                                        ? 'bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 font-bold'
+                                        : 'text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-900 dark:text-blue-400'
+                                    }`}
+                                    title="Copiar link de rastreamento para enviar ao cliente"
+                                  >
+                                    {copiedOrderId === order.id ? (
+                                      <>
+                                        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                        <span>Copiado!</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ExternalLink className="h-3 w-3" />
+                                        <span>Copiar Link</span>
+                                      </>
+                                    )}
+                                  </Button>
+
+                                  {/* Link Rastreio Público */}
+                                  <Link
+                                    to={`/track/${order.tracking_code}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 text-xs px-1.5 py-1"
+                                    title="Abrir página de rastreio em nova aba"
+                                  >
+                                    <span>Abrir</span>
+                                  </Link>
+
+                                  {/* Adicionar a Rota Já Iniciada */}
+                                  {order.status === 'pending' && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                        setSelectedOrderForAddToRoute(order)
+                                        setIsAddToRouteModalOpen(true)
+                                      }}
+                                      className="h-7 px-2 text-[11px] text-purple-600 border-purple-200 hover:bg-purple-50 dark:border-purple-800 gap-1"
+                                      title="Adicionar à rota de um entregador em andamento"
+                                    >
+                                      <UserPlus className="h-3 w-3" />+ Rota
+                                    </Button>
+                                  )}
+
+                                  {/* Retirar da Rota */}
+                                  {order.status === 'in_transit' && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={(e) => handleRemoveFromRoute(order.id, e)}
+                                      className="h-7 px-2 text-[11px] text-amber-600 border-amber-200 hover:bg-amber-50 dark:border-amber-800 gap-1"
+                                      title="Retirar da rota e voltar para pendente"
+                                    >
+                                      <Undo2 className="h-3 w-3" />
+                                      Retirar
+                                    </Button>
+                                  )}
+
+                                  {/* Cancelar Entrega */}
+                                  {order.status !== 'cancelled' && order.status !== 'delivered' && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={(e) => handleCancelOrder(order.id, e)}
+                                      className="h-7 px-2 text-[11px] text-rose-600 border-rose-200 hover:bg-rose-50 dark:border-rose-800 gap-1"
+                                      title="Cancelar entrega"
+                                    >
+                                      <Ban className="h-3 w-3" />
+                                      Cancelar
+                                    </Button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </main>
       </div>
 

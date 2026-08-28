@@ -2,7 +2,15 @@ import type { RecordModel } from 'pocketbase'
 
 export type UserRole = 'admin' | 'seller' | 'courier'
 export type UserStatus = 'active' | 'inactive' | 'pending' | 'idle' | 'busy'
-export type VehicleType = 'moto' | 'carro' | 'van' | 'caminhao'
+export type VehicleType =
+  | 'moto'
+  | 'carro'
+  | 'van'
+  | 'caminhao'
+  | 'motorcycle'
+  | 'car'
+  | 'truck'
+  | 'bicycle'
 
 export interface UserRecord extends RecordModel {
   email: string
@@ -52,6 +60,20 @@ export interface OrderItem {
   price: number
 }
 
+export type AssignmentType = 'manual' | 'automatic'
+export type RouteSuggestionStatus = 'accepted' | 'rejected' | 'edited' | 'none'
+
+export interface RouteSuggestionDetails {
+  courier_id: string
+  courier_name: string
+  vehicle_type: VehicleType
+  order_in_route: number
+  estimated_time: string
+  km_saved: number
+  distance_km: number
+  reason?: string
+}
+
 export interface OrderRecord extends RecordModel {
   seller_id?: string
   customer_id: string
@@ -70,7 +92,11 @@ export interface OrderRecord extends RecordModel {
   actual_arrival?: string
   signature?: string
   proof_photo?: string
+  receiver_name?: string
   notes?: string
+  assignment_type?: AssignmentType
+  route_suggestion_status?: RouteSuggestionStatus
+  route_suggestion_details?: RouteSuggestionDetails | string
   // expanded relations
   expand?: {
     customer_id?: CustomerRecord

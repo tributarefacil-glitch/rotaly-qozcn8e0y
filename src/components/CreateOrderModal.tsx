@@ -39,7 +39,13 @@ import {
   Edit3,
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
-import type { CustomerRecord, UserRecord, OrderPriority, OrderItem } from '@/types/delivery'
+import type {
+  CustomerRecord,
+  UserRecord,
+  OrderPriority,
+  OrderItem,
+  RouteSuggestionDetails,
+} from '@/types/delivery'
 import { useAuth } from '@/contexts/AuthContext'
 import { toast } from 'sonner'
 import {
@@ -106,6 +112,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [selectedCoords, setSelectedCoords] = useState<{ lat: number; lng: number }>(DEFAULT_CENTER)
   const [hasLocationPinned, setHasLocationPinned] = useState(false)
 
+  // Módulo 3: Sugestão Automática de Rota ao Registrar Nova Entrega
+  const [routeSuggestion, setRouteSuggestion] = useState<RouteSuggestionDetails | null>(null)
+  const [suggestionState, setSuggestionState] = useState<
+    'pending' | 'accepted' | 'rejected' | 'edited'
+  >('pending')
+  const [isCalculatingSuggestion, setIsCalculatingSuggestion] = useState(false)
+
   // Link parsing input state
   const [locationLinkInput, setLocationLinkInput] = useState('')
   const [isParsingLink, setIsParsingLink] = useState(false)
@@ -114,6 +127,33 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [isMapsLoaded, setIsMapsLoaded] = useState(false)
   const [mapsAuthWarning, setMapsAuthWarning] = useState<string | null>(null)
   const [isLoadingViaCep, setIsLoadingViaCep] = useState(false)
+
+  // Módulo 3: Função de cálculo inteligente de rota e melhor entregador
+  const calculateSmartRouteSuggestion = useCallback(
+    async (targetLat: number, targetLng: number) => {
+      setIsCalculatingSuggestion(true)
+      try {
+        const suggestion = await deliveryService.suggestBestCourierForOrder({
+          customerLat: targetLat,
+          customerLng: targetLng,
+          priority,
+        })
+        if (suggestion) {
+          setRouteSuggestion(suggestion)
+          setSuggestionState('pending')
+          // Auto-select the courier if unassigned
+          if (courierId === 'unassigned') {
+            setCourierId(suggestion.courier_id)
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao sugerir rota inteligente:', err)
+      } finally {
+        setIsCalculatingSuggestion(false)
+      }
+    },
+    [courierId, priority],
+  )
 
   // Map & Autocomplete refs
   const autocompleteInputRef = useRef<HTMLInputElement>(null)
@@ -443,6 +483,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     (lat: number, lng: number, zoomLevel = 16, shouldReverseGeocode = false) => {
       setSelectedCoords({ lat, lng })
       setHasLocationPinned(true)
+      calculateSmartRouteSuggestion(lat, lng)
 
       const google = getGoogle()
       if (mapInstanceRef.current && google?.maps) {
@@ -975,6 +1016,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
       const now = new Date()
       const assignedCourier = courierId !== 'unassigned' ? courierId : undefined
+      const assignmentType = suggestionState === 'accepted' ? 'automatic' : 'manual'
+      const suggestionStatus =
+        suggestionState === 'accepted' ||
+        suggestionState === 'rejected' ||
+        suggestionState === 'edited'
+          ? suggestionState
+          : 'none'
 
       await deliveryService.createOrder({
         tracking_code: trackingCode,
@@ -986,6 +1034,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         items: validItems,
         total_price: totalPrice,
         notes,
+        assignment_type: assignmentType,
+        route_suggestion_status: suggestionStatus,
+        route_suggestion_details: routeSuggestion || undefined,
+        distance_km: routeSuggestion?.distance_km || undefined,
         estimated_arrival: assignedCourier
           ? new Date(now.getTime() + 45 * 60 * 1000).toISOString()
           : undefined,
@@ -1502,13 +1554,138 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             )}
           </div>
 
+          {/* MÓDULO 3: SUGESTÃO AUTOMÁTICA DE ROTA AO REGISTRAR NOVA ENTREGA */}
+          {routeSuggestion && (
+            <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-3.5 dark:border-indigo-900/60 dark:bg-indigo-950/40 text-xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-indigo-950 dark:text-indigo-200 uppercase tracking-wide flex items-center gap-1.5">
+                  <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                  SUGESTÃO DO SISTEMA:
+                </span>
+                {suggestionState === 'accepted' ? (
+                  <Badge className="bg-emerald-600 text-white text-[10px]">✓ Sugestão Aceita</Badge>
+                ) : suggestionState === 'rejected' ? (
+                  <Badge variant="destructive" className="text-[10px]">
+                    Rejeitada (Manual)
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className="text-indigo-700 border-indigo-300 text-[10px]"
+                  >
+                    Otimização Ativa
+                  </Badge>
+                )}
+              </div>
+
+              {/* Texto exato solicitado pelo Módulo 3 */}
+              <div className="bg-white dark:bg-slate-900/90 rounded-lg p-3 border border-indigo-100 dark:border-indigo-900 font-mono text-slate-800 dark:text-slate-200 space-y-1">
+                <p>
+                  → Enviar para:{' '}
+                  <b className="text-indigo-600 dark:text-indigo-400">
+                    {routeSuggestion.courier_name}
+                  </b>{' '}
+                  (
+                  {routeSuggestion.vehicle_type === 'motorcycle'
+                    ? 'Moto'
+                    : routeSuggestion.vehicle_type === 'car'
+                      ? 'Carro'
+                      : routeSuggestion.vehicle_type === 'van'
+                        ? 'Van'
+                        : 'Caminhão'}
+                  )
+                </p>
+                <p>
+                  → Ordem na rota: <b>{routeSuggestion.order_in_route}ª entrega</b>
+                </p>
+                <p>
+                  → Tempo estimado: <b>{routeSuggestion.estimated_time}</b>
+                </p>
+                <p>
+                  → Economia:{' '}
+                  <b className="text-emerald-600 dark:text-emerald-400">
+                    {routeSuggestion.km_saved}km
+                  </b>{' '}
+                  vs rota manual
+                </p>
+              </div>
+
+              {/* Botões de Ação Exatos: [ACEITAR] [REJEITAR] [EDITAR] */}
+              <div className="flex items-center gap-2 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  className={`h-7 px-3 text-xs font-bold ${
+                    suggestionState === 'accepted'
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white ring-2 ring-emerald-400'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                  }`}
+                  onClick={() => {
+                    setCourierId(routeSuggestion.courier_id)
+                    setSuggestionState('accepted')
+                    toast.success(
+                      `Sugestão aceita! Pedido atribuído a ${routeSuggestion.courier_name} como ${routeSuggestion.order_in_route}ª entrega.`,
+                    )
+                  }}
+                >
+                  ACEITAR
+                </Button>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={`h-7 px-3 text-xs ${
+                    suggestionState === 'rejected'
+                      ? 'border-rose-400 text-rose-600 bg-rose-50'
+                      : 'border-slate-300 hover:bg-slate-100 dark:border-slate-700'
+                  }`}
+                  onClick={() => {
+                    setSuggestionState('rejected')
+                    toast.info('Sugestão rejeitada. Você pode selecionar o entregador manualmente.')
+                  }}
+                >
+                  REJEITAR
+                </Button>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2.5 text-xs text-indigo-700 hover:bg-indigo-100 dark:text-indigo-300"
+                  onClick={() => {
+                    setSuggestionState('edited')
+                    toast.info('Modo de edição manual liberado no seletor abaixo.')
+                  }}
+                >
+                  EDITAR
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Logistics: Courier Assignment & Priority */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <Label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                Atribuir Entregador
-              </Label>
-              <Select value={courierId} onValueChange={setCourierId}>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Atribuir Entregador
+                </Label>
+                {isCalculatingSuggestion && (
+                  <span className="text-[10px] text-indigo-600 flex items-center gap-1">
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" /> analisando rotas...
+                  </span>
+                )}
+              </div>
+              <Select
+                value={courierId}
+                onValueChange={(val) => {
+                  setCourierId(val)
+                  if (routeSuggestion && val !== routeSuggestion.courier_id) {
+                    setSuggestionState('edited')
+                  }
+                }}
+              >
                 <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs">
                   <SelectValue placeholder="Selecione um entregador" />
                 </SelectTrigger>
@@ -1529,7 +1706,15 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               <Label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
                 Prioridade de Entrega
               </Label>
-              <Select value={priority} onValueChange={(val) => setPriority(val as OrderPriority)}>
+              <Select
+                value={priority}
+                onValueChange={(val) => {
+                  setPriority(val as OrderPriority)
+                  if (hasLocationPinned) {
+                    calculateSmartRouteSuggestion(selectedCoords.lat, selectedCoords.lng)
+                  }
+                }}
+              >
                 <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs">
                   <SelectValue />
                 </SelectTrigger>

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-28T02:05:42.530Z",
+  "generatedAt": "2026-08-28T17:55:18.097Z",
   "collections": [
     {
       "name": "users",
@@ -355,6 +355,32 @@
         {
           "name": "fuel_cost",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "assignment_type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["manual", "automatic"]
+        },
+        {
+          "name": "route_suggestion_status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["accepted", "rejected", "edited", "none"]
+        },
+        {
+          "name": "route_suggestion_details",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "receiver_name",
+          "type": "text",
           "required": false,
           "system": false
         }

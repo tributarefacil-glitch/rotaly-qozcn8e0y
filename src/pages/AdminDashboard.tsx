@@ -50,6 +50,8 @@ import {
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
+import { ControlTower } from '@/components/ControlTower'
+import { ReportsSection } from '@/components/ReportsSection'
 import { useAuth } from '@/contexts/AuthContext'
 import { deliveryService } from '@/services/deliveryService'
 import type {
@@ -91,7 +93,15 @@ import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
 
 interface AdminDashboardProps {
-  defaultTab?: 'overview' | 'reports' | 'fuel' | 'deviations' | 'settings' | 'couriers' | 'sellers'
+  defaultTab?:
+    | 'overview'
+    | 'control-tower'
+    | 'reports'
+    | 'fuel'
+    | 'deviations'
+    | 'settings'
+    | 'couriers'
+    | 'sellers'
 }
 
 export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboardProps) {
@@ -103,7 +113,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [isLoading, setIsLoading] = useState(true)
   const [selectedCourierId, setSelectedCourierId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'reports' | 'fuel' | 'deviations' | 'settings' | 'couriers' | 'sellers'
+    | 'overview'
+    | 'control-tower'
+    | 'reports'
+    | 'fuel'
+    | 'deviations'
+    | 'settings'
+    | 'couriers'
+    | 'sellers'
   >(defaultTab)
 
   useEffect(() => {
@@ -608,25 +625,32 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 Visão Geral
               </TabsTrigger>
               <TabsTrigger
+                value="control-tower"
+                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-emerald-800 dark:text-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/40"
+              >
+                <Compass className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
+                Torre de Controle
+              </TabsTrigger>
+              <TabsTrigger
+                value="reports"
+                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-blue-700 dark:text-blue-400"
+              >
+                <PieChart className="h-3.5 w-3.5 mr-1.5 text-blue-500" />
+                Relatórios Operacionais
+              </TabsTrigger>
+              <TabsTrigger
                 value="fuel"
                 className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-emerald-700 dark:text-emerald-400"
               >
                 <Wallet className="h-3.5 w-3.5 mr-1.5 text-emerald-500" />
-                Controle de Combustível & Conta Corrente
+                Controle de Combustível
               </TabsTrigger>
               <TabsTrigger
                 value="deviations"
                 className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-amber-700 dark:text-amber-400"
               >
                 <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-amber-500" />
-                Relatório de Desvios & Paradas ({offRouteEvents.length})
-              </TabsTrigger>
-              <TabsTrigger
-                value="reports"
-                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800"
-              >
-                <PieChart className="h-3.5 w-3.5 mr-1.5 text-indigo-500" />
-                Relatórios Gerais & Avaliações
+                Desvios & Paradas ({offRouteEvents.length})
               </TabsTrigger>
               <TabsTrigger
                 value="settings"
@@ -655,6 +679,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 Vendedores ({sellers.length})
               </TabsTrigger>
             </TabsList>
+
+            {/* MÓDULO 1: TORRE DE CONTROLE NA ABA DO ADMIN */}
+            <TabsContent value="control-tower" className="space-y-6">
+              <ControlTower
+                orders={orders}
+                couriers={couriers}
+                onRefresh={loadData}
+                userRole="admin"
+              />
+            </TabsContent>
 
             {/* TAB: CONTROLE DE COMBUSTÍVEL & CONTA CORRENTE EM TEMPO REAL (REQUISITO 5) */}
             <TabsContent value="fuel" className="space-y-6">
@@ -1080,363 +1114,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               </Card>
             </TabsContent>
 
-            {/* TAB: RELATÓRIOS & AVALIAÇÕES */}
+            {/* TAB: RELATÓRIOS COMPLETOS (MÓDULO 4) */}
             <TabsContent value="reports" className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                    Relatórios Operacionais & Financeiros
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Consolidação de entregas, quilometragem rodada, motivos de encerramento e custos
-                    com combustível.
-                  </p>
-                </div>
-
-                {/* Period Filter */}
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs font-medium text-slate-500">Período:</Label>
-                  <Select
-                    value={reportPeriod}
-                    onValueChange={(val: 'all' | 'today' | 'week' | 'month') =>
-                      setReportPeriod(val)
-                    }
-                  >
-                    <SelectTrigger className="h-9 w-36 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todo o Histórico</SelectItem>
-                      <SelectItem value="today">Hoje</SelectItem>
-                      <SelectItem value="week">Últimos 7 dias</SelectItem>
-                      <SelectItem value="month">Este Mês</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {/* 4 Cards de Métricas Principais */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* 1. Número de Entregas */}
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardContent className="p-4 flex items-center gap-3">
-                    <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600">
-                      <Truck className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 font-medium">Total de Entregas</p>
-                      <h4 className="text-2xl font-black text-slate-900 dark:text-white">
-                        {reportTotalOrders}
-                      </h4>
-                      <p className="text-[10px] text-emerald-600 font-medium">
-                        {deliveredOrders.length} concluídas com sucesso
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* 2. Valor Total das Entregas */}
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardContent className="p-4 flex items-center gap-3">
-                    <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600">
-                      <DollarSign className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 font-medium">Valor Total dos Pedidos</p>
-                      <h4 className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                        R$ {reportTotalValue.toFixed(2)}
-                      </h4>
-                      <p className="text-[10px] text-slate-400">
-                        R$ {reportDeliveredValue.toFixed(2)} finalizados
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* 3. Quilometragem Rodada */}
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardContent className="p-4 flex items-center gap-3">
-                    <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600">
-                      <Gauge className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 font-medium">Quilometragem Rodada</p>
-                      <h4 className="text-2xl font-black text-indigo-600 dark:text-indigo-400 font-mono">
-                        {totalKmRodada.toFixed(1)} km
-                      </h4>
-                      <p className="text-[10px] text-slate-400">
-                        Média de {(totalKmRodada / (reportTotalOrders || 1)).toFixed(1)} km/entrega
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* 4. Gasto por Consumo de Combustível */}
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardContent className="p-4 flex items-center gap-3">
-                    <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-600">
-                      <Fuel className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 font-medium">Gasto com Combustível</p>
-                      <h4 className="text-2xl font-black text-amber-600 dark:text-amber-400 font-mono">
-                        R$ {totalFuelCostCalculated.toFixed(2)}
-                      </h4>
-                      <p className="text-[10px] text-slate-400">
-                        R$ {fuelPrice.toFixed(2)}/L • {fuelConsumption} km/L
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* RELATÓRIO DE MOTIVOS DE ENTREGA & CONSUMO */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Relatório com os MOTIVOS de entrega */}
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-bold flex items-center gap-2">
-                      <PieChart className="h-4 w-4 text-purple-600" />
-                      Motivos de Conclusão / Desfecho das Entregas
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Distribuição detalhada das entregas por status de finalização.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {/* Finalizada */}
-                    <div className="p-3 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="p-1.5 rounded-lg bg-emerald-500 text-white">
-                          <CheckCircle2 className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                            Finalizada com Sucesso
-                          </p>
-                          <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
-                            Entregas concluídas e confirmadas
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-lg font-black text-emerald-700 dark:text-emerald-300">
-                          {deliveredOrders.length}
-                        </span>
-                        <span className="text-[10px] text-slate-500 block">
-                          {reportTotalOrders > 0
-                            ? ((deliveredOrders.length / reportTotalOrders) * 100).toFixed(0)
-                            : 0}
-                          %
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Erro de Endereço */}
-                    <div className="p-3 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/50 dark:bg-amber-950/20 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="p-1.5 rounded-lg bg-amber-500 text-white">
-                          <MapPinOff className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                            Erro de Endereço
-                          </p>
-                          <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                            Endereço não localizado ou incorreto
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-lg font-black text-amber-700 dark:text-amber-300">
-                          {addressErrorOrders.length}
-                        </span>
-                        <span className="text-[10px] text-slate-500 block">
-                          {reportTotalOrders > 0
-                            ? ((addressErrorOrders.length / reportTotalOrders) * 100).toFixed(0)
-                            : 0}
-                          %
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Cliente Ausente */}
-                    <div className="p-3 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/20 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="p-1.5 rounded-lg bg-rose-500 text-white">
-                          <UserX className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-rose-900 dark:text-rose-200">
-                            Cliente Ausente
-                          </p>
-                          <p className="text-[11px] text-rose-700 dark:text-rose-400">
-                            Ninguém no local para receber
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-lg font-black text-rose-700 dark:text-rose-300">
-                          {clientAbsentOrders.length}
-                        </span>
-                        <span className="text-[10px] text-slate-500 block">
-                          {reportTotalOrders > 0
-                            ? ((clientAbsentOrders.length / reportTotalOrders) * 100).toFixed(0)
-                            : 0}
-                          %
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Outros Status (Em Rota / Pendente / Cancelada) */}
-                    <div className="grid grid-cols-3 gap-2 pt-1 text-center text-xs">
-                      <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800 border">
-                        <span className="text-slate-400 block text-[10px]">Em Rota</span>
-                        <span className="font-bold text-slate-700 dark:text-slate-200">
-                          {inTransitOrders.length}
-                        </span>
-                      </div>
-                      <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800 border">
-                        <span className="text-slate-400 block text-[10px]">Pendentes</span>
-                        <span className="font-bold text-slate-700 dark:text-slate-200">
-                          {pendingOrders.length}
-                        </span>
-                      </div>
-                      <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800 border">
-                        <span className="text-slate-400 block text-[10px]">Canceladas</span>
-                        <span className="font-bold text-rose-600">{cancelledOrders.length}</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Detalhamento do Consumo de Combustível */}
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-bold flex items-center gap-2">
-                      <Fuel className="h-4 w-4 text-emerald-600" />
-                      Cálculo & Parâmetros de Combustível
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Fórmula oficial: Distância (km) × Preço do Litro (R$/L) ÷ Consumo (km/L)
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border space-y-2 text-xs">
-                      <div className="flex justify-between items-center pb-1.5 border-b border-slate-200 dark:border-slate-700">
-                        <span className="text-slate-500">Preço do Litro Configurado:</span>
-                        <span className="font-bold text-slate-900 dark:text-white">
-                          R$ {fuelPrice.toFixed(2)} / Litro
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center pb-1.5 border-b border-slate-200 dark:border-slate-700">
-                        <span className="text-slate-500">Consumo Médio da Frota:</span>
-                        <span className="font-bold text-slate-900 dark:text-white">
-                          {fuelConsumption.toFixed(1)} km / Litro
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center pb-1.5 border-b border-slate-200 dark:border-slate-700">
-                        <span className="text-slate-500">Custo por Quilômetro (R$/km):</span>
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                          R$ {(fuelPrice / (fuelConsumption || 1)).toFixed(4)} / km
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center pt-1 font-semibold">
-                        <span className="text-slate-800 dark:text-slate-200">
-                          Gasto Total no Período (Rotas Oficiais):
-                        </span>
-                        <span className="font-black text-amber-600 dark:text-amber-400 font-mono text-base">
-                          R$ {totalFuelCostCalculated.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 text-purple-900 dark:text-purple-200 text-xs flex items-center justify-between">
-                      <div>
-                        <p className="font-bold">Ajustar parâmetros de consumo?</p>
-                        <p className="text-[11px] text-purple-700 dark:text-purple-300">
-                          Edite o preço do litro e km/L na aba Parâmetros.
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setActiveTab('settings')}
-                        className="bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-300 h-8 text-xs font-semibold"
-                      >
-                        Ir para Parâmetros
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* SEÇÃO: AVALIAÇÕES RECEBIDAS DOS CLIENTES (REQUISITO 4) */}
-              <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
-                    Avaliações dos Clientes ({reviews.length})
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Notas atribuídas pelos clientes ao entregador e ao vendedor através do link
-                    público de rastreio.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
-                          <th className="py-2.5 px-3 font-semibold">Data</th>
-                          <th className="py-2.5 px-3 font-semibold">Cliente</th>
-                          <th className="py-2.5 px-3 font-semibold">Nota Entregador</th>
-                          <th className="py-2.5 px-3 font-semibold">Nota Vendedor</th>
-                          <th className="py-2.5 px-3 font-semibold">Comentário</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {reviews.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="py-6 text-center text-slate-400">
-                              Nenhuma avaliação registrada ainda.
-                            </td>
-                          </tr>
-                        ) : (
-                          reviews.map((rev) => (
-                            <tr
-                              key={rev.id}
-                              className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40"
-                            >
-                              <td className="py-2.5 px-3 text-slate-500">
-                                {new Date(rev.created).toLocaleDateString('pt-BR')}
-                              </td>
-                              <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
-                                {rev.customer_name || 'Cliente'}
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className="flex items-center gap-1 font-bold text-amber-500">
-                                  <Star className="h-3.5 w-3.5 fill-amber-500" />
-                                  {rev.courier_rating} / 5
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <span className="flex items-center gap-1 font-bold text-amber-500">
-                                  <Star className="h-3.5 w-3.5 fill-amber-500" />
-                                  {rev.seller_rating} / 5
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300 italic text-[11px]">
-                                {rev.comment || 'Sem comentários adicionais'}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
+              <ReportsSection orders={orders} couriers={couriers} settings={settings} />
             </TabsContent>
 
             {/* TAB: CONFIGURAÇÕES DO ADMINISTRADOR (REQUISITO 4) */}

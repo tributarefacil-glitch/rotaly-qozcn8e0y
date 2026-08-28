@@ -11,6 +11,8 @@ import {
   Truck,
   Sparkles,
   UserCheck,
+  Radio,
+  FileText,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Badge } from '@/components/ui/badge'
@@ -28,6 +30,17 @@ const navItems: NavItem[] = [
     title: 'Painel Geral',
     href: '/seller',
     icon: LayoutDashboard,
+  },
+  {
+    title: 'Torre de Controle',
+    href: '/control-tower',
+    icon: Radio,
+    badge: 'Ao Vivo',
+  },
+  {
+    title: 'Relatórios',
+    href: '/reports',
+    icon: FileText,
   },
   {
     title: 'Pedidos & Vendas',
