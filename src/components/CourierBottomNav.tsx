@@ -1,20 +1,20 @@
 import React from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Navigation2, CheckSquare, User, Package, MapPin } from 'lucide-react'
+import { Navigation2, CheckSquare, User, Package, Fuel } from 'lucide-react'
 
 export const CourierBottomNav: React.FC = () => {
   const location = useLocation()
 
   const tabs = [
     {
-      label: 'Rota Ativa',
+      label: 'Minha Rota',
       href: '/courier',
       icon: Navigation2,
     },
     {
-      label: 'Tarefas',
-      href: '/courier/tasks',
-      icon: CheckSquare,
+      label: 'Combustível',
+      href: '/courier/fuel',
+      icon: Fuel,
     },
     {
       label: 'Histórico',
@@ -22,7 +22,7 @@ export const CourierBottomNav: React.FC = () => {
       icon: Package,
     },
     {
-      label: 'Meu Perfil',
+      label: 'Perfil',
       href: '/courier/profile',
       icon: User,
     },

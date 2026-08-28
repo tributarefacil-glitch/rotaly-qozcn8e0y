@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Truck,
   Sparkles,
+  UserCheck,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Badge } from '@/components/ui/badge'
@@ -42,6 +43,13 @@ const navItems: NavItem[] = [
     title: 'Clientes',
     href: '/customers',
     icon: Users,
+  },
+  {
+    title: 'Usuários',
+    href: '/admin/users',
+    icon: UserCheck,
+    badge: 'Admin',
+    adminOnly: true,
   },
   {
     title: 'Gestão & Métricas',

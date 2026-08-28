@@ -1,5 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { MapPin, Navigation, User, Package, AlertCircle, Compass, Layers } from 'lucide-react'
+import {
+  MapPin,
+  Navigation,
+  User,
+  Package,
+  AlertCircle,
+  Compass,
+  Layers,
+  Copy,
+  Check,
+  ExternalLink,
+  Clock,
+} from 'lucide-react'
+import { toast } from 'sonner'
 import {
   loadGoogleMapsScript,
   onGoogleMapsAuthError,
@@ -15,6 +28,11 @@ export interface MapMarkerItem {
   type: 'courier' | 'order_pending' | 'order_transit' | 'order_delivered' | 'current'
   speed?: number
   tracking_code?: string
+  customer_name?: string
+  customer_address?: string
+  total_price?: number
+  estimated_arrival?: string
+  courier_name?: string
 }
 
 interface LiveMapProps {
@@ -47,6 +65,24 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
   const [mapsLoaded, setMapsLoaded] = useState(false)
   const [authError, setAuthError] = useState(isGoogleMapsAuthError())
+  const [copiedCode, setCopiedCode] = useState<string | null>(null)
+  const [activePopupMarker, setActivePopupMarker] = useState<MapMarkerItem | null>(null)
+
+  const copyTrackingLink = (trackingCode: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const url = `${origin}/track/${trackingCode}`
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url)
+    }
+    setCopiedCode(trackingCode)
+    toast.success(`Link de rastreio copiado!`, {
+      description: url,
+    })
+    setTimeout(() => {
+      setCopiedCode(null)
+    }, 2500)
+  }
 
   useEffect(() => {
     const unsub = onGoogleMapsAuthError(() => {
@@ -148,18 +184,37 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         animation: item.id === selectedMarkerId ? google.maps.Animation.BOUNCE : undefined,
       })
 
+      const origin = typeof window !== 'undefined' ? window.location.origin : ''
+      const trackUrl = item.tracking_code ? `${origin}/track/${item.tracking_code}` : ''
+
+      const infoContent = `
+        <div style="padding: 8px; font-family: sans-serif; color: #0f172a; max-width: 260px;">
+          <strong style="font-size: 13px; color: #0f172a; display: block;">${item.title}</strong>
+          ${item.subtitle ? `<p style="font-size: 11px; margin: 4px 0 0; color: #475569;">${item.subtitle}</p>` : ''}
+          ${item.speed ? `<p style="font-size: 11px; margin: 4px 0 0; color: #8b5cf6; font-weight: bold;">🚀 Velocidade: ${item.speed} km/h</p>` : ''}
+          ${item.estimated_arrival ? `<p style="font-size: 11px; margin: 4px 0 0; color: #0284c7;">⏱️ Previsão: ${new Date(item.estimated_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>` : ''}
+          ${
+            item.tracking_code
+              ? `
+            <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 4px;">
+              <span style="font-size: 10px; font-family: monospace; color: #64748b; font-weight: bold;">Código: ${item.tracking_code}</span>
+              <a href="${trackUrl}" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #2563eb; font-weight: bold; text-decoration: none;">
+                Abrir Rastreio Público ↗
+              </a>
+            </div>
+          `
+              : ''
+          }
+        </div>
+      `
+
       const infoWindow = new google.maps.InfoWindow({
-        content: `
-          <div style="padding: 6px; font-family: sans-serif; color: #1e293b;">
-            <strong style="font-size: 13px;">${item.title}</strong>
-            ${item.subtitle ? `<p style="font-size: 11px; margin: 3px 0 0; color: #64748b;">${item.subtitle}</p>` : ''}
-            ${item.speed ? `<p style="font-size: 11px; margin: 3px 0 0; color: #8b5cf6;">🚀 ${item.speed} km/h</p>` : ''}
-          </div>
-        `,
+        content: infoContent,
       })
 
       marker.addListener('click', () => {
         infoWindow.open(mapInstanceRef.current, marker)
+        setActivePopupMarker(item)
         if (onSelectMarker) onSelectMarker(item)
       })
 
@@ -238,10 +293,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               return (
                 <div
                   key={m.id}
-                  onClick={() => onSelectMarker && onSelectMarker(m)}
+                  onClick={() => {
+                    setActivePopupMarker(activePopupMarker?.id === m.id ? null : m)
+                    if (onSelectMarker) onSelectMarker(m)
+                  }}
                   style={{ left: `${clampedX}%`, top: `${clampedY}%` }}
-                  className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-500 ease-out group z-20 ${
-                    isSelected ? 'scale-125 z-30' : 'hover:scale-110'
+                  className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-300 ease-out group ${
+                    isSelected || activePopupMarker?.id === m.id
+                      ? 'z-40 scale-110'
+                      : 'z-20 hover:scale-110 hover:z-30'
                   }`}
                 >
                   {/* Ping effect for couriers & urgent orders */}
@@ -268,18 +328,107 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                     )}
                   </div>
 
-                  {/* Tooltip Popup on Hover */}
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none min-w-[140px] z-40">
-                    <div className="bg-slate-900/95 text-white text-[11px] font-medium rounded-lg px-2.5 py-1.5 shadow-2xl border border-slate-700 whitespace-nowrap text-center">
-                      <p className="font-bold text-white">{m.title}</p>
-                      {m.subtitle && <p className="text-slate-400 text-[10px]">{m.subtitle}</p>}
+                  {/* Tooltip & Interactive Popover for Customer / Order Marker (Hover & Click) */}
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex-col items-center min-w-[220px] max-w-[280px] z-50 transition-all ${
+                      activePopupMarker?.id === m.id
+                        ? 'flex pointer-events-auto opacity-100 scale-100'
+                        : 'hidden group-hover:flex pointer-events-auto opacity-100'
+                    }`}
+                  >
+                    <div className="bg-slate-900/98 text-white text-xs rounded-xl p-3 shadow-2xl border border-slate-700 w-full space-y-2 backdrop-blur-md">
+                      <div className="flex items-start justify-between gap-1.5 border-b border-slate-800 pb-1.5">
+                        <div>
+                          <p className="font-bold text-white text-xs leading-snug">{m.title}</p>
+                          {m.subtitle && (
+                            <p className="text-slate-400 text-[10px] leading-tight mt-0.5 line-clamp-2">
+                              {m.subtitle}
+                            </p>
+                          )}
+                        </div>
+                        {m.type !== 'courier' && (
+                          <span
+                            className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                              m.type === 'order_transit'
+                                ? 'bg-amber-500/20 text-amber-300'
+                                : m.type === 'order_delivered'
+                                  ? 'bg-emerald-500/20 text-emerald-300'
+                                  : 'bg-blue-500/20 text-blue-300'
+                            }`}
+                          >
+                            {m.type === 'order_transit'
+                              ? 'Em Rota'
+                              : m.type === 'order_delivered'
+                                ? 'Entregue'
+                                : 'Pendente'}
+                          </span>
+                        )}
+                      </div>
+
                       {m.speed && (
-                        <p className="text-purple-400 text-[10px] font-semibold mt-0.5">
+                        <p className="text-purple-400 text-[11px] font-semibold flex items-center gap-1">
                           🚀 {m.speed} km/h
                         </p>
                       )}
+
+                      {/* ETA Time if available */}
+                      {m.estimated_arrival && (
+                        <div className="flex items-center gap-1 text-[11px] text-sky-300 bg-sky-950/50 p-1.5 rounded-lg border border-sky-800/60">
+                          <Clock className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                          <span>
+                            Previsão:{' '}
+                            {new Date(m.estimated_arrival).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Public Tracking Link & Copy Action */}
+                      {m.tracking_code && (
+                        <div className="pt-1 space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                            <span className="font-mono font-bold text-slate-300">
+                              {m.tracking_code}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => copyTrackingLink(m.tracking_code!, e)}
+                              className="flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shadow transition active:scale-95"
+                              title="Copiar link de rastreamento para enviar ao cliente"
+                            >
+                              {copiedCode === m.tracking_code ? (
+                                <>
+                                  <Check className="h-3 w-3 text-emerald-300" />
+                                  <span>Copiado!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="h-3 w-3" />
+                                  <span>Copiar Link</span>
+                                </>
+                              )}
+                            </button>
+
+                            <a
+                              href={`/track/${m.tracking_code}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[10px] border border-slate-700 transition"
+                            >
+                              <span>Ver</span>
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="w-2 h-2 bg-slate-900 border-r border-b border-slate-700 rotate-45 -mt-1" />
+                    <div className="w-2.5 h-2.5 bg-slate-900 border-r border-b border-slate-700 rotate-45 -mt-1 shadow-lg" />
                   </div>
                 </div>
               )

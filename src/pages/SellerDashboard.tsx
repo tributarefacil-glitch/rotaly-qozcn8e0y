@@ -87,6 +87,23 @@ export default function SellerDashboard() {
   )
   const [targetCourierId, setTargetCourierId] = useState<string>('')
   const [isAddingToRoute, setIsAddingToRoute] = useState(false)
+  const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null)
+
+  const handleCopyTrackingLink = (trackingCode: string, orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const fullUrl = `${origin}/track/${trackingCode}`
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(fullUrl)
+    }
+    setCopiedOrderId(orderId)
+    toast.success(`Link de rastreio copiado!`, {
+      description: fullUrl,
+    })
+    setTimeout(() => {
+      setCopiedOrderId(null)
+    }, 2000)
+  }
 
   const loadData = async () => {
     try {
@@ -168,9 +185,10 @@ export default function SellerDashboard() {
     }
   })
 
-  // Add delivery destination markers for in_transit and pending orders
+  // Add delivery destination markers for in_transit, pending and delivered orders
   orders.forEach((o) => {
     const cust = customers.find((c) => c.id === o.customer_id)
+    const courier = couriers.find((c) => c.id === o.courier_id)
     if (cust && cust.lat && cust.lng) {
       mapMarkers.push({
         id: `order-${o.id}`,
@@ -185,6 +203,11 @@ export default function SellerDashboard() {
               ? 'order_delivered'
               : 'order_pending',
         tracking_code: o.tracking_code,
+        customer_name: cust.name,
+        customer_address: cust.address,
+        total_price: Number(o.total_price || 0),
+        estimated_arrival: o.estimated_arrival,
+        courier_name: courier?.name,
       })
     }
   })
@@ -598,13 +621,42 @@ export default function SellerDashboard() {
                           </td>
                           <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                              {/* Link Rastreio */}
+                              {/* Copiar Link de Rastreio Rápido para o Vendedor */}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) =>
+                                  handleCopyTrackingLink(order.tracking_code, order.id, e)
+                                }
+                                className={`h-7 px-2 text-[11px] gap-1 transition-all ${
+                                  copiedOrderId === order.id
+                                    ? 'bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 font-bold'
+                                    : 'text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-900 dark:text-blue-400'
+                                }`}
+                                title="Copiar link de rastreamento para enviar ao cliente"
+                              >
+                                {copiedOrderId === order.id ? (
+                                  <>
+                                    <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                    <span>Copiado!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <ExternalLink className="h-3 w-3" />
+                                    <span>Copiar Link</span>
+                                  </>
+                                )}
+                              </Button>
+
+                              {/* Link Rastreio Público */}
                               <Link
                                 to={`/track/${order.tracking_code}`}
-                                className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:underline text-xs font-semibold px-2 py-1"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 text-xs px-1.5 py-1"
+                                title="Abrir página de rastreio em nova aba"
                               >
-                                <span>Rastrear</span>
-                                <ExternalLink className="h-3 w-3" />
+                                <span>Abrir</span>
                               </Link>
 
                               {/* Adicionar a Rota Já Iniciada */}

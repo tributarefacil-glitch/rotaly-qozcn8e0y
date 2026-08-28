@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -9,17 +9,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { CheckCircle, Camera, PenTool, Upload } from 'lucide-react'
+import { CheckCircle, Camera, PenTool, Trash2, Image as ImageIcon, Sparkles } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import type { OrderRecord, CompletionReason, OrderStatus } from '@/types/delivery'
 import { toast } from 'sonner'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { AlertTriangle, MapPinOff, UserX, CheckCircle2 } from 'lucide-react'
 
 interface DeliveryConfirmationModalProps {
@@ -41,26 +34,56 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const [receiverDoc, setReceiverDoc] = useState('')
   const [notes, setNotes] = useState('')
   const [hasSignature, setHasSignature] = useState(false)
-  const [photoSelected, setPhotoSelected] = useState<string | null>(null)
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
+
+  // Input file ref to open camera / photo selector on mobile & desktop
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Initialize or reset form whenever modal opens with customer info
+  React.useEffect(() => {
+    if (open && order) {
+      setReason('delivered')
+      // Pre-fill receiver name with customer name if empty to facilitate fast check
+      setReceiverName(order.expand?.customer_id?.name || '')
+      setReceiverDoc('')
+      setNotes('')
+      setHasSignature(false)
+      setPhotoFile(null)
+      setPhotoPreview(null)
+    }
+  }, [open, order])
 
   const handleSimulatedSignature = () => {
     setHasSignature(true)
     toast.success('Assinatura digital capturada no touchscreen.')
   }
 
-  const handleSimulatePhoto = () => {
-    // Simulated proof photo base64/url
-    setPhotoSelected('https://img.usecurling.com/p/600/400?q=delivery+receipt')
-    toast.success('Foto do comprovante capturada.')
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setPhotoFile(file)
+      const previewUrl = URL.createObjectURL(file)
+      setPhotoPreview(previewUrl)
+      toast.success('Foto do comprovante/recibo anexada com sucesso!')
+    }
+  }
+
+  const handleClearPhoto = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setPhotoFile(null)
+    setPhotoPreview(null)
+    if (cameraInputRef.current) cameraInputRef.current.value = ''
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const handleConfirmDelivery = async () => {
     if (!order) return
 
-    if (reason === 'delivered' && !receiverName.trim()) {
-      toast.error('Informe o nome de quem recebeu a entrega.')
-      return
-    }
+    // Allow default to customer name if user left it blank
+    const effectiveReceiverName =
+      receiverName.trim() || order.expand?.customer_id?.name || 'Cliente'
 
     setIsSubmitting(true)
     try {
@@ -79,24 +102,37 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       const notePrefix = order.notes ? `${order.notes} | ` : ''
       const reasonDetail =
         reason === 'delivered'
-          ? `Recebido por: ${receiverName} (Doc: ${receiverDoc || 'N/A'})`
+          ? `Recebido por: ${effectiveReceiverName} (Doc: ${receiverDoc || 'N/A'})`
           : `Motivo de não conclusão: ${reasonLabel}`
 
-      const updateData: Partial<OrderRecord> = {
-        status: finalStatus,
-        completion_reason: reason,
-        actual_arrival: now,
-        notes: `${notePrefix}${reasonDetail}${notes ? ` - ${notes}` : ''}`,
-      }
+      const finalNotes = `${notePrefix}${reasonDetail}${notes ? ` - ${notes}` : ''}`
 
-      await deliveryService.updateOrder(order.id, updateData)
+      // If photoFile is attached, send as FormData to upload to PocketBase storage
+      if (photoFile) {
+        const formData = new FormData()
+        formData.append('status', finalStatus)
+        formData.append('completion_reason', reason)
+        formData.append('actual_arrival', now)
+        formData.append('notes', finalNotes)
+        formData.append('proof_photo', photoFile)
+
+        await deliveryService.updateOrder(order.id, formData)
+      } else {
+        const updateData: Partial<OrderRecord> = {
+          status: finalStatus,
+          completion_reason: reason,
+          actual_arrival: now,
+          notes: finalNotes,
+        }
+        await deliveryService.updateOrder(order.id, updateData)
+      }
 
       // In-app Notification for seller/admin
       await deliveryService.createNotification({
         title: `Entrega ${reason === 'delivered' ? 'Concluída' : 'Não Finalizada'}: ${order.tracking_code}`,
         message:
           reason === 'delivered'
-            ? `Pedido entregue com sucesso para ${receiverName}.`
+            ? `Pedido entregue com sucesso para ${effectiveReceiverName}.`
             : `Entrega finalizada com status: "${reasonLabel}". Obs: ${notes || 'Sem observações'}.`,
         type: reason === 'delivered' ? 'order' : 'warning',
         read: false,
@@ -104,7 +140,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       })
 
       if (reason === 'delivered') {
-        toast.success(`Pedido ${order.tracking_code} marcado como ENTREGUE!`)
+        toast.success(`Pedido ${order.tracking_code} marcado como FINALIZADO / ENTREGUE!`)
       } else if (reason === 'address_error') {
         toast.warning(`Pedido ${order.tracking_code} finalizado: Erro de Endereço.`)
       } else {
@@ -119,10 +155,11 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       setReceiverDoc('')
       setNotes('')
       setHasSignature(false)
-      setPhotoSelected(null)
+      setPhotoFile(null)
+      setPhotoPreview(null)
     } catch (err: unknown) {
       console.error('Error confirming delivery:', err)
-      toast.error('Erro ao registrar status da entrega.')
+      toast.error('Erro ao registrar status da entrega. Tente novamente.')
     } finally {
       setIsSubmitting(false)
     }
@@ -145,6 +182,25 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
             </span>
           </p>
         </DialogHeader>
+
+        {/* Hidden File Inputs for Native Camera & Gallery / File chooser */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileChange}
+          className="hidden"
+          id="camera-capture-input"
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="hidden"
+          id="gallery-file-input"
+        />
 
         <div className="space-y-4 py-2">
           {/* Order Details Brief */}
@@ -214,18 +270,17 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               {/* Receiver Info */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <Label className="text-xs font-semibold">Nome do Recebedor *</Label>
+                  <Label className="text-xs font-semibold">Nome do Recebedor</Label>
                   <input
                     type="text"
-                    required
-                    placeholder="Ex: João da Silva"
+                    placeholder="Ex: João da Silva (ou nome do cliente)"
                     value={receiverName}
                     onChange={(e) => setReceiverName(e.target.value)}
                     className="mt-1 flex h-9 w-full rounded-md border border-slate-300 bg-transparent px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-950 dark:border-slate-800"
                   />
                 </div>
                 <div>
-                  <Label className="text-xs font-semibold">RG / CPF do Recebedor</Label>
+                  <Label className="text-xs font-semibold">RG / CPF do Recebedor (Opcional)</Label>
                   <input
                     type="text"
                     placeholder="000.000.000-00"
@@ -239,48 +294,93 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               {/* Proof Options: Digital Signature & Photo */}
               <div className="space-y-3">
                 <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Comprovante de Entrega
+                  Comprovante de Entrega & Recibo (Opcional)
                 </Label>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {/* Native Camera trigger */}
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 border-dashed transition-all ${
+                      photoPreview
+                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                        : 'border-slate-300 hover:border-purple-400 text-slate-600 dark:border-slate-700 dark:text-slate-400'
+                    }`}
+                  >
+                    <Camera className="h-5 w-5 mb-1 text-purple-600 dark:text-purple-400" />
+                    <span className="text-xs font-bold">Abrir Câmera</span>
+                    <span className="text-[10px] text-slate-400">Tirar foto do recibo</span>
+                  </button>
+
+                  {/* Gallery / File Selector trigger */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 border-dashed transition-all ${
+                      photoPreview
+                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                        : 'border-slate-300 hover:border-purple-400 text-slate-600 dark:border-slate-700 dark:text-slate-400'
+                    }`}
+                  >
+                    <ImageIcon className="h-5 w-5 mb-1 text-blue-600 dark:text-blue-400" />
+                    <span className="text-xs font-bold">Escolher Arquivo</span>
+                    <span className="text-[10px] text-slate-400">Galeria de fotos</span>
+                  </button>
+
                   {/* Signature trigger */}
                   <button
                     type="button"
                     onClick={handleSimulatedSignature}
-                    className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed transition-all ${
+                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 border-dashed transition-all ${
                       hasSignature
                         ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
                         : 'border-slate-300 hover:border-purple-400 text-slate-600 dark:border-slate-700 dark:text-slate-400'
                     }`}
                   >
-                    <PenTool className="h-6 w-6 mb-1.5" />
+                    <PenTool className="h-5 w-5 mb-1 text-indigo-600 dark:text-indigo-400" />
                     <span className="text-xs font-bold">
-                      {hasSignature ? '✓ Assinatura Gravada' : 'Assinar na Tela'}
+                      {hasSignature ? '✓ Assinatura OK' : 'Assinar na Tela'}
                     </span>
-                    <span className="text-[10px] text-slate-400 mt-0.5">Captura digital</span>
-                  </button>
-
-                  {/* Photo upload trigger */}
-                  <button
-                    type="button"
-                    onClick={handleSimulatePhoto}
-                    className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed transition-all ${
-                      photoSelected
-                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
-                        : 'border-slate-300 hover:border-purple-400 text-slate-600 dark:border-slate-700 dark:text-slate-400'
-                    }`}
-                  >
-                    <Camera className="h-6 w-6 mb-1.5" />
-                    <span className="text-xs font-bold">
-                      {photoSelected ? '✓ Foto Anexada' : 'Tirar Foto do Recibo'}
-                    </span>
-                    <span className="text-[10px] text-slate-400 mt-0.5">Câmera / Arquivo</span>
+                    <span className="text-[10px] text-slate-400">Captura digital</span>
                   </button>
                 </div>
 
+                {/* Photo Preview with remove button */}
+                {photoPreview && (
+                  <div className="relative rounded-xl border border-emerald-300 dark:border-emerald-800 overflow-hidden bg-slate-950 p-2 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={photoPreview}
+                        alt="Comprovante de entrega"
+                        className="h-16 w-20 object-cover rounded-lg border border-slate-700"
+                      />
+                      <div className="text-xs">
+                        <p className="font-bold text-white flex items-center gap-1">
+                          <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+                          Foto do Recibo Pronta
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          {photoFile?.name || 'recibo_capturado.jpg'}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleClearPhoto}
+                      className="text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 h-8 px-2 text-xs gap-1"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Remover
+                    </Button>
+                  </div>
+                )}
+
                 {hasSignature && (
-                  <div className="p-2 border rounded-lg bg-white dark:bg-slate-900 flex items-center justify-center h-16 border-emerald-300 font-serif italic text-slate-800 dark:text-slate-200">
-                    ✍️ {receiverName || 'Assinatura Registrada Digitalmente'}
+                  <div className="p-2 border rounded-lg bg-white dark:bg-slate-900 flex items-center justify-center h-14 border-emerald-300 font-serif italic text-slate-800 dark:text-slate-200 text-xs">
+                    ✍️ {receiverName || order.expand?.customer_id?.name || 'Assinatura Registrada'}
                   </div>
                 )}
               </div>
@@ -320,7 +420,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           <Button
             type="button"
             onClick={handleConfirmDelivery}
-            disabled={isSubmitting || (reason === 'delivered' && !receiverName.trim())}
+            disabled={isSubmitting}
             className={`font-bold ${
               reason === 'delivered'
                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
@@ -330,7 +430,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
             }`}
           >
             {isSubmitting
-              ? 'Finalizando...'
+              ? 'Salvando...'
               : reason === 'delivered'
                 ? 'Confirmar Entrega (OK)'
                 : 'Salvar Motivo & Finalizar'}

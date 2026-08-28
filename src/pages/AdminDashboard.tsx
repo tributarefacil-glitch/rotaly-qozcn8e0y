@@ -50,11 +50,13 @@ import {
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
+import { useAuth } from '@/contexts/AuthContext'
 import { deliveryService } from '@/services/deliveryService'
 import type {
   OrderRecord,
   UserRecord,
   NotificationRecord,
+  LocationRecord,
   VehicleType,
   AppSettingsRecord,
   FuelAdvanceRecord,
@@ -88,16 +90,28 @@ import {
 import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
 
-export default function AdminDashboard() {
+interface AdminDashboardProps {
+  defaultTab?: 'overview' | 'reports' | 'fuel' | 'deviations' | 'settings' | 'couriers' | 'sellers'
+}
+
+export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboardProps) {
+  const { user } = useAuth()
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
+  const [locations, setLocations] = useState<LocationRecord[]>([])
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
-
-  // Filter & Search states for Users lists
+  const [selectedCourierId, setSelectedCourierId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<
     'overview' | 'reports' | 'fuel' | 'deviations' | 'settings' | 'couriers' | 'sellers'
-  >('overview')
+  >(defaultTab)
+
+  useEffect(() => {
+    if (defaultTab) {
+      setActiveTab(defaultTab)
+    }
+  }, [defaultTab])
+
   const [searchCouriers, setSearchCouriers] = useState('')
   const [courierStatusFilter, setCourierStatusFilter] = useState<string>('all')
   const [searchSellers, setSearchSellers] = useState('')
@@ -397,8 +411,8 @@ export default function AdminDashboard() {
       loadData()
     } catch (err: unknown) {
       console.error('Error creating user:', err)
-      const msg = getErrorMessage(err, 'Falha ao cadastrar novo usuário.')
-      toast.error(msg)
+      const msg = getErrorMessage(err)
+      toast.error(msg || 'Falha ao cadastrar novo usuário.')
     } finally {
       setIsCreatingUser(false)
     }

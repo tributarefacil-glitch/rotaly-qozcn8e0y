@@ -11,6 +11,7 @@ import PendingApprovalPage from './pages/PendingApprovalPage'
 import SellerDashboard from './pages/SellerDashboard'
 import CourierApp from './pages/CourierApp'
 import AdminDashboard from './pages/AdminDashboard'
+import CourierFuelPage from './pages/CourierFuelPage'
 import PublicTrackingPage from './pages/PublicTrackingPage'
 import NotFound from './pages/NotFound'
 
@@ -122,7 +123,23 @@ const App = () => (
             path="/admin"
             element={
               <ProtectedRoute allowedRoles={['admin']}>
-                <AdminDashboard />
+                <AdminDashboard defaultTab="overview" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminDashboard defaultTab="couriers" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/users"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <AdminDashboard defaultTab="couriers" />
               </ProtectedRoute>
             }
           />
@@ -133,6 +150,14 @@ const App = () => (
             element={
               <ProtectedRoute allowedRoles={['admin', 'courier']}>
                 <CourierApp />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/courier/fuel"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'courier']}>
+                <CourierFuelPage />
               </ProtectedRoute>
             }
           />
