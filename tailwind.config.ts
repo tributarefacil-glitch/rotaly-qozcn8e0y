@@ -27,10 +27,24 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['Inter var', 'SF Pro Display', 'system-ui', 'sans-serif'],
-        display: ['SF Pro Display', 'Inter var', 'system-ui', 'sans-serif'],
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+        heading: ['Montserrat', 'Inter', 'sans-serif'],
+        display: ['Montserrat', 'sans-serif'],
       },
       colors: {
+        brand: {
+          navy: '#0A1128',
+          deep: '#070D1E',
+          card: '#0E1738',
+          border: '#1E2B58',
+          blue: '#0052CC',
+          blueLight: '#3B82F6',
+          cyan: '#60A5FA',
+          orange: '#FF6B35',
+          yellow: '#EAB308',
+          green: '#22C55E',
+          red: '#EF4444',
+        },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
@@ -94,6 +108,10 @@ export default {
       boxShadow: {
         subtle: '0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03)',
         elevation: '0 4px 20px rgba(0, 0, 0, 0.05)',
+        brand: '0 4px 14px 0 rgba(0, 82, 204, 0.15)',
+        'brand-hover': '0 8px 25px 0 rgba(0, 82, 204, 0.3)',
+        'brand-orange': '0 4px 14px 0 rgba(255, 107, 53, 0.25)',
+        'brand-dark': '0 10px 30px -5px rgba(10, 17, 40, 0.5)',
       },
       transitionTimingFunction: {
         apple: 'cubic-bezier(0.42, 0, 0.58, 1)',

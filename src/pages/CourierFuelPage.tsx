@@ -137,18 +137,18 @@ export default function CourierFuelPage() {
   const isPositive = balance >= 0
 
   return (
-    <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col pb-20 md:pb-6 font-sans">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col pb-20 md:pb-6 font-sans">
       <Header />
 
       <main className="flex-1 max-w-2xl mx-auto w-full p-4 space-y-4">
         {/* Top Header */}
-        <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+        <div className="flex items-center justify-between pb-2 border-b border-[#1E2B58]">
           <div>
-            <h1 className="font-heading text-xl font-black text-[#1a1a1a] flex items-center gap-2">
-              <Fuel className="h-5 w-5 text-[#00AA44]" />
+            <h1 className="font-heading text-xl font-black text-white flex items-center gap-2">
+              <Fuel className="h-5 w-5 text-[#22C55E]" />
               Minha Conta de Combustível LOGHYPE
             </h1>
-            <p className="font-sans text-xs text-slate-600">
+            <p className="font-sans text-xs text-slate-400">
               Acompanhe seus adiantamentos e gastos calculados em tempo real.
             </p>
           </div>
@@ -156,9 +156,9 @@ export default function CourierFuelPage() {
             variant="outline"
             size="sm"
             onClick={loadFinancialData}
-            className="h-9 gap-1.5 border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs"
+            className="h-9 gap-1.5 border-[#1E2B58] bg-[#0E1738] hover:bg-[#121E46] text-slate-200 text-xs"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className="h-3.5 w-3.5 text-[#60A5FA]" />
             Atualizar
           </Button>
         </div>
@@ -170,22 +170,22 @@ export default function CourierFuelPage() {
             onValueChange={(v) => setPeriodFilter(v as 'all' | 'month' | 'week')}
             className="w-full"
           >
-            <TabsList className="grid grid-cols-3 bg-[#F5F5F5] border border-slate-200 h-10 p-1 rounded-card font-heading">
+            <TabsList className="grid grid-cols-3 bg-[#0A1128] border border-[#1E2B58] h-10 p-1 rounded-xl font-heading">
               <TabsTrigger
                 value="all"
-                className="text-xs data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-input font-bold"
+                className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-lg font-bold"
               >
                 Todo o Período
               </TabsTrigger>
               <TabsTrigger
                 value="month"
-                className="text-xs data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-input font-bold"
+                className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-lg font-bold"
               >
                 Este Mês
               </TabsTrigger>
               <TabsTrigger
                 value="week"
-                className="text-xs data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-input font-bold"
+                className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-lg font-bold"
               >
                 Últimos 7 dias
               </TabsTrigger>
@@ -194,10 +194,10 @@ export default function CourierFuelPage() {
         </div>
 
         {/* MAIN CURRENT ACCOUNT BALANCE CARD */}
-        <Card className="border border-slate-200 bg-white shadow-brand relative overflow-hidden rounded-card">
+        <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark relative overflow-hidden rounded-xl">
           <div
             className={`absolute top-0 left-0 right-0 h-1.5 ${
-              isPositive ? 'bg-[#00AA44]' : 'bg-[#E74C3C]'
+              isPositive ? 'bg-[#22C55E]' : 'bg-[#EF4444]'
             }`}
           />
 
@@ -249,21 +249,21 @@ export default function CourierFuelPage() {
             {/* Inflow vs Outflow Metrics Grid */}
             <div className="grid grid-cols-2 gap-3">
               {/* Adiantamentos Recebidos (+) */}
-              <div className="p-3 rounded-card bg-emerald-50/50 border border-emerald-200 space-y-1">
-                <div className="flex items-center gap-1.5 text-[#00AA44] text-xs font-semibold font-heading">
+              <div className="p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58] space-y-1">
+                <div className="flex items-center gap-1.5 text-[#22C55E] text-xs font-semibold font-heading">
                   <ArrowDownLeft className="h-4 w-4" />
                   <span>Adiantamentos Recebidos</span>
                 </div>
-                <p className="text-xl font-bold font-mono text-[#00AA44]">
+                <p className="text-xl font-bold font-mono text-[#22C55E]">
                   + R$ {totalAdvances.toFixed(2)}
                 </p>
-                <p className="text-[10px] text-slate-500">
+                <p className="text-[10px] text-slate-400">
                   {filteredAdvances.length} lançamento(s) efetuados
                 </p>
               </div>
 
               {/* Gasto em Rotas (-) */}
-              <div className="p-3 rounded-card bg-orange-50/50 border border-orange-200 space-y-1">
+              <div className="p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58] space-y-1">
                 <div className="flex items-center gap-1.5 text-[#FF6B35] text-xs font-semibold font-heading">
                   <ArrowUpRight className="h-4 w-4" />
                   <span>Gasto em Rotas Oficiais</span>
@@ -271,22 +271,22 @@ export default function CourierFuelPage() {
                 <p className="text-xl font-bold font-mono text-[#FF6B35]">
                   - R$ {totalSpent.toFixed(2)}
                 </p>
-                <p className="text-[10px] text-slate-500">
+                <p className="text-[10px] text-slate-400">
                   {totalRouteKm.toFixed(1)} km em {filteredOrders.length} entregas
                 </p>
               </div>
             </div>
 
             {/* Current Pricing Rule Summary */}
-            <div className="p-3 rounded-card bg-[#F5F5F5] border border-slate-200 text-[11px] text-slate-600 flex items-start gap-2">
-              <Info className="h-4 w-4 text-[#0052CC] shrink-0 mt-0.5" />
+            <div className="p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58] text-[11px] text-slate-300 flex items-start gap-2">
+              <Info className="h-4 w-4 text-[#60A5FA] shrink-0 mt-0.5" />
               <div>
-                <p className="text-[#1a1a1a] font-semibold font-heading">
+                <p className="text-white font-semibold font-heading">
                   Regra de Cálculo de Combustível:
                 </p>
-                <p className="mt-0.5">
+                <p className="mt-0.5 text-slate-300">
                   R$ {fuelPrice.toFixed(2)} / Litro ÷ {fuelConsumption.toFixed(1)} km/L ={' '}
-                  <strong className="text-[#0052CC]">
+                  <strong className="text-[#60A5FA]">
                     R$ {(fuelPrice / (fuelConsumption || 1)).toFixed(4)} por km percorrido
                   </strong>
                   .

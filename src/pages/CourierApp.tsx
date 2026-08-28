@@ -206,28 +206,28 @@ export default function CourierApp() {
   )
 
   return (
-    <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col pb-20 md:pb-6 font-sans">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col pb-20 md:pb-6 font-sans">
       <Header />
 
       <main className="flex-1 max-w-2xl mx-auto w-full p-4 space-y-4">
         {/* Courier Status & Live GPS Telemetry Card */}
-        <div className="rounded-card border border-slate-200 bg-[#F5F5F5] p-4 shadow-brand">
+        <div className="rounded-xl border border-[#1E2B58] bg-[#0E1738] p-4 shadow-brand-dark">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white shadow-brand">
                 <Navigation2 className="h-6 w-6" />
               </div>
               <div>
-                <h2 className="font-heading text-base font-bold text-[#1a1a1a] flex items-center gap-2">
+                <h2 className="font-heading text-base font-bold text-white flex items-center gap-2">
                   {user?.name || 'Entregador'}
                   <Badge
                     variant="outline"
-                    className="bg-blue-50 text-[#0052CC] border-[#0052CC]/30 text-[10px] font-bold"
+                    className="bg-[#0052CC]/30 text-[#60A5FA] border-[#60A5FA]/40 text-[10px] font-bold"
                   >
                     🛵 LOGHYPE Online
                   </Badge>
                 </h2>
-                <p className="font-sans text-xs text-slate-600">
+                <p className="font-sans text-xs text-slate-400">
                   Transmissão GPS ativa (atualiza a cada 30s)
                 </p>
               </div>
@@ -235,34 +235,34 @@ export default function CourierApp() {
 
             <div className="flex items-center gap-2">
               <span className="relative flex h-3 w-3">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#00AA44] opacity-75"></span>
-                <span className="relative inline-flex h-3 w-3 rounded-full bg-[#00AA44]"></span>
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#22C55E] opacity-75"></span>
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-[#22C55E]"></span>
               </span>
-              <span className="text-xs font-bold text-[#00AA44]">GPS Conectado</span>
+              <span className="text-xs font-bold text-[#22C55E]">GPS Conectado</span>
             </div>
           </div>
 
           {/* Quick Metrics Bar */}
-          <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-slate-200 text-center">
-            <div className="p-2 rounded-card bg-white border border-slate-200 shadow-brand">
-              <p className="font-heading text-[10px] uppercase font-bold text-slate-500">Em Rota</p>
+          <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-[#1E2B58] text-center">
+            <div className="p-2.5 rounded-lg bg-[#0A1128] border border-[#1E2B58]">
+              <p className="font-heading text-[10px] uppercase font-bold text-slate-400">Em Rota</p>
               <p className="font-heading text-lg font-black text-[#FF6B35] mt-0.5">
                 {activeDeliveries.length}
               </p>
             </div>
-            <div className="p-2 rounded-card bg-white border border-slate-200 shadow-brand">
-              <p className="font-heading text-[10px] uppercase font-bold text-slate-500">
+            <div className="p-2.5 rounded-lg bg-[#0A1128] border border-[#1E2B58]">
+              <p className="font-heading text-[10px] uppercase font-bold text-slate-400">
                 Aguardando
               </p>
-              <p className="font-heading text-lg font-black text-[#0052CC] mt-0.5">
+              <p className="font-heading text-lg font-black text-[#60A5FA] mt-0.5">
                 {pendingDeliveries.length}
               </p>
             </div>
-            <div className="p-2 rounded-card bg-white border border-slate-200 shadow-brand">
-              <p className="font-heading text-[10px] uppercase font-bold text-slate-500">
+            <div className="p-2.5 rounded-lg bg-[#0A1128] border border-[#1E2B58]">
+              <p className="font-heading text-[10px] uppercase font-bold text-slate-400">
                 Entregues
               </p>
-              <p className="font-heading text-lg font-black text-[#00AA44] mt-0.5">
+              <p className="font-heading text-lg font-black text-[#22C55E] mt-0.5">
                 {completedToday.length}
               </p>
             </div>
@@ -361,58 +361,58 @@ export default function CourierApp() {
               {currentActiveDelivery && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 px-1">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#00AA44] text-white font-black text-[11px]">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#22C55E] text-white font-black text-[11px]">
                       1
                     </span>
-                    <span className="font-heading text-xs font-bold text-[#00AA44] uppercase tracking-wide">
+                    <span className="font-heading text-xs font-bold text-[#22C55E] uppercase tracking-wide">
                       Entrega Atual (Disponível para Finalização)
                     </span>
                   </div>
 
-                  <Card className="border-2 border-[#00AA44] bg-white text-[#1a1a1a] shadow-brand overflow-hidden rounded-card">
-                    <CardHeader className="p-4 pb-2 flex flex-row items-start justify-between border-b border-slate-100 bg-emerald-50/40">
+                  <Card className="border-2 border-[#22C55E] bg-[#0E1738] text-white shadow-brand-dark overflow-hidden rounded-xl">
+                    <CardHeader className="p-4 pb-2 flex flex-row items-start justify-between border-b border-[#1E2B58] bg-[#0A1128]/80">
                       <div>
                         <div className="flex items-center gap-2">
-                          <Badge className="bg-[#00AA44] text-white font-bold text-xs animate-pulse">
+                          <Badge className="bg-[#22C55E] text-slate-950 font-bold text-xs animate-pulse">
                             EM ANDAMENTO
                           </Badge>
-                          <span className="font-mono font-bold text-xs text-[#0052CC]">
+                          <span className="font-mono font-bold text-xs text-[#60A5FA]">
                             {currentActiveDelivery.tracking_code}
                           </span>
                           {currentActiveDelivery.priority === 'urgent' && (
-                            <Badge variant="destructive" className="text-[10px] bg-[#E74C3C]">
+                            <Badge variant="destructive" className="text-[10px] bg-[#EF4444]">
                               URGENTE
                             </Badge>
                           )}
                         </div>
-                        <CardTitle className="font-heading text-base font-bold text-[#1a1a1a] mt-1.5">
+                        <CardTitle className="font-heading text-base font-bold text-white mt-1.5">
                           {currentActiveDelivery.expand?.customer_id?.name || 'Cliente'}
                         </CardTitle>
                       </div>
 
-                      <div className="font-heading text-right font-black text-sm text-[#00AA44]">
+                      <div className="font-heading text-right font-black text-sm text-[#22C55E]">
                         R$ {Number(currentActiveDelivery.total_price || 0).toFixed(2)}
                       </div>
                     </CardHeader>
 
                     <CardContent className="p-4 space-y-3 font-sans">
                       {/* Destination Address */}
-                      <div className="flex items-start gap-2.5 text-xs text-slate-700">
+                      <div className="flex items-start gap-2.5 text-xs text-slate-300">
                         <MapPin className="h-4 w-4 text-[#FF6B35] shrink-0 mt-0.5" />
                         <div>
-                          <p className="font-medium text-[#1a1a1a]">
+                          <p className="font-medium text-white">
                             {currentActiveDelivery.expand?.customer_id?.street
                               ? `${currentActiveDelivery.expand.customer_id.street}${currentActiveDelivery.expand.customer_id.complement ? `, ${currentActiveDelivery.expand.customer_id.complement}` : ''} - ${currentActiveDelivery.expand.customer_id.neighborhood || ''}, ${currentActiveDelivery.expand.customer_id.city || ''} (${currentActiveDelivery.expand.customer_id.state || ''})`
                               : currentActiveDelivery.expand?.customer_id?.address ||
                                 'Endereço a confirmar'}
                           </p>
                           {currentActiveDelivery.expand?.customer_id?.postal_code && (
-                            <p className="text-slate-500 text-[10px] font-mono mt-0.5">
+                            <p className="text-slate-400 text-[10px] font-mono mt-0.5">
                               CEP: {currentActiveDelivery.expand.customer_id.postal_code}
                             </p>
                           )}
                           {currentActiveDelivery.expand?.customer_id?.phone && (
-                            <p className="text-slate-600 text-[11px] mt-0.5">
+                            <p className="text-slate-300 text-[11px] mt-0.5">
                               📞 {currentActiveDelivery.expand.customer_id.phone}
                             </p>
                           )}
@@ -421,7 +421,7 @@ export default function CourierApp() {
 
                       {/* Notes / Instructions */}
                       {currentActiveDelivery.notes && (
-                        <div className="rounded-md bg-[#F5F5F5] p-2.5 text-[11px] text-slate-700 border border-slate-200">
+                        <div className="rounded-lg bg-[#0A1128] p-2.5 text-[11px] text-slate-300 border border-[#1E2B58]">
                           <span className="font-semibold text-[#FF6B35]">Instruções: </span>
                           {currentActiveDelivery.notes}
                         </div>
@@ -439,9 +439,9 @@ export default function CourierApp() {
                               currentActiveDelivery.expand?.customer_id?.lng,
                             )
                           }
-                          className="h-12 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs rounded-input shadow-brand flex items-center justify-center gap-2"
+                          className="h-12 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs rounded-lg shadow-brand flex items-center justify-center gap-2 border border-blue-400/30"
                         >
-                          <Compass className="h-4 w-4 text-[#FF6B35]" />
+                          <Compass className="h-4 w-4 text-[#60A5FA]" />
                           <span>Abrir no Google Maps</span>
                         </Button>
 
@@ -452,7 +452,7 @@ export default function CourierApp() {
                             setSelectedOrderForConfirmation(currentActiveDelivery)
                             setIsConfirmModalOpen(true)
                           }}
-                          className="h-12 bg-[#00AA44] hover:bg-[#008837] text-white font-bold text-xs rounded-input shadow-brand flex items-center justify-center gap-2"
+                          className="h-12 bg-[#22C55E] hover:bg-[#16A34A] text-slate-950 font-bold text-xs rounded-lg shadow-brand flex items-center justify-center gap-2"
                         >
                           <CheckCircle className="h-4 w-4" />
                           <span>Finalizar / Informar Motivo</span>
@@ -481,42 +481,42 @@ export default function CourierApp() {
                       return (
                         <div
                           key={order.id}
-                          className="p-3.5 rounded-card border border-slate-200 bg-[#F5F5F5] opacity-80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative overflow-hidden"
+                          className="p-3.5 rounded-xl border border-[#1E2B58] bg-[#0E1738]/80 opacity-90 flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative overflow-hidden"
                         >
                           <div className="flex items-start gap-3">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-slate-700 font-bold text-xs shrink-0 mt-0.5">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#121E46] border border-[#1E2B58] text-slate-300 font-bold text-xs shrink-0 mt-0.5">
                               {stopNumber}
                             </span>
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs font-bold text-[#0052CC]">
+                                <span className="font-mono text-xs font-bold text-[#60A5FA]">
                                   {order.tracking_code}
                                 </span>
                                 <Badge
                                   variant="outline"
-                                  className="text-[10px] bg-white border-slate-300 text-slate-600 flex items-center gap-1 font-bold"
+                                  className="text-[10px] bg-[#0A1128] border-[#1E2B58] text-slate-400 flex items-center gap-1 font-bold"
                                 >
                                   <Lock className="h-2.5 w-2.5" />
                                   Na fila (#{stopNumber})
                                 </Badge>
                               </div>
-                              <p className="text-xs font-semibold text-[#1a1a1a] mt-1 truncate">
+                              <p className="text-xs font-semibold text-white mt-1 truncate">
                                 {customer?.name || 'Cliente'}
                               </p>
-                              <p className="text-[10px] text-slate-500 truncate">
+                              <p className="text-[10px] text-slate-400 truncate">
                                 {customer?.street || customer?.address}
                               </p>
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-200">
-                            <span className="font-heading text-xs font-bold text-[#1a1a1a]">
+                          <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0 border-[#1E2B58]">
+                            <span className="font-heading text-xs font-bold text-white font-mono">
                               R$ {Number(order.total_price || 0).toFixed(2)}
                             </span>
                             <Button
                               disabled
                               size="sm"
-                              className="h-8 px-3 bg-slate-200 text-slate-500 font-semibold text-[11px] rounded-input cursor-not-allowed flex items-center gap-1.5"
+                              className="h-8 px-3 bg-[#121E46] text-slate-400 font-semibold text-[11px] rounded-lg cursor-not-allowed flex items-center gap-1.5 border border-[#1E2B58]"
                             >
                               <Lock className="h-3 w-3" />
                               Bloqueado
@@ -546,24 +546,24 @@ export default function CourierApp() {
                 return (
                   <div
                     key={order.id}
-                    className="p-3.5 rounded-card border border-slate-200 bg-white shadow-brand flex items-center justify-between gap-3 hover:border-[#0052CC]/40 transition"
+                    className="p-3.5 rounded-xl border border-[#1E2B58] bg-[#0E1738] shadow-brand-dark flex items-center justify-between gap-3 hover:border-[#60A5FA]/50 transition"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-[#0052CC]">
+                        <span className="font-mono text-xs font-bold text-[#60A5FA]">
                           {order.tracking_code}
                         </span>
                         <Badge
                           variant="outline"
-                          className="text-[10px] border-[#0052CC]/30 text-[#0052CC] font-bold bg-blue-50"
+                          className="text-[10px] border-[#0052CC]/40 text-[#60A5FA] font-bold bg-[#0052CC]/20"
                         >
                           Pendente
                         </Badge>
                       </div>
-                      <p className="text-xs font-semibold text-[#1a1a1a] mt-1 truncate">
+                      <p className="text-xs font-semibold text-white mt-1 truncate">
                         {customer?.name || 'Cliente'}
                       </p>
-                      <p className="text-[10px] text-slate-500 truncate">
+                      <p className="text-[10px] text-slate-400 truncate">
                         {customer?.street || customer?.address}
                       </p>
                     </div>
@@ -583,7 +583,7 @@ export default function CourierApp() {
                           toast.error('Erro ao iniciar entrega.')
                         }
                       }}
-                      className="h-10 px-4 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs rounded-input shrink-0 shadow-brand"
+                      className="h-10 px-4 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs rounded-lg shrink-0 shadow-brand"
                     >
                       Iniciar
                     </Button>

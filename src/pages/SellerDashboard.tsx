@@ -329,7 +329,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     .reduce((acc, o) => acc + (Number(o.total_price) || 0), 0)
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col">
       <Header />
 
       <div className="flex flex-1">
@@ -339,11 +339,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           {/* Top Title & Actions Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="font-heading text-2xl sm:text-3xl font-extrabold tracking-tight text-[#1a1a1a]">
+              <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center gap-2.5">
                 Painel Comercial LOGHYPE
               </h1>
-              <p className="font-sans text-xs sm:text-sm text-slate-600">
-                Acompanhamento em tempo real de pedidos, mapa interativo, Torre de Controle e
+              <p className="font-sans text-xs sm:text-sm text-slate-400">
+                Acompanhamento em tempo real de pedidos, mapa de frotas, Torre de Controle e
                 Relatórios.
               </p>
             </div>
@@ -376,34 +376,34 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           </div>
 
           {/* Navigation Tabs between Overview, Control Tower and Reports */}
-          <div className="flex border-b border-slate-200 dark:border-slate-800 gap-2">
+          <div className="flex border-b border-[#1E2B58] gap-2">
             <button
               onClick={() => setMainViewTab('overview')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
                 mainViewTab === 'overview'
-                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                  ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
-              Painel Geral & Pedidos
+              Painel Geral &amp; Pedidos
             </button>
             <button
               onClick={() => setMainViewTab('control-tower')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
                 mainViewTab === 'control-tower'
-                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                  ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
               Torre de Controle
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping inline-block ml-0.5" />
+              <span className="h-2 w-2 rounded-full bg-[#22C55E] animate-ping inline-block ml-0.5" />
             </button>
             <button
               onClick={() => setMainViewTab('reports')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
                 mainViewTab === 'reports'
-                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                  ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
               Relatórios Operacionais
@@ -428,65 +428,59 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             <div className="space-y-6">
               {/* KPI Summary Cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark">
                   <CardContent className="p-4 flex items-center justify-between">
                     <div>
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                         Em Trânsito
                       </p>
-                      <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
-                        {inTransitCount}
-                      </p>
+                      <p className="text-2xl font-black text-[#FBBF24] mt-1">{inTransitCount}</p>
                     </div>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:bg-amber-950/40">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FBBF24]/15 text-[#FBBF24] border border-[#FBBF24]/30">
                       <Truck className="h-5 w-5" />
                     </div>
                   </CardContent>
                 </Card>
 
-                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark">
                   <CardContent className="p-4 flex items-center justify-between">
                     <div>
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                         Pendentes
                       </p>
-                      <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
-                        {pendingCount}
-                      </p>
+                      <p className="text-2xl font-black text-[#60A5FA] mt-1">{pendingCount}</p>
                     </div>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:bg-blue-950/40">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#60A5FA]/15 text-[#60A5FA] border border-[#60A5FA]/30">
                       <Clock className="h-5 w-5" />
                     </div>
                   </CardContent>
                 </Card>
 
-                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark">
                   <CardContent className="p-4 flex items-center justify-between">
                     <div>
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                         Concluídas
                       </p>
-                      <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-                        {deliveredCount}
-                      </p>
+                      <p className="text-2xl font-black text-[#22C55E] mt-1">{deliveredCount}</p>
                     </div>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:bg-emerald-950/40">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#22C55E]/15 text-[#22C55E] border border-[#22C55E]/30">
                       <CheckCircle className="h-5 w-5" />
                     </div>
                   </CardContent>
                 </Card>
 
-                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <Card className="border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark">
                   <CardContent className="p-4 flex items-center justify-between">
                     <div>
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                         Volume Total
                       </p>
-                      <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+                      <p className="text-2xl font-black text-[#FF6B35] mt-1">
                         R$ {totalRevenue.toFixed(2)}
                       </p>
                     </div>
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:bg-purple-950/40">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF6B35]/15 text-[#FF6B35] border border-[#FF6B35]/30">
                       <TrendingUp className="h-5 w-5" />
                     </div>
                   </CardContent>
@@ -521,11 +515,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               </div>
 
               {/* Orders Management Table with Filters */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900 space-y-4">
+              <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 sm:p-6 shadow-brand-dark space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="flex items-center gap-2">
-                    <Package className="h-5 w-5 text-blue-600" />
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    <Package className="h-5 w-5 text-[#60A5FA]" />
+                    <h3 className="text-base font-bold text-white font-heading">
                       Gerenciador de Pedidos ({filteredOrders.length})
                     </h3>
                   </div>
@@ -537,17 +531,29 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                       onValueChange={setSelectedStatus}
                       className="w-full sm:w-auto"
                     >
-                      <TabsList className="grid grid-cols-4 h-9">
-                        <TabsTrigger value="all" className="text-xs">
+                      <TabsList className="grid grid-cols-4 h-9 bg-[#0A1128] border border-[#1E2B58]">
+                        <TabsTrigger
+                          value="all"
+                          className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white"
+                        >
                           Todos ({orders.length})
                         </TabsTrigger>
-                        <TabsTrigger value="pending" className="text-xs">
+                        <TabsTrigger
+                          value="pending"
+                          className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white"
+                        >
                           Pendentes ({pendingCount})
                         </TabsTrigger>
-                        <TabsTrigger value="in_transit" className="text-xs">
+                        <TabsTrigger
+                          value="in_transit"
+                          className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white"
+                        >
                           Em Trânsito ({inTransitCount})
                         </TabsTrigger>
-                        <TabsTrigger value="delivered" className="text-xs">
+                        <TabsTrigger
+                          value="delivered"
+                          className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white"
+                        >
                           Entregues ({deliveredCount})
                         </TabsTrigger>
                       </TabsList>
@@ -559,7 +565,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                         placeholder="Filtrar por código ou cliente..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="h-9 pl-8 text-xs bg-[#F5F5F5] border-slate-200 rounded-input focus:bg-white"
+                        className="h-9 pl-8 text-xs bg-[#0A1128] border-[#1E2B58] text-white placeholder:text-slate-500 rounded-lg focus:border-[#60A5FA]"
                       />
                     </div>
                   </div>
@@ -569,7 +575,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse font-sans">
                     <thead>
-                      <tr className="border-b border-slate-200 bg-[#F5F5F5] text-slate-600 font-heading uppercase tracking-wider">
+                      <tr className="border-b border-[#1E2B58] bg-[#0A1128]/80 text-slate-300 font-heading uppercase tracking-wider">
                         <th className="py-3 px-3 font-bold">Código</th>
                         <th className="py-3 px-3 font-bold">Cliente & Destino</th>
                         <th className="py-3 px-3 font-bold">Entregador / Fila</th>
@@ -635,38 +641,36 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                           return (
                             <tr
                               key={order.id}
-                              className="hover:bg-blue-50/40 transition group cursor-pointer"
+                              className="hover:bg-[#121E46]/60 transition group cursor-pointer border-b border-[#1E2B58]/60 text-slate-200"
                               onClick={() => setSelectedMarkerId(`order-${order.id}`)}
                             >
-                              <td className="py-3 px-3 font-mono font-bold text-[#0052CC]">
+                              <td className="py-3 px-3 font-mono font-bold text-[#60A5FA]">
                                 {order.tracking_code}
                               </td>
                               <td className="py-3 px-3">
-                                <p className="font-semibold text-[#1a1a1a]">
+                                <p className="font-semibold text-white">
                                   {customer?.name || 'Cliente'}
                                 </p>
-                                <p className="text-[11px] text-slate-500 truncate max-w-xs">
+                                <p className="text-[11px] text-slate-400 truncate max-w-xs">
                                   {customer?.address || 'Endereço não cadastrado'}
                                 </p>
                               </td>
-                              <td className="py-3 px-3 text-slate-700">
+                              <td className="py-3 px-3 text-slate-300">
                                 {courier ? (
                                   <div className="flex items-center gap-1.5">
                                     <span className="h-2 w-2 rounded-full bg-[#FF6B35] shrink-0"></span>
-                                    <span className="font-semibold text-[#1a1a1a]">
-                                      {courier.name}
-                                    </span>
+                                    <span className="font-semibold text-white">{courier.name}</span>
                                     {order.sequence && (
                                       <Badge
                                         variant="outline"
-                                        className="text-[9px] px-1 py-0 bg-blue-50 text-[#0052CC] border-blue-200 font-bold"
+                                        className="text-[9px] px-1 py-0 bg-[#0052CC]/30 text-[#60A5FA] border-[#60A5FA]/30 font-bold"
                                       >
                                         #{order.sequence}
                                       </Badge>
                                     )}
                                   </div>
                                 ) : (
-                                  <span className="text-slate-400 italic">Não atribuído</span>
+                                  <span className="text-slate-500 italic">Não atribuído</span>
                                 )}
                               </td>
                               <td className="py-3 px-3">
@@ -683,7 +687,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                 </div>
                               </td>
                               <td className="py-3 px-3 text-xs">{priorityBadge}</td>
-                              <td className="py-3 px-3 text-right font-bold text-[#1a1a1a]">
+                              <td className="py-3 px-3 text-right font-bold text-white font-mono">
                                 R$ {Number(order.total_price || 0).toFixed(2)}
                               </td>
                               <td

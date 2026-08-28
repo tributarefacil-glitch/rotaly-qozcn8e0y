@@ -21,6 +21,7 @@ import {
   KeyRound,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { LoghypeLogo } from '@/components/LoghypeLogo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -183,27 +184,21 @@ export default function Index() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-blue-500 selection:text-white relative overflow-hidden">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative overflow-hidden">
       {/* Background glow graphics */}
-      <div className="absolute -top-40 -left-40 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-1/2 -right-40 w-96 h-96 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -top-40 -left-40 w-96 h-96 bg-[#0052CC]/25 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/2 -right-40 w-96 h-96 bg-[#FF6B35]/15 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-[#22C55E]/15 rounded-full blur-3xl pointer-events-none" />
 
       {/* Top Navbar */}
-      <header className="relative z-10 w-full border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md px-6 py-4">
+      <header className="relative z-10 w-full border-b border-[#1E2B58] bg-[#0A1128]/90 backdrop-blur-md px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <Link to="/" onClick={() => setSelectedProfile(null)} className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/25">
-              <Truck className="h-5 w-5" />
-            </div>
-            <div>
-              <span className="text-lg font-black tracking-tight text-white block leading-tight">
-                Gestão de Entregas
-              </span>
-              <span className="text-[11px] text-slate-400">
-                Plataforma de Logística & Rastreamento
-              </span>
-            </div>
+          <Link
+            to="/"
+            onClick={() => setSelectedProfile(null)}
+            className="flex items-center hover:opacity-95"
+          >
+            <LoghypeLogo size="md" theme="dark" showTagline={true} />
           </Link>
 
           <div className="flex items-center gap-3">
@@ -254,17 +249,17 @@ export default function Index() {
               const IconComponent = cfg.icon
 
               return (
-                <Card className="border border-slate-200 bg-white text-[#1a1a1a] shadow-brand rounded-card relative overflow-hidden">
-                  <div className="h-1.5 w-full bg-gradient-to-r from-[#0052CC] to-[#FF6B35]" />
+                <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl relative overflow-hidden">
+                  <div className="h-1.5 w-full bg-gradient-to-r from-[#22C55E] via-[#FBBF24] via-[#FF6B35] to-[#EF4444]" />
 
                   <CardHeader className="space-y-2 pb-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white shadow-brand">
                           <IconComponent className="h-5 w-5 text-white" />
                         </div>
                         <div>
-                          <CardTitle className="font-heading text-xl font-bold text-[#1a1a1a]">
+                          <CardTitle className="font-heading text-xl font-bold text-white">
                             Login {cfg.title}
                           </CardTitle>
                           <Badge
@@ -276,7 +271,7 @@ export default function Index() {
                         </div>
                       </div>
                     </div>
-                    <CardDescription className="font-sans text-slate-600 text-xs">
+                    <CardDescription className="font-sans text-slate-400 text-xs">
                       {cfg.subtitle}
                     </CardDescription>
                   </CardHeader>
@@ -417,49 +412,49 @@ export default function Index() {
                 onClick={() => handleSelectProfile('admin')}
                 role="button"
                 tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-card border border-slate-200 bg-white p-6 shadow-brand transition-all duration-200 hover:-translate-y-1 hover:border-[#0052CC] hover:shadow-brand-hover cursor-pointer overflow-hidden text-left"
+                className="group relative flex flex-col justify-between rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-6 shadow-brand-dark transition-all duration-200 hover:-translate-y-1 hover:border-[#60A5FA] hover:shadow-brand cursor-pointer overflow-hidden text-left"
               >
                 <div className="space-y-4 relative z-10">
                   <div className="flex items-center justify-between">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand group-hover:scale-105 transition-transform">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white shadow-brand group-hover:scale-105 transition-transform">
                       <Shield className="h-6 w-6" />
                     </div>
                     <Badge
                       variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-blue-50 text-[#0052CC] border-[#0052CC]/30"
+                      className="text-[10px] uppercase font-bold tracking-wider bg-[#0052CC]/30 text-[#60A5FA] border-[#60A5FA]/40"
                     >
-                      Acesso Gestor
+                      Acesso Master
                     </Badge>
                   </div>
 
                   <div>
-                    <h2 className="font-heading text-xl font-bold text-[#1a1a1a] group-hover:text-[#0052CC] transition-colors">
+                    <h2 className="font-heading text-xl font-bold text-white group-hover:text-[#60A5FA] transition-colors">
                       Administrador
                     </h2>
-                    <p className="font-sans text-xs text-slate-600 mt-1.5 leading-relaxed">
+                    <p className="font-sans text-xs text-slate-300 mt-1.5 leading-relaxed">
                       Painel executivo com telemetria da frota, aprovação de cadastros de
                       entregadores, relatórios e KPIs globais.
                     </p>
                   </div>
 
-                  <ul className="space-y-2 text-xs text-slate-700 pt-2 border-t border-slate-100 font-sans">
+                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-[#1E2B58] font-sans">
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>Gestão e validação de CNH/selfies</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>Aprovação e bloqueio de usuários</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>KPIs de SLA e faturamento</span>
                     </li>
                   </ul>
                 </div>
 
                 <div className="pt-6 relative z-10">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#0052CC] group-hover:translate-x-1 transition-transform">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#60A5FA] group-hover:translate-x-1 transition-transform">
                     <span>Entrar como Administrador</span>
                     <ArrowRight className="h-4 w-4 text-[#FF6B35]" />
                   </div>
@@ -471,42 +466,42 @@ export default function Index() {
                 onClick={() => handleSelectProfile('seller')}
                 role="button"
                 tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-card border border-slate-200 bg-white p-6 shadow-brand transition-all duration-200 hover:-translate-y-1 hover:border-[#FF6B35] hover:shadow-brand-orange cursor-pointer overflow-hidden text-left"
+                className="group relative flex flex-col justify-between rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-6 shadow-brand-dark transition-all duration-200 hover:-translate-y-1 hover:border-[#FF6B35] hover:shadow-brand-orange cursor-pointer overflow-hidden text-left"
               >
                 <div className="space-y-4 relative z-10">
                   <div className="flex items-center justify-between">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[#FF6B35] text-white shadow-brand group-hover:scale-105 transition-transform">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#FF6B35] text-white shadow-brand group-hover:scale-105 transition-transform">
                       <Store className="h-6 w-6" />
                     </div>
                     <Badge
                       variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-orange-50 text-[#FF6B35] border-[#FF6B35]/30"
+                      className="text-[10px] uppercase font-bold tracking-wider bg-[#FF6B35]/20 text-[#FF6B35] border-[#FF6B35]/40"
                     >
                       Painel Comercial
                     </Badge>
                   </div>
 
                   <div>
-                    <h2 className="font-heading text-xl font-bold text-[#1a1a1a] group-hover:text-[#FF6B35] transition-colors">
+                    <h2 className="font-heading text-xl font-bold text-white group-hover:text-[#FF6B35] transition-colors">
                       Vendedor
                     </h2>
-                    <p className="font-sans text-xs text-slate-600 mt-1.5 leading-relaxed">
+                    <p className="font-sans text-xs text-slate-300 mt-1.5 leading-relaxed">
                       Criação rápida de despachos, acompanhamento de pedidos no mapa em tempo real e
                       otimização inteligente de rotas.
                     </p>
                   </div>
 
-                  <ul className="space-y-2 text-xs text-slate-700 pt-2 border-t border-slate-100 font-sans">
+                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-[#1E2B58] font-sans">
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>Criação rápida de despachos</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>Roteirização inteligente com IA</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>Acompanhamento no mapa ao vivo</span>
                     </li>
                   </ul>
@@ -515,7 +510,7 @@ export default function Index() {
                 <div className="pt-6 relative z-10">
                   <div className="flex items-center justify-between text-xs font-bold text-[#FF6B35] group-hover:translate-x-1 transition-transform">
                     <span>Entrar como Vendedor</span>
-                    <ArrowRight className="h-4 w-4 text-[#0052CC]" />
+                    <ArrowRight className="h-4 w-4 text-[#60A5FA]" />
                   </div>
                 </div>
               </div>
@@ -525,49 +520,49 @@ export default function Index() {
                 onClick={() => handleSelectProfile('courier')}
                 role="button"
                 tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-card border border-slate-200 bg-white p-6 shadow-brand transition-all duration-200 hover:-translate-y-1 hover:border-[#0052CC] hover:shadow-brand-hover cursor-pointer overflow-hidden text-left"
+                className="group relative flex flex-col justify-between rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-6 shadow-brand-dark transition-all duration-200 hover:-translate-y-1 hover:border-[#60A5FA] hover:shadow-brand cursor-pointer overflow-hidden text-left"
               >
                 <div className="space-y-4 relative z-10">
                   <div className="flex items-center justify-between">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand group-hover:scale-105 transition-transform">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white shadow-brand group-hover:scale-105 transition-transform">
                       <Truck className="h-6 w-6" />
                     </div>
                     <Badge
                       variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-blue-50 text-[#0052CC] border-[#0052CC]/30"
+                      className="text-[10px] uppercase font-bold tracking-wider bg-[#0052CC]/30 text-[#60A5FA] border-[#60A5FA]/40"
                     >
                       App Operacional
                     </Badge>
                   </div>
 
                   <div>
-                    <h2 className="font-heading text-xl font-bold text-[#1a1a1a] group-hover:text-[#0052CC] transition-colors">
+                    <h2 className="font-heading text-xl font-bold text-white group-hover:text-[#60A5FA] transition-colors">
                       Entregador
                     </h2>
-                    <p className="font-sans text-xs text-slate-600 mt-1.5 leading-relaxed">
+                    <p className="font-sans text-xs text-slate-300 mt-1.5 leading-relaxed">
                       Interface mobile simplificada com lista de paradas sequencial, GPS ativo e
                       comprovante com foto e assinatura na tela.
                     </p>
                   </div>
 
-                  <ul className="space-y-2 text-xs text-slate-700 pt-2 border-t border-slate-100 font-sans">
+                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-[#1E2B58] font-sans">
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>Telemetria GPS a cada 30 segundos</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>Assinatura digital e foto de entrega</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
                       <span>Navegação com Waze / Google Maps</span>
                     </li>
                   </ul>
                 </div>
 
                 <div className="pt-6 relative z-10">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#0052CC] group-hover:translate-x-1 transition-transform">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#60A5FA] group-hover:translate-x-1 transition-transform">
                     <span>Entrar como Entregador</span>
                     <ArrowRight className="h-4 w-4 text-[#FF6B35]" />
                   </div>
@@ -578,8 +573,8 @@ export default function Index() {
             {/* Quick Registration Bar & Public Tracking */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-5xl mx-auto w-full pt-4">
               {/* Public Tracking Box */}
-              <div className="lg:col-span-7 rounded-card border border-slate-200 bg-[#F5F5F5] p-5 shadow-brand space-y-3">
-                <div className="flex items-center gap-2 text-[#0052CC] font-bold text-xs uppercase tracking-wider font-heading">
+              <div className="lg:col-span-7 rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-5 shadow-brand-dark space-y-3">
+                <div className="flex items-center gap-2 text-[#60A5FA] font-bold text-xs uppercase tracking-wider font-heading">
                   <Search className="h-4 w-4 text-[#FF6B35]" />
                   <span>Acompanhe sua Encomenda (Rastreio Público LOGHYPE)</span>
                 </div>
@@ -592,12 +587,12 @@ export default function Index() {
                       placeholder="Digite o código: TRK-2025-001..."
                       value={trackingCode}
                       onChange={(e) => setTrackingCode(e.target.value)}
-                      className="h-10 bg-white border-slate-300 pl-10 text-xs text-[#1a1a1a] placeholder:text-slate-400 focus:border-[#0052CC] rounded-input"
+                      className="h-10 bg-[#0A1128] border-[#1E2B58] pl-10 text-xs text-white placeholder:text-slate-400 focus:border-[#60A5FA] rounded-xl"
                     />
                   </div>
                   <Button
                     type="submit"
-                    className="h-10 px-5 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
+                    className="h-10 px-5 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shadow-brand rounded-xl transition duration-100"
                   >
                     Rastrear Pedido
                   </Button>
@@ -605,13 +600,13 @@ export default function Index() {
               </div>
 
               {/* Register Callout */}
-              <div className="lg:col-span-5 rounded-card border border-slate-200 bg-white p-5 shadow-brand flex flex-col justify-between space-y-3">
+              <div className="lg:col-span-5 rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-5 shadow-brand-dark flex flex-col justify-between space-y-3">
                 <div>
-                  <div className="flex items-center gap-2 text-[#0052CC] font-bold text-xs uppercase tracking-wider font-heading">
+                  <div className="flex items-center gap-2 text-[#60A5FA] font-bold text-xs uppercase tracking-wider font-heading">
                     <UserPlus className="h-4 w-4 text-[#FF6B35]" />
                     <span>Novo na Plataforma?</span>
                   </div>
-                  <p className="font-sans text-xs text-slate-600 mt-1 leading-relaxed">
+                  <p className="font-sans text-xs text-slate-300 mt-1 leading-relaxed">
                     Cadastre-se como entregador ou vendedor em menos de 2 minutos.
                   </p>
                 </div>
@@ -620,7 +615,7 @@ export default function Index() {
                   <Link to="/register?role=courier" className="flex-1">
                     <Button
                       variant="outline"
-                      className="w-full h-9 border-[#0052CC] text-[#0052CC] hover:bg-blue-50 text-xs font-bold rounded-input"
+                      className="w-full h-9 border-[#60A5FA] text-[#60A5FA] hover:bg-[#0052CC]/20 text-xs font-bold rounded-xl"
                     >
                       Entregador
                     </Button>
@@ -628,7 +623,7 @@ export default function Index() {
                   <Link to="/register?role=seller" className="flex-1">
                     <Button
                       variant="outline"
-                      className="w-full h-9 border-[#FF6B35] text-[#FF6B35] hover:bg-orange-50 text-xs font-bold rounded-input"
+                      className="w-full h-9 border-[#FF6B35] text-[#FF6B35] hover:bg-[#FF6B35]/20 text-xs font-bold rounded-xl"
                     >
                       Vendedor
                     </Button>
@@ -641,7 +636,7 @@ export default function Index() {
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-slate-200 bg-[#F5F5F5] py-4 px-6 text-center text-xs text-slate-500 font-sans">
+      <footer className="relative z-10 border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
         <p>
           LOGHYPE © {new Date().getFullYear()} — Entrega rápida, confiança garantida • Sua logística
           no próximo nível

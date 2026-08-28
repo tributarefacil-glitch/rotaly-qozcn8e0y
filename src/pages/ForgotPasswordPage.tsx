@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { LoghypeLogo } from '@/components/LoghypeLogo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -56,11 +57,9 @@ export default function ForgotPasswordPage() {
       toast.success(
         'Código/Link de redefinição enviado com sucesso! Verifique sua caixa de entrada.',
       )
-      // Advance to step 2 so user can paste the code or click the email link
       setStep(2)
     } catch (err: unknown) {
       console.error('Password reset request error:', err)
-      // For security, PocketBase might still succeed or report errors
       const msg = getErrorMessage(err, 'Falha ao solicitar recuperação de senha.')
       toast.error(msg)
     } finally {
@@ -103,31 +102,19 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FFFFFF] text-[#1a1a1a] flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
       {/* Header */}
-      <header className="relative z-10 w-full border-b border-slate-200 bg-white shadow-subtle px-6 py-3.5">
+      <header className="relative z-10 w-full border-b border-[#1E2B58] bg-[#0A1128]/90 backdrop-blur-md px-6 py-3.5 shadow-brand-dark">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0A1128] text-white shadow-sm p-1.5">
-                <Truck className="h-5 w-5 text-[#FF6B35]" />
-              </div>
-              <div>
-                <span className="font-heading text-lg font-black tracking-tight text-[#0052CC] block leading-tight">
-                  LOGHYPE
-                </span>
-                <span className="font-sans text-[11px] text-slate-500">
-                  Entrega rápida, confiança garantida
-                </span>
-              </div>
-            </div>
+          <Link to="/" className="flex items-center hover:opacity-95">
+            <LoghypeLogo size="sm" theme="dark" showTagline={false} />
           </Link>
 
           <Button
             variant="ghost"
             size="sm"
             onClick={() => navigate('/login')}
-            className="text-xs text-[#0052CC] hover:bg-blue-50 font-bold gap-1.5 rounded-input"
+            className="text-xs text-[#60A5FA] hover:text-white hover:bg-[#121E46] font-bold gap-1.5 rounded-lg border border-[#1E2B58]"
           >
             <ArrowLeft className="h-4 w-4" />
             Voltar para o Login
@@ -136,25 +123,25 @@ export default function ForgotPasswordPage() {
       </header>
       {/* Main Form */}
       <main className="relative z-10 flex-1 max-w-md mx-auto w-full px-4 py-12 flex items-center justify-center">
-        <Card className="w-full border border-slate-200 bg-white text-[#1a1a1a] shadow-brand rounded-card">
+        <Card className="w-full border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl">
           <CardHeader className="space-y-1">
-            <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand mb-2">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white shadow-brand mb-2">
               <KeyRound className="h-6 w-6 text-white" />
             </div>
-            <CardTitle className="font-heading text-2xl font-black text-[#1a1a1a]">
+            <CardTitle className="font-heading text-2xl font-black text-white">
               {initialToken ? 'Criar Nova Senha' : 'Recuperar Senha'}
             </CardTitle>
-            <CardDescription className="font-sans text-slate-600 text-xs">
+            <CardDescription className="font-sans text-slate-400 text-xs">
               {initialToken
                 ? 'Informe sua nova senha para redefinir o acesso à sua conta.'
                 : 'Informe seu e-mail cadastrado para enviarmos as instruções de redefinição.'}
-            </CardDescription>{' '}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             {step === 1 ? (
               <form onSubmit={handleRequestReset} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label className="font-heading text-xs font-semibold text-[#1a1a1a]">
+                  <Label className="font-heading text-xs font-semibold text-white">
                     Seu E-mail Cadastrado
                   </Label>
                   <div className="relative">
@@ -164,7 +151,7 @@ export default function ForgotPasswordPage() {
                       placeholder="exemplo@logistica.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="bg-[#F5F5F5] border-slate-200 pl-9 text-xs text-[#1a1a1a] placeholder:text-slate-400 focus:bg-white rounded-input"
+                      className="bg-[#0A1128] border-[#1E2B58] pl-9 text-xs text-white placeholder:text-slate-400 focus:border-[#60A5FA] rounded-xl"
                       required
                     />
                   </div>
@@ -173,7 +160,7 @@ export default function ForgotPasswordPage() {
                 <Button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full h-11 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-sm shadow-brand transition gap-2 rounded-input"
+                  className="w-full h-11 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-sm shadow-brand transition gap-2 rounded-xl"
                 >
                   <Send className="h-4 w-4 text-[#FF6B35]" />
                   {isLoading ? 'Enviando...' : 'Enviar Código de Recuperação'}
@@ -183,7 +170,7 @@ export default function ForgotPasswordPage() {
                   <button
                     type="button"
                     onClick={() => setStep(2)}
-                    className="text-xs text-[#0052CC] hover:underline font-semibold"
+                    className="text-xs text-[#60A5FA] hover:underline font-semibold"
                   >
                     Já tem o código/token? Clique aqui para redefinir.
                   </button>
@@ -192,7 +179,7 @@ export default function ForgotPasswordPage() {
             ) : (
               <form onSubmit={handleConfirmReset} className="space-y-4">
                 {emailSent && (
-                  <div className="p-3 rounded-card border border-emerald-200 bg-emerald-50 text-[#00AA44] text-xs flex items-start gap-2">
+                  <div className="p-3 rounded-xl border border-emerald-500/40 bg-emerald-500/20 text-[#22C55E] text-xs flex items-start gap-2">
                     <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
                     <span>
                       Enviamos um e-mail com o token de redefinição para <strong>{email}</strong>.
@@ -201,7 +188,7 @@ export default function ForgotPasswordPage() {
                 )}
 
                 <div className="space-y-1.5">
-                  <Label className="font-heading text-xs font-semibold text-[#1a1a1a]">
+                  <Label className="font-heading text-xs font-semibold text-white">
                     Código / Token de Redefinição
                   </Label>
                   <div className="relative">
@@ -211,14 +198,14 @@ export default function ForgotPasswordPage() {
                       placeholder="Cole o token recebido por e-mail"
                       value={token}
                       onChange={(e) => setToken(e.target.value)}
-                      className="bg-[#F5F5F5] border-slate-200 pl-9 text-xs text-[#1a1a1a] placeholder:text-slate-400 font-mono rounded-input focus:bg-white"
+                      className="bg-[#0A1128] border-[#1E2B58] pl-9 text-xs text-white placeholder:text-slate-400 font-mono rounded-xl focus:border-[#60A5FA]"
                       required
                     />
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="font-heading text-xs font-semibold text-[#1a1a1a]">
+                  <Label className="font-heading text-xs font-semibold text-white">
                     Nova Senha
                   </Label>
                   <div className="relative">
@@ -228,7 +215,7 @@ export default function ForgotPasswordPage() {
                       placeholder="Mínimo 8 caracteres"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="bg-[#F5F5F5] border-slate-200 pl-9 text-xs text-[#1a1a1a] placeholder:text-slate-400 rounded-input focus:bg-white"
+                      className="bg-[#0A1128] border-[#1E2B58] pl-9 text-xs text-white placeholder:text-slate-400 rounded-xl focus:border-[#60A5FA]"
                       minLength={8}
                       required
                     />
@@ -236,7 +223,7 @@ export default function ForgotPasswordPage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="font-heading text-xs font-semibold text-[#1a1a1a]">
+                  <Label className="font-heading text-xs font-semibold text-white">
                     Confirmar Nova Senha
                   </Label>
                   <div className="relative">
@@ -246,7 +233,7 @@ export default function ForgotPasswordPage() {
                       placeholder="Repita a nova senha"
                       value={passwordConfirm}
                       onChange={(e) => setPasswordConfirm(e.target.value)}
-                      className="bg-[#F5F5F5] border-slate-200 pl-9 text-xs text-[#1a1a1a] placeholder:text-slate-400 rounded-input focus:bg-white"
+                      className="bg-[#0A1128] border-[#1E2B58] pl-9 text-xs text-white placeholder:text-slate-400 rounded-xl focus:border-[#60A5FA]"
                       minLength={8}
                       required
                     />
@@ -257,7 +244,7 @@ export default function ForgotPasswordPage() {
                   <Button
                     type="submit"
                     disabled={isLoading}
-                    className="w-full h-11 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-sm shadow-brand transition rounded-input"
+                    className="w-full h-11 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-sm shadow-brand transition rounded-xl"
                   >
                     {isLoading ? 'Redefinindo...' : 'Redefinir Senha e Entrar'}
                   </Button>
@@ -266,7 +253,7 @@ export default function ForgotPasswordPage() {
                     type="button"
                     variant="outline"
                     onClick={() => setStep(1)}
-                    className="w-full h-9 border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-xs rounded-input"
+                    className="w-full h-9 border-[#1E2B58] bg-[#0A1128] text-slate-200 hover:bg-[#121E46] text-xs rounded-xl"
                   >
                     Solicitar novo código
                   </Button>
@@ -274,10 +261,10 @@ export default function ForgotPasswordPage() {
               </form>
             )}
 
-            <div className="pt-3 border-t border-slate-200 text-center">
-              <Link to="/login" className="text-xs text-slate-600 hover:text-[#0052CC] transition">
+            <div className="pt-3 border-t border-[#1E2B58] text-center">
+              <Link to="/login" className="text-xs text-slate-400 hover:text-[#60A5FA] transition">
                 Lembrou a senha?{' '}
-                <span className="text-[#0052CC] font-bold hover:underline">Fazer login</span>
+                <span className="text-[#60A5FA] font-bold hover:underline">Fazer login</span>
               </Link>
             </div>
           </CardContent>
@@ -285,7 +272,7 @@ export default function ForgotPasswordPage() {
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-slate-200 bg-[#F5F5F5] py-4 px-6 text-center text-xs text-slate-600 font-sans">
+      <footer className="relative z-10 border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
         <p>LOGHYPE — Entrega rápida, confiança garantida • Recuperação de Acesso</p>
       </footer>
     </div>

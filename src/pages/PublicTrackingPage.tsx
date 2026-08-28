@@ -22,6 +22,7 @@ import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { OrderRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
+import { LoghypeLogo } from '@/components/LoghypeLogo'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -154,19 +155,11 @@ export default function PublicTrackingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col justify-between font-sans">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-between font-sans">
       {/* Public Header */}
-      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between bg-[#0052CC] text-white px-4 shadow-sm sm:px-6">
-        <Link to="/" className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 text-white border border-white/20">
-            <Truck className="h-5 w-5 text-[#FF6B35]" />
-          </div>
-          <div>
-            <span className="font-heading text-base font-bold text-white block leading-none">
-              LOGHYPE
-            </span>
-            <span className="font-sans text-[10px] text-white/80">Rastreamento Público</span>
-          </div>
+      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between bg-[#0A1128] border-b border-[#1E2B58] text-white px-4 shadow-brand-dark sm:px-6">
+        <Link to="/" className="flex items-center hover:opacity-95">
+          <LoghypeLogo size="sm" theme="dark" showTagline={false} />
         </Link>
 
         <div className="flex items-center gap-2">
@@ -213,17 +206,17 @@ export default function PublicTrackingPage() {
         ) : (
           <div className="space-y-6">
             {/* Status Summary Banner */}
-            <div className="rounded-card border border-blue-200 bg-blue-50/60 p-6 shadow-brand relative overflow-hidden">
+            <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-6 shadow-brand-dark relative overflow-hidden text-white">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-bold text-[#0052CC]">
+                    <span className="font-mono text-sm font-bold text-[#60A5FA]">
                       {order.tracking_code}
                     </span>
                     <Badge
                       className={`text-xs font-bold ${
                         order.status === 'delivered'
-                          ? 'bg-[#00AA44] text-white'
+                          ? 'bg-[#22C55E] text-slate-950'
                           : order.status === 'in_transit'
                             ? 'bg-[#FF6B35] text-white animate-pulse'
                             : 'bg-[#0052CC] text-white'
@@ -236,26 +229,26 @@ export default function PublicTrackingPage() {
                           : 'PEDIDO CONFIRMADO'}
                     </Badge>
                   </div>
-                  <h1 className="font-heading text-2xl font-black text-[#1a1a1a] mt-1">
+                  <h1 className="font-heading text-2xl font-black text-white mt-1">
                     {order.status === 'delivered'
                       ? 'Sua encomenda foi entregue!'
                       : order.status === 'in_transit'
                         ? 'O entregador está a caminho do seu endereço.'
                         : 'Seu pedido está sendo preparado para envio.'}
                   </h1>
-                  <p className="font-sans text-xs text-slate-600 mt-1">
+                  <p className="font-sans text-xs text-slate-400 mt-1">
                     Previsão de Chegada (ETA):{' '}
-                    <span className="font-bold text-[#0052CC]">{getEtaString()}</span>
+                    <span className="font-bold text-[#60A5FA]">{getEtaString()}</span>
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3 self-start sm:self-center p-3 rounded-card bg-white border border-slate-200 shadow-brand">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-card bg-blue-50 text-[#0052CC] border border-blue-100">
+                <div className="flex items-center gap-3 self-start sm:self-center p-3 rounded-xl bg-[#0A1128] border border-[#1E2B58] shadow-sm">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0052CC]/30 text-[#60A5FA] border border-[#60A5FA]/30">
                     <Truck className="h-5 w-5 text-[#FF6B35]" />
                   </div>
                   <div>
-                    <p className="text-[11px] text-slate-500 font-sans">Entregador Responsável</p>
-                    <p className="text-xs font-bold text-[#1a1a1a] font-heading">
+                    <p className="text-[11px] text-slate-400 font-sans">Entregador Responsável</p>
+                    <p className="text-xs font-bold text-white font-heading">
                       {courier?.name || 'Equipe de Logística LOGHYPE'}
                     </p>
                   </div>
@@ -263,7 +256,7 @@ export default function PublicTrackingPage() {
               </div>
 
               {/* VERTICAL / HORIZONTAL STEPPER TIMELINE */}
-              <div className="mt-8 pt-6 border-t border-slate-200 grid grid-cols-3 gap-2 relative">
+              <div className="mt-8 pt-6 border-t border-[#1E2B58] grid grid-cols-3 gap-2 relative">
                 {/* Step 1 */}
                 <div className="flex flex-col items-center text-center space-y-1.5 font-sans">
                   <div
@@ -271,14 +264,14 @@ export default function PublicTrackingPage() {
                       order.status === 'pending' ||
                       order.status === 'in_transit' ||
                       order.status === 'delivered'
-                        ? 'bg-[#0052CC] text-white shadow-sm'
-                        : 'bg-slate-200 text-slate-500'
+                        ? 'bg-[#0052CC] text-white shadow-sm border border-blue-400/40'
+                        : 'bg-[#0A1128] text-slate-500 border border-[#1E2B58]'
                     }`}
                   >
                     <Package className="h-4 w-4" />
                   </div>
-                  <p className="text-xs font-bold text-[#1a1a1a] font-heading">1. Confirmado</p>
-                  <p className="text-[10px] text-slate-500">Pedido registrado</p>
+                  <p className="text-xs font-bold text-white font-heading">1. Confirmado</p>
+                  <p className="text-[10px] text-slate-400">Pedido registrado</p>
                 </div>
 
                 {/* Step 2 */}
@@ -286,14 +279,14 @@ export default function PublicTrackingPage() {
                   <div
                     className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${
                       order.status === 'in_transit' || order.status === 'delivered'
-                        ? 'bg-[#FF6B35] text-white shadow-sm'
-                        : 'bg-slate-200 text-slate-500'
+                        ? 'bg-[#FF6B35] text-white shadow-sm border border-orange-400/40'
+                        : 'bg-[#0A1128] text-slate-500 border border-[#1E2B58]'
                     }`}
                   >
                     <Truck className="h-4 w-4" />
                   </div>
-                  <p className="text-xs font-bold text-[#1a1a1a] font-heading">2. Em Rota</p>
-                  <p className="text-[10px] text-slate-500">Despachado com GPS</p>
+                  <p className="text-xs font-bold text-white font-heading">2. Em Rota</p>
+                  <p className="text-[10px] text-slate-400">Despachado com GPS</p>
                 </div>
 
                 {/* Step 3 */}
@@ -301,14 +294,14 @@ export default function PublicTrackingPage() {
                   <div
                     className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${
                       order.status === 'delivered'
-                        ? 'bg-[#00AA44] text-white shadow-sm'
-                        : 'bg-slate-200 text-slate-500'
+                        ? 'bg-[#22C55E] text-slate-950 shadow-sm border border-emerald-400/40'
+                        : 'bg-[#0A1128] text-slate-500 border border-[#1E2B58]'
                     }`}
                   >
                     <CheckCircle2 className="h-4 w-4" />
                   </div>
-                  <p className="text-xs font-bold text-[#1a1a1a] font-heading">3. Entregue</p>
-                  <p className="text-[10px] text-slate-500">Comprovante OK</p>
+                  <p className="text-xs font-bold text-white font-heading">3. Entregue</p>
+                  <p className="text-[10px] text-slate-400">Comprovante OK</p>
                 </div>
               </div>
             </div>
@@ -342,31 +335,29 @@ export default function PublicTrackingPage() {
 
             {/* Delivery Destination & Package Details */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="rounded-card border border-slate-200 bg-white p-4 space-y-2 text-xs shadow-brand">
-                <span className="font-heading font-bold text-slate-500 uppercase tracking-wider text-[10px]">
+              <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 space-y-2 text-xs shadow-brand-dark">
+                <span className="font-heading font-bold text-slate-400 uppercase tracking-wider text-[10px]">
                   Local de Entrega
                 </span>
-                <p className="text-sm font-semibold text-[#1a1a1a]">
-                  {customer?.name || 'Cliente'}
-                </p>
-                <p className="text-slate-600">{customer?.address}</p>
+                <p className="text-sm font-semibold text-white">{customer?.name || 'Cliente'}</p>
+                <p className="text-slate-300">{customer?.address}</p>
                 {order.notes && (
                   <p className="text-[#FF6B35] text-[11px] pt-1">Nota: {order.notes}</p>
                 )}
               </div>
 
-              <div className="rounded-card border border-slate-200 bg-white p-4 space-y-2 text-xs shadow-brand">
-                <span className="font-heading font-bold text-slate-500 uppercase tracking-wider text-[10px]">
+              <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 space-y-2 text-xs shadow-brand-dark">
+                <span className="font-heading font-bold text-slate-400 uppercase tracking-wider text-[10px]">
                   Resumo do Pedido
                 </span>
-                <p className="text-slate-600">
+                <p className="text-slate-300">
                   Data: {new Date(order.created).toLocaleDateString('pt-BR')} às{' '}
                   {new Date(order.created).toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
                   })}
                 </p>
-                <p className="text-sm font-bold text-[#00AA44] font-heading">
+                <p className="text-sm font-bold text-[#22C55E] font-heading">
                   Valor Total: R$ {Number(order.total_price || 0).toFixed(2)}
                 </p>
               </div>
@@ -523,7 +514,7 @@ export default function PublicTrackingPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-200 bg-[#F5F5F5] py-4 px-6 text-center text-xs text-slate-600 font-sans">
+      <footer className="border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
         <p>LOGHYPE — Entrega rápida, confiança garantida • Rastreio em Tempo Real</p>
       </footer>
     </div>

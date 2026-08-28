@@ -14,6 +14,7 @@ import {
   Mail,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { LoghypeLogo } from '@/components/LoghypeLogo'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -47,31 +48,19 @@ export default function PendingApprovalPage() {
   const isInactive = user?.status === 'inactive'
 
   return (
-    <div className="min-h-screen bg-[#FFFFFF] text-[#1a1a1a] flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
       {/* Header */}
-      <header className="relative z-10 w-full border-b border-slate-200 bg-white shadow-subtle px-6 py-3.5">
+      <header className="relative z-10 w-full border-b border-[#1E2B58] bg-[#0A1128]/90 backdrop-blur-md px-6 py-3.5 shadow-brand-dark">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0A1128] text-white shadow-sm p-1.5">
-                <Truck className="h-5 w-5 text-[#FF6B35]" />
-              </div>
-              <div>
-                <span className="font-heading text-lg font-black tracking-tight text-[#0052CC] block leading-tight">
-                  LOGHYPE
-                </span>
-                <span className="font-sans text-[11px] text-slate-500">
-                  Entrega rápida, confiança garantida
-                </span>
-              </div>
-            </div>
+          <Link to="/" className="flex items-center hover:opacity-95">
+            <LoghypeLogo size="sm" theme="dark" showTagline={false} />
           </Link>
 
           <Button
             variant="ghost"
             size="sm"
             onClick={logout}
-            className="text-xs text-[#E74C3C] hover:bg-red-50 font-bold gap-1.5 rounded-input"
+            className="text-xs text-[#EF4444] hover:bg-[#EF4444]/10 font-bold gap-1.5 rounded-lg border border-[#EF4444]/30"
           >
             <LogOut className="h-4 w-4" />
             Sair da Conta
@@ -80,11 +69,11 @@ export default function PendingApprovalPage() {
       </header>
       {/* Main Container */}
       <main className="relative z-10 flex-1 max-w-xl mx-auto w-full px-4 py-12 flex items-center justify-center">
-        <Card className="w-full border border-slate-200 bg-white text-[#1a1a1a] shadow-brand rounded-card">
+        <Card className="w-full border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl">
           <CardHeader className="text-center pb-2">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-card bg-orange-50 text-[#FF6B35] border border-orange-200 shadow-sm">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FF6B35]/15 text-[#FF6B35] border border-[#FF6B35]/30 shadow-sm">
               {isInactive ? (
-                <AlertCircle className="h-8 w-8 text-[#E74C3C]" />
+                <AlertCircle className="h-8 w-8 text-[#EF4444]" />
               ) : (
                 <Clock className="h-8 w-8 text-[#FF6B35] animate-pulse" />
               )}
@@ -94,20 +83,20 @@ export default function PendingApprovalPage() {
               variant="outline"
               className={`mx-auto mb-2 text-xs uppercase tracking-wider font-bold ${
                 isInactive
-                  ? 'bg-red-50 text-[#E74C3C] border-[#E74C3C]/30'
-                  : 'bg-orange-50 text-[#FF6B35] border-[#FF6B35]/30'
+                  ? 'bg-rose-500/20 text-[#EF4444] border-[#EF4444]/30'
+                  : 'bg-[#FF6B35]/20 text-[#FF6B35] border-[#FF6B35]/30'
               }`}
             >
               {isInactive ? 'Conta Inativa / Bloqueada' : 'Cadastro em Análise'}
             </Badge>
 
-            <CardTitle className="font-heading text-2xl font-black text-[#1a1a1a]">
+            <CardTitle className="font-heading text-2xl font-black text-white">
               {isInactive
                 ? 'Acesso Temporariamente Suspenso'
                 : 'Aguardando Liberação do Administrador'}
             </CardTitle>
 
-            <CardDescription className="font-sans text-slate-600 text-sm mt-2 leading-relaxed">
+            <CardDescription className="font-sans text-slate-300 text-sm mt-2 leading-relaxed">
               {isInactive
                 ? 'Sua conta de entregador está com status Inativo. Entre em contato com a equipe de logística para mais informações.'
                 : 'Recebemos suas informações e seus documentos (RG/CNH e selfie). Nossa equipe de gestão está conferindo os dados para liberação do acesso.'}
@@ -116,24 +105,24 @@ export default function PendingApprovalPage() {
 
           <CardContent className="space-y-6 pt-4">
             {/* Status Checklist Box */}
-            <div className="rounded-card border border-slate-200 bg-[#F5F5F5] p-4 space-y-3 text-xs font-sans">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                <span className="text-slate-500">Usuário:</span>
-                <span className="font-bold text-[#1a1a1a]">{user?.name || 'Não informado'}</span>
+            <div className="rounded-xl border border-[#1E2B58] bg-[#0A1128] p-4 space-y-3 text-xs font-sans">
+              <div className="flex items-center justify-between pb-2 border-b border-[#1E2B58]">
+                <span className="text-slate-400">Usuário:</span>
+                <span className="font-bold text-white">{user?.name || 'Não informado'}</span>
               </div>
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                <span className="text-slate-500">E-mail:</span>
-                <span className="font-bold text-[#1a1a1a]">{user?.email}</span>
+              <div className="flex items-center justify-between pb-2 border-b border-[#1E2B58]">
+                <span className="text-slate-400">E-mail:</span>
+                <span className="font-bold text-white">{user?.email}</span>
               </div>
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                <span className="text-slate-500">Perfil:</span>
-                <span className="font-bold text-[#0052CC]">🛵 Entregador LOGHYPE</span>
+              <div className="flex items-center justify-between pb-2 border-b border-[#1E2B58]">
+                <span className="text-slate-400">Perfil:</span>
+                <span className="font-bold text-[#60A5FA]">🛵 Entregador LOGHYPE</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-500">Status atual:</span>
+                <span className="text-slate-400">Status atual:</span>
                 <span
                   className={`font-bold uppercase ${
-                    isInactive ? 'text-[#E74C3C]' : 'text-[#FF6B35]'
+                    isInactive ? 'text-[#EF4444]' : 'text-[#FF6B35]'
                   }`}
                 >
                   {user?.status || 'Pendente'}
@@ -142,9 +131,9 @@ export default function PendingApprovalPage() {
             </div>
 
             {/* Steps Info */}
-            <div className="space-y-2.5 text-xs text-slate-600 font-sans">
+            <div className="space-y-2.5 text-xs text-slate-300 font-sans">
               <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="h-4 w-4 text-[#00AA44] shrink-0 mt-0.5" />
+                <CheckCircle2 className="h-4 w-4 text-[#22C55E] shrink-0 mt-0.5" />
                 <span>Cadastro e envio de documentos concluídos com sucesso.</span>
               </div>
               <div className="flex items-start gap-2.5">
@@ -152,7 +141,7 @@ export default function PendingApprovalPage() {
                 <span>Análise documental pelo time de validação e compliance da LOGHYPE.</span>
               </div>
               <div className="flex items-start gap-2.5">
-                <ShieldCheck className="h-4 w-4 text-[#0052CC] shrink-0 mt-0.5" />
+                <ShieldCheck className="h-4 w-4 text-[#60A5FA] shrink-0 mt-0.5" />
                 <span>Após aprovação, suas rotas e entregas serão liberadas imediatamente.</span>
               </div>
             </div>
@@ -162,7 +151,7 @@ export default function PendingApprovalPage() {
               <Button
                 onClick={handleCheckStatus}
                 disabled={isRefreshing}
-                className="w-full h-11 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-sm shadow-brand rounded-input gap-2 transition duration-100"
+                className="w-full h-11 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-sm shadow-brand rounded-xl gap-2 transition duration-100"
               >
                 <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 {isRefreshing ? 'Verificando...' : 'Verificar Status de Aprovação'}
@@ -171,7 +160,7 @@ export default function PendingApprovalPage() {
               <Button
                 variant="outline"
                 onClick={logout}
-                className="w-full h-10 border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-xs font-bold rounded-input"
+                className="w-full h-10 border-[#1E2B58] bg-[#0A1128] text-slate-200 hover:bg-[#121E46] text-xs font-bold rounded-xl"
               >
                 Voltar à Tela de Login
               </Button>
@@ -181,7 +170,7 @@ export default function PendingApprovalPage() {
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-slate-800/80 bg-slate-950/90 py-4 px-6 text-center text-xs text-slate-500">
+      <footer className="relative z-10 border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400">
         <p>LOGHYPE — Entrega rápida, confiança garantida • Sistema de Credenciamento</p>
       </footer>
     </div>

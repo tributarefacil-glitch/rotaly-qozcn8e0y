@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { LoghypeLogo } from '@/components/LoghypeLogo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -234,36 +235,25 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FFFFFF] text-[#1a1a1a] flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
       {/* Header */}
-      <header className="relative z-10 w-full border-b border-slate-200 bg-white shadow-subtle px-6 py-3.5">
+      <header className="relative z-10 w-full border-b border-[#1E2B58] bg-[#0A1128]/90 backdrop-blur-md px-6 py-3.5 shadow-brand-dark">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#0052CC] text-white shadow-brand">
-              <Truck className="h-5 w-5 text-[#FF6B35]" />
-            </div>
-            <div>
-              <span className="font-heading text-lg font-black leading-none tracking-wider text-[#0052CC] block">
-                LOGHYPE
-              </span>
-              <span className="font-sans text-[10px] text-slate-500">
-                Entrega rápida, confiança garantida
-              </span>
-            </div>
+          <Link to="/" className="flex items-center hover:opacity-95">
+            <LoghypeLogo size="sm" theme="dark" showTagline={false} />
           </Link>
 
           <Button
             variant="ghost"
             size="sm"
             onClick={() => navigate('/login')}
-            className="text-xs text-[#0052CC] hover:bg-blue-50 font-bold gap-1.5 rounded-input"
+            className="text-xs text-[#60A5FA] hover:text-white hover:bg-[#121E46] font-bold gap-1.5 rounded-lg border border-[#1E2B58]"
           >
             <ArrowLeft className="h-4 w-4" />
             Já tenho conta (Fazer Login)
           </Button>
         </div>
       </header>
-
       {/* Main Container */}
       <main className="relative z-10 flex-1 max-w-2xl mx-auto w-full px-4 py-8 sm:py-12 flex flex-col justify-center">
         {registrationComplete ? (
@@ -312,15 +302,15 @@ export default function RegisterPage() {
           </Card>
         ) : (
           /* MULTI-STEP REGISTRATION FORM */
-          <Card className="border border-slate-200 bg-white text-[#1a1a1a] shadow-brand rounded-card">
+          <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl">
             <CardHeader className="space-y-4 pb-4">
               {/* Profile Type Selector (Courier vs Seller) */}
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="font-heading text-2xl font-black text-[#1a1a1a]">
+                  <CardTitle className="font-heading text-2xl font-black text-white">
                     Criar Nova Conta
                   </CardTitle>
-                  <CardDescription className="font-sans text-slate-600 text-xs">
+                  <CardDescription className="font-sans text-slate-400 text-xs">
                     Cadastre-se na LOGHYPE para começar a operar entregas.
                   </CardDescription>
                 </div>
@@ -784,11 +774,10 @@ export default function RegisterPage() {
           </Card>
         )}
       </main>
-
       {/* Footer */}
-      <footer className="relative z-10 border-t border-slate-800/80 bg-slate-950/90 py-4 px-6 text-center text-xs text-slate-500">
+      <footer className="border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
         <p>LOGHYPE — Entrega rápida, confiança garantida • Plataforma Segura</p>
-      </footer>
+      </footer>{' '}
     </div>
   )
 }

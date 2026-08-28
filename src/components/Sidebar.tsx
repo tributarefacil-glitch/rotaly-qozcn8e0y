@@ -1,159 +1,153 @@
 import React from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Package,
-  Route as RouteIcon,
-  Users,
+  Bike,
   BarChart3,
   Settings,
-  ShieldCheck,
-  Truck,
+  Fuel,
   Sparkles,
-  UserCheck,
-  Radio,
+  MapPin,
   FileText,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 
 interface NavItem {
   title: string
   href: string
   icon: React.ElementType
+  roles: ('admin' | 'seller' | 'courier')[]
   badge?: string
   adminOnly?: boolean
 }
 
 const navItems: NavItem[] = [
   {
-    title: 'Painel Geral',
-    href: '/seller',
+    title: 'Painel Master Admin',
+    href: '/admin',
     icon: LayoutDashboard,
+    roles: ['admin'],
   },
   {
-    title: 'Torre de Controle',
+    title: 'Painel do Lojista',
+    href: '/seller',
+    icon: Package,
+    roles: ['seller', 'admin'],
+  },
+  {
+    title: 'App do Entregador',
+    href: '/courier',
+    icon: Bike,
+    roles: ['courier', 'admin'],
+  },
+  {
+    title: 'Torre de Controle (Mapa)',
     href: '/control-tower',
-    icon: Radio,
+    icon: MapPin,
+    roles: ['admin', 'seller'],
     badge: 'Ao Vivo',
   },
   {
-    title: 'Relatórios',
+    title: 'Controle de Combustível',
+    href: '/courier/fuel',
+    icon: Fuel,
+    roles: ['courier', 'admin'],
+  },
+  {
+    title: 'Relatórios & KPIs',
     href: '/reports',
-    icon: FileText,
-  },
-  {
-    title: 'Pedidos & Vendas',
-    href: '/orders',
-    icon: Package,
-  },
-  {
-    title: 'Rotas & Mapa',
-    href: '/routes',
-    icon: RouteIcon,
-  },
-  {
-    title: 'Clientes',
-    href: '/customers',
-    icon: Users,
-  },
-  {
-    title: 'Usuários',
-    href: '/admin/users',
-    icon: UserCheck,
-    badge: 'Admin',
-    adminOnly: true,
-  },
-  {
-    title: 'Gestão & Métricas',
-    href: '/admin',
     icon: BarChart3,
-    badge: 'Admin',
-    adminOnly: true,
+    roles: ['admin', 'seller'],
   },
   {
-    title: 'Entregadores',
-    href: '/couriers',
-    icon: Truck,
+    title: 'Notas Fiscais & XML',
+    href: '/invoices',
+    icon: FileText,
+    roles: ['admin', 'seller'],
   },
   {
-    title: 'Configurações',
+    title: 'Configurações Globais',
     href: '/settings',
     icon: Settings,
+    roles: ['admin'],
   },
 ]
 
 export const Sidebar: React.FC = () => {
-  const { role } = useAuth()
   const location = useLocation()
+  const { user } = useAuth()
+  const role = user?.role || 'seller'
 
   const filteredItems = navItems.filter((item) => {
-    if (item.adminOnly && role !== 'admin') return false
-    return true
+    if (role === 'admin') return true
+    return item.roles.includes(role)
   })
 
   return (
-    <aside className="hidden md:flex h-[calc(100vh-4rem)] w-64 flex-col border-r border-slate-200 bg-[#F5F5F5] text-[#1a1a1a]">
+    <aside className="hidden md:flex h-[calc(100vh-4rem)] w-64 flex-col border-r border-[#1E2B58] bg-[#0A1128] text-slate-200 shadow-xl select-none">
       {/* Navigation Links */}
-      <div className="flex-1 space-y-1 p-4 overflow-y-auto">
-        <div className="px-3 py-2 font-heading text-xs font-bold uppercase tracking-wider text-slate-500">
-          Menu Principal
+      <div className="flex-1 space-y-1.5 p-4 overflow-y-auto">
+        <div className="px-3 py-1 font-heading text-[11px] font-black uppercase tracking-wider text-slate-400">
+          Navegação LOGHYPE
         </div>
-        <nav className="space-y-1">
+        <nav className="space-y-1.5">
           {filteredItems.map((item) => {
             const Icon = item.icon
             const isActive = location.pathname === item.href
 
             return (
-              <NavLink
+              <Link
                 key={item.href}
                 to={item.href}
-                className={`group flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium transition-all ${
+                className={cn(
+                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-sans font-medium transition-all duration-150',
                   isActive
-                    ? 'bg-[#0052CC] text-white shadow-sm font-semibold'
-                    : 'text-slate-700 hover:bg-white hover:text-[#0052CC] hover:shadow-xs'
-                }`}
+                    ? 'bg-gradient-to-r from-[#0052CC] to-[#1D4ED8] text-white shadow-brand font-semibold border border-blue-400/30'
+                    : 'text-slate-300 hover:bg-[#121E46] hover:text-white hover:border-[#1E2B58]',
+                )}
               >
-                <div className="flex items-center gap-3">
-                  <Icon
-                    className={`h-4 w-4 transition-colors ${
-                      isActive ? 'text-[#FF6B35]' : 'text-[#0052CC] group-hover:text-[#FF6B35]'
-                    }`}
-                  />
-                  <span className={isActive ? 'font-bold' : ''}>{item.title}</span>
-                </div>
+                <Icon
+                  className={cn('h-4 w-4 shrink-0', isActive ? 'text-[#60A5FA]' : 'text-slate-400')}
+                />
+                <span className="flex-1 tracking-tight">{item.title}</span>
                 {item.badge && (
                   <Badge
-                    variant="secondary"
-                    className={`text-[10px] font-bold ${
+                    variant="outline"
+                    className={cn(
+                      'text-[10px] font-sans h-5 px-1.5 font-bold',
                       isActive
-                        ? 'bg-white text-[#0052CC]'
-                        : 'bg-white text-[#FF6B35] border border-orange-200 shadow-xs'
-                    }`}
+                        ? 'border-white/30 text-white bg-white/10'
+                        : 'border-[#FF6B35]/40 bg-[#FF6B35]/20 text-[#FF6B35]',
+                    )}
                   >
                     {item.badge}
                   </Badge>
                 )}
-              </NavLink>
+              </Link>
             )
           })}
         </nav>
       </div>
 
-      {/* AI Assistant Promo Widget in Sidebar */}
-      <div className="p-4 border-t border-slate-200 bg-white/70">
-        <div className="rounded-lg bg-blue-50/70 p-3 border border-blue-200 shadow-xs">
+      {/* Floating Copilot Helper Card in Sidebar */}
+      <div className="p-4 border-t border-[#1E2B58] bg-[#070D1E]/80">
+        <div className="rounded-xl bg-[#0E1738] p-3 border border-[#1E2B58] shadow-sm">
           <div className="flex items-center gap-2 mb-1.5">
             <Sparkles className="h-4 w-4 text-[#FF6B35] animate-pulse" />
-            <span className="font-heading text-xs font-bold text-[#0052CC]">
+            <span className="font-heading text-xs font-bold text-white tracking-wide">
               LOGHYPE Copilot IA
             </span>
           </div>
-          <p className="font-sans text-[11px] text-slate-600 leading-relaxed">
-            Consulte rotas, frotas e atrasos a qualquer momento pelo chat flutuante.
+          <p className="font-sans text-[11px] text-slate-300 leading-relaxed">
+            Consulte rotas inteligentes, status de entregas e KPIs a qualquer instante.
           </p>
         </div>
       </div>
     </aside>
   )
 }
+
+export default Sidebar

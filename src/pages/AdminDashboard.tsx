@@ -567,7 +567,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const maxDayVolume = Math.max(...volumeByDay, 40)
 
   return (
-    <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col font-sans">
+    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col font-sans">
       <Header />
 
       <div className="flex flex-1">
@@ -577,13 +577,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
           {/* Header Title & Actions */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-6 w-6 text-[#0052CC]" />
-                <h1 className="font-heading text-2xl sm:text-3xl font-extrabold tracking-tight text-[#1a1a1a]">
-                  Painel Executivo & Gestão LOGHYPE
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="h-6 w-6 text-[#60A5FA]" />
+                <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-white">
+                  Painel Executivo &amp; Gestão LOGHYPE
                 </h1>
               </div>
-              <p className="font-sans text-xs sm:text-sm text-slate-600 mt-1">
+              <p className="font-sans text-xs sm:text-sm text-slate-400 mt-1">
                 Controle global de entregadores, vendedores, aprovações de documentos e telemetria.
               </p>
             </div>
@@ -618,66 +618,66 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
             }
             className="space-y-6"
           >
-            <TabsList className="bg-[#F5F5F5] p-1 border border-slate-200 rounded-card flex flex-wrap gap-1 font-heading">
+            <TabsList className="bg-[#0A1128] p-1 border border-[#1E2B58] rounded-xl flex flex-wrap gap-1 font-heading">
               <TabsTrigger
                 value="overview"
-                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input"
+                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
               >
-                <BarChart3 className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
+                <BarChart3 className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
                 Visão Geral
               </TabsTrigger>
               <TabsTrigger
                 value="control-tower"
-                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input text-[#00AA44] bg-emerald-50/50"
+                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
               >
-                <Compass className="h-3.5 w-3.5 mr-1.5 text-[#00AA44]" />
+                <Compass className="h-3.5 w-3.5 mr-1.5 text-[#22C55E]" />
                 Torre de Controle
               </TabsTrigger>
               <TabsTrigger
                 value="reports"
-                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input text-[#0052CC]"
+                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
               >
-                <PieChart className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
+                <PieChart className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
                 Relatórios Operacionais
               </TabsTrigger>
               <TabsTrigger
                 value="fuel"
-                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input text-[#00AA44]"
+                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
               >
-                <Wallet className="h-3.5 w-3.5 mr-1.5 text-[#00AA44]" />
+                <Wallet className="h-3.5 w-3.5 mr-1.5 text-[#22C55E]" />
                 Controle de Combustível
               </TabsTrigger>
               <TabsTrigger
                 value="deviations"
-                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input text-[#FF6B35]"
+                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg text-[#FF6B35]"
               >
                 <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-[#FF6B35]" />
-                Desvios & Paradas ({offRouteEvents.length})
+                Desvios &amp; Paradas ({offRouteEvents.length})
               </TabsTrigger>
               <TabsTrigger
                 value="settings"
-                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input"
+                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
               >
-                <Settings className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
-                Parâmetros R$/L e km/L
+                <Settings className="h-3.5 w-3.5 mr-1.5 text-slate-400" />
+                Parâmetros R$/L
               </TabsTrigger>
               <TabsTrigger
                 value="couriers"
-                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input relative"
+                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg relative"
               >
                 <Truck className="h-3.5 w-3.5 mr-1.5 text-[#FF6B35]" />
                 Entregadores ({couriers.length})
                 {pendingCouriers.length > 0 && (
                   <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-[#FF6B35] text-white text-[10px] font-bold">
-                    {pendingCouriers.length} pendentes
+                    {pendingCouriers.length}
                   </span>
                 )}
               </TabsTrigger>
               <TabsTrigger
                 value="sellers"
-                className="text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-[#0052CC] data-[state=active]:shadow-xs rounded-input"
+                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
               >
-                <Users className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
+                <Users className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
                 Vendedores ({sellers.length})
               </TabsTrigger>
             </TabsList>

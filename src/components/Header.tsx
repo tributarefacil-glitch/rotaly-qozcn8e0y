@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { LoghypeLogo } from '@/components/LoghypeLogo'
 import { deliveryService } from '@/services/deliveryService'
 import type { NotificationRecord } from '@/types/delivery'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -111,41 +112,31 @@ export const Header: React.FC = () => {
   }[role]
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between bg-[#0052CC] text-white px-4 shadow-sm transition-all sm:px-6">
+    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between bg-[#0A1128] border-b border-[#1E2B58] text-white px-4 shadow-brand-dark transition-all sm:px-6">
       {/* Left section: App Brand & Status */}
-      <div className="flex items-center gap-3">
-        <Link to="/" className="flex items-center gap-2.5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/10 text-white border border-white/20 shadow-sm">
-            <Truck className="h-5 w-5 text-[#FF6B35]" />
-          </div>
-          <div className="hidden flex-col sm:flex">
-            <span className="font-heading text-lg font-black leading-none tracking-wider text-white">
-              LOGHYPE
-            </span>
-            <span className="font-sans text-[11px] text-white/80">
-              Entrega rápida, confiança garantida
-            </span>
-          </div>
+      <div className="flex items-center gap-3.5">
+        <Link to="/" className="flex items-center hover:opacity-95 transition-opacity">
+          <LoghypeLogo size="md" theme="dark" showTagline={false} />
         </Link>
-        <div className="hidden md:flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-medium text-white">
+        <div className="hidden md:flex items-center gap-2 rounded-full border border-[#1E2B58] bg-[#0E1738]/80 px-3 py-1 text-xs font-semibold text-slate-200">
           <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#00AA44] opacity-75"></span>
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#00AA44]"></span>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#22C55E] opacity-75"></span>
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#22C55E]"></span>
           </span>
-          GPS & Realtime Ativo
+          <span className="text-[11px] font-sans tracking-wide">GPS &amp; Realtime Ativo</span>
         </div>
       </div>
 
       {/* Center section: Global Tracking Code Search */}
       <div className="mx-2 max-w-md flex-1 sm:mx-6">
         <form onSubmit={handleSearch} className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/60" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input
             type="text"
-            placeholder="Rastrear entrega (ex: TRK-2025-001)..."
+            placeholder="Rastrear entrega LOGHYPE (ex: TRK-2025-001)..."
             value={searchTracking}
             onChange={(e) => setSearchTracking(e.target.value)}
-            className="h-9 w-full rounded-md border border-white/20 bg-white/10 pl-9 pr-4 text-xs text-white placeholder:text-white/60 transition focus:border-white focus:bg-white/20 focus:ring-0"
+            className="h-9 w-full rounded-lg border border-[#1E2B58] bg-[#0E1738] pl-9 pr-4 text-xs text-white placeholder:text-slate-400 transition focus:border-[#60A5FA] focus:bg-[#121E46] focus:ring-1 focus:ring-[#60A5FA]"
           />
         </form>
       </div>
@@ -252,16 +243,16 @@ export const Header: React.FC = () => {
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="flex items-center gap-2 pl-2 pr-2 sm:pr-3 py-1.5 h-auto rounded-md hover:bg-white/10 text-white"
+              className="flex items-center gap-2 pl-2 pr-2 sm:pr-3 py-1.5 h-auto rounded-lg hover:bg-[#121E46] border border-transparent hover:border-[#1E2B58] text-white"
             >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#0052CC] text-xs font-black uppercase shadow-sm">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white text-xs font-black uppercase shadow-sm border border-blue-300/30">
                 {user?.name ? user.name.slice(0, 2) : 'LH'}
               </div>
               <div className="hidden text-left sm:block">
                 <p className="font-heading text-xs font-bold leading-none text-white">
                   {user?.name || 'Usuário'}
                 </p>
-                <p className="text-[10px] text-white/80 leading-none mt-1">{user?.email}</p>
+                <p className="text-[10px] text-slate-300 leading-none mt-1">{user?.email}</p>
               </div>
             </Button>
           </DropdownMenuTrigger>
