@@ -24,7 +24,15 @@ import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { OrderRecord, CustomerRecord, UserRecord, LocationRecord } from '@/types/delivery'
+import type {
+  OrderRecord,
+  CustomerRecord,
+  UserRecord,
+  LocationRecord,
+  NotificationRecord,
+} from '@/types/delivery'
+import { playOffRouteWarningSound, sendBrowserPushNotification } from '@/lib/notificationSound'
+import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -60,6 +68,7 @@ import {
 import { toast } from 'sonner'
 
 export default function SellerDashboard() {
+  const { user } = useAuth()
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [couriers, setCouriers] = useState<UserRecord[]>([])
@@ -117,6 +126,26 @@ export default function SellerDashboard() {
   useRealtime<LocationRecord>('locations', (e) => {
     if (e.action === 'create') {
       setLocations((prev) => [e.record, ...prev.filter((l) => l.user_id !== e.record.user_id)])
+    }
+  })
+
+  // Realtime hook for seller notifications (off-route alerts with audible warning for seller)
+  useRealtime<NotificationRecord>('notifications', (e) => {
+    if (
+      e.action === 'create' &&
+      (!e.record.user_id ||
+        e.record.user_id === user?.id ||
+        user?.role === 'admin' ||
+        user?.role === 'seller')
+    ) {
+      if (e.record.type === 'off_route') {
+        playOffRouteWarningSound()
+        sendBrowserPushNotification(e.record.title, e.record.message)
+        toast.error(e.record.title, {
+          description: e.record.message,
+          duration: 9000,
+        })
+      }
     }
   })
 

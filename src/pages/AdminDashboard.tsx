@@ -36,6 +36,16 @@ import {
   Save,
   MapPinOff,
   UserX,
+  Wallet,
+  CreditCard,
+  PlusCircle,
+  Trash2,
+  Calendar,
+  Compass,
+  Star,
+  Receipt,
+  ArrowDownRight,
+  ArrowUpDown,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
@@ -47,6 +57,11 @@ import type {
   NotificationRecord,
   VehicleType,
   AppSettingsRecord,
+  FuelAdvanceRecord,
+  ReviewRecord,
+  OffRouteEventRecord,
+  CourierFuelAccount,
+  FuelPaymentMethod,
 } from '@/types/delivery'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { Button } from '@/components/ui/button'
@@ -81,17 +96,38 @@ export default function AdminDashboard() {
 
   // Filter & Search states for Users lists
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'reports' | 'settings' | 'couriers' | 'sellers'
+    'overview' | 'reports' | 'fuel' | 'deviations' | 'settings' | 'couriers' | 'sellers'
   >('overview')
   const [searchCouriers, setSearchCouriers] = useState('')
   const [courierStatusFilter, setCourierStatusFilter] = useState<string>('all')
   const [searchSellers, setSearchSellers] = useState('')
 
-  // Settings State (REQUISITO 4: Preço do litro e consumo km/L)
+  // Settings State (REQUISITO 1 & 5: Preço do litro e consumo km/L)
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
   const [fuelPriceInput, setFuelPriceInput] = useState('5.59')
   const [fuelConsumptionInput, setFuelConsumptionInput] = useState('35.0')
   const [isSavingSettings, setIsSavingSettings] = useState(false)
+
+  // Fuel Advances & Current Accounts State (REQUISITO 5)
+  const [fuelAdvances, setFuelAdvances] = useState<FuelAdvanceRecord[]>([])
+  const [fuelAccounts, setFuelAccounts] = useState<CourierFuelAccount[]>([])
+  const [selectedCourierForFuelFilter, setSelectedCourierForFuelFilter] = useState<string>('all')
+  const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week'>('all')
+  const [isNewFuelAdvanceModalOpen, setIsNewFuelAdvanceModalOpen] = useState(false)
+  const [advanceCourierId, setAdvanceCourierId] = useState('')
+  const [advanceAmount, setAdvanceAmount] = useState('')
+  const [advanceDate, setAdvanceDate] = useState(new Date().toISOString().split('T')[0])
+  const [advancePaymentMethod, setAdvancePaymentMethod] = useState<FuelPaymentMethod>('pix')
+  const [advanceNotes, setAdvanceNotes] = useState('')
+  const [isCreatingAdvance, setIsCreatingAdvance] = useState(false)
+
+  // Off-Route & Deviations State (REQUISITO 2)
+  const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
+  const [offRouteFilterType, setOffRouteFilterType] = useState<string>('all')
+  const [offRouteCourierFilter, setOffRouteCourierFilter] = useState<string>('all')
+
+  // Reviews State (REQUISITO 4)
+  const [reviews, setReviews] = useState<ReviewRecord[]>([])
 
   // Report Period Filter
   const [reportPeriod, setReportPeriod] = useState<'all' | 'today' | 'week' | 'month'>('all')
@@ -118,22 +154,113 @@ export default function AdminDashboard() {
   const loadData = async () => {
     try {
       setIsLoading(true)
-      const [ordersData, usersData, notifsData, appSettings] = await Promise.all([
+      const [
+        ordersData,
+        usersData,
+        notifsData,
+        appSettings,
+        advancesData,
+        accountsData,
+        eventsData,
+        reviewsData,
+      ] = await Promise.all([
         deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
         deliveryService.getAllUsers(),
         deliveryService.getNotifications(),
         deliveryService.getSettings(),
+        deliveryService.getFuelAdvances(),
+        deliveryService.getCourierFuelAccounts(),
+        deliveryService.getOffRouteEvents(),
+        deliveryService.getReviews(),
       ])
       setOrders(ordersData)
       setUsers(usersData)
       setNotifications(notifsData)
       setSettings(appSettings)
+      setFuelAdvances(advancesData)
+      setFuelAccounts(accountsData)
+      setOffRouteEvents(eventsData)
+      setReviews(reviewsData)
       setFuelPriceInput(String(appSettings.fuel_price_per_liter || 5.59))
       setFuelConsumptionInput(String(appSettings.fuel_consumption_kml || 35.0))
     } catch (err) {
       console.error('Error loading admin data:', err)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  // Create Fuel Advance
+  const handleCreateFuelAdvance = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const amountNum = parseFloat(advanceAmount.replace(',', '.'))
+    if (!advanceCourierId) {
+      toast.error('Selecione o entregador.')
+      return
+    }
+    if (isNaN(amountNum) || amountNum <= 0) {
+      toast.error('Informe um valor de adiantamento válido.')
+      return
+    }
+
+    setIsCreatingAdvance(true)
+    try {
+      await deliveryService.createFuelAdvance({
+        courier_id: advanceCourierId,
+        amount: amountNum,
+        date: advanceDate,
+        payment_method: advancePaymentMethod,
+        notes: advanceNotes.trim(),
+        created_by: pb.authStore.record?.id,
+      })
+
+      const courier = users.find((u) => u.id === advanceCourierId)
+      toast.success(
+        `Adiantamento de R$ ${amountNum.toFixed(2)} cadastrado para ${courier?.name || 'o entregador'}!`,
+      )
+
+      setIsNewFuelAdvanceModalOpen(false)
+      setAdvanceAmount('')
+      setAdvanceNotes('')
+      loadData()
+    } catch (err) {
+      console.error('Error creating fuel advance:', err)
+      toast.error('Erro ao cadastrar adiantamento de combustível.')
+    } finally {
+      setIsCreatingAdvance(false)
+    }
+  }
+
+  // Delete Fuel Advance
+  const handleDeleteFuelAdvance = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este registro de adiantamento?')) return
+    try {
+      await deliveryService.deleteFuelAdvance(id)
+      toast.success('Adiantamento excluído com sucesso.')
+      loadData()
+    } catch (err) {
+      console.error('Error deleting advance:', err)
+      toast.error('Erro ao excluir adiantamento.')
+    }
+  }
+
+  // Delete User (REQUISITO 6)
+  const handleDeleteUser = async (targetUser: UserRecord) => {
+    const roleLabel = targetUser.role === 'courier' ? 'entregador' : 'vendedor'
+    if (
+      !window.confirm(
+        `Tem certeza que deseja EXCLUIR permanentemente o ${roleLabel} "${targetUser.name || targetUser.email}"? Esta ação não pode ser desfeita.`,
+      )
+    )
+      return
+
+    try {
+      await deliveryService.deleteUser(targetUser.id)
+      toast.success(`Usuário ${targetUser.name || targetUser.email} excluído com sucesso.`)
+      loadData()
+    } catch (err) {
+      console.error('Error deleting user:', err)
+      toast.error('Erro ao excluir usuário. Verifique se há registros vinculados.')
     }
   }
 
@@ -354,15 +481,41 @@ export default function AdminDashboard() {
     0,
   )
 
-  // Total Kilometers Run
+  // REQUISITO 1: Quilometragem e consumo — contar APENAS as rotas do sistema (trajetos calculados pela roteirização entre os pontos das entregas). Qualquer quilometragem fora da rota NÃO deve contar para custo de combustível nem para km rodado.
   const totalKmRodada = filteredReportOrders.reduce((acc, o) => {
-    if (o.distance_km && o.distance_km > 0) return acc + o.distance_km
-    return acc + 3.8
+    if (typeof o.distance_km === 'number' && o.distance_km > 0) return acc + o.distance_km
+    return acc
   }, 0)
 
   // Total Fuel Cost
   // Formula: Distância (km) * Preço do Litro / Consumo (km/L)
-  const totalFuelCostCalculated = (totalKmRodada * fuelPrice) / fuelConsumption
+  const totalFuelCostCalculated =
+    fuelConsumption > 0 ? (totalKmRodada * fuelPrice) / fuelConsumption : 0
+
+  // Filtered Fuel Advances by Courier & Period (REQUISITO 5)
+  const filteredFuelAdvances = fuelAdvances.filter((adv) => {
+    if (selectedCourierForFuelFilter !== 'all' && adv.courier_id !== selectedCourierForFuelFilter) {
+      return false
+    }
+    if (fuelPeriodFilter === 'month') {
+      const advDate = new Date(adv.date)
+      const now = new Date()
+      return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
+    }
+    if (fuelPeriodFilter === 'week') {
+      const advDate = new Date(adv.date)
+      const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      return advDate >= oneWeekAgo
+    }
+    return true
+  })
+
+  // Filtered Off Route Events (REQUISITO 2)
+  const filteredOffRouteEvents = offRouteEvents.filter((ev) => {
+    if (offRouteFilterType !== 'all' && ev.event_type !== offRouteFilterType) return false
+    if (offRouteCourierFilter !== 'all' && ev.courier_id !== offRouteCourierFilter) return false
+    return true
+  })
 
   const totalSales = orders
     .filter((o) => o.status !== 'cancelled')
@@ -438,28 +591,42 @@ export default function AdminDashboard() {
                 className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800"
               >
                 <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
-                Visão Geral & KPIs
+                Visão Geral
+              </TabsTrigger>
+              <TabsTrigger
+                value="fuel"
+                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-emerald-700 dark:text-emerald-400"
+              >
+                <Wallet className="h-3.5 w-3.5 mr-1.5 text-emerald-500" />
+                Controle de Combustível & Conta Corrente
+              </TabsTrigger>
+              <TabsTrigger
+                value="deviations"
+                className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 text-amber-700 dark:text-amber-400"
+              >
+                <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-amber-500" />
+                Relatório de Desvios & Paradas ({offRouteEvents.length})
               </TabsTrigger>
               <TabsTrigger
                 value="reports"
                 className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800"
               >
                 <PieChart className="h-3.5 w-3.5 mr-1.5 text-indigo-500" />
-                Relatórios Gerenciais
+                Relatórios Gerais & Avaliações
               </TabsTrigger>
               <TabsTrigger
                 value="settings"
                 className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800"
               >
-                <Settings className="h-3.5 w-3.5 mr-1.5 text-emerald-500" />
-                Configurações de Combustível
+                <Settings className="h-3.5 w-3.5 mr-1.5 text-slate-500" />
+                Parâmetros R$/L e km/L
               </TabsTrigger>
               <TabsTrigger
                 value="couriers"
                 className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800 relative"
               >
                 <Truck className="h-3.5 w-3.5 mr-1.5" />
-                Gestão de Entregadores ({couriers.length})
+                Entregadores ({couriers.length})
                 {pendingCouriers.length > 0 && (
                   <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold">
                     {pendingCouriers.length} pendentes
@@ -471,11 +638,435 @@ export default function AdminDashboard() {
                 className="text-xs font-semibold data-[state=active]:bg-white dark:data-[state=active]:bg-slate-800"
               >
                 <Users className="h-3.5 w-3.5 mr-1.5" />
-                Gestão de Vendedores ({sellers.length})
+                Vendedores ({sellers.length})
               </TabsTrigger>
             </TabsList>
 
-            {/* TAB: RELATÓRIOS (REQUISITO 5) */}
+            {/* TAB: CONTROLE DE COMBUSTÍVEL & CONTA CORRENTE EM TEMPO REAL (REQUISITO 5) */}
+            <TabsContent value="fuel" className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Wallet className="h-5 w-5 text-emerald-600" />
+                    Controle Financeiro de Combustível (Pagamento Antecipado)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Conta corrente por entregador em tempo real:{' '}
+                    <strong>Valor Recebido (Adiantamentos)</strong> menos{' '}
+                    <strong>Gasto em Rotas Oficiais</strong>.
+                  </p>
+                </div>
+
+                <Button
+                  onClick={() => setIsNewFuelAdvanceModalOpen(true)}
+                  className="h-9 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/25 self-start sm:self-center"
+                >
+                  <PlusCircle className="h-4 w-4" />
+                  Cadastrar Adiantamento / Pagamento
+                </Button>
+              </div>
+
+              {/* CARDS DE CONTA CORRENTE DOS ENTREGADORES */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                  <CreditCard className="h-4 w-4 text-emerald-500" />
+                  Conta Corrente dos Entregadores (Saldo em Tempo Real)
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {fuelAccounts.map((acc) => {
+                    const isPositive = acc.balance >= 0
+                    return (
+                      <Card
+                        key={acc.courier.id}
+                        className="border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden"
+                      >
+                        <div
+                          className={`absolute top-0 left-0 right-0 h-1.5 ${
+                            isPositive ? 'bg-emerald-500' : 'bg-rose-500'
+                          }`}
+                        />
+                        <CardHeader className="p-4 pb-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 font-bold text-xs">
+                                {acc.courier.name
+                                  ? acc.courier.name.slice(0, 2).toUpperCase()
+                                  : 'EN'}
+                              </div>
+                              <div>
+                                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
+                                  {acc.courier.name || 'Entregador'}
+                                </CardTitle>
+                                <p className="text-[10px] text-slate-500">
+                                  {acc.courier.vehicle_plate || 'Sem placa'} •{' '}
+                                  {acc.courier.vehicle_model || 'Moto'}
+                                </p>
+                              </div>
+                            </div>
+                            <Badge
+                              className={`text-[10px] font-bold ${
+                                isPositive
+                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300'
+                                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300'
+                              }`}
+                            >
+                              {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
+                            </Badge>
+                          </div>
+                        </CardHeader>
+
+                        <CardContent className="p-4 pt-2 space-y-3 text-xs">
+                          {/* Saldo Principal */}
+                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border flex items-center justify-between">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                                Saldo da Conta Corrente
+                              </span>
+                              <span
+                                className={`text-xl font-black font-mono ${
+                                  isPositive
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : 'text-rose-600 dark:text-rose-400'
+                                }`}
+                              >
+                                R$ {acc.balance.toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[10px] text-slate-400 block">
+                                {acc.advanceCount} adiantamento(s)
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">
+                                {acc.deliveriesCount} entregas
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Detalhamento: Recebido vs Gasto */}
+                          <div className="grid grid-cols-2 gap-2 text-[11px]">
+                            <div className="p-2 rounded-lg bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
+                              <span className="text-emerald-700 dark:text-emerald-400 block font-medium">
+                                (+) Total Adiantado
+                              </span>
+                              <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono text-sm">
+                                R$ {acc.totalAdvances.toFixed(2)}
+                              </span>
+                            </div>
+
+                            <div className="p-2 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
+                              <span className="text-amber-700 dark:text-amber-400 block font-medium">
+                                (-) Gasto Rota Oficial
+                              </span>
+                              <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm">
+                                R$ {acc.totalSpent.toFixed(2)}
+                              </span>
+                              <span className="text-[9px] text-slate-400 block mt-0.5">
+                                {acc.totalRouteKm.toFixed(1)} km roteirizados
+                              </span>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* HISTÓRICO DE PAGAMENTOS / ADIANTAMENTOS CADASTRADOS */}
+              <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <CardHeader className="pb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                        <Receipt className="h-4 w-4 text-emerald-600" />
+                        Histórico de Pagamentos e Adiantamentos ({filteredFuelAdvances.length})
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        Lançamentos cadastrados pelo administrador com filtro por entregador e
+                        período.
+                      </CardDescription>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Filter by Courier */}
+                      <Select
+                        value={selectedCourierForFuelFilter}
+                        onValueChange={setSelectedCourierForFuelFilter}
+                      >
+                        <SelectTrigger className="h-8 w-44 text-xs">
+                          <SelectValue placeholder="Filtrar Entregador" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos os Entregadores</SelectItem>
+                          {couriers.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              🛵 {c.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {/* Filter by Period */}
+                      <Select
+                        value={fuelPeriodFilter}
+                        onValueChange={(v: 'all' | 'month' | 'week') => setFuelPeriodFilter(v)}
+                      >
+                        <SelectTrigger className="h-8 w-32 text-xs">
+                          <SelectValue placeholder="Período" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todo Histórico</SelectItem>
+                          <SelectItem value="month">Este Mês</SelectItem>
+                          <SelectItem value="week">Últimos 7 dias</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CardHeader>
+
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
+                          <th className="py-2.5 px-3 font-semibold">Data</th>
+                          <th className="py-2.5 px-3 font-semibold">Entregador</th>
+                          <th className="py-2.5 px-3 font-semibold">Forma de Pagamento</th>
+                          <th className="py-2.5 px-3 font-semibold">Observações / Motivo</th>
+                          <th className="py-2.5 px-3 font-semibold text-right">Valor Pago</th>
+                          <th className="py-2.5 px-3 font-semibold text-right">Ação</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {filteredFuelAdvances.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-6 text-center text-slate-400">
+                              Nenhum adiantamento cadastrado para os filtros selecionados.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredFuelAdvances.map((adv) => {
+                            const courier = users.find((u) => u.id === adv.courier_id)
+                            return (
+                              <tr
+                                key={adv.id}
+                                className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+                              >
+                                <td className="py-2.5 px-3 font-mono text-slate-700 dark:text-slate-300">
+                                  {adv.date ? new Date(adv.date).toLocaleDateString('pt-BR') : '-'}
+                                </td>
+                                <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
+                                  {courier?.name || 'Entregador'}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <Badge
+                                    variant="outline"
+                                    className="uppercase font-mono text-[10px] bg-slate-100 dark:bg-slate-800"
+                                  >
+                                    {adv.payment_method || 'PIX'}
+                                  </Badge>
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-500 text-[11px] max-w-xs truncate">
+                                  {adv.notes || 'Adiantamento de combustível para rotas'}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-black text-emerald-600 dark:text-emerald-400 font-mono text-sm">
+                                  R$ {Number(adv.amount || 0).toFixed(2)}
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleDeleteFuelAdvance(adv.id)}
+                                    className="h-7 w-7 p-0 text-slate-400 hover:text-rose-600"
+                                    title="Excluir adiantamento"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* TAB: RELATÓRIO DE DESVIOS E PARADAS FORA DE ROTA (REQUISITO 2) */}
+            <TabsContent value="deviations" className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    Relatório de Desvios de Rota e Paradas Não Previstas
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Ocorrências automáticas de telemetria:{' '}
+                    <strong>desvios superiores a 500 metros</strong> e{' '}
+                    <strong>paradas fora dos pontos previstos</strong>.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={offRouteFilterType} onValueChange={setOffRouteFilterType}>
+                    <SelectTrigger className="h-8 w-44 text-xs">
+                      <SelectValue placeholder="Tipo de Ocorrência" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas as Ocorrências</SelectItem>
+                      <SelectItem value="route_deviation">🚨 Desvio de Rota (&gt;500m)</SelectItem>
+                      <SelectItem value="unexpected_stop">🛑 Parada Não Prevista</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={offRouteCourierFilter} onValueChange={setOffRouteCourierFilter}>
+                    <SelectTrigger className="h-8 w-44 text-xs">
+                      <SelectValue placeholder="Filtrar Entregador" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os Entregadores</SelectItem>
+                      {couriers.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          🛵 {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* SUMMARY STATS */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-600">
+                      <AlertTriangle className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500 font-medium">Total de Ocorrências</p>
+                      <h4 className="text-2xl font-black text-slate-900 dark:text-white">
+                        {offRouteEvents.length}
+                      </h4>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-600">
+                      <Compass className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500 font-medium">Desvios &gt; 500m</p>
+                      <h4 className="text-2xl font-black text-rose-600">
+                        {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}
+                      </h4>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+                  <CardContent className="p-4 flex items-center gap-3">
+                    <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600">
+                      <Clock className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500 font-medium">Paradas Fora do Ponto</p>
+                      <h4 className="text-2xl font-black text-blue-600">
+                        {offRouteEvents.filter((e) => e.event_type === 'unexpected_stop').length}
+                      </h4>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* TABELA DE EVENTOS */}
+              <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-bold text-slate-900 dark:text-white">
+                    Histórico Detalhado de Telemetria & Alertas ({filteredOffRouteEvents.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
+                          <th className="py-3 px-3 font-semibold">Data / Hora</th>
+                          <th className="py-3 px-3 font-semibold">Entregador</th>
+                          <th className="py-3 px-3 font-semibold">Tipo de Evento</th>
+                          <th className="py-3 px-3 font-semibold">Desvio / Detalhe</th>
+                          <th className="py-3 px-3 font-semibold">Coordenadas GPS</th>
+                          <th className="py-3 px-3 font-semibold">Observação do Sistema</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {filteredOffRouteEvents.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-8 text-center text-slate-400">
+                              Nenhuma ocorrência de desvio ou parada registrada.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredOffRouteEvents.map((ev) => {
+                            const courier = users.find((u) => u.id === ev.courier_id)
+                            return (
+                              <tr
+                                key={ev.id}
+                                className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+                              >
+                                <td className="py-3 px-3 font-mono text-slate-600 dark:text-slate-300">
+                                  {new Date(ev.created).toLocaleString('pt-BR')}
+                                </td>
+                                <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                                  {courier?.name || 'Entregador'}
+                                </td>
+                                <td className="py-3 px-3">
+                                  {ev.event_type === 'route_deviation' ? (
+                                    <Badge className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300 text-[10px] font-bold">
+                                      🚨 Desvio de Rota
+                                    </Badge>
+                                  ) : (
+                                    <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-300 text-[10px] font-bold">
+                                      🛑 Parada Fora do Ponto
+                                    </Badge>
+                                  )}
+                                </td>
+                                <td className="py-3 px-3 font-semibold">
+                                  {ev.distance_deviation_meters ? (
+                                    <span className="text-rose-600 font-mono">
+                                      +{ev.distance_deviation_meters} metros
+                                    </span>
+                                  ) : ev.stop_duration_seconds ? (
+                                    <span className="text-amber-600 font-mono">
+                                      ~{Math.round(ev.stop_duration_seconds / 60)} min parado
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">-</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-3 font-mono text-slate-500 text-[11px]">
+                                  {ev.lat?.toFixed(5)}, {ev.lng?.toFixed(5)}
+                                </td>
+                                <td className="py-3 px-3 text-slate-500 text-[11px]">
+                                  {ev.notes ||
+                                    'Alerta disparado para vendedor e entregador com sinal sonoro.'}
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* TAB: RELATÓRIOS & AVALIAÇÕES */}
             <TabsContent value="reports" className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -733,12 +1324,12 @@ export default function AdminDashboard() {
                       <div className="flex justify-between items-center pb-1.5 border-b border-slate-200 dark:border-slate-700">
                         <span className="text-slate-500">Custo por Quilômetro (R$/km):</span>
                         <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                          R$ {(fuelPrice / fuelConsumption).toFixed(4)} / km
+                          R$ {(fuelPrice / (fuelConsumption || 1)).toFixed(4)} / km
                         </span>
                       </div>
                       <div className="flex justify-between items-center pt-1 font-semibold">
                         <span className="text-slate-800 dark:text-slate-200">
-                          Gasto Total no Período:
+                          Gasto Total no Período (Rotas Oficiais):
                         </span>
                         <span className="font-black text-amber-600 dark:text-amber-400 font-mono text-base">
                           R$ {totalFuelCostCalculated.toFixed(2)}
@@ -750,7 +1341,7 @@ export default function AdminDashboard() {
                       <div>
                         <p className="font-bold">Ajustar parâmetros de consumo?</p>
                         <p className="text-[11px] text-purple-700 dark:text-purple-300">
-                          Edite o preço do litro e km/L na aba Configurações.
+                          Edite o preço do litro e km/L na aba Parâmetros.
                         </p>
                       </div>
                       <Button
@@ -759,12 +1350,79 @@ export default function AdminDashboard() {
                         onClick={() => setActiveTab('settings')}
                         className="bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-300 h-8 text-xs font-semibold"
                       >
-                        Ir para Configurações
+                        Ir para Parâmetros
                       </Button>
                     </div>
                   </CardContent>
                 </Card>
               </div>
+
+              {/* SEÇÃO: AVALIAÇÕES RECEBIDAS DOS CLIENTES (REQUISITO 4) */}
+              <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
+                    Avaliações dos Clientes ({reviews.length})
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Notas atribuídas pelos clientes ao entregador e ao vendedor através do link
+                    público de rastreio.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
+                          <th className="py-2.5 px-3 font-semibold">Data</th>
+                          <th className="py-2.5 px-3 font-semibold">Cliente</th>
+                          <th className="py-2.5 px-3 font-semibold">Nota Entregador</th>
+                          <th className="py-2.5 px-3 font-semibold">Nota Vendedor</th>
+                          <th className="py-2.5 px-3 font-semibold">Comentário</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {reviews.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-6 text-center text-slate-400">
+                              Nenhuma avaliação registrada ainda.
+                            </td>
+                          </tr>
+                        ) : (
+                          reviews.map((rev) => (
+                            <tr
+                              key={rev.id}
+                              className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40"
+                            >
+                              <td className="py-2.5 px-3 text-slate-500">
+                                {new Date(rev.created).toLocaleDateString('pt-BR')}
+                              </td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
+                                {rev.customer_name || 'Cliente'}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="flex items-center gap-1 font-bold text-amber-500">
+                                  <Star className="h-3.5 w-3.5 fill-amber-500" />
+                                  {rev.courier_rating} / 5
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="flex items-center gap-1 font-bold text-amber-500">
+                                  <Star className="h-3.5 w-3.5 fill-amber-500" />
+                                  {rev.seller_rating} / 5
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300 italic text-[11px]">
+                                {rev.comment || 'Sem comentários adicionais'}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
             </TabsContent>
 
             {/* TAB: CONFIGURAÇÕES DO ADMINISTRADOR (REQUISITO 4) */}
@@ -1337,6 +1995,17 @@ export default function AdminDashboard() {
                                         Reativar
                                       </Button>
                                     )}
+
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleDeleteUser(c)}
+                                      className="h-7 px-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                                      title="Excluir Entregador"
+                                    >
+                                      <Trash2 className="h-3 w-3 mr-0.5" />
+                                      Excluir
+                                    </Button>
                                   </div>
                                 </td>
                               </tr>
@@ -1469,6 +2138,17 @@ export default function AdminDashboard() {
                                         Reativar
                                       </Button>
                                     )}
+
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => handleDeleteUser(s)}
+                                      className="h-7 px-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                                      title="Excluir Vendedor"
+                                    >
+                                      <Trash2 className="h-3 w-3 mr-0.5" />
+                                      Excluir
+                                    </Button>
                                   </div>
                                 </td>
                               </tr>
@@ -1484,6 +2164,128 @@ export default function AdminDashboard() {
           </Tabs>
         </main>
       </div>
+
+      {/* ================= MODAL: CADASTRO DE ADIANTAMENTO DE COMBUSTÍVEL ================= */}
+      <Dialog open={isNewFuelAdvanceModalOpen} onOpenChange={setIsNewFuelAdvanceModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-white">
+              <Wallet className="h-5 w-5 text-emerald-600" />
+              Lançar Pagamento / Adiantamento de Combustível
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Cadastre o pagamento antecipado realizado ao entregador. Este valor será creditado na
+              conta corrente do entregador.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateFuelAdvance} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Selecione o Entregador *
+              </label>
+              <Select value={advanceCourierId} onValueChange={setAdvanceCourierId} required>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="Selecione o entregador beneficiário" />
+                </SelectTrigger>
+                <SelectContent>
+                  {couriers.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      🛵 {c.name} ({c.vehicle_plate || 'Sem placa'})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Valor Pago (R$) *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                    R$
+                  </span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="0,00"
+                    value={advanceAmount}
+                    onChange={(e) => setAdvanceAmount(e.target.value)}
+                    className="h-9 pl-9 font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Data do Pagamento *
+                </label>
+                <Input
+                  type="date"
+                  value={advanceDate}
+                  onChange={(e) => setAdvanceDate(e.target.value)}
+                  className="h-9 text-xs"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Forma de Pagamento
+              </label>
+              <Select
+                value={advancePaymentMethod}
+                onValueChange={(v: FuelPaymentMethod) => setAdvancePaymentMethod(v)}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pix">PIX Instantâneo</SelectItem>
+                  <SelectItem value="dinheiro">Dinheiro em Espécie</SelectItem>
+                  <SelectItem value="transferencia">Transferência / TED</SelectItem>
+                  <SelectItem value="outro">Outro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Observações / Justificativa
+              </label>
+              <Input
+                placeholder="Ex: Adiantamento semanal de gasolina ou abastecimento extra"
+                value={advanceNotes}
+                onChange={(e) => setAdvanceNotes(e.target.value)}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsNewFuelAdvanceModalOpen(false)}
+                className="h-9 text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                disabled={isCreatingAdvance}
+                className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-600/20"
+              >
+                {isCreatingAdvance ? 'Gravando...' : 'Confirmar Adiantamento'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Floating AI Assistant */}
       <AiLogisticsAssistant />

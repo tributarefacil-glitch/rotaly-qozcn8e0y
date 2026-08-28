@@ -13,14 +13,20 @@ import {
   AlertCircle,
   Navigation,
   Compass,
+  Star,
+  MessageSquare,
+  Check,
+  HeartHandshake,
 } from 'lucide-react'
 import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { OrderRecord, LocationRecord } from '@/types/delivery'
+import type { OrderRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
+import { toast } from 'sonner'
 
 export default function PublicTrackingPage() {
   const { tracking_code } = useParams<{ tracking_code: string }>()
@@ -28,6 +34,14 @@ export default function PublicTrackingPage() {
   const [courierLocation, setCourierLocation] = useState<LocationRecord | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // Review states (REQUISITO 4: Avaliação do entregador e vendedor)
+  const [existingReview, setExistingReview] = useState<ReviewRecord | null>(null)
+  const [courierRating, setCourierRating] = useState<number>(5)
+  const [sellerRating, setSellerRating] = useState<number>(5)
+  const [reviewComment, setReviewComment] = useState('')
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false)
+  const [hasSubmittedReview, setHasSubmittedReview] = useState(false)
 
   const loadOrder = async () => {
     if (!tracking_code) return
@@ -43,12 +57,46 @@ export default function PublicTrackingPage() {
           const loc = await deliveryService.getLatestLocationForCourier(orderData.courier_id)
           setCourierLocation(loc)
         }
+        // Load existing review if available
+        const rev = await deliveryService.getReviewByOrderId(orderData.id)
+        if (rev) {
+          setExistingReview(rev)
+          setCourierRating(rev.courier_rating)
+          setSellerRating(rev.seller_rating)
+          setReviewComment(rev.comment || '')
+          setHasSubmittedReview(true)
+        }
       }
     } catch (err) {
       console.error('Tracking fetch error:', err)
       setErrorMsg('Não foi possível carregar as informações deste rastreamento.')
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleSubmitReview = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!order) return
+    setIsSubmittingReview(true)
+    try {
+      const rev = await deliveryService.createReview({
+        order_id: order.id,
+        courier_id: order.courier_id || undefined,
+        seller_id: order.seller_id || undefined,
+        courier_rating: courierRating,
+        seller_rating: sellerRating,
+        comment: reviewComment.trim(),
+        customer_name: order.expand?.customer_id?.name || 'Cliente',
+      })
+      setExistingReview(rev)
+      setHasSubmittedReview(true)
+      toast.success('🎉 Avaliação enviada com sucesso! Muito obrigado pelo seu feedback.')
+    } catch (err) {
+      console.error('Review submit error:', err)
+      toast.error('Erro ao registrar avaliação. Tente novamente.')
+    } finally {
+      setIsSubmittingReview(false)
     }
   }
 
@@ -314,6 +362,151 @@ export default function PublicTrackingPage() {
                 </p>
               </div>
             </div>
+
+            {/* REQUISITO 4: SEÇÃO DE AVALIAÇÃO DO CLIENTE (Entregador & Vendedor) */}
+            {order.status === 'delivered' && (
+              <div className="rounded-3xl border border-amber-500/30 bg-gradient-to-br from-slate-900 via-slate-950 to-amber-950/30 p-6 shadow-2xl backdrop-blur space-y-5">
+                <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 shadow-lg shadow-amber-500/20">
+                    <HeartHandshake className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      Avalie sua Experiência de Entrega
+                      <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[10px]">
+                        Feedback do Cliente
+                      </Badge>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Sua opinião nos ajuda a melhorar a agilidade e atendimento da nossa equipe.
+                    </p>
+                  </div>
+                </div>
+
+                {hasSubmittedReview || existingReview ? (
+                  <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs space-y-2 text-center">
+                    <div className="flex justify-center">
+                      <div className="h-10 w-10 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center font-bold">
+                        <Check className="h-6 w-6" />
+                      </div>
+                    </div>
+                    <h4 className="font-bold text-sm text-white">Avaliação Registrada!</h4>
+                    <p className="text-slate-300">
+                      Você avaliou o entregador com{' '}
+                      <strong>{existingReview?.courier_rating || courierRating} estrelas</strong> e
+                      o vendedor/atendimento com{' '}
+                      <strong>{existingReview?.seller_rating || sellerRating} estrelas</strong>.
+                    </p>
+                    {existingReview?.comment && (
+                      <p className="italic text-slate-400 text-[11px] pt-1">
+                        &ldquo;{existingReview.comment}&rdquo;
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <form onSubmit={handleSubmitReview} className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Avaliação do Entregador */}
+                      <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <Truck className="h-4 w-4 text-purple-400" />
+                            Avaliar Entregador
+                          </span>
+                          <span className="text-xs font-bold text-amber-400">
+                            {courierRating} / 5
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          {courier?.name
+                            ? `Como foi o atendimento de ${courier.name}?`
+                            : 'Pontualidade e cuidado com a entrega'}
+                        </p>
+                        <div className="flex items-center gap-2 pt-1">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                              key={star}
+                              type="button"
+                              onClick={() => setCourierRating(star)}
+                              className="focus:outline-none transition-transform hover:scale-125"
+                            >
+                              <Star
+                                className={`h-7 w-7 ${
+                                  star <= courierRating
+                                    ? 'fill-amber-400 text-amber-400'
+                                    : 'text-slate-700'
+                                }`}
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Avaliação do Vendedor / Loja */}
+                      <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <Package className="h-4 w-4 text-blue-400" />
+                            Avaliar Vendedor & Loja
+                          </span>
+                          <span className="text-xs font-bold text-amber-400">
+                            {sellerRating} / 5
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          {order.expand?.seller_id?.name
+                            ? `Como foi a experiência com ${order.expand.seller_id.name}?`
+                            : 'Agilidade de despacho e qualidade do produto'}
+                        </p>
+                        <div className="flex items-center gap-2 pt-1">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                              key={star}
+                              type="button"
+                              onClick={() => setSellerRating(star)}
+                              className="focus:outline-none transition-transform hover:scale-125"
+                            >
+                              <Star
+                                className={`h-7 w-7 ${
+                                  star <= sellerRating
+                                    ? 'fill-amber-400 text-amber-400'
+                                    : 'text-slate-700'
+                                }`}
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Comentário Opcional */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
+                        <MessageSquare className="h-3.5 w-3.5 text-blue-400" />
+                        Deixe um elogio ou observação (opcional)
+                      </label>
+                      <Textarea
+                        value={reviewComment}
+                        onChange={(e) => setReviewComment(e.target.value)}
+                        placeholder="Ex: Entrega super rápida, entregador muito educado e atencioso!"
+                        className="bg-slate-950 border-slate-800 text-xs text-white resize-none"
+                        rows={2}
+                      />
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button
+                        type="submit"
+                        disabled={isSubmittingReview}
+                        className="bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-slate-950 font-black text-xs h-10 px-6 rounded-xl shadow-lg shadow-amber-500/25"
+                      >
+                        {isSubmittingReview ? 'Enviando...' : 'Enviar Avaliação da Entrega'}
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
           </div>
         )}
       </main>

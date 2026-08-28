@@ -86,6 +86,64 @@ export interface AppSettingsRecord extends RecordModel {
   extra?: Record<string, unknown>
 }
 
+export type FuelPaymentMethod = 'pix' | 'dinheiro' | 'transferencia' | 'outro'
+
+export interface FuelAdvanceRecord extends RecordModel {
+  courier_id: string
+  amount: number
+  date: string
+  notes?: string
+  payment_method?: FuelPaymentMethod
+  created_by?: string
+  expand?: {
+    courier_id?: UserRecord
+    created_by?: UserRecord
+  }
+}
+
+export interface ReviewRecord extends RecordModel {
+  order_id: string
+  courier_id?: string
+  seller_id?: string
+  courier_rating: number
+  seller_rating: number
+  comment?: string
+  customer_name?: string
+  expand?: {
+    order_id?: OrderRecord
+    courier_id?: UserRecord
+    seller_id?: UserRecord
+  }
+}
+
+export type OffRouteEventType = 'route_deviation' | 'unexpected_stop'
+
+export interface OffRouteEventRecord extends RecordModel {
+  courier_id: string
+  order_id?: string
+  event_type: OffRouteEventType
+  distance_deviation_meters?: number
+  stop_duration_seconds?: number
+  lat: number
+  lng: number
+  address?: string
+  notes?: string
+  expand?: {
+    courier_id?: UserRecord
+    order_id?: OrderRecord
+  }
+}
+
+export interface CourierFuelAccount {
+  courier: UserRecord
+  totalAdvances: number
+  totalRouteKm: number
+  totalSpent: number
+  balance: number // totalAdvances - totalSpent
+  advanceCount: number
+  deliveriesCount: number
+}
+
 export interface LocationRecord extends RecordModel {
   user_id: string
   lat: number

@@ -22,7 +22,12 @@ import { deliveryService } from '@/services/deliveryService'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { OrderRecord, OptimizedRouteResult } from '@/types/delivery'
-import { notifyCourierNewDelivery } from '@/lib/notificationSound'
+import {
+  notifyCourierNewDelivery,
+  playOffRouteWarningSound,
+  sendBrowserPushNotification,
+} from '@/lib/notificationSound'
+import type { NotificationRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -80,6 +85,20 @@ export default function CourierApp() {
         )
       }
       loadCourierOrders()
+    }
+  })
+
+  // Realtime hook for notifications (off-route alerts with audible warning for courier)
+  useRealtime<NotificationRecord>('notifications', (e) => {
+    if (e.action === 'create' && (!e.record.user_id || e.record.user_id === user?.id)) {
+      if (e.record.type === 'off_route') {
+        playOffRouteWarningSound()
+        sendBrowserPushNotification(e.record.title, e.record.message)
+        toast.error(e.record.title, {
+          description: e.record.message,
+          duration: 8000,
+        })
+      }
     }
   })
 

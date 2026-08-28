@@ -45,6 +45,49 @@ export function playRouteAlertSound() {
   }
 }
 
+// Dedicated alert sound for route deviation (>500m) or unexpected stop (urgent two-tone siren chime)
+export function playOffRouteWarningSound() {
+  try {
+    if (typeof window === 'undefined') return
+
+    const AudioContextClass =
+      window.AudioContext ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).webkitAudioContext
+
+    if (!AudioContextClass) return
+
+    const ctx = new AudioContextClass()
+
+    // Sharp warning buzzer tones (A5 -> D6 -> A5)
+    const tones = [
+      { freq: 880.0, time: 0, duration: 0.15 },
+      { freq: 1174.66, time: 0.18, duration: 0.18 },
+      { freq: 880.0, time: 0.38, duration: 0.25 },
+    ]
+
+    tones.forEach((tone) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+
+      osc.type = 'triangle'
+      osc.frequency.setValueAtTime(tone.freq, ctx.currentTime + tone.time)
+
+      gain.gain.setValueAtTime(0.001, ctx.currentTime + tone.time)
+      gain.gain.exponentialRampToValueAtTime(0.6, ctx.currentTime + tone.time + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + tone.time + tone.duration)
+
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+
+      osc.start(ctx.currentTime + tone.time)
+      osc.stop(ctx.currentTime + tone.time + tone.duration + 0.05)
+    })
+  } catch (err) {
+    console.warn('Off-route audio warning error:', err)
+  }
+}
+
 // Request and dispatch Native System Notification (when tab is in background or minimized)
 export async function sendBrowserPushNotification(title: string, body: string) {
   if (typeof window === 'undefined' || !('Notification' in window)) return

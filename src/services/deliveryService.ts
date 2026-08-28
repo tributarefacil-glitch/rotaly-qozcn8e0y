@@ -7,6 +7,10 @@ import type {
   UserRecord,
   OptimizedRouteResult,
   AppSettingsRecord,
+  FuelAdvanceRecord,
+  ReviewRecord,
+  OffRouteEventRecord,
+  CourierFuelAccount,
 } from '@/types/delivery'
 
 export const deliveryService = {
@@ -339,6 +343,111 @@ export const deliveryService = {
   calculateFuelCost(distanceKm: number, fuelPrice = 5.59, consumptionKml = 35.0): number {
     if (consumptionKml <= 0) return 0
     return (distanceKm * fuelPrice) / consumptionKml
+  },
+
+  // Fuel Advances & Current Account
+  async getFuelAdvances(filter = '', sort = '-date,-created', expand = 'courier_id,created_by') {
+    return pb.collection<FuelAdvanceRecord>('fuel_advances').getFullList({
+      filter,
+      sort,
+      expand,
+      requestKey: null,
+    })
+  },
+
+  async createFuelAdvance(data: Partial<FuelAdvanceRecord>) {
+    return pb.collection<FuelAdvanceRecord>('fuel_advances').create(data)
+  },
+
+  async deleteFuelAdvance(id: string) {
+    return pb.collection<FuelAdvanceRecord>('fuel_advances').delete(id)
+  },
+
+  // Compute Real-time Courier Current Account
+  // Regra: Soma dos Adiantamentos - Gasto em Rotas Oficiais (apenas km roteirizados das ordens)
+  async getCourierFuelAccounts(): Promise<CourierFuelAccount[]> {
+    const [couriers, advances, orders, settings] = await Promise.all([
+      this.getCouriers(),
+      this.getFuelAdvances(),
+      this.getOrders(),
+      this.getSettings(),
+    ])
+
+    const fuelPrice = settings.fuel_price_per_liter || 5.59
+    const fuelConsumption = settings.fuel_consumption_kml || 35.0
+
+    return couriers.map((courier) => {
+      const courierAdvances = advances.filter((a) => a.courier_id === courier.id)
+      const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+
+      // Regra 1: Contar APENAS as rotas do sistema (trajetos calculados pela roteirização entre os pontos das entregas)
+      const courierOrders = orders.filter(
+        (o) =>
+          o.courier_id === courier.id &&
+          (o.status === 'delivered' ||
+            o.status === 'in_transit' ||
+            o.status === 'address_error' ||
+            o.status === 'client_absent'),
+      )
+
+      const totalRouteKm = courierOrders.reduce((sum, o) => {
+        const km = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
+        return sum + km
+      }, 0)
+
+      const totalSpent = fuelConsumption > 0 ? (totalRouteKm * fuelPrice) / fuelConsumption : 0
+      const balance = totalAdvances - totalSpent
+
+      return {
+        courier,
+        totalAdvances,
+        totalRouteKm,
+        totalSpent,
+        balance,
+        advanceCount: courierAdvances.length,
+        deliveriesCount: courierOrders.length,
+      }
+    })
+  },
+
+  // Reviews (Avaliação de Entregador e Vendedor no Rastreio Público)
+  async getReviews(filter = '', sort = '-created', expand = 'order_id,courier_id,seller_id') {
+    return pb.collection<ReviewRecord>('reviews').getFullList({
+      filter,
+      sort,
+      expand,
+      requestKey: null,
+    })
+  },
+
+  async getReviewByOrderId(orderId: string): Promise<ReviewRecord | null> {
+    try {
+      const records = await pb.collection<ReviewRecord>('reviews').getList(1, 1, {
+        filter: `order_id = '${orderId}'`,
+        requestKey: null,
+      })
+      return records.items[0] || null
+    } catch {
+      return null
+    }
+  },
+
+  async createReview(data: Partial<ReviewRecord>) {
+    return pb.collection<ReviewRecord>('reviews').create(data)
+  },
+
+  // Off Route & Unexpected Stop Events
+  async getOffRouteEvents(filter = '', sort = '-created', expand = 'courier_id,order_id') {
+    return pb.collection<OffRouteEventRecord>('off_route_events').getFullList({
+      filter,
+      sort,
+      expand,
+      requestKey: null,
+    })
+  },
+
+  async createOffRouteEvent(data: Partial<OffRouteEventRecord>) {
+    return pb.collection<OffRouteEventRecord>('off_route_events').create(data)
   },
 
   // Route optimization with Google Maps Traffic or fallback
