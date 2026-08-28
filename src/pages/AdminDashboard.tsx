@@ -578,12 +578,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
-                <ShieldCheck className="h-6 w-6 text-blue-600" />
-                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                  Painel de Controle & Gestão de Acesso
+                <ShieldCheck className="h-6 w-6 text-[#0052CC]" />
+                <h1 className="font-heading text-2xl sm:text-3xl font-extrabold tracking-tight text-[#1a1a1a]">
+                  Painel Executivo & Gestão LOGHYPE
                 </h1>
               </div>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+              <p className="font-sans text-xs sm:text-sm text-slate-600 mt-1">
                 Controle global de entregadores, vendedores, aprovações de documentos e telemetria.
               </p>
             </div>
@@ -600,7 +600,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               </Button>
               <Button
                 onClick={() => setIsNewUserModalOpen(true)}
-                className="h-9 gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-md shadow-blue-500/25"
+                className="h-9 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
               >
                 <UserPlus className="h-4 w-4" />
                 Cadastrar Usuário

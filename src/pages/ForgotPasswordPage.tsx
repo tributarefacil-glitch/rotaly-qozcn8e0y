@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { toast } from 'sonner'
 
+
 export default function ForgotPasswordPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -103,23 +104,23 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-blue-500 selection:text-white relative overflow-hidden">
-      {/* Glow Effects */}
-      <div className="absolute -top-40 -left-40 w-96 h-96 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-1/2 -right-40 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
-
-      {/* Top Header */}
-      <header className="relative z-10 w-full border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md px-6 py-4">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
+    <div className="min-h-screen bg-[#FFFFFF] text-[#1a1a1a] flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
+      {/* Header */}
+      <header className="relative z-10 w-full border-b border-slate-200 bg-white shadow-subtle px-6 py-3.5">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
           <Link to="/" className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/25">
-              <Truck className="h-5 w-5" />
-            </div>
-            <div>
-              <span className="text-lg font-black tracking-tight text-white block leading-tight">
-                Gestão de Entregas
-              </span>
-              <span className="text-[11px] text-slate-400">Recuperação de Acesso</span>
+            <div className="flex items-center gap-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0A1128] text-white shadow-sm p-1.5">
+                <Truck className="h-5 w-5 text-[#FF6B35]" />
+              </div>
+              <div>
+                <span className="font-heading text-lg font-black tracking-tight text-[#0052CC] block leading-tight">
+                  LOGHYPE
+                </span>
+                <span className="font-sans text-[11px] text-slate-500">
+                  Entrega rápida, confiança garantida
+                </span>
+              </div>
             </div>
           </Link>
 
@@ -127,31 +128,29 @@ export default function ForgotPasswordPage() {
             variant="ghost"
             size="sm"
             onClick={() => navigate('/login')}
-            className="text-xs text-slate-300 hover:text-white gap-1.5"
+            className="text-xs text-[#0052CC] hover:bg-blue-50 font-bold gap-1.5 rounded-input"
           >
             <ArrowLeft className="h-4 w-4" />
-            Voltar ao Login
+            Voltar para o Login
           </Button>
         </div>
       </header>
-
       {/* Main Form */}
       <main className="relative z-10 flex-1 max-w-md mx-auto w-full px-4 py-12 flex items-center justify-center">
-        <Card className="w-full border-slate-800 bg-slate-900/90 text-white shadow-2xl backdrop-blur-xl">
+        <Card className="w-full border border-slate-200 bg-white text-[#1a1a1a] shadow-brand rounded-card">
           <CardHeader className="space-y-1">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 mb-2">
-              <KeyRound className="h-6 w-6" />
+            <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand mb-2">
+              <KeyRound className="h-6 w-6 text-white" />
             </div>
-            <CardTitle className="text-2xl font-black text-white">
-              {step === 1 ? 'Recuperar Senha' : 'Nova Senha'}
+            <CardTitle className="font-heading text-2xl font-black text-[#1a1a1a]">
+              {initialToken ? 'Criar Nova Senha' : 'Recuperar Senha'}
             </CardTitle>
-            <CardDescription className="text-slate-400 text-xs leading-relaxed">
-              {step === 1
-                ? 'Informe o e-mail cadastrado para enviarmos as instruções e código de redefinição.'
-                : 'Insira o token recebido no seu e-mail e defina a sua nova senha de acesso.'}
-            </CardDescription>
+            <CardDescription className="font-sans text-slate-600 text-xs">
+              {initialToken
+                ? 'Informe sua nova senha para redefinir o acesso à sua conta.'
+                : 'Informe seu e-mail cadastrado para enviarmos as instruções de redefinição.'}
+            </CardDescription>{' '}
           </CardHeader>
-
           <CardContent className="space-y-5">
             {step === 1 ? (
               <form onSubmit={handleRequestReset} className="space-y-4">
@@ -286,7 +285,7 @@ export default function ForgotPasswordPage() {
 
       {/* Footer */}
       <footer className="relative z-10 border-t border-slate-800/80 bg-slate-950/90 py-4 px-6 text-center text-xs text-slate-500">
-        <p>Gestão de Entregas — Sistema de Segurança e Autenticação Nativa</p>
+        <p>LOGHYPE — Entrega rápida, confiança garantida • Recuperação de Acesso</p>
       </footer>
     </div>
   )

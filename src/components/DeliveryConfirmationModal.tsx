@@ -297,17 +297,14 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto rounded-modal shadow-brand bg-white text-[#1a1a1a]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-lg font-bold text-emerald-600 dark:text-emerald-400">
-            <CheckCircle className="h-6 w-6" />
+          <DialogTitle className="flex items-center gap-2 text-lg font-heading font-bold text-[#00AA44]">
+            <CheckCircle className="h-6 w-6 animate-checkmark-bounce text-[#00AA44]" />
             Confirmar Entrega de Pedido
           </DialogTitle>
-          <p className="text-xs text-slate-500">
-            Código:{' '}
-            <span className="font-semibold text-slate-900 dark:text-white">
-              {order.tracking_code}
-            </span>
+          <p className="text-xs text-slate-500 font-sans">
+            Código: <span className="font-bold text-[#0052CC]">{order.tracking_code}</span>
           </p>
         </DialogHeader>
 
@@ -351,43 +348,45 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               <button
                 type="button"
                 onClick={() => setReason('delivered')}
-                className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition ${
+                className={`flex flex-col items-center justify-center p-3 rounded-card border-2 text-center transition duration-200 ${
                   reason === 'delivered'
-                    ? 'border-emerald-500 bg-emerald-50/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 ring-2 ring-emerald-500/20 font-bold'
-                    : 'border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    ? 'border-[#00AA44] bg-emerald-50 text-[#00AA44] ring-2 ring-[#00AA44]/20 font-bold'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
                 }`}
               >
-                <CheckCircle2 className="h-5 w-5 mb-1 text-emerald-500" />
-                <span className="text-xs">Finalizada</span>
-                <span className="text-[10px] text-slate-400">Comprovante obrigatório</span>
+                <CheckCircle2 className="h-5 w-5 mb-1 text-[#00AA44] animate-checkmark-bounce" />
+                <span className="text-xs font-heading">Finalizada</span>
+                <span className="text-[10px] text-slate-500 font-sans">
+                  Comprovante obrigatório
+                </span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setReason('address_error')}
-                className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition ${
+                className={`flex flex-col items-center justify-center p-3 rounded-card border-2 text-center transition duration-200 ${
                   reason === 'address_error'
-                    ? 'border-amber-500 bg-amber-50/80 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 ring-2 ring-amber-500/20 font-bold'
-                    : 'border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    ? 'border-[#FF6B35] bg-orange-50 text-[#FF6B35] ring-2 ring-[#FF6B35]/20 font-bold'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
                 }`}
               >
-                <MapPinOff className="h-5 w-5 mb-1 text-amber-500" />
-                <span className="text-xs">Erro de Endereço</span>
-                <span className="text-[10px] text-slate-400">Não localizado</span>
+                <MapPinOff className="h-5 w-5 mb-1 text-[#FF6B35]" />
+                <span className="text-xs font-heading">Erro de Endereço</span>
+                <span className="text-[10px] text-slate-500 font-sans">Não localizado</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setReason('client_absent')}
-                className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition ${
+                className={`flex flex-col items-center justify-center p-3 rounded-card border-2 text-center transition duration-200 ${
                   reason === 'client_absent'
-                    ? 'border-rose-500 bg-rose-50/80 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 ring-2 ring-rose-500/20 font-bold'
-                    : 'border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                    ? 'border-[#E74C3C] bg-red-50 text-[#E74C3C] ring-2 ring-[#E74C3C]/20 font-bold'
+                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
                 }`}
               >
-                <UserX className="h-5 w-5 mb-1 text-rose-500" />
-                <span className="text-xs">Cliente Ausente</span>
-                <span className="text-[10px] text-slate-400">Ninguém no local</span>
+                <UserX className="h-5 w-5 mb-1 text-[#E74C3C]" />
+                <span className="text-xs font-heading">Cliente Ausente</span>
+                <span className="text-[10px] text-slate-500 font-sans">Ninguém no local</span>
               </button>
             </div>
           </div>
@@ -566,25 +565,30 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            className="rounded-input text-xs"
+          >
             Cancelar
           </Button>
           <Button
             type="button"
             onClick={handleConfirmDelivery}
             disabled={isSubmitting}
-            className={`font-bold ${
+            className={`font-bold text-xs rounded-input transition duration-100 shadow-brand ${
               reason === 'delivered'
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                ? 'bg-[#00AA44] hover:bg-[#008836] text-white'
                 : reason === 'address_error'
-                  ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                  : 'bg-rose-600 hover:bg-rose-700 text-white'
+                  ? 'bg-[#FF6B35] hover:bg-[#E5531E] text-white'
+                  : 'bg-[#E74C3C] hover:bg-[#C0392B] text-white'
             }`}
           >
             {isSubmitting
               ? 'Salvando comprovante...'
               : reason === 'delivered'
-                ? 'Confirmar Entrega com Comprovante'
+                ? 'Entrega confirmada!'
                 : 'Salvar Ocorrência'}
           </Button>
         </DialogFooter>

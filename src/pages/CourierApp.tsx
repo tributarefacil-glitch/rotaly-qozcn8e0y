@@ -206,28 +206,28 @@ export default function CourierApp() {
   )
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col pb-20 md:pb-6">
+    <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col pb-20 md:pb-6 font-sans">
       <Header />
 
       <main className="flex-1 max-w-2xl mx-auto w-full p-4 space-y-4">
         {/* Courier Status & Live GPS Telemetry Card */}
-        <div className="rounded-2xl border border-purple-500/30 bg-gradient-to-br from-slate-950 to-purple-950/40 p-4 shadow-xl backdrop-blur">
+        <div className="rounded-card border border-slate-200 bg-[#F5F5F5] p-4 shadow-brand">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-purple-600 text-white shadow-lg shadow-purple-600/30">
+              <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand">
                 <Navigation2 className="h-6 w-6" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <h2 className="font-heading text-base font-bold text-[#1a1a1a] flex items-center gap-2">
                   {user?.name || 'Entregador'}
                   <Badge
                     variant="outline"
-                    className="bg-purple-500/10 text-purple-300 border-purple-500/30 text-[10px]"
+                    className="bg-blue-50 text-[#0052CC] border-[#0052CC]/30 text-[10px] font-bold"
                   >
-                    🛵 Online
+                    🛵 LOGHYPE Online
                   </Badge>
                 </h2>
-                <p className="text-xs text-slate-400">
+                <p className="font-sans text-xs text-slate-600">
                   Transmissão GPS ativa (atualiza a cada 30s)
                 </p>
               </div>
@@ -235,10 +235,10 @@ export default function CourierApp() {
 
             <div className="flex items-center gap-2">
               <span className="relative flex h-3 w-3">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500"></span>
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#00AA44] opacity-75"></span>
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-[#00AA44]"></span>
               </span>
-              <span className="text-xs font-semibold text-emerald-400">GPS Conectado</span>
+              <span className="text-xs font-bold text-[#00AA44]">GPS Conectado</span>
             </div>
           </div>
 
@@ -266,9 +266,12 @@ export default function CourierApp() {
             disabled={
               isOptimizing || (activeDeliveries.length === 0 && pendingDeliveries.length === 0)
             }
-            className="flex-1 h-12 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-purple-600/25 flex items-center justify-center gap-2"
+            className="flex-1 h-12 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs rounded-input shadow-brand transition duration-100 flex items-center justify-center gap-2"
           >
-            <Sparkles className="h-4 w-4 animate-spin" style={{ animationDuration: '3s' }} />
+            <Sparkles
+              className="h-4 w-4 animate-spin text-[#FF6B35]"
+              style={{ animationDuration: '3s' }}
+            />
             {isOptimizing ? 'Calculando Rota Ótima...' : 'Otimizar Sequência de Entregas (IA)'}
           </Button>
           <Button

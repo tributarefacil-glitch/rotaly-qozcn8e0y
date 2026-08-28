@@ -339,10 +339,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           {/* Top Title & Actions Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                Painel do Vendedor & Frotas
+              <h1 className="font-heading text-2xl sm:text-3xl font-extrabold tracking-tight text-[#1a1a1a]">
+                Painel Comercial LOGHYPE
               </h1>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+              <p className="font-sans text-xs sm:text-sm text-slate-600">
                 Acompanhamento em tempo real de pedidos, mapa interativo, Torre de Controle e
                 Relatórios.
               </p>
@@ -367,11 +367,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               </Button>
               <Button
                 onClick={() => setIsCreateModalOpen(true)}
-                className="h-9 gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-md shadow-blue-500/25"
+                className="gap-2 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
               >
                 <Plus className="h-4 w-4" />
-                Nova Venda / Entrega
-              </Button>
+                Novo Despacho
+              </Button>{' '}
             </div>
           </div>
 

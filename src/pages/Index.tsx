@@ -238,12 +238,12 @@ export default function Index() {
       <main className="relative z-10 flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex flex-col justify-center">
         {selectedProfile ? (
           /* ================= DEDICATED PROFILE LOGIN FORM ================= */
-          <div className="max-w-md mx-auto w-full">
+          <div className="max-w-md mx-auto w-full transition-all duration-200">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setSelectedProfile(null)}
-              className="mb-4 text-xs text-slate-400 hover:text-white gap-1.5"
+              className="mb-4 text-xs text-[#0052CC] hover:bg-blue-50 gap-1.5 font-bold rounded-input"
             >
               <ArrowLeft className="h-4 w-4" />
               Escolher outro perfil de acesso
@@ -254,28 +254,29 @@ export default function Index() {
               const IconComponent = cfg.icon
 
               return (
-                <Card className="border-slate-800 bg-slate-900/90 text-white backdrop-blur-xl shadow-2xl relative overflow-hidden">
-                  <div className={`h-2 w-full bg-gradient-to-r ${cfg.gradient}`} />
+                <Card className="border border-slate-200 bg-white text-[#1a1a1a] shadow-brand rounded-card relative overflow-hidden">
+                  <div className="h-1.5 w-full bg-gradient-to-r from-[#0052CC] to-[#FF6B35]" />
 
                   <CardHeader className="space-y-2 pb-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
-                        <div
-                          className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${cfg.gradient} text-white shadow-md`}
-                        >
-                          <IconComponent className="h-5 w-5" />
+                        <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand">
+                          <IconComponent className="h-5 w-5 text-white" />
                         </div>
                         <div>
-                          <CardTitle className="text-xl font-bold text-white">
+                          <CardTitle className="font-heading text-xl font-bold text-[#1a1a1a]">
                             Login {cfg.title}
                           </CardTitle>
-                          <Badge variant="outline" className={`mt-0.5 text-[10px] ${cfg.badgeBg}`}>
+                          <Badge
+                            variant="outline"
+                            className={`mt-0.5 text-[10px] font-bold ${cfg.badgeBg}`}
+                          >
                             Perfil {cfg.title}
                           </Badge>
                         </div>
                       </div>
                     </div>
-                    <CardDescription className="text-slate-400 text-xs">
+                    <CardDescription className="font-sans text-slate-600 text-xs">
                       {cfg.subtitle}
                     </CardDescription>
                   </CardHeader>
@@ -283,15 +284,15 @@ export default function Index() {
                   <CardContent className="space-y-4">
                     <form onSubmit={handleLoginSubmit} className="space-y-3.5">
                       <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-slate-300">E-mail</Label>
+                        <Label className="text-xs font-bold text-[#1a1a1a]">E-mail</Label>
                         <div className="relative">
-                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                           <Input
                             type="email"
                             placeholder="seu.email@exemplo.com"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
-                            className="bg-slate-950 border-slate-700 pl-9 text-xs text-white placeholder:text-slate-500 focus:border-blue-500"
+                            className="bg-white border-slate-200 pl-9 text-xs text-[#1a1a1a] placeholder:text-slate-400 focus:border-[#0052CC] rounded-input"
                             required
                           />
                         </div>
@@ -299,28 +300,28 @@ export default function Index() {
 
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
-                          <Label className="text-xs font-semibold text-slate-300">Senha</Label>
+                          <Label className="text-xs font-bold text-[#1a1a1a]">Senha</Label>
                           <Link
                             to="/forgot-password"
-                            className="text-[11px] text-blue-400 hover:underline"
+                            className="text-[11px] text-[#0052CC] font-bold hover:underline"
                           >
                             Esqueceu a senha?
                           </Link>
                         </div>
                         <div className="relative">
-                          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                           <Input
                             type={showPassword ? 'text' : 'password'}
                             placeholder="••••••••"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            className="bg-slate-950 border-slate-700 pl-9 pr-9 text-xs text-white placeholder:text-slate-500"
+                            className="bg-white border-slate-200 pl-9 pr-9 text-xs text-[#1a1a1a] placeholder:text-slate-400 rounded-input focus:border-[#0052CC]"
                             required
                           />
                           <button
                             type="button"
                             onClick={() => setShowPassword(!showPassword)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                           >
                             {showPassword ? (
                               <EyeOff className="h-4 w-4" />
@@ -334,7 +335,7 @@ export default function Index() {
                       <Button
                         type="submit"
                         disabled={isLoading}
-                        className={`w-full h-11 text-white font-bold text-sm shadow-lg transition flex items-center justify-center gap-2 ${cfg.btnBg}`}
+                        className={`w-full h-11 text-white font-bold text-sm shadow-brand rounded-input transition duration-100 flex items-center justify-center gap-2 ${cfg.btnBg}`}
                       >
                         {isLoading ? (
                           'Autenticando...'
@@ -348,39 +349,39 @@ export default function Index() {
                     </form>
 
                     {/* Quick 1-click login preset */}
-                    <div className="pt-2 border-t border-slate-800 space-y-2">
+                    <div className="pt-2 border-t border-slate-100 space-y-2">
                       <button
                         type="button"
                         onClick={() => handleQuickLogin(cfg.defaultEmail, selectedProfile)}
-                        className="w-full py-2 px-3 rounded-lg bg-slate-950 hover:bg-slate-800/90 border border-slate-800 text-left flex items-center justify-between transition group text-xs"
+                        className="w-full py-2.5 px-3 rounded-input bg-[#F5F5F5] hover:bg-slate-200/70 border border-slate-200 text-left flex items-center justify-between transition group text-xs"
                       >
                         <div className="flex items-center gap-2">
-                          <Zap className="h-3.5 w-3.5 text-amber-400" />
-                          <span className="text-slate-300 font-medium">
-                            Preencher credencial de teste ({cfg.defaultEmail})
+                          <Zap className="h-3.5 w-3.5 text-[#FF6B35]" />
+                          <span className="text-[#1a1a1a] font-medium">
+                            Credencial de teste ({cfg.defaultEmail})
                           </span>
                         </div>
-                        <span className="text-[11px] text-blue-400 group-hover:translate-x-0.5 transition-transform">
+                        <span className="text-[11px] font-bold text-[#0052CC] group-hover:translate-x-0.5 transition-transform">
                           1-Clique →
                         </span>
                       </button>
                     </div>
 
                     {/* Links to Register or Forgot Password */}
-                    <div className="pt-2 text-center text-xs text-slate-400 space-y-2">
+                    <div className="pt-2 text-center text-xs text-slate-500 space-y-2">
                       {cfg.canRegister ? (
                         <p>
                           Ainda não tem conta?{' '}
                           <Link
                             to={cfg.registerUrl!}
-                            className="text-blue-400 font-semibold hover:underline"
+                            className="text-[#0052CC] font-bold hover:underline"
                           >
                             Cadastre-se aqui
                           </Link>
                         </p>
                       ) : (
-                        <p className="text-[11px] text-slate-500">
-                          Conta administrativa criada previamente no Skip Cloud.
+                        <p className="text-[11px] text-slate-400">
+                          Conta administrativa criada previamente.
                         </p>
                       )}
                     </div>
@@ -394,18 +395,18 @@ export default function Index() {
           <div className="space-y-10">
             {/* Header intro */}
             <div className="text-center space-y-3 max-w-2xl mx-auto">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-semibold">
-                <Zap className="h-3.5 w-3.5" />
-                Controle de Acesso & Perfis de Usuário
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 border border-[#0052CC]/20 text-[#0052CC] text-xs font-bold font-sans">
+                <Zap className="h-3.5 w-3.5 text-[#FF6B35]" />
+                LOGHYPE • Plataforma de Gestão e Rastreamento
               </div>
 
-              <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white leading-tight">
+              <h1 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#1a1a1a] leading-tight">
                 Selecione seu perfil para acessar
               </h1>
 
-              <p className="text-slate-400 text-sm sm:text-base leading-relaxed">
-                Cada módulo possui uma interface dedicada com ferramentas específicas para sua
-                operação logística diária.
+              <p className="font-sans text-slate-600 text-sm sm:text-base leading-relaxed">
+                Entrega rápida, confiança garantida. Escolha seu módulo operacional para acessar o
+                painel correspondente.
               </p>
             </div>
 
@@ -416,53 +417,51 @@ export default function Index() {
                 onClick={() => handleSelectProfile('admin')}
                 role="button"
                 tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900/90 to-slate-950/90 p-6 backdrop-blur-xl shadow-xl transition-all duration-300 hover:-translate-y-1.5 hover:border-rose-500/50 hover:shadow-2xl hover:shadow-rose-500/10 cursor-pointer overflow-hidden text-left"
+                className="group relative flex flex-col justify-between rounded-card border border-slate-200 bg-white p-6 shadow-brand transition-all duration-200 hover:-translate-y-1 hover:border-[#0052CC] hover:shadow-brand-hover cursor-pointer overflow-hidden text-left"
               >
-                <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 rounded-full blur-2xl group-hover:bg-rose-500/20 transition-all" />
-
                 <div className="space-y-4 relative z-10">
                   <div className="flex items-center justify-between">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-rose-500 to-red-600 text-white shadow-lg shadow-rose-500/25 group-hover:scale-105 transition-transform">
-                      <Shield className="h-7 w-7" />
+                    <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand group-hover:scale-105 transition-transform">
+                      <Shield className="h-6 w-6" />
                     </div>
                     <Badge
                       variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-rose-500/10 text-rose-400 border-rose-500/30"
+                      className="text-[10px] uppercase font-bold tracking-wider bg-blue-50 text-[#0052CC] border-[#0052CC]/30"
                     >
                       Acesso Gestor
                     </Badge>
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-bold text-white group-hover:text-rose-400 transition-colors">
+                    <h2 className="font-heading text-xl font-bold text-[#1a1a1a] group-hover:text-[#0052CC] transition-colors">
                       Administrador
                     </h2>
-                    <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                      Painel executivo com métricas financeiras globais, aprovação de cadastros de
-                      entregadores, telemetria e controle da equipe.
+                    <p className="font-sans text-xs text-slate-600 mt-1.5 leading-relaxed">
+                      Painel executivo com telemetria da frota, aprovação de cadastros de
+                      entregadores, relatórios e KPIs globais.
                     </p>
                   </div>
 
-                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-slate-800/80">
+                  <ul className="space-y-2 text-xs text-slate-700 pt-2 border-t border-slate-100 font-sans">
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
                       <span>Gestão e validação de CNH/selfies</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
                       <span>Aprovação e bloqueio de usuários</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
                       <span>KPIs de SLA e faturamento</span>
                     </li>
                   </ul>
                 </div>
 
                 <div className="pt-6 relative z-10">
-                  <div className="flex items-center justify-between text-xs font-bold text-rose-400 group-hover:translate-x-1 transition-transform">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#0052CC] group-hover:translate-x-1 transition-transform">
                     <span>Entrar como Administrador</span>
-                    <ArrowRight className="h-4 w-4" />
+                    <ArrowRight className="h-4 w-4 text-[#FF6B35]" />
                   </div>
                 </div>
               </div>
@@ -472,53 +471,51 @@ export default function Index() {
                 onClick={() => handleSelectProfile('seller')}
                 role="button"
                 tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900/90 to-slate-950/90 p-6 backdrop-blur-xl shadow-xl transition-all duration-300 hover:-translate-y-1.5 hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-500/10 cursor-pointer overflow-hidden text-left"
+                className="group relative flex flex-col justify-between rounded-card border border-slate-200 bg-white p-6 shadow-brand transition-all duration-200 hover:-translate-y-1 hover:border-[#FF6B35] hover:shadow-brand-orange cursor-pointer overflow-hidden text-left"
               >
-                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all" />
-
                 <div className="space-y-4 relative z-10">
                   <div className="flex items-center justify-between">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/25 group-hover:scale-105 transition-transform">
-                      <Store className="h-7 w-7" />
+                    <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[#FF6B35] text-white shadow-brand group-hover:scale-105 transition-transform">
+                      <Store className="h-6 w-6" />
                     </div>
                     <Badge
                       variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-blue-500/10 text-blue-400 border-blue-500/30"
+                      className="text-[10px] uppercase font-bold tracking-wider bg-orange-50 text-[#FF6B35] border-[#FF6B35]/30"
                     >
                       Painel Comercial
                     </Badge>
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-bold text-white group-hover:text-blue-400 transition-colors">
+                    <h2 className="font-heading text-xl font-bold text-[#1a1a1a] group-hover:text-[#FF6B35] transition-colors">
                       Vendedor
                     </h2>
-                    <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                      Criação de novos pedidos de entrega, monitoramento de status em tempo real,
-                      roteirização e cadastro de clientes.
+                    <p className="font-sans text-xs text-slate-600 mt-1.5 leading-relaxed">
+                      Criação rápida de despachos, acompanhamento de pedidos no mapa em tempo real e
+                      otimização inteligente de rotas.
                     </p>
                   </div>
 
-                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-slate-800/80">
+                  <ul className="space-y-2 text-xs text-slate-700 pt-2 border-t border-slate-100 font-sans">
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
                       <span>Criação rápida de despachos</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
                       <span>Roteirização inteligente com IA</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
                       <span>Acompanhamento no mapa ao vivo</span>
                     </li>
                   </ul>
                 </div>
 
                 <div className="pt-6 relative z-10">
-                  <div className="flex items-center justify-between text-xs font-bold text-blue-400 group-hover:translate-x-1 transition-transform">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#FF6B35] group-hover:translate-x-1 transition-transform">
                     <span>Entrar como Vendedor</span>
-                    <ArrowRight className="h-4 w-4" />
+                    <ArrowRight className="h-4 w-4 text-[#0052CC]" />
                   </div>
                 </div>
               </div>
@@ -528,53 +525,51 @@ export default function Index() {
                 onClick={() => handleSelectProfile('courier')}
                 role="button"
                 tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-900/90 to-slate-950/90 p-6 backdrop-blur-xl shadow-xl transition-all duration-300 hover:-translate-y-1.5 hover:border-purple-500/50 hover:shadow-2xl hover:shadow-purple-500/10 cursor-pointer overflow-hidden text-left"
+                className="group relative flex flex-col justify-between rounded-card border border-slate-200 bg-white p-6 shadow-brand transition-all duration-200 hover:-translate-y-1 hover:border-[#0052CC] hover:shadow-brand-hover cursor-pointer overflow-hidden text-left"
               >
-                <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/10 rounded-full blur-2xl group-hover:bg-purple-500/20 transition-all" />
-
                 <div className="space-y-4 relative z-10">
                   <div className="flex items-center justify-between">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-500/25 group-hover:scale-105 transition-transform">
-                      <Truck className="h-7 w-7" />
+                    <div className="flex h-12 w-12 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand group-hover:scale-105 transition-transform">
+                      <Truck className="h-6 w-6" />
                     </div>
                     <Badge
                       variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-purple-500/10 text-purple-400 border-purple-500/30"
+                      className="text-[10px] uppercase font-bold tracking-wider bg-blue-50 text-[#0052CC] border-[#0052CC]/30"
                     >
                       App Operacional
                     </Badge>
                   </div>
 
                   <div>
-                    <h2 className="text-xl font-bold text-white group-hover:text-purple-400 transition-colors">
+                    <h2 className="font-heading text-xl font-bold text-[#1a1a1a] group-hover:text-[#0052CC] transition-colors">
                       Entregador
                     </h2>
-                    <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                      Interface mobile otimizada com lista de entregas, GPS ativo, assinatura
-                      digital na tela e comprovante fotográfico.
+                    <p className="font-sans text-xs text-slate-600 mt-1.5 leading-relaxed">
+                      Interface mobile simplificada com lista de paradas sequencial, GPS ativo e
+                      comprovante com foto e assinatura na tela.
                     </p>
                   </div>
 
-                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-slate-800/80">
+                  <ul className="space-y-2 text-xs text-slate-700 pt-2 border-t border-slate-100 font-sans">
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
                       <span>Telemetria GPS a cada 30 segundos</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
                       <span>Assinatura digital e foto de entrega</span>
                     </li>
                     <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-purple-400 shrink-0" />
-                      <span>Fluxo de cadastro em 3 etapas</span>
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[#00AA44] shrink-0" />
+                      <span>Navegação com Waze / Google Maps</span>
                     </li>
                   </ul>
                 </div>
 
                 <div className="pt-6 relative z-10">
-                  <div className="flex items-center justify-between text-xs font-bold text-purple-400 group-hover:translate-x-1 transition-transform">
+                  <div className="flex items-center justify-between text-xs font-bold text-[#0052CC] group-hover:translate-x-1 transition-transform">
                     <span>Entrar como Entregador</span>
-                    <ArrowRight className="h-4 w-4" />
+                    <ArrowRight className="h-4 w-4 text-[#FF6B35]" />
                   </div>
                 </div>
               </div>
@@ -583,10 +578,10 @@ export default function Index() {
             {/* Quick Registration Bar & Public Tracking */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-5xl mx-auto w-full pt-4">
               {/* Public Tracking Box */}
-              <div className="lg:col-span-7 rounded-2xl border border-blue-500/30 bg-gradient-to-br from-slate-900/90 to-blue-950/40 p-5 backdrop-blur-xl shadow-xl space-y-3">
-                <div className="flex items-center gap-2 text-blue-400 font-bold text-xs uppercase tracking-wider">
-                  <Search className="h-4 w-4" />
-                  <span>Acompanhe sua Encomenda (Acesso Público Sem Login)</span>
+              <div className="lg:col-span-7 rounded-card border border-slate-200 bg-[#F5F5F5] p-5 shadow-brand space-y-3">
+                <div className="flex items-center gap-2 text-[#0052CC] font-bold text-xs uppercase tracking-wider font-heading">
+                  <Search className="h-4 w-4 text-[#FF6B35]" />
+                  <span>Acompanhe sua Encomenda (Rastreio Público LOGHYPE)</span>
                 </div>
 
                 <form onSubmit={handlePublicTracking} className="flex flex-col sm:flex-row gap-2">
@@ -594,15 +589,15 @@ export default function Index() {
                     <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                     <Input
                       type="text"
-                      placeholder="Ex: TRK-2025-001"
+                      placeholder="Digite o código: TRK-2025-001..."
                       value={trackingCode}
                       onChange={(e) => setTrackingCode(e.target.value)}
-                      className="h-10 bg-slate-950/80 border-slate-700 pl-10 text-xs text-white placeholder:text-slate-500 focus:border-blue-500"
+                      className="h-10 bg-white border-slate-300 pl-10 text-xs text-[#1a1a1a] placeholder:text-slate-400 focus:border-[#0052CC] rounded-input"
                     />
                   </div>
                   <Button
                     type="submit"
-                    className="h-10 px-5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md"
+                    className="h-10 px-5 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
                   >
                     Rastrear Pedido
                   </Button>
@@ -610,13 +605,13 @@ export default function Index() {
               </div>
 
               {/* Register Callout */}
-              <div className="lg:col-span-5 rounded-2xl border border-purple-500/30 bg-gradient-to-br from-slate-900/90 to-purple-950/40 p-5 backdrop-blur-xl shadow-xl flex flex-col justify-between space-y-3">
+              <div className="lg:col-span-5 rounded-card border border-slate-200 bg-white p-5 shadow-brand flex flex-col justify-between space-y-3">
                 <div>
-                  <div className="flex items-center gap-2 text-purple-400 font-bold text-xs uppercase tracking-wider">
-                    <UserPlus className="h-4 w-4" />
+                  <div className="flex items-center gap-2 text-[#0052CC] font-bold text-xs uppercase tracking-wider font-heading">
+                    <UserPlus className="h-4 w-4 text-[#FF6B35]" />
                     <span>Novo na Plataforma?</span>
                   </div>
-                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  <p className="font-sans text-xs text-slate-600 mt-1 leading-relaxed">
                     Cadastre-se como entregador ou vendedor em menos de 2 minutos.
                   </p>
                 </div>
@@ -625,17 +620,17 @@ export default function Index() {
                   <Link to="/register?role=courier" className="flex-1">
                     <Button
                       variant="outline"
-                      className="w-full h-9 border-purple-500/50 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 text-xs font-semibold"
+                      className="w-full h-9 border-[#0052CC] text-[#0052CC] hover:bg-blue-50 text-xs font-bold rounded-input"
                     >
-                      Cadastrar Entregador
+                      Entregador
                     </Button>
                   </Link>
                   <Link to="/register?role=seller" className="flex-1">
                     <Button
                       variant="outline"
-                      className="w-full h-9 border-blue-500/50 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 text-xs font-semibold"
+                      className="w-full h-9 border-[#FF6B35] text-[#FF6B35] hover:bg-orange-50 text-xs font-bold rounded-input"
                     >
-                      Cadastrar Vendedor
+                      Vendedor
                     </Button>
                   </Link>
                 </div>
@@ -646,10 +641,10 @@ export default function Index() {
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-slate-800/80 bg-slate-950/90 py-4 px-6 text-center text-xs text-slate-500">
+      <footer className="relative z-10 border-t border-slate-200 bg-[#F5F5F5] py-4 px-6 text-center text-xs text-slate-500 font-sans">
         <p>
-          Gestão de Entregas & Telemetria em Tempo Real © {new Date().getFullYear()} — Plataforma
-          Skip Cloud
+          LOGHYPE © {new Date().getFullYear()} — Entrega rápida, confiança garantida • Sua logística
+          no próximo nível
         </p>
       </footer>
     </div>

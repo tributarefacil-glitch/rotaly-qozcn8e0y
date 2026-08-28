@@ -173,12 +173,12 @@ export const AiLogisticsAssistant: React.FC = () => {
       <div className="fixed bottom-6 right-6 z-50">
         <Button
           onClick={() => setIsOpen(true)}
-          className="relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-2xl hover:scale-105 hover:shadow-blue-500/50 transition-all"
+          className="relative flex h-14 w-14 items-center justify-center rounded-full bg-[#0052CC] hover:bg-[#003E99] text-white shadow-brand-hover hover:scale-105 transition-all duration-100"
         >
-          <Sparkles className="h-6 w-6 animate-pulse" />
+          <Sparkles className="h-6 w-6 text-[#FF6B35] animate-pulse" />
           <span className="absolute -top-1 -right-1 flex h-4 w-4">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75"></span>
-            <span className="relative inline-flex h-4 w-4 rounded-full bg-sky-500 text-[9px] font-bold text-white items-center justify-center">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#FF6B35] opacity-75"></span>
+            <span className="relative inline-flex h-4 w-4 rounded-full bg-[#FF6B35] text-[9px] font-bold text-white items-center justify-center">
               AI
             </span>
           </span>
@@ -191,22 +191,24 @@ export const AiLogisticsAssistant: React.FC = () => {
     <div className="fixed bottom-6 right-6 z-50 w-96 max-w-[calc(100vw-2rem)] shadow-2xl transition-all">
       <Card className="border-slate-800 bg-slate-900/95 text-white backdrop-blur shadow-2xl overflow-hidden flex flex-col h-[520px]">
         {/* Header */}
-        <CardHeader className="flex flex-row items-center justify-between border-b border-slate-800 p-3.5 bg-slate-950/80">
+        <CardHeader className="flex flex-row items-center justify-between border-b border-slate-200 p-3.5 bg-[#F5F5F5] rounded-t-modal">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-tr from-blue-600 to-purple-600 text-white">
-              <Sparkles className="h-4 w-4" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-card bg-[#0052CC] text-white shadow-brand">
+              <Sparkles className="h-4 w-4 text-[#FF6B35]" />
             </div>
             <div>
-              <CardTitle className="text-sm font-bold flex items-center gap-2">
-                Logistics Copilot
+              <CardTitle className="font-heading text-sm font-bold text-[#1a1a1a] flex items-center gap-2">
+                LOGHYPE Copilot IA
                 <Badge
                   variant="outline"
-                  className="text-[10px] bg-blue-500/10 text-blue-400 border-blue-500/30"
+                  className="text-[10px] bg-blue-50 text-[#0052CC] border-[#0052CC]/30 font-bold"
                 >
-                  IA Ativa
+                  Online
                 </Badge>
               </CardTitle>
-              <p className="text-[10px] text-slate-400">Assistente de Operações e Frotas</p>
+              <p className="font-sans text-[10px] text-slate-600">
+                Assistente de Operações e Frotas
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-1">

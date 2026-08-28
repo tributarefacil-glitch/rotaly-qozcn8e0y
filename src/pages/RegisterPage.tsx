@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { toast } from 'sonner'
+import { LoghypeLogo } from '@/components/LoghypeLogo'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
@@ -234,34 +235,22 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between selection:bg-blue-500 selection:text-white relative overflow-hidden">
-      {/* Background glow graphics */}
-      <div className="absolute -top-40 -left-40 w-96 h-96 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-1/2 -right-40 w-96 h-96 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
-
+    <div className="min-h-screen bg-[#FFFFFF] text-[#1a1a1a] flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
       {/* Header */}
-      <header className="relative z-10 w-full border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md px-6 py-4">
+      <header className="relative z-10 w-full border-b border-slate-200 bg-white shadow-subtle px-6 py-3.5">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <Link to="/" className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-500/25">
-              <Truck className="h-5 w-5" />
-            </div>
-            <div>
-              <span className="text-lg font-black tracking-tight text-white block leading-tight">
-                Gestão de Entregas
-              </span>
-              <span className="text-[11px] text-slate-400">Portal de Credenciamento</span>
-            </div>
+            <LoghypeLogo variant="full" size="sm" showSlogan theme="dark" />
           </Link>
 
           <Button
             variant="ghost"
             size="sm"
             onClick={() => navigate('/login')}
-            className="text-xs text-slate-300 hover:text-white gap-1.5"
+            className="text-xs text-[#0052CC] hover:bg-blue-50 font-bold gap-1.5 rounded-input"
           >
             <ArrowLeft className="h-4 w-4" />
-            Já tenho conta (Login)
+            Já tenho conta (Fazer Login)
           </Button>
         </div>
       </header>
@@ -314,14 +303,16 @@ export default function RegisterPage() {
           </Card>
         ) : (
           /* MULTI-STEP REGISTRATION FORM */
-          <Card className="border-slate-800 bg-slate-900/90 text-white shadow-2xl backdrop-blur-xl">
+          <Card className="border border-slate-200 bg-white text-[#1a1a1a] shadow-brand rounded-card">
             <CardHeader className="space-y-4 pb-4">
               {/* Profile Type Selector (Courier vs Seller) */}
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-2xl font-black text-white">Criar Nova Conta</CardTitle>
-                  <CardDescription className="text-slate-400 text-xs">
-                    Cadastre-se na plataforma para começar a operar.
+                  <CardTitle className="font-heading text-2xl font-black text-[#1a1a1a]">
+                    Criar Nova Conta
+                  </CardTitle>
+                  <CardDescription className="font-sans text-slate-600 text-xs">
+                    Cadastre-se na LOGHYPE para começar a operar entregas.
                   </CardDescription>
                 </div>
 
@@ -329,8 +320,8 @@ export default function RegisterPage() {
                   variant="outline"
                   className={`text-xs uppercase tracking-wider font-bold ${
                     profileType === 'courier'
-                      ? 'border-purple-500/40 bg-purple-500/10 text-purple-400'
-                      : 'border-blue-500/40 bg-blue-500/10 text-blue-400'
+                      ? 'border-[#0052CC]/30 bg-blue-50 text-[#0052CC]'
+                      : 'border-[#FF6B35]/30 bg-orange-50 text-[#FF6B35]'
                   }`}
                 >
                   {profileType === 'courier' ? '🛵 Entregador' : '🏪 Vendedor'}
@@ -339,14 +330,14 @@ export default function RegisterPage() {
 
               {/* Profile Switcher Tabs */}
               {currentStep === 1 && (
-                <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="grid grid-cols-2 gap-2 p-1 rounded-card bg-[#F5F5F5] border border-slate-200">
                   <button
                     type="button"
                     onClick={() => setProfileType('courier')}
-                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition ${
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-input text-xs font-bold transition duration-200 ${
                       profileType === 'courier'
-                        ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-[#0052CC] text-white shadow-brand'
+                        : 'text-slate-600 hover:text-[#0052CC]'
                     }`}
                   >
                     <Truck className="h-4 w-4" />
@@ -355,10 +346,10 @@ export default function RegisterPage() {
                   <button
                     type="button"
                     onClick={() => setProfileType('seller')}
-                    className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition ${
+                    className={`flex items-center justify-center gap-2 py-2.5 rounded-input text-xs font-bold transition duration-200 ${
                       profileType === 'seller'
-                        ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-[#FF6B35] text-white shadow-brand'
+                        : 'text-slate-600 hover:text-[#FF6B35]'
                     }`}
                   >
                     <Store className="h-4 w-4" />
@@ -787,7 +778,7 @@ export default function RegisterPage() {
 
       {/* Footer */}
       <footer className="relative z-10 border-t border-slate-800/80 bg-slate-950/90 py-4 px-6 text-center text-xs text-slate-500">
-        <p>Gestão de Entregas — Plataforma Segura com Autenticação PocketBase</p>
+        <p>LOGHYPE — Entrega rápida, confiança garantida • Plataforma Segura</p>
       </footer>
     </div>
   )

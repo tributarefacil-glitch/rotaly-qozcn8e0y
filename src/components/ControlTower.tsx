@@ -436,19 +436,23 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   function getStatusBadge(status: string) {
     switch (status) {
       case 'delivered':
-        return <Badge className="bg-emerald-500 text-white hover:bg-emerald-600">Entregue</Badge>
+        return (
+          <Badge className="bg-[#00AA44] text-white hover:bg-[#008836] font-bold">Entregue</Badge>
+        )
       case 'in_transit':
-        return <Badge className="bg-amber-500 text-white hover:bg-amber-600">Em Rota</Badge>
+        return (
+          <Badge className="bg-[#FF6B35] text-white hover:bg-[#E5531E] font-bold">Em Rota</Badge>
+        )
       case 'pending':
         return (
-          <Badge variant="outline" className="border-blue-300 text-blue-700 bg-blue-50">
+          <Badge variant="outline" className="border-[#0052CC] text-[#0052CC] bg-blue-50 font-bold">
             Pendente
           </Badge>
         )
       case 'address_error':
-        return <Badge variant="destructive">Erro de Endereço</Badge>
+        return <Badge className="bg-[#FF6B35] text-white font-bold">Erro de Endereço</Badge>
       case 'client_absent':
-        return <Badge variant="destructive">Cliente Ausente</Badge>
+        return <Badge className="bg-[#E74C3C] text-white font-bold">Cliente Ausente</Badge>
       case 'cancelled':
         return <Badge variant="secondary">Cancelada</Badge>
       default:

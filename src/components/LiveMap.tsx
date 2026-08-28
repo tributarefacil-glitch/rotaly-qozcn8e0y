@@ -165,15 +165,16 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     markers.forEach((item) => {
       if (!item.lat || !item.lng) return
 
-      let iconUrl = 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png'
+      // LOGHYPE Color Scheme: Blue for couriers, Orange for customers/orders, Green for delivered
+      let iconUrl = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
       if (item.type === 'courier') {
-        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png'
+        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png' // Blue for Couriers
       } else if (item.type === 'order_transit') {
-        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/yellow-dot.png'
+        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png' // Orange for Customers / Orders
       } else if (item.type === 'order_delivered') {
-        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/green-dot.png'
+        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/green-dot.png' // Green for Delivered
       } else if (item.type === 'order_pending') {
-        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/red-dot.png'
+        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
       }
 
       const marker = new google.maps.Marker({
@@ -306,19 +307,19 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                 >
                   {/* Ping effect for couriers & urgent orders */}
                   {(m.type === 'courier' || m.type === 'order_transit') && (
-                    <span className="absolute -inset-2 rounded-full animate-ping bg-purple-500/30 opacity-75" />
+                    <span className="absolute -inset-2 rounded-full animate-ping bg-[#FF6B35]/30 opacity-75" />
                   )}
 
-                  {/* Marker Pin Icon */}
+                  {/* Marker Pin Icon: Blue #0052CC for couriers, Orange #FF6B35 for customers */}
                   <div
-                    className={`flex items-center justify-center p-2 rounded-full shadow-lg border-2 transition-all ${
+                    className={`flex items-center justify-center p-2 rounded-full shadow-brand border-2 transition-all ${
                       m.type === 'courier'
-                        ? 'bg-purple-600 border-purple-200 text-white shadow-purple-500/50 ring-2 ring-purple-400/50'
+                        ? 'bg-[#0052CC] border-blue-200 text-white shadow-brand-hover ring-2 ring-[#0052CC]/50'
                         : m.type === 'order_transit'
-                          ? 'bg-amber-500 border-amber-200 text-white shadow-amber-500/50'
+                          ? 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
                           : m.type === 'order_delivered'
-                            ? 'bg-emerald-600 border-emerald-200 text-white'
-                            : 'bg-blue-600 border-blue-200 text-white shadow-blue-500/50'
+                            ? 'bg-[#00AA44] border-emerald-200 text-white'
+                            : 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
                     }`}
                   >
                     {m.type === 'courier' ? (
@@ -445,22 +446,18 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           </div>
 
           {/* Legend */}
-          <div className="absolute bottom-3 left-3 z-30 flex flex-wrap gap-2 rounded-lg bg-slate-900/90 p-2 backdrop-blur border border-slate-700 text-[11px] text-slate-300 shadow-lg">
+          <div className="absolute bottom-3 left-3 z-30 flex flex-wrap gap-3 rounded-card bg-white/95 p-2.5 backdrop-blur border border-slate-200 text-[11px] text-[#1a1a1a] shadow-brand font-sans">
             <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-purple-500"></span>
-              <span>Entregador Ativo</span>
+              <span className="h-2.5 w-2.5 rounded-full bg-[#0052CC]"></span>
+              <span className="font-medium">Entregador (Azul)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500"></span>
-              <span>Em Trânsito</span>
+              <span className="h-2.5 w-2.5 rounded-full bg-[#FF6B35]"></span>
+              <span className="font-medium">Cliente / Pedido (Laranja)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-blue-500"></span>
-              <span>Pendente</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-              <span>Entregue</span>
+              <span className="h-2.5 w-2.5 rounded-full bg-[#00AA44]"></span>
+              <span className="font-medium">Entregue (Verde)</span>
             </div>
           </div>
         </div>

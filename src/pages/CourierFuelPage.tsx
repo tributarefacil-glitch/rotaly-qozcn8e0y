@@ -137,22 +137,21 @@ export default function CourierFuelPage() {
   const isPositive = balance >= 0
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col pb-20 md:pb-6">
+    <div className="min-h-screen bg-white text-[#1a1a1a] flex flex-col pb-20 md:pb-6 font-sans">
       <Header />
 
       <main className="flex-1 max-w-2xl mx-auto w-full p-4 space-y-4">
-        {/* Top Header Card */}
-        <div className="flex items-center justify-between">
+        {/* Top Header */}
+        <div className="flex items-center justify-between pb-2 border-b border-slate-200">
           <div>
-            <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
-              <Fuel className="h-6 w-6 text-emerald-400" />
-              Controle de Combustível
+            <h1 className="font-heading text-xl font-black text-[#1a1a1a] flex items-center gap-2">
+              <Fuel className="h-5 w-5 text-[#00AA44]" />
+              Minha Conta de Combustível LOGHYPE
             </h1>
-            <p className="text-xs text-slate-400">
-              Extrato da sua conta corrente e adiantamentos recebidos
+            <p className="font-sans text-xs text-slate-600">
+              Acompanhe seus adiantamentos e gastos calculados em tempo real.
             </p>
           </div>
-
           <Button
             variant="outline"
             size="sm"
