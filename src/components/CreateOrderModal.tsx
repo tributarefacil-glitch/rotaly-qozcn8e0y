@@ -158,6 +158,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
   }, [open])
 
+  // Watch open state change: force map resize when dialog animation completes
+  useEffect(() => {
+    if (open && isMapsLoaded) {
+      const resizeTimer = setTimeout(() => {
+        const google = getGoogle()
+        if (mapInstanceRef.current && google?.maps) {
+          google.maps.event.trigger(mapInstanceRef.current, 'resize')
+          mapInstanceRef.current.setCenter(selectedCoords)
+        }
+      }, 300)
+      return () => clearTimeout(resizeTimer)
+    }
+  }, [open, isMapsLoaded, selectedCoords])
+
   // Populate customer fields helper
   const populateCustomerForm = useCallback((cust: CustomerRecord) => {
     setExistingMatchedCustomerId(cust.id)
@@ -199,15 +213,23 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         const d2 = (c.phone2 || '').replace(/\D/g, '')
         const d3 = (c.phone3 || '').replace(/\D/g, '')
         return (
-          (d1 && (d1 === cleanDigits || (d1.length >= 8 && (d1.endsWith(cleanDigits) || cleanDigits.endsWith(d1))))) ||
-          (d2 && (d2 === cleanDigits || (d2.length >= 8 && (d2.endsWith(cleanDigits) || cleanDigits.endsWith(d2))))) ||
-          (d3 && (d3 === cleanDigits || (d3.length >= 8 && (d3.endsWith(cleanDigits) || cleanDigits.endsWith(d3)))))
+          (d1 &&
+            (d1 === cleanDigits ||
+              (d1.length >= 8 && (d1.endsWith(cleanDigits) || cleanDigits.endsWith(d1))))) ||
+          (d2 &&
+            (d2 === cleanDigits ||
+              (d2.length >= 8 && (d2.endsWith(cleanDigits) || cleanDigits.endsWith(d2))))) ||
+          (d3 &&
+            (d3 === cleanDigits ||
+              (d3.length >= 8 && (d3.endsWith(cleanDigits) || cleanDigits.endsWith(d3)))))
         )
       })
 
       if (localMatch) {
         populateCustomerForm(localMatch)
-        toast.success(`Cliente localizado: "${localMatch.name}". Cadastro completo carregado e pronto para edição!`)
+        toast.success(
+          `Cliente localizado: "${localMatch.name}". Cadastro completo carregado e pronto para edição!`,
+        )
         return
       }
 
@@ -217,7 +239,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         const found = await deliveryService.findCustomerByPhone(phoneInput)
         if (found) {
           populateCustomerForm(found)
-          toast.success(`Cliente localizado: "${found.name}". Cadastro completo carregado e pronto para edição!`)
+          toast.success(
+            `Cliente localizado: "${found.name}". Cadastro completo carregado e pronto para edição!`,
+          )
         }
       } catch (e) {
         console.warn('Error querying customer by phone:', e)
@@ -229,7 +253,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   )
 
   // Phone input handler with auto-search debounce
-  const phoneDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  const phoneDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handlePhoneInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
     setNewCustPhone(val)
@@ -1081,7 +1105,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         <div className="space-y-1">
                           <p className="font-bold text-slate-900 dark:text-white">{sel.name}</p>
                           <p className="text-slate-600 dark:text-slate-300">
-                            📞 {sel.phone} {sel.phone2 ? `| 2: ${sel.phone2}` : ''} {sel.phone3 ? `| 3: ${sel.phone3}` : ''}
+                            📞 {sel.phone} {sel.phone2 ? `| 2: ${sel.phone2}` : ''}{' '}
+                            {sel.phone3 ? `| 3: ${sel.phone3}` : ''}
                           </p>
                           <p className="text-slate-600 dark:text-slate-300">📍 {sel.address}</p>
                           {sel.lat && sel.lng && (
@@ -1120,7 +1145,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300">
                     <span className="flex items-center gap-1.5 font-medium">
                       <UserCheck className="h-4 w-4 text-emerald-600" />
-                      Cliente identificado! Você pode editar nome, telefones e endereço diretamente aqui.
+                      Cliente identificado! Você pode editar nome, telefones e endereço diretamente
+                      aqui.
                     </span>
                     <Button
                       type="button"
@@ -1162,7 +1188,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   <div>
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                        <Phone className="h-3 w-3 text-blue-600" /> Telefone Principal (WhatsApp) <span className="text-rose-500">*</span>
+                        <Phone className="h-3 w-3 text-blue-600" /> Telefone Principal (WhatsApp){' '}
+                        <span className="text-rose-500">*</span>
                       </Label>
                       {isSearchingPhone && (
                         <span className="text-[10px] text-blue-600 flex items-center gap-1">

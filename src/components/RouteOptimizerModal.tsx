@@ -37,12 +37,23 @@ import type {
   CourierOptimizationPlan,
   MultiCourierOptimizationResult,
   OptimizedStop,
+  AppSettingsRecord,
 } from '@/types/delivery'
 import {
   loadGoogleMapsScript,
   onGoogleMapsAuthError,
   isGoogleMapsAuthError,
 } from '@/lib/googleMaps'
+import {
+  ArrowUp,
+  ArrowDown,
+  Trash2,
+  UserPlus,
+  Fuel,
+  TrendingDown,
+  Gauge,
+  PlusCircle,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 interface RouteOptimizerModalProps {
@@ -133,6 +144,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const [searchCourierFilter, setSearchCourierFilter] = useState<string>('')
   const [vehicleFilter, setVehicleFilter] = useState<string>('all')
 
+  // App Settings for Fuel Calculation
+  const [appSettings, setAppSettings] = useState<AppSettingsRecord | null>(null)
+
   // Optimization Result
   const [optimizationResult, setOptimizationResult] =
     useState<MultiCourierOptimizationResult | null>(null)
@@ -149,7 +163,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const getGoogle = () =>
     typeof window !== 'undefined' ? (window as unknown as { google?: any }).google : undefined
 
-  // Initialize selected couriers with active/idle couriers when opened
+  // Initialize selected couriers and load app settings when opened
   useEffect(() => {
     if (open) {
       const activeIds = couriers.filter((c) => c.status !== 'inactive').map((c) => c.id)
@@ -157,6 +171,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         activeIds.length > 0 ? activeIds : couriers.slice(0, 3).map((c) => c.id),
       )
       setOptimizationResult(null)
+      deliveryService.getSettings().then((s) => setAppSettings(s))
       loadGoogleMapsScript().then((success) => {
         setIsMapsLoaded(success && !isGoogleMapsAuthError())
       })
@@ -365,22 +380,35 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
         grandTotalDistanceMeters += clusterDistMeters
         const estMinutes = Math.round((clusterDistMeters / 1000) * 3.2 + stops.length * 6)
+        const distKmNum = clusterDistMeters / 1000
+        const fuelPrice = appSettings?.fuel_price_per_liter || 5.59
+        const fuelCons = appSettings?.fuel_consumption_kml || 35.0
+        const planFuelCost = (distKmNum * fuelPrice) / fuelCons
 
         plans.push({
           courier: courierData.courier,
           color: colorItem.color,
           orders: clusterOrders.map((co) => co.order),
           stops,
-          total_distance_km: (clusterDistMeters / 1000).toFixed(1),
+          total_distance_km: distKmNum.toFixed(1),
           estimated_duration_minutes: estMinutes,
+          estimated_fuel_cost: Number(planFuelCost.toFixed(2)),
         })
       }
+
+      const grandDistKm = grandTotalDistanceMeters / 1000
+      const totalFuelPrice = appSettings?.fuel_price_per_liter || 5.59
+      const totalFuelCons = appSettings?.fuel_consumption_kml || 35.0
+      const totalFuelCost = (grandDistKm * totalFuelPrice) / totalFuelCons
+      const totalEstDuration = plans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
 
       const finalResult: MultiCourierOptimizationResult = {
         courierPlans: plans,
         unassignedOrders: unassignedWithoutCoords,
         totalOrders: validOrdersWithCoords.length,
-        totalDistanceKm: (grandTotalDistanceMeters / 1000).toFixed(1),
+        totalDistanceKm: grandDistKm.toFixed(1),
+        totalEstimatedFuelCost: Number(totalFuelCost.toFixed(2)),
+        totalDurationMinutes: totalEstDuration,
       }
 
       setOptimizationResult(finalResult)
@@ -583,10 +611,18 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           const stop = plan.stops[i]
           // Progressive ETA estimation (e.g. +20 min, +35 min...)
           const etaTimestamp = new Date(now + (20 + i * 15) * 60 * 1000).toISOString()
+          const stopDistanceKm = Number((stop.step_distance_meters / 1000).toFixed(2))
+          const fuelPrice = appSettings?.fuel_price_per_liter || 5.59
+          const fuelCons = appSettings?.fuel_consumption_kml || 35.0
+          const stopFuelCost = Number(((stopDistanceKm * fuelPrice) / fuelCons).toFixed(2))
 
           await deliveryService.updateOrder(stop.id, {
             courier_id: plan.courier.id,
             status: 'in_transit',
+            sequence: i + 1,
+            distance_km: stopDistanceKm,
+            estimated_duration_minutes: Math.round((stop.step_distance_meters / 1000) * 3.5 + 5),
+            fuel_cost: stopFuelCost,
             estimated_arrival: etaTimestamp,
           })
           assignedCount++
@@ -615,6 +651,96 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     } finally {
       setIsApplying(false)
     }
+  }
+
+  // REQUISITO 3: Edição da Otimização (Mover paradas para cima/baixo, remover da rota, reatribuir)
+  const moveStopInPlan = (courierId: string, stopIndex: number, direction: 'up' | 'down') => {
+    if (!optimizationResult) return
+
+    setOptimizationResult((prev) => {
+      if (!prev) return prev
+      const newPlans = prev.courierPlans.map((p) => {
+        if (p.courier.id !== courierId) return p
+
+        const newStops = [...p.stops]
+        const targetIndex = direction === 'up' ? stopIndex - 1 : stopIndex + 1
+        if (targetIndex < 0 || targetIndex >= newStops.length) return p
+
+        const temp = newStops[stopIndex]
+        newStops[stopIndex] = newStops[targetIndex]
+        newStops[targetIndex] = temp
+
+        return {
+          ...p,
+          stops: newStops,
+        }
+      })
+
+      return {
+        ...prev,
+        courierPlans: newPlans,
+      }
+    })
+  }
+
+  const removeStopFromPlan = (courierId: string, stopIndex: number) => {
+    if (!optimizationResult) return
+
+    setOptimizationResult((prev) => {
+      if (!prev) return prev
+      const newPlans = prev.courierPlans.map((p) => {
+        if (p.courier.id !== courierId) return p
+        const newStops = p.stops.filter((_, idx) => idx !== stopIndex)
+        return {
+          ...p,
+          stops: newStops,
+        }
+      })
+
+      return {
+        ...prev,
+        courierPlans: newPlans,
+      }
+    })
+    toast.info('Parada removida da rota calculada.')
+  }
+
+  const reassignStopToAnotherCourier = (
+    fromCourierId: string,
+    toCourierId: string,
+    stopIndex: number,
+  ) => {
+    if (!optimizationResult || fromCourierId === toCourierId) return
+
+    setOptimizationResult((prev) => {
+      if (!prev) return prev
+      const fromPlan = prev.courierPlans.find((p) => p.courier.id === fromCourierId)
+      if (!fromPlan || !fromPlan.stops[stopIndex]) return prev
+
+      const stopToMove = fromPlan.stops[stopIndex]
+
+      const newPlans = prev.courierPlans.map((p) => {
+        if (p.courier.id === fromCourierId) {
+          return {
+            ...p,
+            stops: p.stops.filter((_, idx) => idx !== stopIndex),
+          }
+        }
+        if (p.courier.id === toCourierId) {
+          return {
+            ...p,
+            stops: [...p.stops, stopToMove],
+          }
+        }
+        return p
+      })
+
+      return {
+        ...prev,
+        courierPlans: newPlans,
+      }
+    })
+    toast.success('Entrega reatribuída para outro entregador.')
   }
 
   return (
@@ -813,7 +939,6 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               </Button>
             </div>
           </div>
-
           {/* Step 2: Visual Map & Distribution Inspection */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -909,15 +1034,59 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               )}
             </div>
           </div>
-
-          {/* Step 3: Courier Route Cards Breakdown */}
+          {/* Step 3: Courier Route Cards Breakdown & Reordering */}
           {optimizationResult && (
             <div className="space-y-3 pt-1">
+              {/* Summary Bar: Total Distância, Tempo e Custo de Combustível */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs">
+                <div className="flex items-center gap-2">
+                  <Gauge className="h-4 w-4 text-indigo-600" />
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">
+                      Distância Total
+                    </span>
+                    <span className="font-bold text-slate-900 dark:text-white">
+                      {optimizationResult.totalDistanceKm} km
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-amber-600" />
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">
+                      Previsão de Tempo
+                    </span>
+                    <span className="font-bold text-slate-900 dark:text-white">
+                      ~{optimizationResult.totalDurationMinutes} minutos
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Fuel className="h-4 w-4 text-emerald-600" />
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">
+                      Custo de Combustível Estimado
+                    </span>
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                      R$ {optimizationResult.totalEstimatedFuelCost.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between">
-                <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                  <Truck className="h-3.5 w-3.5 text-indigo-600" />
-                  3. Revisão da Sequência por Entregador ({optimizationResult.courierPlans.length})
-                </Label>
+                <div>
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Truck className="h-3.5 w-3.5 text-indigo-600" />
+                    3. Edição da Otimização (Reordenar, Remover e Reatribuir)
+                  </Label>
+                  <p className="text-[11px] text-slate-500">
+                    Você pode subir/descer a prioridade das paradas ou mover pedidos entre
+                    entregadores.
+                  </p>
+                </div>
 
                 {/* Filter Tab Buttons */}
                 <div className="flex items-center gap-1 overflow-x-auto pb-1 max-w-[280px] sm:max-w-none">
@@ -949,8 +1118,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 </div>
               </div>
 
-              {/* Plans Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-1">
+              {/* Plans Grid with Editable Stops */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1">
                 {optimizationResult.courierPlans
                   .filter((p) => activeCourierTab === 'all' || activeCourierTab === p.courier.id)
                   .map((plan) => (
@@ -968,46 +1137,117 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             {plan.courier.name}
                           </p>
                         </div>
-                        <Badge className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] border">
-                          {plan.stops.length} paradas • {plan.total_distance_km} km (~
-                          {plan.estimated_duration_minutes} min)
-                        </Badge>
+                        <div className="flex items-center gap-1.5">
+                          <Badge className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] border">
+                            {plan.stops.length} paradas • {plan.total_distance_km} km
+                          </Badge>
+                          <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] border-emerald-200">
+                            ⛽ R$ {plan.estimated_fuel_cost.toFixed(2)}
+                          </Badge>
+                        </div>
                       </div>
 
-                      {/* Sequence stops list */}
-                      <div className="space-y-1.5 text-xs max-h-36 overflow-y-auto">
-                        {plan.stops.map((stop, sIdx) => (
-                          <div
-                            key={stop.id}
-                            className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-[11px]"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span
-                                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-white font-bold text-[9px]"
-                                style={{ backgroundColor: plan.color }}
-                              >
-                                {sIdx + 1}
-                              </span>
-                              <div className="min-w-0">
-                                <p className="font-semibold text-slate-900 dark:text-white truncate">
-                                  {stop.customer_name}
-                                </p>
-                                <p className="text-[10px] text-slate-400 truncate max-w-[170px]">
-                                  {stop.address}
-                                </p>
+                      {/* Sequence stops list with reordering controls */}
+                      <div className="space-y-1.5 text-xs max-h-48 overflow-y-auto">
+                        {plan.stops.length === 0 ? (
+                          <p className="text-xs text-slate-400 py-2 text-center">
+                            Nenhuma entrega nesta rota.
+                          </p>
+                        ) : (
+                          plan.stops.map((stop, sIdx) => (
+                            <div
+                              key={stop.id}
+                              className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700/60 text-[11px] gap-2"
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <span
+                                  className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-white font-bold text-[9px]"
+                                  style={{ backgroundColor: plan.color }}
+                                >
+                                  {sIdx + 1}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="font-semibold text-slate-900 dark:text-white truncate">
+                                    {stop.customer_name}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400 truncate max-w-[150px]">
+                                    {stop.address}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Action Controls: Move Up, Move Down, Reassign, Remove */}
+                              <div className="flex items-center gap-1 shrink-0">
+                                {/* Move Up */}
+                                <button
+                                  type="button"
+                                  disabled={sIdx === 0}
+                                  onClick={() => moveStopInPlan(plan.courier.id, sIdx, 'up')}
+                                  className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-25"
+                                  title="Mover para cima"
+                                >
+                                  <ArrowUp className="h-3 w-3 text-slate-600 dark:text-slate-300" />
+                                </button>
+
+                                {/* Move Down */}
+                                <button
+                                  type="button"
+                                  disabled={sIdx === plan.stops.length - 1}
+                                  onClick={() => moveStopInPlan(plan.courier.id, sIdx, 'down')}
+                                  className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-25"
+                                  title="Mover para baixo"
+                                >
+                                  <ArrowDown className="h-3 w-3 text-slate-600 dark:text-slate-300" />
+                                </button>
+
+                                {/* Reassign to another courier */}
+                                {optimizationResult.courierPlans.length > 1 && (
+                                  <select
+                                    className="h-6 text-[10px] px-1 bg-white dark:bg-slate-800 border rounded text-slate-700 dark:text-slate-300 max-w-[70px]"
+                                    value=""
+                                    onChange={(e) => {
+                                      if (e.target.value) {
+                                        reassignStopToAnotherCourier(
+                                          plan.courier.id,
+                                          e.target.value,
+                                          sIdx,
+                                        )
+                                      }
+                                    }}
+                                    title="Reatribuir a outro entregador"
+                                  >
+                                    <option value="" disabled>
+                                      Mover...
+                                    </option>
+                                    {optimizationResult.courierPlans
+                                      .filter((p) => p.courier.id !== plan.courier.id)
+                                      .map((other) => (
+                                        <option key={other.courier.id} value={other.courier.id}>
+                                          → {other.courier.name.split(' ')[0]}
+                                        </option>
+                                      ))}
+                                  </select>
+                                )}
+
+                                {/* Remove Stop from route */}
+                                <button
+                                  type="button"
+                                  onClick={() => removeStopFromPlan(plan.courier.id, sIdx)}
+                                  className="p-1 rounded hover:bg-rose-100 dark:hover:bg-rose-950 text-rose-500"
+                                  title="Remover desta rota"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
                               </div>
                             </div>
-                            <span className="text-[10px] font-mono text-slate-500 shrink-0">
-                              +{stop.step_distance_meters}m
-                            </span>
-                          </div>
-                        ))}
+                          ))
+                        )}
                       </div>
                     </div>
                   ))}
               </div>
             </div>
-          )}
+          )}{' '}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-slate-100 dark:border-slate-800">

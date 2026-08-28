@@ -11,8 +11,16 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { CheckCircle, Camera, PenTool, Upload } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
-import type { OrderRecord } from '@/types/delivery'
+import type { OrderRecord, CompletionReason, OrderStatus } from '@/types/delivery'
 import { toast } from 'sonner'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { AlertTriangle, MapPinOff, UserX, CheckCircle2 } from 'lucide-react'
 
 interface DeliveryConfirmationModalProps {
   order: OrderRecord | null
@@ -28,6 +36,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   onConfirmed,
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [reason, setReason] = useState<CompletionReason>('delivered')
   const [receiverName, setReceiverName] = useState('')
   const [receiverDoc, setReceiverDoc] = useState('')
   const [notes, setNotes] = useState('')
@@ -47,7 +56,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
 
   const handleConfirmDelivery = async () => {
     if (!order) return
-    if (!receiverName.trim()) {
+
+    if (reason === 'delivered' && !receiverName.trim()) {
       toast.error('Informe o nome de quem recebeu a entrega.')
       return
     }
@@ -55,27 +65,56 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
     setIsSubmitting(true)
     try {
       const now = new Date().toISOString()
-      const updateData = {
-        status: 'delivered' as const,
+      let finalStatus: OrderStatus = 'delivered'
+      let reasonLabel = 'Finalizada com Sucesso'
+
+      if (reason === 'address_error') {
+        finalStatus = 'address_error'
+        reasonLabel = 'Erro de Endereço'
+      } else if (reason === 'client_absent') {
+        finalStatus = 'client_absent'
+        reasonLabel = 'Cliente Ausente'
+      }
+
+      const notePrefix = order.notes ? `${order.notes} | ` : ''
+      const reasonDetail =
+        reason === 'delivered'
+          ? `Recebido por: ${receiverName} (Doc: ${receiverDoc || 'N/A'})`
+          : `Motivo de não conclusão: ${reasonLabel}`
+
+      const updateData: Partial<OrderRecord> = {
+        status: finalStatus,
+        completion_reason: reason,
         actual_arrival: now,
-        notes: `${order.notes ? order.notes + ' | ' : ''}Recebido por: ${receiverName} (Doc: ${receiverDoc || 'N/A'}) - ${notes}`,
+        notes: `${notePrefix}${reasonDetail}${notes ? ` - ${notes}` : ''}`,
       }
 
       await deliveryService.updateOrder(order.id, updateData)
 
-      // In-app Push notification for admin & seller
+      // In-app Notification for seller/admin
       await deliveryService.createNotification({
-        title: `Entrega Concluída: ${order.tracking_code}`,
-        message: `Pedido entregue com sucesso para ${receiverName}.`,
-        type: 'order',
+        title: `Entrega ${reason === 'delivered' ? 'Concluída' : 'Não Finalizada'}: ${order.tracking_code}`,
+        message:
+          reason === 'delivered'
+            ? `Pedido entregue com sucesso para ${receiverName}.`
+            : `Entrega finalizada com status: "${reasonLabel}". Obs: ${notes || 'Sem observações'}.`,
+        type: reason === 'delivered' ? 'order' : 'warning',
         read: false,
         order_id: order.id,
       })
 
-      toast.success(`Pedido ${order.tracking_code} confirmado como ENTREGUE!`)
+      if (reason === 'delivered') {
+        toast.success(`Pedido ${order.tracking_code} marcado como ENTREGUE!`)
+      } else if (reason === 'address_error') {
+        toast.warning(`Pedido ${order.tracking_code} finalizado: Erro de Endereço.`)
+      } else {
+        toast.warning(`Pedido ${order.tracking_code} finalizado: Cliente Ausente.`)
+      }
+
       onConfirmed()
       onOpenChange(false)
-      // reset
+      // Reset form state
+      setReason('delivered')
       setReceiverName('')
       setReceiverDoc('')
       setNotes('')
@@ -83,7 +122,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       setPhotoSelected(null)
     } catch (err: unknown) {
       console.error('Error confirming delivery:', err)
-      toast.error('Erro ao confirmar entrega.')
+      toast.error('Erro ao registrar status da entrega.')
     } finally {
       setIsSubmitting(false)
     }
@@ -119,85 +158,153 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
             </p>
           </div>
 
-          {/* Receiver Info */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <Label className="text-xs font-semibold">Nome do Recebedor *</Label>
-              <input
-                type="text"
-                required
-                placeholder="Ex: João da Silva"
-                value={receiverName}
-                onChange={(e) => setReceiverName(e.target.value)}
-                className="mt-1 flex h-9 w-full rounded-md border border-slate-300 bg-transparent px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-950 dark:border-slate-800"
-              />
-            </div>
-            <div>
-              <Label className="text-xs font-semibold">RG / CPF do Recebedor</Label>
-              <input
-                type="text"
-                placeholder="000.000.000-00"
-                value={receiverDoc}
-                onChange={(e) => setReceiverDoc(e.target.value)}
-                className="mt-1 flex h-9 w-full rounded-md border border-slate-300 bg-transparent px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-950 dark:border-slate-800"
-              />
-            </div>
-          </div>
-
-          {/* Proof Options: Digital Signature & Photo */}
-          <div className="space-y-3">
-            <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Comprovante de Entrega
+          {/* Motivo Obrigatório de Finalização */}
+          <div className="space-y-2">
+            <Label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+              Selecione o Motivo de Finalização *
             </Label>
-
-            <div className="grid grid-cols-2 gap-3">
-              {/* Signature trigger */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
-                onClick={handleSimulatedSignature}
-                className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed transition-all ${
-                  hasSignature
-                    ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
-                    : 'border-slate-300 hover:border-purple-400 text-slate-600 dark:border-slate-700 dark:text-slate-400'
+                onClick={() => setReason('delivered')}
+                className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition ${
+                  reason === 'delivered'
+                    ? 'border-emerald-500 bg-emerald-50/80 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 ring-2 ring-emerald-500/20 font-bold'
+                    : 'border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-slate-300'
                 }`}
               >
-                <PenTool className="h-6 w-6 mb-1.5" />
-                <span className="text-xs font-bold">
-                  {hasSignature ? '✓ Assinatura Gravada' : 'Assinar na Tela'}
-                </span>
-                <span className="text-[10px] text-slate-400 mt-0.5">Captura digital</span>
+                <CheckCircle2 className="h-5 w-5 mb-1 text-emerald-500" />
+                <span className="text-xs">Finalizada</span>
+                <span className="text-[10px] text-slate-400">Entrega efetuada</span>
               </button>
 
-              {/* Photo upload trigger */}
               <button
                 type="button"
-                onClick={handleSimulatePhoto}
-                className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed transition-all ${
-                  photoSelected
-                    ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
-                    : 'border-slate-300 hover:border-purple-400 text-slate-600 dark:border-slate-700 dark:text-slate-400'
+                onClick={() => setReason('address_error')}
+                className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition ${
+                  reason === 'address_error'
+                    ? 'border-amber-500 bg-amber-50/80 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 ring-2 ring-amber-500/20 font-bold'
+                    : 'border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-slate-300'
                 }`}
               >
-                <Camera className="h-6 w-6 mb-1.5" />
-                <span className="text-xs font-bold">
-                  {photoSelected ? '✓ Foto Anexada' : 'Tirar Foto do Recibo'}
-                </span>
-                <span className="text-[10px] text-slate-400 mt-0.5">Câmera / Arquivo</span>
+                <MapPinOff className="h-5 w-5 mb-1 text-amber-500" />
+                <span className="text-xs">Erro de Endereço</span>
+                <span className="text-[10px] text-slate-400">Não localizado / incorreto</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setReason('client_absent')}
+                className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 text-center transition ${
+                  reason === 'client_absent'
+                    ? 'border-rose-500 bg-rose-50/80 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 ring-2 ring-rose-500/20 font-bold'
+                    : 'border-slate-200 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                }`}
+              >
+                <UserX className="h-5 w-5 mb-1 text-rose-500" />
+                <span className="text-xs">Cliente Ausente</span>
+                <span className="text-[10px] text-slate-400">Ninguém no local</span>
               </button>
             </div>
-
-            {hasSignature && (
-              <div className="p-2 border rounded-lg bg-white dark:bg-slate-900 flex items-center justify-center h-16 border-emerald-300 font-serif italic text-slate-800 dark:text-slate-200">
-                ✍️ {receiverName || 'Assinatura Registrada Digitalmente'}
-              </div>
-            )}
           </div>
+
+          {/* Condicional: Recebedor e Comprovante (quando finalizada com sucesso) */}
+          {reason === 'delivered' ? (
+            <>
+              {/* Receiver Info */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label className="text-xs font-semibold">Nome do Recebedor *</Label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: João da Silva"
+                    value={receiverName}
+                    onChange={(e) => setReceiverName(e.target.value)}
+                    className="mt-1 flex h-9 w-full rounded-md border border-slate-300 bg-transparent px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-950 dark:border-slate-800"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs font-semibold">RG / CPF do Recebedor</Label>
+                  <input
+                    type="text"
+                    placeholder="000.000.000-00"
+                    value={receiverDoc}
+                    onChange={(e) => setReceiverDoc(e.target.value)}
+                    className="mt-1 flex h-9 w-full rounded-md border border-slate-300 bg-transparent px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-slate-950 dark:border-slate-800"
+                  />
+                </div>
+              </div>
+
+              {/* Proof Options: Digital Signature & Photo */}
+              <div className="space-y-3">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Comprovante de Entrega
+                </Label>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Signature trigger */}
+                  <button
+                    type="button"
+                    onClick={handleSimulatedSignature}
+                    className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed transition-all ${
+                      hasSignature
+                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                        : 'border-slate-300 hover:border-purple-400 text-slate-600 dark:border-slate-700 dark:text-slate-400'
+                    }`}
+                  >
+                    <PenTool className="h-6 w-6 mb-1.5" />
+                    <span className="text-xs font-bold">
+                      {hasSignature ? '✓ Assinatura Gravada' : 'Assinar na Tela'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">Captura digital</span>
+                  </button>
+
+                  {/* Photo upload trigger */}
+                  <button
+                    type="button"
+                    onClick={handleSimulatePhoto}
+                    className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed transition-all ${
+                      photoSelected
+                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                        : 'border-slate-300 hover:border-purple-400 text-slate-600 dark:border-slate-700 dark:text-slate-400'
+                    }`}
+                  >
+                    <Camera className="h-6 w-6 mb-1.5" />
+                    <span className="text-xs font-bold">
+                      {photoSelected ? '✓ Foto Anexada' : 'Tirar Foto do Recibo'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">Câmera / Arquivo</span>
+                  </button>
+                </div>
+
+                {hasSignature && (
+                  <div className="p-2 border rounded-lg bg-white dark:bg-slate-900 flex items-center justify-center h-16 border-emerald-300 font-serif italic text-slate-800 dark:text-slate-200">
+                    ✍️ {receiverName || 'Assinatura Registrada Digitalmente'}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2.5">
+              <AlertTriangle className="h-5 w-5 shrink-0" />
+              <span>
+                {reason === 'address_error'
+                  ? 'O pedido será marcado com pendência de endereço e notificado ao vendedor para correção.'
+                  : 'O pedido será registrado como tentativa sem sucesso por ausência do cliente.'}
+              </span>
+            </div>
+          )}
 
           {/* Observations */}
           <div>
-            <Label className="text-xs font-semibold">Observação Final</Label>
+            <Label className="text-xs font-semibold">Observações / Detalhes</Label>
             <Textarea
-              placeholder="Ex: Entregue sem avarias, conferido pelo recebedor."
+              placeholder={
+                reason === 'delivered'
+                  ? 'Ex: Entregue na portaria com o porteiro Silva.'
+                  : 'Ex: Número não localizado na rua / Interfone não atendeu.'
+              }
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="mt-1 text-xs resize-none"
@@ -213,10 +320,20 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           <Button
             type="button"
             onClick={handleConfirmDelivery}
-            disabled={isSubmitting || !receiverName.trim()}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+            disabled={isSubmitting || (reason === 'delivered' && !receiverName.trim())}
+            className={`font-bold ${
+              reason === 'delivered'
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                : reason === 'address_error'
+                  ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                  : 'bg-rose-600 hover:bg-rose-700 text-white'
+            }`}
           >
-            {isSubmitting ? 'Finalizando...' : 'Confirmar Entrega (OK)'}
+            {isSubmitting
+              ? 'Finalizando...'
+              : reason === 'delivered'
+                ? 'Confirmar Entrega (OK)'
+                : 'Salvar Motivo & Finalizar'}
           </Button>
         </DialogFooter>
       </DialogContent>

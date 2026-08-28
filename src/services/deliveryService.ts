@@ -6,6 +6,7 @@ import type {
   NotificationRecord,
   UserRecord,
   OptimizedRouteResult,
+  AppSettingsRecord,
 } from '@/types/delivery'
 
 export const deliveryService = {
@@ -284,41 +285,72 @@ export const deliveryService = {
     return pb.collection<NotificationRecord>('notifications').create(data)
   },
 
-  // Route optimization via backend hook
-  async optimizeRoute(
-    orderIds: string[],
-    originLat?: number,
-    originLng?: number,
-  ): Promise<OptimizedRouteResult> {
+  // App Settings (Fuel Price & Consumption)
+  async getSettings(): Promise<AppSettingsRecord> {
     try {
-      const res = await fetch(`${import.meta.env.VITE_POCKETBASE_URL}/backend/v1/optimize-route`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: pb.authStore.token,
-        },
-        body: JSON.stringify({
-          order_ids: orderIds,
-          origin_lat: originLat,
-          origin_lng: originLng,
-        }),
+      const records = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1, {
+        filter: "key = 'global_settings'",
+        requestKey: null,
       })
-
-      if (res.ok) {
-        return await res.json()
+      if (records.items.length > 0) {
+        return records.items[0]
       }
     } catch (e) {
-      console.warn(
-        'Backend optimize-route fetch failed, running client-side optimization fallback:',
-        e,
-      )
+      console.warn('Error fetching app_settings:', e)
     }
 
-    // Client-side fallback if backend hook is unavailable or throws
+    // Default fallback
+    return {
+      id: 'default',
+      key: 'global_settings',
+      fuel_price_per_liter: 5.59,
+      fuel_consumption_kml: 35.0,
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: 'app_settings',
+    } as AppSettingsRecord
+  },
+
+  async updateSettings(data: { fuel_price_per_liter: number; fuel_consumption_kml: number }) {
+    try {
+      const records = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1, {
+        filter: "key = 'global_settings'",
+        requestKey: null,
+      })
+      if (records.items.length > 0) {
+        return await pb
+          .collection<AppSettingsRecord>('app_settings')
+          .update(records.items[0].id, data)
+      } else {
+        return await pb.collection<AppSettingsRecord>('app_settings').create({
+          key: 'global_settings',
+          ...data,
+        })
+      }
+    } catch (e) {
+      console.error('Error updating app_settings:', e)
+      throw e
+    }
+  },
+
+  // Calculate Fuel Cost
+  // Formula: Distância (km) * Preço do Litro (R$/L) / Consumo (km/L)
+  calculateFuelCost(distanceKm: number, fuelPrice = 5.59, consumptionKml = 35.0): number {
+    if (consumptionKml <= 0) return 0
+    return (distanceKm * fuelPrice) / consumptionKml
+  },
+
+  // Route optimization with Google Maps Traffic or fallback
+  async optimizeRoute(
+    orderIds: string[],
+    originLat = -23.55052,
+    originLng = -46.633308,
+  ): Promise<OptimizedRouteResult> {
     return this.clientSideOptimizeRoute(orderIds, originLat, originLng)
   },
 
-  // Client-side intelligent TSP router for fallback & multi-courier clustering
+  // Client-side intelligent TSP router using Google Maps Directions with trafficModel (departureTime=now)
   async clientSideOptimizeRoute(
     orderIds: string[],
     originLat = -23.55052,
@@ -329,6 +361,10 @@ export const deliveryService = {
       expand: 'customer_id',
       requestKey: null,
     })
+
+    const settings = await this.getSettings()
+    const fuelPrice = settings.fuel_price_per_liter || 5.59
+    const fuelConsumption = settings.fuel_consumption_kml || 35.0
 
     const calcDist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
       const R = 6371e3
@@ -358,7 +394,20 @@ export const deliveryService = {
     })
 
     const unvisited = [...items]
-    const optimized = []
+    const optimized: Array<{
+      id: string
+      tracking_code: string
+      priority: string
+      status: string
+      customer_name: string
+      address: string
+      lat: number
+      lng: number
+      step_distance_meters: number
+      cumulative_distance_meters: number
+      step_duration_seconds?: number
+    }> = []
+
     let curLat = originLat
     let curLng = originLng
     let totalDistMeters = 0
@@ -397,12 +446,91 @@ export const deliveryService = {
       }
     }
 
-    const durationMins = Math.round((totalDistMeters / 1000) * 3.5 + optimized.length * 5)
+    // Try Google Maps Directions for accurate driving time with live traffic if window.google is loaded
+    let durationMins = Math.round((totalDistMeters / 1000) * 3.5 + optimized.length * 5)
+    let finalDistMeters = totalDistMeters
+
+    if (typeof window !== 'undefined') {
+      const win = window as any
+      if (
+        win.google &&
+        win.google.maps &&
+        win.google.maps.DirectionsService &&
+        optimized.length > 0
+      ) {
+        try {
+          const directionsService = new win.google.maps.DirectionsService()
+          const origin = new win.google.maps.LatLng(originLat, originLng)
+          const destination = new win.google.maps.LatLng(
+            optimized[optimized.length - 1].lat,
+            optimized[optimized.length - 1].lng,
+          )
+
+          const waypoints = optimized.slice(0, -1).map((opt) => ({
+            location: new win.google.maps.LatLng(opt.lat, opt.lng),
+            stopover: true,
+          }))
+
+          // Request directions with live traffic (departureTime: now, trafficModel: BEST_GUESS)
+          const result = await new Promise<any>((resolve) => {
+            directionsService.route(
+              {
+                origin,
+                destination,
+                waypoints: waypoints.slice(0, 23), // Google maps limits waypoints to 25
+                optimizeWaypoints: false, // Already ordered by our TSP
+                travelMode: win.google.maps.TravelMode.DRIVING,
+                drivingOptions: {
+                  departureTime: new Date(),
+                  trafficModel: win.google.maps.TrafficModel.BEST_GUESS,
+                },
+              },
+              (res: any, status: any) => {
+                if (status === win.google.maps.DirectionsStatus.OK) {
+                  resolve(res)
+                } else {
+                  resolve(null)
+                }
+              },
+            )
+          })
+
+          if (result && result.routes && result.routes[0]) {
+            const legs = result.routes[0].legs || []
+            let legDistSum = 0
+            let legDurationSum = 0
+
+            legs.forEach((leg: any, idx: number) => {
+              legDistSum += leg.distance?.value || 0
+              const legDur = leg.duration_in_traffic?.value || leg.duration?.value || 0
+              legDurationSum += legDur
+              if (optimized[idx]) {
+                optimized[idx].step_duration_seconds = legDur
+                optimized[idx].step_distance_meters =
+                  leg.distance?.value || optimized[idx].step_distance_meters
+              }
+            })
+
+            if (legDistSum > 0) finalDistMeters = legDistSum
+            if (legDurationSum > 0) {
+              // Duration from traffic + 5 min per stop for delivery interaction
+              durationMins = Math.round(legDurationSum / 60 + optimized.length * 5)
+            }
+          }
+        } catch (trafficErr) {
+          console.warn('Traffic duration fetch fallback applied:', trafficErr)
+        }
+      }
+    }
+
+    const distKm = finalDistMeters / 1000
+    const fuelCost = (distKm * fuelPrice) / fuelConsumption
 
     return {
       optimized_orders: optimized,
-      total_distance_km: (totalDistMeters / 1000).toFixed(2),
+      total_distance_km: distKm.toFixed(2),
       estimated_duration_minutes: durationMins,
+      estimated_fuel_cost: Number(fuelCost.toFixed(2)),
       stops_count: optimized.length,
     }
   },

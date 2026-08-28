@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-28T00:35:33.720Z",
+  "generatedAt": "2026-08-28T01:25:00.071Z",
   "collections": [
     {
       "name": "users",
@@ -249,7 +249,14 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["pending", "in_transit", "delivered", "cancelled"]
+          "selectValues": [
+            "pending",
+            "in_transit",
+            "delivered",
+            "address_error",
+            "client_absent",
+            "cancelled"
+          ]
         },
         {
           "name": "tracking_code",
@@ -319,6 +326,37 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "completion_reason",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["delivered", "address_error", "client_absent", "other"]
+        },
+        {
+          "name": "sequence",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "distance_km",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "estimated_duration_minutes",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "fuel_cost",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -453,6 +491,58 @@
         }
       ],
       "indexes": ["CREATE INDEX idx_notifications_user_read ON notifications (user_id, read)"]
+    },
+    {
+      "name": "app_settings",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.role = 'admin'",
+        "update": "@request.auth.role = 'admin'",
+        "delete": "@request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "key",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "fuel_price_per_liter",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "fuel_consumption_kml",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "extra",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE UNIQUE INDEX idx_app_settings_key ON app_settings (key)"]
     }
   ]
 }

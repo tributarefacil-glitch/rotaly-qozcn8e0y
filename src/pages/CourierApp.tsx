@@ -22,9 +22,11 @@ import { deliveryService } from '@/services/deliveryService'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { OrderRecord, OptimizedRouteResult } from '@/types/delivery'
+import { notifyCourierNewDelivery } from '@/lib/notificationSound'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Lock, CheckCircle2, MapPinOff, UserX, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
 export default function CourierApp() {
@@ -45,9 +47,10 @@ export default function CourierApp() {
   // Load orders assigned to this courier (or all active if none assigned)
   const loadCourierOrders = async () => {
     try {
+      // Sort primarily by sequence ascending, then created ascending
       const allOrders = await deliveryService.getOrders(
-        user?.id ? `courier_id = '${user.id}' || courier_id = ''` : '',
-        '-updated',
+        user?.id ? `courier_id = '${user.id}'` : '',
+        'sequence,-created',
         'customer_id,courier_id,seller_id',
       )
       setOrders(allOrders)
@@ -62,9 +65,20 @@ export default function CourierApp() {
     loadCourierOrders()
   }, [user])
 
-  // Realtime hook for orders
+  // Realtime hook for orders with audio alert on new route or assigned deliveries
   useRealtime<OrderRecord>('orders', (e) => {
     if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
+      if (
+        (e.action === 'create' || e.action === 'update') &&
+        e.record.courier_id === user?.id &&
+        (e.record.status === 'in_transit' || e.record.status === 'pending')
+      ) {
+        // Play notification chime and dispatch push
+        notifyCourierNewDelivery(
+          '📦 Nova Entrega na sua Rota!',
+          `Pedido ${e.record.tracking_code} foi adicionado à sua lista de entregas.`,
+        )
+      }
       loadCourierOrders()
     }
   })
@@ -156,9 +170,21 @@ export default function CourierApp() {
     window.open(wazeUrl, '_blank')
   }
 
-  const activeDeliveries = orders.filter((o) => o.status === 'in_transit')
+  // Active deliveries ordered by sequence (or list index if sequence not set)
+  const activeDeliveries = [...orders.filter((o) => o.status === 'in_transit')].sort((a, b) => {
+    const seqA = a.sequence ?? 9999
+    const seqB = b.sequence ?? 9999
+    return seqA - seqB
+  })
+
+  // The current active delivery is strictly the FIRST in the queue (index 0)
+  const currentActiveDelivery = activeDeliveries.length > 0 ? activeDeliveries[0] : null
+  const subsequentDeliveries = activeDeliveries.slice(1)
+
   const pendingDeliveries = orders.filter((o) => o.status === 'pending')
-  const completedToday = orders.filter((o) => o.status === 'delivered')
+  const completedToday = orders.filter(
+    (o) => o.status === 'delivered' || o.status === 'address_error' || o.status === 'client_absent',
+  )
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col pb-20 md:pb-6">
@@ -278,119 +304,201 @@ export default function CourierApp() {
           </div>
         )}
 
-        {/* ACTIVE DELIVERIES LIST (Touch-first cards, min 48px targets) */}
+        {/* REQUISITO 1: FLUXO DO ENTREGADOR (Bloqueio Sequencial) */}
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
               <Clock className="h-4 w-4 text-amber-400" />
-              Entregas em Andamento ({activeDeliveries.length})
+              Rota de Entregas ({activeDeliveries.length})
             </h3>
+            {activeDeliveries.length > 0 && (
+              <span className="text-[11px] font-semibold text-amber-400">
+                1 ativa • {subsequentDeliveries.length} na fila
+              </span>
+            )}
           </div>
 
           {activeDeliveries.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-800 p-8 text-center text-slate-400 space-y-2">
               <p className="text-xs">Nenhuma entrega em trânsito no momento.</p>
               <p className="text-[11px] text-slate-500">
-                Veja abaixo os pedidos pendentes para iniciar.
+                Veja abaixo os pedidos pendentes para iniciar sua rota.
               </p>
             </div>
           ) : (
-            activeDeliveries.map((order) => {
-              const customer = order.expand?.customer_id
-              return (
-                <Card
-                  key={order.id}
-                  className="border-amber-500/30 bg-slate-950/90 text-white shadow-xl overflow-hidden rounded-2xl"
-                >
-                  <CardHeader className="p-4 pb-2 flex flex-row items-start justify-between border-b border-slate-800/80">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-amber-500 text-slate-950 font-bold text-xs">
-                          EM ROTA
-                        </Badge>
-                        <span className="font-mono font-bold text-xs text-amber-400">
-                          {order.tracking_code}
-                        </span>
-                        {order.priority === 'urgent' && (
-                          <Badge variant="destructive" className="text-[10px]">
-                            URGENTE
-                          </Badge>
-                        )}
-                      </div>
-                      <CardTitle className="text-base font-bold text-white mt-1.5">
-                        {customer?.name || 'Cliente'}
-                      </CardTitle>
-                    </div>
+            <>
+              {/* 1. ENTREGA ATUAL DESBLOQUEADA */}
+              {currentActiveDelivery && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-slate-950 font-black text-[11px]">
+                      1
+                    </span>
+                    <span className="text-xs font-bold text-emerald-400 uppercase tracking-wide">
+                      Entrega Atual (Disponível para Finalização)
+                    </span>
+                  </div>
 
-                    <div className="text-right font-bold text-sm text-emerald-400">
-                      R$ {Number(order.total_price || 0).toFixed(2)}
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="p-4 space-y-3">
-                    {/* Destination Address */}
-                    <div className="flex items-start gap-2.5 text-xs text-slate-300">
-                      <MapPin className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                  <Card className="border-2 border-emerald-500 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/30 text-white shadow-2xl overflow-hidden rounded-2xl ring-4 ring-emerald-500/10">
+                    <CardHeader className="p-4 pb-2 flex flex-row items-start justify-between border-b border-slate-800/80">
                       <div>
-                        <p className="font-medium text-white">
-                          {customer?.street
-                            ? `${customer.street}${customer.complement ? `, ${customer.complement}` : ''} - ${customer.neighborhood || ''}, ${customer.city || ''} (${customer.state || ''})`
-                            : customer?.address || 'Endereço a confirmar'}
-                        </p>
-                        {customer?.postal_code && (
-                          <p className="text-slate-400 text-[10px] font-mono mt-0.5">
-                            CEP: {customer.postal_code}
+                        <div className="flex items-center gap-2">
+                          <Badge className="bg-emerald-500 text-slate-950 font-bold text-xs animate-pulse">
+                            EM ANDAMENTO
+                          </Badge>
+                          <span className="font-mono font-bold text-xs text-amber-400">
+                            {currentActiveDelivery.tracking_code}
+                          </span>
+                          {currentActiveDelivery.priority === 'urgent' && (
+                            <Badge variant="destructive" className="text-[10px]">
+                              URGENTE
+                            </Badge>
+                          )}
+                        </div>
+                        <CardTitle className="text-base font-bold text-white mt-1.5">
+                          {currentActiveDelivery.expand?.customer_id?.name || 'Cliente'}
+                        </CardTitle>
+                      </div>
+
+                      <div className="text-right font-bold text-sm text-emerald-400">
+                        R$ {Number(currentActiveDelivery.total_price || 0).toFixed(2)}
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="p-4 space-y-3">
+                      {/* Destination Address */}
+                      <div className="flex items-start gap-2.5 text-xs text-slate-300">
+                        <MapPin className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-medium text-white">
+                            {currentActiveDelivery.expand?.customer_id?.street
+                              ? `${currentActiveDelivery.expand.customer_id.street}${currentActiveDelivery.expand.customer_id.complement ? `, ${currentActiveDelivery.expand.customer_id.complement}` : ''} - ${currentActiveDelivery.expand.customer_id.neighborhood || ''}, ${currentActiveDelivery.expand.customer_id.city || ''} (${currentActiveDelivery.expand.customer_id.state || ''})`
+                              : currentActiveDelivery.expand?.customer_id?.address ||
+                                'Endereço a confirmar'}
                           </p>
-                        )}
-                        {customer?.phone && (
-                          <p className="text-slate-400 text-[11px] mt-0.5">📞 {customer.phone}</p>
-                        )}
+                          {currentActiveDelivery.expand?.customer_id?.postal_code && (
+                            <p className="text-slate-400 text-[10px] font-mono mt-0.5">
+                              CEP: {currentActiveDelivery.expand.customer_id.postal_code}
+                            </p>
+                          )}
+                          {currentActiveDelivery.expand?.customer_id?.phone && (
+                            <p className="text-slate-400 text-[11px] mt-0.5">
+                              📞 {currentActiveDelivery.expand.customer_id.phone}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Notes / Instructions */}
-                    {order.notes && (
-                      <div className="rounded-lg bg-slate-900 p-2.5 text-[11px] text-slate-300 border border-slate-800">
-                        <span className="font-semibold text-amber-400">Instruções: </span>
-                        {order.notes}
+                      {/* Notes / Instructions */}
+                      {currentActiveDelivery.notes && (
+                        <div className="rounded-lg bg-slate-900/90 p-2.5 text-[11px] text-slate-300 border border-slate-800">
+                          <span className="font-semibold text-amber-400">Instruções: </span>
+                          {currentActiveDelivery.notes}
+                        </div>
+                      )}
+
+                      {/* TOUCH ACTION BUTTONS (Min 48px height) */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        {/* Open GPS Nav */}
+                        <Button
+                          type="button"
+                          onClick={() =>
+                            openExternalNavigation(
+                              currentActiveDelivery.expand?.customer_id?.address || '',
+                              currentActiveDelivery.expand?.customer_id?.lat,
+                              currentActiveDelivery.expand?.customer_id?.lng,
+                            )
+                          }
+                          className="h-12 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-2"
+                        >
+                          <Compass className="h-4 w-4" />
+                          <span>Abrir no Google Maps</span>
+                        </Button>
+
+                        {/* Finalizar Entrega button (Abre modal de motivos) */}
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            setSelectedOrderForConfirmation(currentActiveDelivery)
+                            setIsConfirmModalOpen(true)
+                          }}
+                          className="h-12 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2"
+                        >
+                          <CheckCircle className="h-4 w-4" />
+                          <span>Finalizar / Informar Motivo</span>
+                        </Button>
                       </div>
-                    )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
 
-                    {/* TOUCH ACTION BUTTONS (Min 48px height) */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                      {/* Open GPS Nav */}
-                      <Button
-                        type="button"
-                        onClick={() =>
-                          openExternalNavigation(
-                            customer?.address || '',
-                            customer?.lat,
-                            customer?.lng,
-                          )
-                        }
-                        className="h-12 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md flex items-center justify-center gap-2"
-                      >
-                        <Compass className="h-4 w-4" />
-                        <span>Abrir no Google Maps</span>
-                      </Button>
+              {/* 2. PRÓXIMAS ENTREGAS BLOQUEADAS SEQUENCIALMENTE */}
+              {subsequentDeliveries.length > 0 && (
+                <div className="space-y-2 pt-3">
+                  <div className="flex items-center gap-2 px-1">
+                    <Lock className="h-4 w-4 text-slate-400" />
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">
+                      Próximas Entregas na Fila (Bloqueadas até concluir a atual)
+                    </span>
+                  </div>
 
-                      {/* Confirm Delivery button */}
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          setSelectedOrderForConfirmation(order)
-                          setIsConfirmModalOpen(true)
-                        }}
-                        className="h-12 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2"
-                      >
-                        <CheckCircle className="h-4 w-4" />
-                        <span>Confirmar Entrega</span>
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })
+                  <div className="space-y-2">
+                    {subsequentDeliveries.map((order, idx) => {
+                      const customer = order.expand?.customer_id
+                      const stopNumber = idx + 2
+
+                      return (
+                        <div
+                          key={order.id}
+                          className="p-3.5 rounded-2xl border border-slate-800 bg-slate-950/60 opacity-75 backdrop-blur flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative overflow-hidden"
+                        >
+                          <div className="flex items-start gap-3">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-slate-400 font-bold text-xs shrink-0 mt-0.5">
+                              {stopNumber}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs font-bold text-slate-400">
+                                  {order.tracking_code}
+                                </span>
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] bg-slate-900 border-slate-700 text-slate-400 flex items-center gap-1"
+                                >
+                                  <Lock className="h-2.5 w-2.5" />
+                                  Na fila (#{stopNumber})
+                                </Badge>
+                              </div>
+                              <p className="text-xs font-semibold text-slate-200 mt-1 truncate">
+                                {customer?.name || 'Cliente'}
+                              </p>
+                              <p className="text-[10px] text-slate-400 truncate">
+                                {customer?.street || customer?.address}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-800/80">
+                            <span className="text-xs font-bold text-slate-300">
+                              R$ {Number(order.total_price || 0).toFixed(2)}
+                            </span>
+                            <Button
+                              disabled
+                              size="sm"
+                              className="h-8 px-3 bg-slate-800 text-slate-500 font-semibold text-[11px] rounded-lg cursor-not-allowed flex items-center gap-1.5"
+                            >
+                              <Lock className="h-3 w-3" />
+                              Bloqueado
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 

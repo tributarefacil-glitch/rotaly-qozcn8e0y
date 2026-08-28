@@ -57,7 +57,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     loadGoogleMapsScript().then((success) => {
       if (success && !isGoogleMapsAuthError()) {
         setMapsLoaded(true)
-        initGoogleMap()
+        setTimeout(() => {
+          initGoogleMap()
+        }, 100)
       } else {
         setMapsLoaded(false)
       }
@@ -65,6 +67,20 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
     return unsub
   }, [])
+
+  // Handle window resize for map
+  useEffect(() => {
+    const handleResize = () => {
+      const google = getGoogle()
+      if (mapInstanceRef.current && google?.maps) {
+        google.maps.event.trigger(mapInstanceRef.current, 'resize')
+        mapInstanceRef.current.setCenter({ lat: center.lat, lng: center.lng })
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [center])
 
   const initGoogleMap = () => {
     const google = getGoogle()

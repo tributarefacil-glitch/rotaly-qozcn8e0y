@@ -30,7 +30,33 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Label } from '@/components/ui/label'
 import { Link } from 'react-router-dom'
+import {
+  Ban,
+  Undo2,
+  UserPlus,
+  Send,
+  MoreVertical,
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 export default function SellerDashboard() {
@@ -44,6 +70,14 @@ export default function SellerDashboard() {
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+
+  // Modal: Adicionar Entrega à Rota Já Iniciada de um Entregador
+  const [isAddToRouteModalOpen, setIsAddToRouteModalOpen] = useState(false)
+  const [selectedOrderForAddToRoute, setSelectedOrderForAddToRoute] = useState<OrderRecord | null>(
+    null,
+  )
+  const [targetCourierId, setTargetCourierId] = useState<string>('')
+  const [isAddingToRoute, setIsAddingToRoute] = useState(false)
 
   const loadData = async () => {
     try {
@@ -135,6 +169,89 @@ export default function SellerDashboard() {
       customerName.toLowerCase().includes(searchQuery.toLowerCase())
     return matchesStatus && matchesSearch
   })
+
+  // REQUISITO 2: PERMISSÕES DO VENDEDOR/ADMIN sobre entregas
+  // 1. Cancelar entrega
+  const handleCancelOrder = async (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    if (!window.confirm('Tem certeza que deseja cancelar esta entrega?')) return
+
+    try {
+      await deliveryService.updateOrder(orderId, {
+        status: 'cancelled',
+      })
+      toast.warning('Entrega cancelada com sucesso.')
+      loadData()
+    } catch (err) {
+      console.error('Error cancelling order:', err)
+      toast.error('Erro ao cancelar entrega.')
+    }
+  }
+
+  // 2. Retirar da rota (volta para status "pending" sem entregador atribuído)
+  const handleRemoveFromRoute = async (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+
+    try {
+      await deliveryService.updateOrder(orderId, {
+        status: 'pending',
+        courier_id: '',
+        sequence: undefined,
+      })
+      toast.info('Entrega retirada da rota e retornada para o status "Pendente" (sem entregador).')
+      loadData()
+    } catch (err) {
+      console.error('Error removing order from route:', err)
+      toast.error('Erro ao retirar entrega da rota.')
+    }
+  }
+
+  // 3. Adicionar cliente/entrega a uma rota JÁ INICIADA (Entra no FIM da fila do entregador)
+  const handleConfirmAddToActiveRoute = async () => {
+    if (!selectedOrderForAddToRoute || !targetCourierId) {
+      toast.error('Selecione um entregador.')
+      return
+    }
+
+    setIsAddingToRoute(true)
+    try {
+      // Find maximum sequence among current in_transit orders for this courier
+      const courierOrders = orders.filter(
+        (o) => o.courier_id === targetCourierId && o.status === 'in_transit',
+      )
+      const nextSequence = courierOrders.reduce((max, o) => Math.max(max, o.sequence || 0), 0) + 1
+
+      await deliveryService.updateOrder(selectedOrderForAddToRoute.id, {
+        courier_id: targetCourierId,
+        status: 'in_transit',
+        sequence: nextSequence,
+        estimated_arrival: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      })
+
+      // Send realtime notification to courier
+      await deliveryService.createNotification({
+        user_id: targetCourierId,
+        title: '📦 Nova Entrega Adicionada à sua Rota!',
+        message: `O pedido ${selectedOrderForAddToRoute.tracking_code} foi adicionado ao fim da sua fila de entregas.`,
+        type: 'order',
+        read: false,
+        order_id: selectedOrderForAddToRoute.id,
+      })
+
+      toast.success(
+        `Entrega ${selectedOrderForAddToRoute.tracking_code} adicionada ao fim da rota do entregador com sucesso!`,
+      )
+      setIsAddToRouteModalOpen(false)
+      setSelectedOrderForAddToRoute(null)
+      setTargetCourierId('')
+      loadData()
+    } catch (err) {
+      console.error('Error adding to active route:', err)
+      toast.error('Erro ao adicionar entrega à rota.')
+    } finally {
+      setIsAddingToRoute(false)
+    }
+  }
 
   // Quick stats
   const pendingCount = orders.filter((o) => o.status === 'pending').length
@@ -336,11 +453,11 @@ export default function SellerDashboard() {
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 uppercase tracking-wider">
                     <th className="py-3 px-3 font-semibold">Código</th>
                     <th className="py-3 px-3 font-semibold">Cliente & Destino</th>
-                    <th className="py-3 px-3 font-semibold">Entregador</th>
-                    <th className="py-3 px-3 font-semibold">Status</th>
+                    <th className="py-3 px-3 font-semibold">Entregador / Fila</th>
+                    <th className="py-3 px-3 font-semibold">Status / Motivo</th>
                     <th className="py-3 px-3 font-semibold">Prioridade</th>
                     <th className="py-3 px-3 font-semibold text-right">Valor Total</th>
-                    <th className="py-3 px-3 font-semibold text-center">Rastreio</th>
+                    <th className="py-3 px-3 font-semibold text-right">Ações da Venda</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -416,27 +533,95 @@ export default function SellerDashboard() {
                           <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
                             {courier ? (
                               <div className="flex items-center gap-1.5">
-                                <span className="h-2 w-2 rounded-full bg-purple-500"></span>
-                                <span>{courier.name}</span>
+                                <span className="h-2 w-2 rounded-full bg-purple-500 shrink-0"></span>
+                                <span className="font-semibold text-slate-900 dark:text-white">
+                                  {courier.name}
+                                </span>
+                                {order.sequence && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] px-1 py-0 bg-slate-100 dark:bg-slate-800"
+                                  >
+                                    #{order.sequence}
+                                  </Badge>
+                                )}
                               </div>
                             ) : (
                               <span className="text-slate-400 italic">Não atribuído</span>
                             )}
                           </td>
-                          <td className="py-3 px-3">{statusBadge}</td>
+                          <td className="py-3 px-3">
+                            <div>
+                              {statusBadge}
+                              {order.completion_reason &&
+                                order.completion_reason !== 'delivered' && (
+                                  <span className="block text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-0.5">
+                                    {order.completion_reason === 'address_error'
+                                      ? '⚠️ Erro de Endereço'
+                                      : '⚠️ Cliente Ausente'}
+                                  </span>
+                                )}
+                            </div>
+                          </td>
                           <td className="py-3 px-3 text-xs">{priorityBadge}</td>
                           <td className="py-3 px-3 text-right font-bold text-slate-900 dark:text-white">
                             R$ {Number(order.total_price || 0).toFixed(2)}
                           </td>
-                          <td className="py-3 px-3 text-center">
-                            <Link
-                              to={`/track/${order.tracking_code}`}
-                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:underline text-xs font-semibold"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <span>Acompanhar</span>
-                              <ExternalLink className="h-3 w-3" />
-                            </Link>
+                          <td className="py-3 px-3 text-right" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                              {/* Link Rastreio */}
+                              <Link
+                                to={`/track/${order.tracking_code}`}
+                                className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 hover:underline text-xs font-semibold px-2 py-1"
+                              >
+                                <span>Rastrear</span>
+                                <ExternalLink className="h-3 w-3" />
+                              </Link>
+
+                              {/* Adicionar a Rota Já Iniciada */}
+                              {order.status === 'pending' && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedOrderForAddToRoute(order)
+                                    setIsAddToRouteModalOpen(true)
+                                  }}
+                                  className="h-7 px-2 text-[11px] text-purple-600 border-purple-200 hover:bg-purple-50 dark:border-purple-800 gap-1"
+                                  title="Adicionar à rota de um entregador em andamento"
+                                >
+                                  <UserPlus className="h-3 w-3" />+ Rota
+                                </Button>
+                              )}
+
+                              {/* Retirar da Rota */}
+                              {order.status === 'in_transit' && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => handleRemoveFromRoute(order.id, e)}
+                                  className="h-7 px-2 text-[11px] text-amber-600 border-amber-200 hover:bg-amber-50 dark:border-amber-800 gap-1"
+                                  title="Retirar da rota e voltar para pendente"
+                                >
+                                  <Undo2 className="h-3 w-3" />
+                                  Retirar
+                                </Button>
+                              )}
+
+                              {/* Cancelar Entrega */}
+                              {order.status !== 'cancelled' && order.status !== 'delivered' && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => handleCancelOrder(order.id, e)}
+                                  className="h-7 px-2 text-[11px] text-rose-600 border-rose-200 hover:bg-rose-50 dark:border-rose-800 gap-1"
+                                  title="Cancelar entrega"
+                                >
+                                  <Ban className="h-3 w-3" />
+                                  Cancelar
+                                </Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )
@@ -471,6 +656,80 @@ export default function SellerDashboard() {
         locations={locations}
         onRoutesApplied={loadData}
       />
+
+      {/* MODAL: Adicionar Entrega a Rota JÁ INICIADA do Entregador */}
+      <Dialog open={isAddToRouteModalOpen} onOpenChange={setIsAddToRouteModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-white">
+              <UserPlus className="h-5 w-5 text-indigo-600" />
+              Adicionar Entrega à Rota em Andamento
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              A nova entrega entrará automaticamente no <strong>FIM da fila</strong> do entregador
+              selecionado e ele receberá um alerta sonoro e notificação push instantânea.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedOrderForAddToRoute && (
+            <div className="space-y-3.5 py-2">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border text-xs space-y-1">
+                <p className="font-bold text-slate-900 dark:text-white">
+                  Pedido: {selectedOrderForAddToRoute.tracking_code}
+                </p>
+                <p className="text-slate-600 dark:text-slate-300">
+                  Cliente:{' '}
+                  {customers.find((c) => c.id === selectedOrderForAddToRoute.customer_id)?.name ||
+                    'Cliente'}
+                </p>
+                <p className="text-slate-500 text-[11px]">
+                  Endereço:{' '}
+                  {customers.find((c) => c.id === selectedOrderForAddToRoute.customer_id)?.address}
+                </p>
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold">
+                  Selecione o Entregador com Rota Ativa
+                </Label>
+                <Select value={targetCourierId} onValueChange={setTargetCourierId}>
+                  <SelectTrigger className="mt-1 text-xs">
+                    <SelectValue placeholder="Escolha um entregador..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {couriers
+                      .filter((c) => c.status !== 'inactive')
+                      .map((c) => {
+                        const inTransitCount = orders.filter(
+                          (o) => o.courier_id === c.id && o.status === 'in_transit',
+                        ).length
+                        return (
+                          <SelectItem key={c.id} value={c.id}>
+                            🛵 {c.name} ({inTransitCount} entregas ativas)
+                          </SelectItem>
+                        )
+                      })}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="pt-2">
+            <Button type="button" variant="outline" onClick={() => setIsAddToRouteModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={isAddingToRoute || !targetCourierId}
+              onClick={handleConfirmAddToActiveRoute}
+              className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs"
+            >
+              {isAddingToRoute ? 'Enviando...' : 'Despachar para o Fim da Fila'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

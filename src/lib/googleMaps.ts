@@ -332,12 +332,15 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
     script.defer = true
 
     script.onload = () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if ((window as any).google?.maps) {
-        resolve(!googleMapsAuthError)
-      } else {
-        resolve(false)
-      }
+      // Give a tiny tick for google.maps and sub-modules to finish setup
+      setTimeout(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((window as any).google?.maps) {
+          resolve(!googleMapsAuthError)
+        } else {
+          resolve(false)
+        }
+      }, 50)
     }
 
     script.onerror = (err) => {
