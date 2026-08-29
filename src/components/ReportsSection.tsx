@@ -202,23 +202,33 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
     }
   }, [filteredOrders])
 
-  // MÉTRICA 4: Análise de Custo (custo médio, custo total, custo por km)
+  // MÉTRICA 4: Análise de Custo (custo médio, custo total, custo por km - Regras 1, 2 e 3)
+  // Regra 1: Contabiliza apenas se route_started === true ou delivered
+  // Regra 3: Considera IDA E VOLTA (return_trip_km)
   const costAnalysis = useMemo(() => {
     let totalKm = 0
-    filteredOrders.forEach((o) => {
-      const km = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 4.5
-      totalKm += km
+    const activeRouteOrders = filteredOrders.filter(
+      (o) => o.route_started === true || o.status === 'delivered',
+    )
+
+    activeRouteOrders.forEach((o) => {
+      const baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
+      const returnKm =
+        typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+      totalKm += baseKm + returnKm
     })
 
     const costPerKm = fuelConsumption > 0 ? fuelPrice / fuelConsumption : 0.16
     const totalCost = totalKm * costPerKm
-    const avgCostPerDelivery = filteredOrders.length > 0 ? totalCost / filteredOrders.length : 0
+    const avgCostPerDelivery =
+      activeRouteOrders.length > 0 ? totalCost / activeRouteOrders.length : 0
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
       costPerKm: Number(costPerKm.toFixed(2)),
       totalCost: Number(totalCost.toFixed(2)),
       avgCostPerDelivery: Number(avgCostPerDelivery.toFixed(2)),
+      activeRouteOrdersCount: activeRouteOrders.length,
     }
   }, [filteredOrders, fuelPrice, fuelConsumption])
 

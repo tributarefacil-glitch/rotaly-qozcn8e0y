@@ -1,271 +1,284 @@
-// Hook on location creation to detect off-route deviations (>500m) and unexpected stops
-// Alert both courier and seller/admin and persist in off_route_events
+// Hook on location creation to detect off-route deviations (>300m) and unexpected stops
+// Regra 2: O desvio, alerta e parada só podem ser considerados após o entregador INICIAR a rota (route_started = true)
+// Regra 2: Se houver desvio superior a 300m, o trecho NÃO deve ser contabilizado na km nem consumo de combustível
+
 onRecordAfterCreateSuccess((e) => {
+  const loc = e.record
+  const courierId = loc.getString('user_id')
+  const lat = loc.getFloat('lat')
+  const lng = loc.getFloat('lng')
+  const speedKmh = loc.getFloat('speed') || 0
+
+  if (!courierId || !lat || !lng) {
+    e.next()
+    return
+  }
+
+  // Find active in_transit orders for this courier with route_started = true
+  let activeOrders = []
   try {
-    const loc = e.record
-    const courierId = loc.getString('user_id')
-    const lat = loc.getFloat('lat')
-    const lng = loc.getFloat('lng')
-    const speed = loc.getFloat('speed') || 0
-
-    if (!courierId || !lat || !lng) {
-      e.next()
-      return
-    }
-
-    // Find active in_transit orders for this courier ordered by sequence or created
-    let activeOrders = []
-    try {
-      activeOrders = $app.findRecordsByFilter(
-        'orders',
-        `courier_id = '${courierId}' && status = 'in_transit'`,
-        'sequence,created',
-        10,
-        0,
-      )
-    } catch (findErr) {
-      console.log('Error fetching active orders:', findErr)
-    }
-
-    if (!activeOrders || activeOrders.length === 0) {
-      e.next()
-      return
-    }
-
-    // The current active delivery target is the first order in the queue
-    const currentOrder = activeOrders[0]
-    const customerId = currentOrder.getString('customer_id')
-    const sellerId = currentOrder.getString('seller_id')
-    const trackingCode = currentOrder.getString('tracking_code')
-
-    let customer = null
-    try {
-      if (customerId) {
-        customer = $app.findRecordById('customers', customerId)
-      }
-    } catch (_) {}
-
-    if (!customer) {
-      e.next()
-      return
-    }
-
-    const custLat = customer.getFloat('lat')
-    const custLng = customer.getFloat('lng')
-    const custAddress = customer.getString('address') || ''
-
-    if (!custLat || !custLng) {
-      e.next()
-      return
-    }
-
-    // Inline distance helper
-    const R = 6371e3
-    const φ1 = (lat * Math.PI) / 180
-    const φ2 = (custLat * Math.PI) / 180
-    const Δφ = ((custLat - lat) * Math.PI) / 180
-    const Δλ = ((custLng - lng) * Math.PI) / 180
-    const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    const distToCustomerMeters = R * c
-
-    // Fetch previous location for this courier to detect stop or deviation
-    let prevLocations = []
-    try {
-      prevLocations = $app.findRecordsByFilter(
-        'locations',
-        `user_id = '${courierId}' && id != '${loc.id}'`,
-        '-created',
-        2,
-        0,
-      )
-    } catch (_) {}
-
-    let courierName = 'Entregador'
-    try {
-      const courierUser = $app.findRecordById('_pb_users_auth_', courierId)
-      courierName = courierUser.getString('name') || 'Entregador'
-    } catch (_) {}
-
-    const notifsCol = $app.findCollectionByNameOrId('notifications')
-    const eventsCol = $app.findCollectionByNameOrId('off_route_events')
-
-    // 1. Check if vehicle is STOPPED outside destination (>100m from customer destination and speed == 0)
-    if (speed <= 1 && distToCustomerMeters > 150) {
-      // Check if previous location was also stopped (>30s)
-      if (prevLocations.length > 0) {
-        const prevLoc = prevLocations[0]
-        const prevSpeed = prevLoc.getFloat('speed') || 0
-        if (prevSpeed <= 1) {
-          // Avoid spam: check if an unexpected stop event was created in the last 5 minutes
-          let recentStopEvents = []
-          try {
-            recentStopEvents = $app.findRecordsByFilter(
-              'off_route_events',
-              `courier_id = '${courierId}' && event_type = 'unexpected_stop'`,
-              '-created',
-              1,
-              0,
-            )
-          } catch (_) {}
-
-          let canTriggerStop = true
-          if (recentStopEvents.length > 0) {
-            const lastCreated = new Date(recentStopEvents[0].getString('created')).getTime()
-            if (Date.now() - lastCreated < 3 * 60 * 1000) {
-              canTriggerStop = false
-            }
-          }
-
-          if (canTriggerStop) {
-            // Save off_route_events record
-            try {
-              const ev = new Record(eventsCol)
-              ev.set('courier_id', courierId)
-              ev.set('order_id', currentOrder.id)
-              ev.set('event_type', 'unexpected_stop')
-              ev.set('lat', lat)
-              ev.set('lng', lng)
-              ev.set('stop_duration_seconds', 60)
-              ev.set(
-                'notes',
-                `Veículo parado fora do destino previsto (${Math.round(distToCustomerMeters)}m do cliente).`,
-              )
-              $app.save(ev)
-            } catch (errEv) {
-              console.log('Error saving unexpected_stop event:', errEv)
-            }
-
-            // Notify Courier
-            try {
-              const notifCourier = new Record(notifsCol)
-              notifCourier.set('user_id', courierId)
-              notifCourier.set('title', '⚠️ Alerta de Parada Fora de Rota')
-              notifCourier.set(
-                'message',
-                `Identificamos que você está parado fora dos pontos previstos para o pedido ${trackingCode}.`,
-              )
-              notifCourier.set('type', 'off_route')
-              notifCourier.set('read', false)
-              notifCourier.set('order_id', currentOrder.id)
-              $app.save(notifCourier)
-            } catch (_) {}
-
-            // Notify Seller if present
-            if (sellerId) {
-              try {
-                const notifSeller = new Record(notifsCol)
-                notifSeller.set('user_id', sellerId)
-                notifSeller.set('title', `⚠️ Parada Fora de Rota: ${courierName}`)
-                notifSeller.set(
-                  'message',
-                  `O entregador ${courierName} parou fora dos pontos previstos da rota (${trackingCode}).`,
-                )
-                notifSeller.set('type', 'off_route')
-                notifSeller.set('read', false)
-                notifSeller.set('order_id', currentOrder.id)
-                $app.save(notifSeller)
-              } catch (_) {}
-            }
-          }
-        }
-      }
-    }
-
-    // 2. Check for Route Deviation (> 500 meters moving away from target or unusual trajectory)
-    // If moving (> 10km/h) and distance increased by > 500m compared to previous location towards customer
-    if (prevLocations.length > 0 && speed > 5) {
-      const prevLoc = prevLocations[0]
-      const prevLat = prevLoc.getFloat('lat')
-      const prevLng = prevLoc.getFloat('lng')
-
-      const prevφ1 = (prevLat * Math.PI) / 180
-      const prevΔφ = ((custLat - prevLat) * Math.PI) / 180
-      const prevΔλ = ((custLng - prevLng) * Math.PI) / 180
-      const prevA =
-        Math.sin(prevΔφ / 2) * Math.sin(prevΔφ / 2) +
-        Math.cos(prevφ1) * Math.cos(φ2) * Math.sin(prevΔλ / 2) * Math.sin(prevΔλ / 2)
-      const prevDist = R * 2 * Math.atan2(Math.sqrt(prevA), Math.sqrt(1 - prevA))
-
-      // If courier moved significantly further from destination (> 500m increase)
-      const deviationDelta = distToCustomerMeters - prevDist
-      if (deviationDelta >= 500) {
-        // Check debounce (last 5 minutes)
-        let recentDevEvents = []
-        try {
-          recentDevEvents = $app.findRecordsByFilter(
-            'off_route_events',
-            `courier_id = '${courierId}' && event_type = 'route_deviation'`,
-            '-created',
-            1,
-            0,
-          )
-        } catch (_) {}
-
-        let canTriggerDev = true
-        if (recentDevEvents.length > 0) {
-          const lastCreated = new Date(recentDevEvents[0].getString('created')).getTime()
-          if (Date.now() - lastCreated < 4 * 60 * 1000) {
-            canTriggerDev = false
-          }
-        }
-
-        if (canTriggerDev) {
-          try {
-            const ev = new Record(eventsCol)
-            ev.set('courier_id', courierId)
-            ev.set('order_id', currentOrder.id)
-            ev.set('event_type', 'route_deviation')
-            ev.set('distance_deviation_meters', Math.round(deviationDelta))
-            ev.set('lat', lat)
-            ev.set('lng', lng)
-            ev.set(
-              'notes',
-              `Desvio de rota superior a 500m detectado (+${Math.round(deviationDelta)}m de afastamento do destino).`,
-            )
-            $app.save(ev)
-          } catch (errDev) {
-            console.log('Error saving deviation event:', errDev)
-          }
-
-          // Notify Courier with audio trigger
-          try {
-            const notifCourier = new Record(notifsCol)
-            notifCourier.set('user_id', courierId)
-            notifCourier.set('title', '🚨 Alerta de Desvio de Rota (>500m)')
-            notifCourier.set(
-              'message',
-              `Desvio de rota detectado para o pedido ${trackingCode}. Verifique o trajeto recomendado.`,
-            )
-            notifCourier.set('type', 'off_route')
-            notifCourier.set('read', false)
-            notifCourier.set('order_id', currentOrder.id)
-            $app.save(notifCourier)
-          } catch (_) {}
-
-          // Notify Seller
-          if (sellerId) {
-            try {
-              const notifSeller = new Record(notifsCol)
-              notifSeller.set('user_id', sellerId)
-              notifSeller.set('title', `🚨 Desvio de Rota: ${courierName}`)
-              notifSeller.set(
-                'message',
-                `O entregador ${courierName} desviou mais de 500m da rota do pedido ${trackingCode}.`,
-              )
-              notifSeller.set('type', 'off_route')
-              notifSeller.set('read', false)
-              notifSeller.set('order_id', currentOrder.id)
-              $app.save(notifSeller)
-            } catch (_) {}
-          }
-        }
-      }
-    }
+    activeOrders = $app.findRecordsByFilter(
+      'orders',
+      `courier_id = '${courierId}' && status = 'in_transit' && route_started = true`,
+      'sequence',
+      1,
+      0,
+    )
   } catch (err) {
-    console.log('Error in on_location_alert hook:', err)
+    console.log('Error finding orders for location check:', err)
+    e.next()
+    return
+  }
+
+  if (activeOrders.length === 0) {
+    e.next()
+    return
+  }
+
+  const activeOrder = activeOrders[0]
+  const customerId = activeOrder.getString('customer_id')
+  const trackingCode = activeOrder.getString('tracking_code')
+  const sellerId = activeOrder.getString('seller_id')
+
+  // Find courier user name
+  let courierName = 'Entregador'
+  try {
+    const courierUser = $app.findRecordById('users', courierId)
+    if (courierUser) {
+      courierName = courierUser.getString('name') || courierUser.getString('email') || 'Entregador'
+    }
+  } catch (_) {}
+
+  // Find customer to get destination coordinates
+  let custLat = null
+  let custLng = null
+  let custAddress = ''
+  if (customerId) {
+    try {
+      const cust = $app.findRecordById('customers', customerId)
+      if (cust) {
+        custLat = cust.getFloat('lat')
+        custLng = cust.getFloat('lng')
+        custAddress = cust.getString('address')
+      }
+    } catch (errCust) {
+      console.log('Error finding customer:', errCust)
+    }
+  }
+
+  if (custLat === null || custLng === null) {
+    e.next()
+    return
+  }
+
+  // Calculate Haversine distance in meters
+  const R = 6371e3
+  const φ1 = (lat * Math.PI) / 180
+  const φ2 = (custLat * Math.PI) / 180
+  const Δφ = ((custLat - lat) * Math.PI) / 180
+  const Δλ = ((custLng - lng) * Math.PI) / 180
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  const distToCustomerMeters = R * c
+
+  // Fetch previous location for this courier to detect stop or deviation
+  let prevLocations = []
+  try {
+    prevLocations = $app.findRecordsByFilter(
+      'locations',
+      `user_id = '${courierId}' && id != '${loc.id}'`,
+      '-created',
+      2,
+      0,
+    )
+  } catch (_) {}
+
+  let prevDistanceToCustomer = null
+  let prevLat = null
+  let prevLng = null
+
+  if (prevLocations.length > 0) {
+    prevLat = prevLocations[0].getFloat('lat')
+    prevLng = prevLocations[0].getFloat('lng')
+
+    if (prevLat && prevLng) {
+      const pφ1 = (prevLat * Math.PI) / 180
+      const pΔφ = ((custLat - prevLat) * Math.PI) / 180
+      const pΔλ = ((custLng - prevLng) * Math.PI) / 180
+      const pa =
+        Math.sin(pΔφ / 2) * Math.sin(pΔφ / 2) +
+        Math.cos(pφ1) * Math.cos(φ2) * Math.sin(pΔλ / 2) * Math.sin(pΔλ / 2)
+      const pc = 2 * Math.atan2(Math.sqrt(pa), Math.sqrt(1 - pa))
+      prevDistanceToCustomer = R * pc
+    }
+  }
+
+  // 1. Check for Unexpected Stop:
+  // If courier is standing still (speed < 2 km/h) and distance to customer is > 200m (not yet arrived)
+  // and was also still at same spot in previous check
+  if (speedKmh < 2 && distToCustomerMeters > 200 && prevLat && prevLng) {
+    const pΔφ = ((lat - prevLat) * Math.PI) / 180
+    const pΔλ = ((lng - prevLng) * Math.PI) / 180
+    const pa =
+      Math.sin(pΔφ / 2) * Math.sin(pΔφ / 2) +
+      Math.cos((prevLat * Math.PI) / 180) *
+        Math.cos((lat * Math.PI) / 180) *
+        Math.sin(pΔλ / 2) *
+        Math.sin(pΔλ / 2)
+    const moveDistanceMeters = R * 2 * Math.atan2(Math.sqrt(pa), Math.sqrt(1 - pa))
+
+    if (moveDistanceMeters < 30) {
+      // Only trigger alert once every 10 minutes per courier
+      let recentStopAlerts = []
+      try {
+        const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+        recentStopAlerts = $app.findRecordsByFilter(
+          'notifications',
+          `user_id = '${courierId}' && type = 'off_route' && created >= '${tenMinAgo}'`,
+          '-created',
+          1,
+          0,
+        )
+      } catch (_) {}
+
+      if (recentStopAlerts.length === 0) {
+        // Log off_route_events
+        try {
+          const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
+          const ev = new Record(offRouteCol)
+          ev.set('courier_id', courierId)
+          ev.set('order_id', activeOrder.id)
+          ev.set('event_type', 'unexpected_stop')
+          ev.set('lat', lat)
+          ev.set('lng', lng)
+          ev.set('notes', `Parada não planejada a ${Math.round(distToCustomerMeters)}m do destino.`)
+          $app.save(ev)
+        } catch (errEv) {
+          console.log('Error saving off_route event:', errEv)
+        }
+
+        // Create notification for Courier
+        try {
+          const notifCol = $app.findCollectionByNameOrId('notifications')
+          const notif = new Record(notifCol)
+          notif.set('user_id', courierId)
+          notif.set('order_id', activeOrder.id)
+          notif.set('type', 'warning')
+          notif.set('title', '⚠️ Alerta de Parada Inesperada')
+          notif.set(
+            'message',
+            `Você está parado a ${Math.round(distToCustomerMeters)}m da entrega ${trackingCode}. Caso precise de ajuda, contate a central.`,
+          )
+          notif.set('is_read', false)
+          $app.save(notif)
+        } catch (errNotif) {
+          console.log('Error creating courier notification:', errNotif)
+        }
+
+        // Create notification for Seller
+        if (sellerId) {
+          try {
+            const notifCol = $app.findCollectionByNameOrId('notifications')
+            const notif = new Record(notifCol)
+            notif.set('user_id', sellerId)
+            notif.set('order_id', activeOrder.id)
+            notif.set('type', 'off_route')
+            notif.set('title', '⚠️ Parada Suspeita de Entregador')
+            notif.set(
+              'message',
+              `O entregador ${courierName} está parado a ${Math.round(distToCustomerMeters)}m do pedido ${trackingCode}.`,
+            )
+            notif.set('is_read', false)
+            $app.save(notif)
+          } catch (errNotif) {
+            console.log('Error creating seller notification:', errNotif)
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Check for Route Deviation (> 300 meters moving away from target or unusual trajectory)
+  // Regra 2: Se houver desvio de rota superior a 300 metros, esse trecho NÃO deve ser contabilizado na km/combustível
+  if (speedKmh > 10 && prevDistanceToCustomer !== null) {
+    const deviationDelta = distToCustomerMeters - prevDistanceToCustomer
+
+    // If courier moved significantly further from destination (>= 300m increase)
+    if (deviationDelta >= 300) {
+      // Check cooldown: avoid spamming alerts if one was created in last 5 min
+      let recentAlerts = []
+      try {
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+        recentAlerts = $app.findRecordsByFilter(
+          'notifications',
+          `user_id = '${courierId}' && type = 'off_route' && created >= '${fiveMinAgo}'`,
+          '-created',
+          1,
+          0,
+        )
+      } catch (_) {}
+
+      if (recentAlerts.length === 0) {
+        // Log off_route_events
+        try {
+          const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
+          const ev = new Record(offRouteCol)
+          ev.set('courier_id', courierId)
+          ev.set('order_id', activeOrder.id)
+          ev.set('event_type', 'route_deviation')
+          ev.set('distance_deviation_meters', Math.round(deviationDelta))
+          ev.set('lat', lat)
+          ev.set('lng', lng)
+          ev.set(
+            'notes',
+            `Desvio de rota superior a 300m detectado (+${Math.round(deviationDelta)}m). Trecho não contabilizado no consumo de combustível.`,
+          )
+          $app.save(ev)
+        } catch (errDev) {
+          console.log('Error saving deviation event:', errDev)
+        }
+
+        // Create notification for Courier
+        try {
+          const notifCol = $app.findCollectionByNameOrId('notifications')
+          const notif = new Record(notifCol)
+          notif.set('user_id', courierId)
+          notif.set('order_id', activeOrder.id)
+          notif.set('type', 'off_route')
+          notif.set('title', '🚨 Alerta de Desvio de Rota (>300m)')
+          notif.set(
+            'message',
+            `Você está se afastando da rota do pedido ${trackingCode} (+${Math.round(deviationDelta)}m). Trecho desconsiderado no cálculo de combustível.`,
+          )
+          notif.set('is_read', false)
+          $app.save(notif)
+        } catch (errNotif) {
+          console.log('Error creating courier notification:', errNotif)
+        }
+
+        // Create notification for Seller
+        if (sellerId) {
+          try {
+            const notifCol = $app.findCollectionByNameOrId('notifications')
+            const notif = new Record(notifCol)
+            notif.set('user_id', sellerId)
+            notif.set('order_id', activeOrder.id)
+            notif.set('type', 'off_route')
+            notif.set('title', '🚨 Desvio de Rota do Entregador (>300m)')
+            notif.set(
+              'message',
+              `O entregador ${courierName} desviou mais de 300m da rota do pedido ${trackingCode}. Trecho desconsiderado da medição de combustível.`,
+            )
+            notif.set('is_read', false)
+            $app.save(notif)
+          } catch (errNotif) {
+            console.log('Error creating seller notification:', errNotif)
+          }
+        }
+      }
+    }
   }
 
   e.next()

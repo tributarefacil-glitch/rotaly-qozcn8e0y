@@ -45,7 +45,7 @@ export function playRouteAlertSound() {
   }
 }
 
-// Dedicated alert sound for route deviation (>500m) or unexpected stop (urgent two-tone siren chime)
+// Dedicated alert sound for route deviation (>300m) or unexpected stop (urgent two-tone siren chime)
 export function playOffRouteWarningSound() {
   try {
     if (typeof window === 'undefined') return

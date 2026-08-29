@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-28T19:00:56.986Z",
+  "generatedAt": "2026-08-28T23:53:59.410Z",
   "collections": [
     {
       "name": "users",
@@ -381,6 +381,84 @@
         {
           "name": "receiver_name",
           "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "route_started",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "route_started_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "start_base_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "start_base_address",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "start_base_lat",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "start_base_lng",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "end_address_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "end_address_text",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "end_address_lat",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "end_address_lng",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "return_trip_km",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "total_route_with_return_km",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "total_route_fuel_cost",
+          "type": "number",
           "required": false,
           "system": false
         }
@@ -801,6 +879,114 @@
         "CREATE INDEX idx_off_route_courier_created ON off_route_events (courier_id, created DESC)",
         "CREATE INDEX idx_off_route_type ON off_route_events (event_type)"
       ]
+    },
+    {
+      "name": "base_addresses",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["base", "end_point", "store", "warehouse"]
+        },
+        {
+          "name": "address",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "street",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "neighborhood",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "city",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "state",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "postal_code",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "lat",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "lng",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_default",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_end_default",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE INDEX idx_base_addresses_type ON base_addresses (type)"]
     }
   ]
 }

@@ -15,7 +15,11 @@ import {
   MapPin,
   RefreshCw,
   Sparkles,
+  Building,
+  RotateCcw,
+  Edit3,
 } from 'lucide-react'
+import type { BaseAddressRecord } from '@/types/delivery'
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
@@ -89,6 +93,16 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     defaultTab,
   )
 
+  // Base Addresses & Editable Quick Config beside Iniciar Despacho (Regras 4 e 5)
+  const [baseAddresses, setBaseAddresses] = useState<BaseAddressRecord[]>([])
+  const [selectedBaseId, setSelectedBaseId] = useState<string>('')
+  const [selectedEndAddressId, setSelectedEndAddressId] = useState<string>('')
+  const [isBaseConfigOpen, setIsBaseConfigOpen] = useState(false)
+  const [newBaseName, setNewBaseName] = useState('')
+  const [newBaseAddress, setNewBaseAddress] = useState('')
+  const [newBaseType, setNewBaseType] = useState<'base' | 'end_point'>('base')
+  const [isSavingBase, setIsSavingBase] = useState(false)
+
   useEffect(() => {
     if (defaultTab) {
       setMainViewTab(defaultTab)
@@ -122,16 +136,23 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   const loadData = async () => {
     try {
-      const [ordersData, custData, couriersData, locsData] = await Promise.all([
+      const [ordersData, custData, couriersData, locsData, basesData] = await Promise.all([
         deliveryService.getOrders(),
         deliveryService.getCustomers(),
         deliveryService.getCouriers(),
         deliveryService.getLatestLocations(),
+        deliveryService.getBaseAddresses(),
       ])
       setOrders(ordersData)
       setCustomers(custData)
       setCouriers(couriersData)
       setLocations(locsData)
+      setBaseAddresses(basesData)
+      const defaultBase = basesData.find((b) => b.is_default) || basesData[0]
+      const defaultEnd =
+        basesData.find((b) => b.is_end_default || b.type === 'end_point') || defaultBase
+      if (defaultBase && !selectedBaseId) setSelectedBaseId(defaultBase.id)
+      if (defaultEnd && !selectedEndAddressId) setSelectedEndAddressId(defaultEnd.id)
     } catch (err) {
       console.error('Error loading seller dashboard data:', err)
     } finally {
@@ -358,6 +379,25 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 <RefreshCw className="h-3.5 w-3.5" />
                 Atualizar
               </Button>
+              {/* REQUISITO 5: BOTÃO/CAMPO EDITÁVEL PARA MARCAR BASE OU ENDEREÇO FINAL AO LADO DE INICIAR DESPACHO */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsBaseConfigOpen(!isBaseConfigOpen)}
+                className={`h-9 gap-1.5 text-xs border border-[#60A5FA]/40 font-bold ${
+                  isBaseConfigOpen
+                    ? 'bg-[#0052CC] text-white'
+                    : 'bg-[#0E1738] text-[#60A5FA] hover:bg-[#121E46]'
+                }`}
+                title="Configurar a Base da Empresa e Endereço Final de Retorno da Rota"
+              >
+                <Building className="h-3.5 w-3.5 text-[#FF6B35]" />
+                <span className="hidden md:inline">Base &amp; Endereço Final:</span>
+                <span className="max-w-[130px] truncate text-white">
+                  {baseAddresses.find((b) => b.id === selectedBaseId)?.name || 'Base Central'}
+                </span>
+                <Edit3 className="h-3 w-3 text-slate-400" />
+              </Button>
               <Button
                 onClick={() => setIsOptimizerModalOpen(true)}
                 className="h-9 gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold text-xs shadow-md shadow-indigo-500/20"
@@ -409,6 +449,152 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               Relatórios Operacionais
             </button>
           </div>
+
+          {/* REQUISITO 5: PAINEL EDITÁVEL DE BASE E ENDEREÇO FINAL AO LADO DE DESPACHO */}
+          {isBaseConfigOpen && (
+            <div className="rounded-xl border border-[#1E2B58] bg-[#0E1738] p-4 shadow-brand-dark space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1E2B58] pb-2">
+                <div className="flex items-center gap-2">
+                  <Building className="h-4 w-4 text-[#FF6B35]" />
+                  <h3 className="text-xs font-bold font-heading uppercase text-white">
+                    Definição de Base de Saída &amp; Ponto de Finalização (Ida e Volta)
+                  </h3>
+                </div>
+                <span className="text-[11px] text-slate-400">
+                  Defina onde os entregadores retiram as entregas e onde finalizam para cálculo
+                  exato de combustível.
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                {/* Seleção de Base */}
+                <div className="space-y-1.5 p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58]">
+                  <label className="font-bold text-slate-300 block">
+                    🏢 Base da Empresa / Loja de Saída:
+                  </label>
+                  <Select value={selectedBaseId} onValueChange={setSelectedBaseId}>
+                    <SelectTrigger className="h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white">
+                      <SelectValue placeholder="Selecione a base de saída..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {baseAddresses.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.name} {b.is_default ? '★ (Padrão)' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-slate-400">
+                    {baseAddresses.find((b) => b.id === selectedBaseId)?.address ||
+                      'Endereço da base selecionada'}
+                  </p>
+                </div>
+
+                {/* Seleção de Endereço Final */}
+                <div className="space-y-1.5 p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58]">
+                  <label className="font-bold text-slate-300 block">
+                    🔄 Endereço de Finalização da Rota (Retorno):
+                  </label>
+                  <Select value={selectedEndAddressId} onValueChange={setSelectedEndAddressId}>
+                    <SelectTrigger className="h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white">
+                      <SelectValue placeholder="Selecione o ponto de retorno..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {baseAddresses.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.name} {b.id === selectedBaseId ? '(Mesma Base de Saída)' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-slate-400">
+                    {baseAddresses.find((b) => b.id === selectedEndAddressId)?.address ||
+                      'Endereço de retorno'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Cadastro Rápido de Novo Local */}
+              <div className="p-3 rounded-lg bg-[#070D1E] border border-[#1E2B58] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-[11px] text-[#60A5FA] uppercase">
+                    + Cadastrar Outra Empresa, Loja ou Ponto de Apoio
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <Input
+                    placeholder="Nome da Base / Galpão / Loja"
+                    value={newBaseName}
+                    onChange={(e) => setNewBaseName(e.target.value)}
+                    className="h-8 text-xs bg-[#0A1128] border-[#1E2B58] text-white placeholder:text-slate-500"
+                  />
+                  <Input
+                    placeholder="Endereço completo (Rua, Número, Bairro, Cidade)"
+                    value={newBaseAddress}
+                    onChange={(e) => setNewBaseAddress(e.target.value)}
+                    className="h-8 text-xs sm:col-span-2 bg-[#0A1128] border-[#1E2B58] text-white placeholder:text-slate-500"
+                  />
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center gap-3 text-slate-300">
+                    <label className="text-[11px] flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="sellerBaseType"
+                        checked={newBaseType === 'base'}
+                        onChange={() => setNewBaseType('base')}
+                      />
+                      Base Principal / Loja
+                    </label>
+                    <label className="text-[11px] flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="sellerBaseType"
+                        checked={newBaseType === 'end_point'}
+                        onChange={() => setNewBaseType('end_point')}
+                      />
+                      Ponto de Finalização
+                    </label>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={isSavingBase}
+                    onClick={async () => {
+                      if (!newBaseName.trim() || !newBaseAddress.trim()) {
+                        toast.error('Informe o nome e endereço da base.')
+                        return
+                      }
+                      setIsSavingBase(true)
+                      try {
+                        const created = await deliveryService.createBaseAddress({
+                          name: newBaseName.trim(),
+                          address: newBaseAddress.trim(),
+                          type: newBaseType,
+                          lat: -23.565734 + (Math.random() - 0.5) * 0.04,
+                          lng: -46.651257 + (Math.random() - 0.5) * 0.04,
+                          is_default: baseAddresses.length === 0,
+                        })
+                        setBaseAddresses((prev) => [...prev, created])
+                        if (newBaseType === 'base') setSelectedBaseId(created.id)
+                        else setSelectedEndAddressId(created.id)
+                        setNewBaseName('')
+                        setNewBaseAddress('')
+                        toast.success('Novo local cadastrado com sucesso!')
+                      } catch {
+                        toast.error('Erro ao cadastrar local.')
+                      } finally {
+                        setIsSavingBase(false)
+                      }
+                    }}
+                    className="h-7 text-xs bg-[#0052CC] hover:bg-[#003E99] text-white font-bold"
+                  >
+                    {isSavingBase ? 'Salvando...' : 'Cadastrar Local'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* TAB 1: TORRE DE CONTROLE (MÓDULO 1) */}
           {mainViewTab === 'control-tower' && (

@@ -14,6 +14,8 @@ import type {
   OrderPriority,
   RouteSuggestionDetails,
   VehicleType,
+  BaseAddressRecord,
+  BaseAddressType,
 } from '@/types/delivery'
 
 export const deliveryService = {
@@ -341,6 +343,117 @@ export const deliveryService = {
     }
   },
 
+  // Base Addresses Management (Cadastro de Base da Empresa / Loja e Endereço Final)
+  async getBaseAddresses(): Promise<BaseAddressRecord[]> {
+    try {
+      const records = await pb.collection<BaseAddressRecord>('base_addresses').getFullList({
+        sort: '-is_default,name',
+        requestKey: null,
+      })
+      if (records.length > 0) return records
+    } catch (err) {
+      console.warn('Could not fetch base_addresses from pb:', err)
+    }
+
+    return [
+      {
+        id: 'default_central_base',
+        name: 'Base Central LOGHYPE (Loja Principal)',
+        type: 'base',
+        address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
+        street: 'Av. Paulista, 1000',
+        neighborhood: 'Bela Vista',
+        city: 'São Paulo',
+        state: 'SP',
+        postal_code: '01310-100',
+        lat: -23.565734,
+        lng: -46.651257,
+        is_default: true,
+        is_end_default: true,
+        collectionId: 'base_addresses',
+        collectionName: 'base_addresses',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+      },
+      {
+        id: 'default_endpoint_base',
+        name: 'Galpão / Ponto de Apoio Zona Sul',
+        type: 'end_point',
+        address: 'Av. Santo Amaro, 3450 - Brooklin, São Paulo - SP',
+        street: 'Av. Santo Amaro, 3450',
+        neighborhood: 'Brooklin',
+        city: 'São Paulo',
+        state: 'SP',
+        postal_code: '04556-300',
+        lat: -23.61845,
+        lng: -46.68532,
+        is_default: false,
+        is_end_default: false,
+        collectionId: 'base_addresses',
+        collectionName: 'base_addresses',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+      },
+    ]
+  },
+
+  async createBaseAddress(data: Partial<BaseAddressRecord>): Promise<BaseAddressRecord> {
+    return pb.collection<BaseAddressRecord>('base_addresses').create({
+      ...data,
+      created_by: pb.authStore.record?.id || '',
+    })
+  },
+
+  async updateBaseAddress(
+    id: string,
+    data: Partial<BaseAddressRecord>,
+  ): Promise<BaseAddressRecord> {
+    return pb.collection<BaseAddressRecord>('base_addresses').update(id, data)
+  },
+
+  async deleteBaseAddress(id: string): Promise<boolean> {
+    return pb.collection('base_addresses').delete(id)
+  },
+
+  // Route Lifecycle (Iniciar Rota, Ida e Volta, Desvios)
+  async startCourierRoute(
+    courierId: string,
+    orderIds?: string[],
+  ): Promise<{ success: boolean; updatedCount: number }> {
+    try {
+      const now = new Date().toISOString()
+      let ordersToUpdate: OrderRecord[] = []
+
+      if (orderIds && orderIds.length > 0) {
+        const filter = orderIds.map((id) => `id='${id}'`).join(' || ')
+        ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
+          filter,
+          requestKey: null,
+        })
+      } else {
+        ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
+          filter: `courier_id='${courierId}' && (status='assigned' || status='in_transit' || status='picked_up')`,
+          requestKey: null,
+        })
+      }
+
+      let updatedCount = 0
+      for (const order of ordersToUpdate) {
+        await pb.collection('orders').update(order.id, {
+          route_started: true,
+          route_started_at: order.route_started_at || now,
+          status: order.status === 'assigned' ? 'in_transit' : order.status,
+        })
+        updatedCount++
+      }
+
+      return { success: true, updatedCount }
+    } catch (err) {
+      console.error('Error starting courier route:', err)
+      throw err
+    }
+  },
+
   // Calculate Fuel Cost
   // Formula: Distância (km) * Preço do Litro (R$/L) / Consumo (km/L)
   calculateFuelCost(distanceKm: number, fuelPrice = 5.59, consumptionKml = 35.0): number {
@@ -384,9 +497,13 @@ export const deliveryService = {
       const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
 
       // Regra 1: Contar APENAS as rotas do sistema (trajetos calculados pela roteirização entre os pontos das entregas)
+      // Regras:
+      // 1. Contabilizar APENAS ordens onde a rota já foi iniciada (route_started === true) ou entregas finalizadas
+      // 2. Considerar IDA E VOLTA quando disponível (return_trip_km ou total_route_with_return_km)
       const courierOrders = orders.filter(
         (o) =>
           o.courier_id === courier.id &&
+          (o.route_started === true || o.status === 'delivered') &&
           (o.status === 'delivered' ||
             o.status === 'in_transit' ||
             o.status === 'address_error' ||
@@ -394,8 +511,12 @@ export const deliveryService = {
       )
 
       const totalRouteKm = courierOrders.reduce((sum, o) => {
-        const km = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-        return sum + km
+        // Base distance
+        const baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
+        // Return trip addition
+        const returnKm =
+          typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+        return sum + baseKm + returnKm
       }, 0)
 
       const totalSpent = fuelConsumption > 0 ? (totalRouteKm * fuelPrice) / fuelConsumption : 0
@@ -594,8 +715,10 @@ export const deliveryService = {
   // Client-side intelligent TSP router using Google Maps Directions with trafficModel (departureTime=now)
   async clientSideOptimizeRoute(
     orderIds: string[],
-    originLat = -23.55052,
-    originLng = -46.633308,
+    originLat = -23.565734,
+    originLng = -46.651257,
+    destLat?: number,
+    destLng?: number,
   ): Promise<OptimizedRouteResult> {
     const allOrders = await pb.collection<OrderRecord>('orders').getFullList({
       filter: orderIds.map((id) => `id = '${id}'`).join(' || '),
@@ -764,13 +887,32 @@ export const deliveryService = {
       }
     }
 
-    const distKm = finalDistMeters / 1000
-    const fuelCost = (distKm * fuelPrice) / fuelConsumption
+    const finalDestLat = destLat !== undefined ? destLat : originLat
+    const finalDestLng = destLng !== undefined ? destLng : originLng
+
+    // IDA E VOLTA: calcular percurso de retorno da última parada até a base ou endereço de finalização
+    let returnDistMeters = 0
+    if (optimized.length > 0) {
+      const lastStop = optimized[optimized.length - 1]
+      returnDistMeters = calcDist(lastStop.lat, lastStop.lng, finalDestLat, finalDestLng)
+    }
+
+    const outboundDistKm = finalDistMeters / 1000
+    const returnDistKm = returnDistMeters / 1000
+    const totalDistKm = outboundDistKm + returnDistKm
+
+    // Add return drive time
+    const returnMins = Math.round((returnDistKm / 25) * 60)
+    const totalDurationMins = durationMins + returnMins
+
+    const fuelCost = (totalDistKm * fuelPrice) / fuelConsumption
 
     return {
       optimized_orders: optimized,
-      total_distance_km: distKm.toFixed(2),
-      estimated_duration_minutes: durationMins,
+      total_distance_km: totalDistKm.toFixed(2),
+      outbound_distance_km: parseFloat(outboundDistKm.toFixed(2)),
+      return_distance_km: parseFloat(returnDistKm.toFixed(2)),
+      estimated_duration_minutes: totalDurationMins,
       estimated_fuel_cost: Number(fuelCost.toFixed(2)),
       stops_count: optimized.length,
     }

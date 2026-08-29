@@ -45,6 +45,7 @@ export interface CustomerRecord extends RecordModel {
 
 export type OrderStatus =
   | 'pending'
+  | 'assigned'
   | 'in_transit'
   | 'delivered'
   | 'address_error'
@@ -74,6 +75,24 @@ export interface RouteSuggestionDetails {
   reason?: string
 }
 
+export type BaseAddressType = 'base' | 'end_point' | 'store' | 'warehouse'
+
+export interface BaseAddressRecord extends RecordModel {
+  name: string
+  type: BaseAddressType
+  address: string
+  street?: string
+  neighborhood?: string
+  city?: string
+  state?: string
+  postal_code?: string
+  lat?: number
+  lng?: number
+  is_default?: boolean
+  is_end_default?: boolean
+  created_by?: string
+}
+
 export interface OrderRecord extends RecordModel {
   seller_id?: string
   customer_id: string
@@ -97,6 +116,20 @@ export interface OrderRecord extends RecordModel {
   assignment_type?: AssignmentType
   route_suggestion_status?: RouteSuggestionStatus
   route_suggestion_details?: RouteSuggestionDetails | string
+  // Route Lifecycle & Bases (Regras 1, 3, 4, 5)
+  route_started?: boolean
+  route_started_at?: string
+  start_base_name?: string
+  start_base_address?: string
+  start_base_lat?: number
+  start_base_lng?: number
+  end_address_name?: string
+  end_address_text?: string
+  end_address_lat?: number
+  end_address_lng?: number
+  return_trip_km?: number
+  total_route_with_return_km?: number
+  total_route_fuel_cost?: number
   // expanded relations
   expand?: {
     customer_id?: CustomerRecord
@@ -215,6 +248,10 @@ export interface OptimizedRouteResult {
   estimated_duration_minutes: number
   estimated_fuel_cost: number
   stops_count: number
+  outbound_distance_km?: number
+  return_distance_km?: number
+  start_base?: { name: string; address: string; lat: number; lng: number }
+  end_base?: { name: string; address: string; lat: number; lng: number }
 }
 
 export interface CourierOptimizationPlan {
@@ -223,8 +260,12 @@ export interface CourierOptimizationPlan {
   orders: OrderRecord[]
   stops: OptimizedStop[]
   total_distance_km: string
+  outbound_distance_km?: number
+  return_distance_km?: number
   estimated_duration_minutes: number
   estimated_fuel_cost: number
+  start_base?: { name: string; address: string; lat: number; lng: number }
+  end_base?: { name: string; address: string; lat: number; lng: number }
 }
 
 export interface MultiCourierOptimizationResult {
@@ -232,6 +273,10 @@ export interface MultiCourierOptimizationResult {
   unassignedOrders: OrderRecord[]
   totalOrders: number
   totalDistanceKm: string
+  outboundDistanceKm?: string
+  returnDistanceKm?: string
   totalEstimatedFuelCost: number
   totalDurationMinutes: number
+  startBase?: BaseAddressRecord | { name: string; address: string; lat: number; lng: number }
+  endBase?: BaseAddressRecord | { name: string; address: string; lat: number; lng: number }
 }

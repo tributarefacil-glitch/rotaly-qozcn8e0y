@@ -14,6 +14,15 @@ import {
   ShieldAlert,
   Zap,
   CheckSquare,
+  Play,
+  Fuel,
+  Building,
+  RotateCcw,
+  CheckCircle2,
+  Lock,
+  MapPinOff,
+  UserX,
+  AlertCircle,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { CourierBottomNav } from '@/components/CourierBottomNav'
@@ -31,7 +40,6 @@ import type { NotificationRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Lock, CheckCircle2, MapPinOff, UserX, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
 export default function CourierApp() {
@@ -48,6 +56,20 @@ export default function CourierApp() {
   const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRouteResult | null>(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [isStartingRoute, setIsStartingRoute] = useState(false)
+  const [fuelSettings, setFuelSettings] = useState({
+    fuel_price_per_liter: 5.59,
+    fuel_consumption_kml: 35.0,
+  })
+
+  useEffect(() => {
+    deliveryService.getSettings().then((s) => {
+      setFuelSettings({
+        fuel_price_per_liter: s.fuel_price_per_liter || 5.59,
+        fuel_consumption_kml: s.fuel_consumption_kml || 35.0,
+      })
+    })
+  }, [])
 
   // Load orders assigned to this courier (or all active if none assigned)
   const loadCourierOrders = async () => {
@@ -146,9 +168,46 @@ export default function CourierApp() {
   }, [user, isGpsActive])
 
   // Optimize route calculation via backend AI routing hook
+  // Regra 1: Iniciar Rota (acionável após receber a rota; começa a contabilizar km e consumo de combustível)
+  const handleStartRoute = async () => {
+    if (!user?.id) {
+      toast.error('Entregador não autenticado.')
+      return
+    }
+
+    const unstartedOrders = orders.filter(
+      (o) =>
+        (o.status === 'assigned' || o.status === 'in_transit' || o.status === 'pending') &&
+        !o.route_started,
+    )
+
+    if (unstartedOrders.length === 0 && activeDeliveries.length === 0) {
+      toast.info('Não há entregas aguardando início de rota.')
+      return
+    }
+
+    setIsStartingRoute(true)
+    try {
+      const orderIdsToStart = unstartedOrders.map((o) => o.id)
+      await deliveryService.startCourierRoute(user.id, orderIdsToStart)
+      toast.success(
+        '🚀 Rota iniciada com sucesso! A telemetria, quilometragem e combustível agora estão ativos.',
+        {
+          duration: 5000,
+        },
+      )
+      await loadCourierOrders()
+    } catch (err: any) {
+      console.error('Erro ao iniciar rota:', err)
+      toast.error('Falha ao iniciar rota. Tente novamente.')
+    } finally {
+      setIsStartingRoute(false)
+    }
+  }
+
   const handleOptimizeRoute = async () => {
     const activeOrderIds = orders
-      .filter((o) => o.status === 'in_transit' || o.status === 'pending')
+      .filter((o) => o.status === 'in_transit' || o.status === 'pending' || o.status === 'assigned')
       .map((o) => o.id)
 
     if (activeOrderIds.length === 0) {
@@ -158,7 +217,7 @@ export default function CourierApp() {
 
     setIsOptimizing(true)
     try {
-      const res = await deliveryService.optimizeRoute(
+      const res = await deliveryService.clientSideOptimizeRoute(
         activeOrderIds,
         currentCoords.lat,
         currentCoords.lng,
@@ -190,11 +249,31 @@ export default function CourierApp() {
   }
 
   // Active deliveries ordered by sequence (or list index if sequence not set)
-  const activeDeliveries = [...orders.filter((o) => o.status === 'in_transit')].sort((a, b) => {
+  const activeDeliveries = [
+    ...orders.filter((o) => o.status === 'in_transit' || o.status === 'assigned'),
+  ].sort((a, b) => {
     const seqA = a.sequence ?? 9999
     const seqB = b.sequence ?? 9999
     return seqA - seqB
   })
+
+  // Has route already been started for active deliveries?
+  const isRouteStarted = activeDeliveries.some((o) => o.route_started === true)
+  const totalRouteKmCounted = activeDeliveries
+    .filter((o) => o.route_started)
+    .reduce((sum, o) => sum + (o.distance_km || 0) + (o.return_trip_km || 0), 0)
+  const totalRouteFuelSpent =
+    (totalRouteKmCounted * fuelSettings.fuel_price_per_liter) /
+    (fuelSettings.fuel_consumption_kml || 35.0)
+
+  // Start Base / End Base Info from the first active order
+  const startBaseName =
+    activeDeliveries.find((o) => o.start_base_name)?.start_base_name || 'Base Central LOGHYPE'
+  const startBaseAddress = activeDeliveries.find((o) => o.start_base_address)?.start_base_address
+  const endBaseName =
+    activeDeliveries.find((o) => o.end_address_name)?.end_address_name || startBaseName
+  const endBaseAddress =
+    activeDeliveries.find((o) => o.end_address_text)?.end_address_text || startBaseAddress
 
   // The current active delivery is strictly the FIRST in the queue (index 0)
   const currentActiveDelivery = activeDeliveries.length > 0 ? activeDeliveries[0] : null
@@ -268,6 +347,95 @@ export default function CourierApp() {
             </div>
           </div>
         </div>
+
+        {/* REQUISITO 1 & 3: CARD DE ROTA E BOTÃO "INICIAR ROTA" */}
+        {activeDeliveries.length > 0 && (
+          <div className="rounded-xl border border-[#1E2B58] bg-gradient-to-b from-[#0E1738] to-[#0A1128] p-4 shadow-brand-dark space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1E2B58]/80 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold font-heading uppercase text-slate-300 flex items-center gap-1.5">
+                    <Building className="h-4 w-4 text-[#FF6B35]" />
+                    Origem / Base: <span className="text-white">{startBaseName}</span>
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-1">
+                  <RotateCcw className="h-3.5 w-3.5 text-[#22C55E]" />
+                  <span>
+                    Destino Final (Ida e Volta):{' '}
+                    <strong className="text-slate-200">{endBaseName}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {isRouteStarted ? (
+                <Badge className="bg-[#22C55E]/20 text-[#22C55E] border border-[#22C55E]/40 font-bold px-3 py-1 text-xs flex items-center gap-1.5 self-start sm:self-center">
+                  <span className="h-2 w-2 rounded-full bg-[#22C55E] animate-ping" />
+                  ROTA INICIADA (KM ATIVA)
+                </Badge>
+              ) : (
+                <Badge className="bg-amber-500/20 text-amber-400 border border-amber-500/40 font-bold px-3 py-1 text-xs self-start sm:self-center">
+                  Aguardando Início da Rota
+                </Badge>
+              )}
+            </div>
+
+            {/* Status da Contabilização de KM e Combustível (Regras 1, 2 e 3) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+              <div className="p-2.5 rounded-lg bg-[#070D1E] border border-[#1E2B58]">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold">
+                  Status Contabilização
+                </span>
+                <span
+                  className={`font-bold font-heading text-xs mt-0.5 block ${isRouteStarted ? 'text-[#22C55E]' : 'text-slate-400'}`}
+                >
+                  {isRouteStarted ? '● Contabilizando KM' : '⏸ Pausada (inicie a rota)'}
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-[#070D1E] border border-[#1E2B58]">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold flex items-center gap-1">
+                  <Fuel className="h-3 w-3 text-[#FF6B35]" /> Consumo Oficial
+                </span>
+                <span className="font-bold font-mono text-xs mt-0.5 text-white block">
+                  {isRouteStarted ? `R$ ${totalRouteFuelSpent.toFixed(2)}` : 'R$ 0,00'}
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-[#070D1E] border border-[#1E2B58] col-span-2 sm:col-span-1">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold">
+                  Regra de Desvio
+                </span>
+                <span className="font-semibold text-[11px] mt-0.5 text-[#60A5FA] block">
+                  Filtro &gt;300m Ativo
+                </span>
+              </div>
+            </div>
+
+            {/* BOTÃO PRINCIPAL: INICIAR ROTA */}
+            {!isRouteStarted ? (
+              <Button
+                type="button"
+                onClick={handleStartRoute}
+                disabled={isStartingRoute}
+                className="w-full h-14 bg-gradient-to-r from-[#22C55E] to-[#16A34A] hover:from-[#16A34A] hover:to-[#15803D] text-slate-950 font-black text-sm uppercase tracking-wider rounded-xl shadow-lg shadow-green-900/30 flex items-center justify-center gap-3 border border-green-400/30"
+              >
+                <Play className="h-5 w-5 fill-current" />
+                {isStartingRoute
+                  ? 'Iniciando Rota...'
+                  : '▶ Iniciar Rota (Liberar KM e Combustível)'}
+              </Button>
+            ) : (
+              <div className="p-2.5 rounded-lg bg-[#22C55E]/10 border border-[#22C55E]/30 text-[11px] text-[#22C55E] flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>
+                  <strong>Rota em execução!</strong> A quilometragem ida e volta e o consumo de
+                  combustível estão sendo registrados oficialmente.
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Route Optimization Button */}
         <div className="flex items-center justify-between gap-3">

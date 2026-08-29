@@ -27,7 +27,19 @@ import {
   Zap,
   RotateCcw,
   Check,
+  Building,
+  Edit3,
+  Plus,
+  Play,
 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { deliveryService } from '@/services/deliveryService'
 import type {
   OrderRecord,
@@ -38,6 +50,7 @@ import type {
   MultiCourierOptimizationResult,
   OptimizedStop,
   AppSettingsRecord,
+  BaseAddressRecord,
 } from '@/types/delivery'
 import {
   loadGoogleMapsScript,
@@ -147,6 +160,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // App Settings for Fuel Calculation
   const [appSettings, setAppSettings] = useState<AppSettingsRecord | null>(null)
 
+  // Base Addresses (Regras 3, 4 e 5: Cadastro e Edição de Base e Endereço Final)
+  const [baseAddresses, setBaseAddresses] = useState<BaseAddressRecord[]>([])
+  const [selectedStartBaseId, setSelectedStartBaseId] = useState<string>('')
+  const [selectedEndBaseId, setSelectedEndBaseId] = useState<string>('')
+  const [isEditingBases, setIsEditingBases] = useState(false)
+  const [newBaseName, setNewBaseName] = useState('')
+  const [newBaseAddress, setNewBaseAddress] = useState('')
+  const [newBaseType, setNewBaseType] = useState<'base' | 'end_point'>('base')
+  const [isCreatingBase, setIsCreatingBase] = useState(false)
+
   // Optimization Result
   const [optimizationResult, setOptimizationResult] =
     useState<MultiCourierOptimizationResult | null>(null)
@@ -172,6 +195,14 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       )
       setOptimizationResult(null)
       deliveryService.getSettings().then((s) => setAppSettings(s))
+      deliveryService.getBaseAddresses().then((bases) => {
+        setBaseAddresses(bases)
+        const defaultStart = bases.find((b) => b.is_default) || bases[0]
+        const defaultEnd =
+          bases.find((b) => b.is_end_default || b.type === 'end_point') || defaultStart
+        if (defaultStart) setSelectedStartBaseId(defaultStart.id)
+        if (defaultEnd) setSelectedEndBaseId(defaultEnd.id)
+      })
       loadGoogleMapsScript().then((success) => {
         setIsMapsLoaded(success && !isGoogleMapsAuthError())
       })
@@ -217,7 +248,48 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     })
   }, [couriers, searchCourierFilter, vehicleFilter])
 
-  // Multi-Courier Geographic K-Means Clustering + Nearest Neighbor Sequencing Algorithm
+  // Helper to handle base creation
+  const handleCreateNewBase = async () => {
+    if (!newBaseName.trim() || !newBaseAddress.trim()) {
+      toast.error('Informe o nome e o endereço completo da base / local.')
+      return
+    }
+
+    setIsCreatingBase(true)
+    try {
+      // Simulate/approximate lat/lng for SP if not geocoded
+      const randomOffsetLat = (Math.random() - 0.5) * 0.03
+      const randomOffsetLng = (Math.random() - 0.5) * 0.03
+      const lat = -23.565734 + randomOffsetLat
+      const lng = -46.651257 + randomOffsetLng
+
+      const created = await deliveryService.createBaseAddress({
+        name: newBaseName.trim(),
+        type: newBaseType,
+        address: newBaseAddress.trim(),
+        lat,
+        lng,
+        is_default: baseAddresses.length === 0,
+      })
+
+      setBaseAddresses((prev) => [...prev, created])
+      if (newBaseType === 'base') {
+        setSelectedStartBaseId(created.id)
+      } else {
+        setSelectedEndBaseId(created.id)
+      }
+      setNewBaseName('')
+      setNewBaseAddress('')
+      toast.success('Local cadastrado com sucesso!')
+    } catch (err) {
+      console.error('Erro ao cadastrar base:', err)
+      toast.error('Erro ao salvar novo local.')
+    } finally {
+      setIsCreatingBase(false)
+    }
+  }
+
+  // Multi-Courier Geographic K-Means Clustering + Nearest Neighbor Sequencing Algorithm (com IDA E VOLTA)
   const runRouteOptimization = async () => {
     if (selectedCourierIds.length === 0) {
       toast.warning('Selecione pelo menos um entregador disponível.')
@@ -232,17 +304,25 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     setIsOptimizing(true)
 
     try {
-      // 1. Prepare courier objects with starting locations
+      // 1. Determine Start Base and End Base coordinates
+      const startBase = baseAddresses.find((b) => b.id === selectedStartBaseId) || {
+        name: 'Base Central LOGHYPE',
+        address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
+        lat: -23.565734,
+        lng: -46.651257,
+      }
+
+      const endBase = baseAddresses.find((b) => b.id === selectedEndBaseId) || startBase
+
+      // 2. Prepare courier objects with starting locations (at Start Base or live GPS)
       const selectedCouriers = couriers.filter((c) => selectedCourierIds.includes(c.id))
       const k = selectedCouriers.length
 
-      // Map courier origins (live GPS if available, else SP center fallback)
       const courierOrigins = selectedCouriers.map((c) => {
-        const loc = locations.find((l) => l.user_id === c.id)
         return {
           courier: c,
-          lat: loc?.lat || -23.55052 + (Math.random() - 0.5) * 0.04,
-          lng: loc?.lng || -46.633308 + (Math.random() - 0.5) * 0.04,
+          lat: startBase.lat || -23.565734,
+          lng: startBase.lng || -46.651257,
         }
       })
 
@@ -378,21 +458,47 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           }
         }
 
-        grandTotalDistanceMeters += clusterDistMeters
-        const estMinutes = Math.round((clusterDistMeters / 1000) * 3.2 + stops.length * 6)
-        const distKmNum = clusterDistMeters / 1000
+        // IDA E VOLTA: Percurso de retorno da última parada até a base ou endereço de finalização
+        const returnMeters =
+          stops.length > 0 && endBase.lat && endBase.lng
+            ? haversineDistance(curLat, curLng, endBase.lat, endBase.lng)
+            : 0
+
+        const totalClusterMetersWithReturn = clusterDistMeters + returnMeters
+        grandTotalDistanceMeters += totalClusterMetersWithReturn
+
+        const estMinutes = Math.round(
+          (totalClusterMetersWithReturn / 1000) * 3.2 + stops.length * 6,
+        )
+        const totalDistKmNum = totalClusterMetersWithReturn / 1000
+        const outboundKmNum = clusterDistMeters / 1000
+        const returnKmNum = returnMeters / 1000
         const fuelPrice = appSettings?.fuel_price_per_liter || 5.59
         const fuelCons = appSettings?.fuel_consumption_kml || 35.0
-        const planFuelCost = (distKmNum * fuelPrice) / fuelCons
+        const planFuelCost = (totalDistKmNum * fuelPrice) / fuelCons
 
         plans.push({
           courier: courierData.courier,
           color: colorItem.color,
           orders: clusterOrders.map((co) => co.order),
           stops,
-          total_distance_km: distKmNum.toFixed(1),
+          total_distance_km: totalDistKmNum.toFixed(1),
+          outbound_distance_km: Number(outboundKmNum.toFixed(1)),
+          return_distance_km: Number(returnKmNum.toFixed(1)),
           estimated_duration_minutes: estMinutes,
           estimated_fuel_cost: Number(planFuelCost.toFixed(2)),
+          start_base: {
+            name: startBase.name,
+            address: startBase.address,
+            lat: startBase.lat || -23.565734,
+            lng: startBase.lng || -46.651257,
+          },
+          end_base: {
+            name: endBase.name,
+            address: endBase.address,
+            lat: endBase.lat || -23.565734,
+            lng: endBase.lng || -46.651257,
+          },
         })
       }
 
@@ -409,6 +515,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         totalDistanceKm: grandDistKm.toFixed(1),
         totalEstimatedFuelCost: Number(totalFuelCost.toFixed(2)),
         totalDurationMinutes: totalEstDuration,
+        startBase,
+        endBase,
       }
 
       setOptimizationResult(finalResult)
@@ -600,6 +708,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       return
     }
 
+    const startBase = baseAddresses.find((b) => b.id === selectedStartBaseId)
+    const endBase = baseAddresses.find((b) => b.id === selectedEndBaseId) || startBase
+
     setIsApplying(true)
     let assignedCount = 0
 
@@ -607,9 +718,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const now = Date.now()
 
       for (const plan of optimizationResult.courierPlans) {
+        const returnKmPerStop =
+          plan.stops.length > 0 ? (plan.return_distance_km || 0) / plan.stops.length : 0
+
         for (let i = 0; i < plan.stops.length; i++) {
           const stop = plan.stops[i]
-          // Progressive ETA estimation (e.g. +20 min, +35 min...)
           const etaTimestamp = new Date(now + (20 + i * 15) * 60 * 1000).toISOString()
           const stopDistanceKm = Number((stop.step_distance_meters / 1000).toFixed(2))
           const fuelPrice = appSettings?.fuel_price_per_liter || 5.59
@@ -618,12 +731,24 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
           await deliveryService.updateOrder(stop.id, {
             courier_id: plan.courier.id,
-            status: 'in_transit',
+            status: 'assigned', // Permite que o entregador acione o botão "Iniciar Rota"
             sequence: i + 1,
             distance_km: stopDistanceKm,
+            return_trip_km: Number(returnKmPerStop.toFixed(2)),
+            total_route_with_return_km: Number(plan.total_distance_km),
+            total_route_fuel_cost: plan.estimated_fuel_cost,
             estimated_duration_minutes: Math.round((stop.step_distance_meters / 1000) * 3.5 + 5),
             fuel_cost: stopFuelCost,
             estimated_arrival: etaTimestamp,
+            route_started: false, // Regra 1: Entregador deve clicar em "Iniciar Rota"
+            start_base_name: startBase?.name || 'Base Central LOGHYPE',
+            start_base_address: startBase?.address,
+            start_base_lat: startBase?.lat,
+            start_base_lng: startBase?.lng,
+            end_address_name: endBase?.name || startBase?.name || 'Base Central LOGHYPE',
+            end_address_text: endBase?.address || startBase?.address,
+            end_address_lat: endBase?.lat || startBase?.lat,
+            end_address_lng: endBase?.lng || startBase?.lng,
           })
           assignedCount++
         }
@@ -632,8 +757,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         if (plan.stops.length > 0) {
           await deliveryService.createNotification({
             user_id: plan.courier.id,
-            title: '✨ Nova Rota Otimizada Atribuída',
-            message: `Você recebeu ${plan.stops.length} entregas organizadas na melhor sequência (${plan.total_distance_km} km total).`,
+            title: '📦 Nova Rota Atribuída - Clique em Iniciar Rota',
+            message: `Você recebeu ${plan.stops.length} entregas (${plan.total_distance_km} km ida/volta). Acesse o app e clique em "Iniciar Rota" para começar.`,
             type: 'order',
             read: false,
           })
@@ -641,7 +766,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
 
       toast.success(
-        `🎉 Sucesso! ${assignedCount} entregas distribuídas e despachadas para os entregadores!`,
+        `🎉 Sucesso! ${assignedCount} entregas distribuídas para os entregadores (aguardando acionamento de "Iniciar Rota")!`,
       )
       onRoutesApplied()
       onOpenChange(false)
@@ -758,6 +883,128 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {/* REQUISITO 4 & 5: CADASTRO E SELEÇÃO DE BASE E ENDEREÇO FINAL EDITÁVEL */}
+          <div className="rounded-xl border-2 border-indigo-200 bg-gradient-to-r from-indigo-50/90 to-blue-50/90 p-4 dark:border-indigo-900 dark:bg-slate-900/90 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Building className="h-4 w-4 text-indigo-600" />
+                <Label className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-slate-100">
+                  Base de Saída &amp; Endereço de Finalização (Ida e Volta)
+                </Label>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsEditingBases(!isEditingBases)}
+                className="h-7 px-2 text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {isEditingBases ? 'Fechar Cadastro' : '+ Cadastrar Nova Base / Local'}
+              </Button>
+            </div>
+
+            {/* Quick selectors for Start Base and Final Address */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  🏢 Base da Empresa / Loja (Ponto de Partida):
+                </Label>
+                <Select value={selectedStartBaseId} onValueChange={setSelectedStartBaseId}>
+                  <SelectTrigger className="h-9 text-xs bg-white dark:bg-slate-800 border-slate-300">
+                    <SelectValue placeholder="Selecione a base de saída..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {baseAddresses.map((base) => (
+                      <SelectItem key={base.id} value={base.id}>
+                        {base.name} {base.is_default ? '★ (Padrão)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-slate-500 mt-1 truncate">
+                  📍{' '}
+                  {baseAddresses.find((b) => b.id === selectedStartBaseId)?.address ||
+                    'Endereço da base'}
+                </p>
+              </div>
+
+              <div>
+                <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  🔄 Endereço Final da Rota (Retorno / Ponto de Chegada):
+                </Label>
+                <Select value={selectedEndBaseId} onValueChange={setSelectedEndBaseId}>
+                  <SelectTrigger className="h-9 text-xs bg-white dark:bg-slate-800 border-slate-300">
+                    <SelectValue placeholder="Selecione onde o motoboy finaliza..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {baseAddresses.map((base) => (
+                      <SelectItem key={base.id} value={base.id}>
+                        {base.name} {base.id === selectedStartBaseId ? '(Mesma Base de Saída)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-slate-500 mt-1 truncate">
+                  🏁{' '}
+                  {baseAddresses.find((b) => b.id === selectedEndBaseId)?.address ||
+                    'Endereço de finalização'}
+                </p>
+              </div>
+            </div>
+
+            {/* Form to add a new base / store / alternate finish address */}
+            {isEditingBases && (
+              <div className="p-3 rounded-lg bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-800 space-y-2 mt-2">
+                <p className="text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                  Cadastrar Nova Empresa, Loja ou Ponto de Finalização:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <Input
+                    placeholder="Nome da Base / Loja / Galpão"
+                    value={newBaseName}
+                    onChange={(e) => setNewBaseName(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                  <Input
+                    placeholder="Endereço completo com número, bairro e cidade"
+                    value={newBaseAddress}
+                    onChange={(e) => setNewBaseAddress(e.target.value)}
+                    className="h-8 text-xs sm:col-span-2"
+                  />
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                      <input
+                        type="radio"
+                        checked={newBaseType === 'base'}
+                        onChange={() => setNewBaseType('base')}
+                      />
+                      Base Principal / Loja
+                    </label>
+                    <label className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                      <input
+                        type="radio"
+                        checked={newBaseType === 'end_point'}
+                        onChange={() => setNewBaseType('end_point')}
+                      />
+                      Ponto de Finalização Alternativo
+                    </label>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleCreateNewBase}
+                    disabled={isCreatingBase}
+                    className="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
+                  >
+                    {isCreatingBase ? 'Salvando...' : 'Salvar Local'}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
           {/* Step 1: Courier Selection & Pending Stats */}
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-900/50 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">

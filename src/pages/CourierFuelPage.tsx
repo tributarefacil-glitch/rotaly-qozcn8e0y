@@ -99,13 +99,14 @@ export default function CourierFuelPage() {
     return true
   })
 
-  // Official route orders (delivered, in_transit, address_error, client_absent)
+  // Official route orders (Regra 1: Apenas rotas iniciadas [route_started = true] ou entregas já finalizadas)
   const officialRouteOrders = orders.filter(
     (o) =>
-      o.status === 'delivered' ||
-      o.status === 'in_transit' ||
-      o.status === 'address_error' ||
-      o.status === 'client_absent',
+      (o.route_started === true || o.status === 'delivered') &&
+      (o.status === 'delivered' ||
+        o.status === 'in_transit' ||
+        o.status === 'address_error' ||
+        o.status === 'client_absent'),
   )
 
   const filteredOrders = officialRouteOrders.filter((o) => {
@@ -123,10 +124,12 @@ export default function CourierFuelPage() {
   // Total Advance Received
   const totalAdvances = filteredAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
 
-  // Total Official Route Km
+  // Total Official Route Km (Regra 3: Ida e Volta considerada)
   const totalRouteKm = filteredOrders.reduce((sum, o) => {
-    const km = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-    return sum + km
+    const baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
+    const returnKm =
+      typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+    return sum + baseKm + returnKm
   }, 0)
 
   // Total estimated spent in routes
@@ -380,38 +383,46 @@ export default function CourierFuelPage() {
           ) : (
             <div className="space-y-2 font-sans">
               {filteredOrders.map((order) => {
-                const distKm =
+                const baseKm =
                   typeof order.distance_km === 'number' && order.distance_km > 0
                     ? order.distance_km
                     : 0
-                const cost = fuelConsumption > 0 ? (distKm * fuelPrice) / fuelConsumption : 0
+                const returnKm =
+                  typeof order.return_trip_km === 'number' && order.return_trip_km > 0
+                    ? order.return_trip_km
+                    : 0
+                const totalOrderKm = baseKm + returnKm
+                const cost = fuelConsumption > 0 ? (totalOrderKm * fuelPrice) / fuelConsumption : 0
 
                 return (
                   <div
                     key={order.id}
-                    className="p-3 rounded-card border border-slate-200 bg-white shadow-brand flex items-center justify-between text-xs"
+                    className="p-3 rounded-card border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark flex items-center justify-between text-xs"
                   >
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-mono font-bold text-[#0052CC]">
+                        <span className="font-mono font-bold text-[#60A5FA]">
                           {order.tracking_code}
                         </span>
                         <Badge
                           variant="outline"
-                          className="text-[9px] bg-slate-100 border-slate-200 text-slate-700"
+                          className="text-[9px] bg-[#0A1128] border-[#1E2B58] text-slate-300"
                         >
-                          {order.status === 'delivered' ? '✓ Entregue' : 'Em Andamento'}
+                          {order.status === 'delivered' ? '✓ Entregue' : 'Em Rota Iniciada'}
                         </Badge>
                       </div>
-                      <p className="text-[11px] text-slate-500 truncate max-w-[200px] mt-0.5">
+                      <p className="text-[11px] text-slate-400 truncate max-w-[200px] mt-0.5">
                         {order.expand?.customer_id?.name || 'Cliente'}
                       </p>
+                      {order.start_base_name && (
+                        <p className="text-[10px] text-slate-400">Base: {order.start_base_name}</p>
+                      )}
                     </div>
 
                     <div className="text-right">
                       <p className="font-bold text-[#FF6B35] font-mono">- R$ {cost.toFixed(2)}</p>
-                      <p className="text-[10px] text-slate-500">
-                        {distKm > 0 ? `${distKm.toFixed(1)} km` : 'Km N/D'}
+                      <p className="text-[10px] text-slate-400">
+                        {totalOrderKm > 0 ? `${totalOrderKm.toFixed(1)} km (c/ volta)` : 'Km N/D'}
                       </p>
                     </div>
                   </div>
