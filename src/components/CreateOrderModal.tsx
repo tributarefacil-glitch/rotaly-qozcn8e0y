@@ -59,6 +59,7 @@ import {
   fallbackReverseGeocode,
   normalizeBrazilianUF,
 } from '@/lib/googleMaps'
+import { BaseAddressAutocomplete, BaseAddressResult } from '@/components/BaseAddressAutocomplete'
 
 interface CreateOrderModalProps {
   open: boolean
@@ -98,7 +99,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
   // Search input controlled state
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
-  const [isSearchingAddress, setIsSearchingAddress] = useState(false)
 
   // Split Address Fields (Rua e Número, Bairro, Cidade, UF e CEP)
   const [streetAndNumber, setStreetAndNumber] = useState('')
@@ -156,14 +156,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   )
 
   // Map & Autocomplete refs
-  const autocompleteInputRef = useRef<HTMLInputElement>(null)
   const mapContainerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapInstanceRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markerInstanceRef = useRef<any>(null)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const autocompleteInstanceRef = useRef<any>(null)
   const isReverseGeocodingRef = useRef<boolean>(false)
 
   // Helper to check window.google safely
@@ -590,139 +587,24 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
   }, [hasLocationPinned, reverseGeocode, selectedCoords, updateMapPosition])
 
-  // Initialize Places Autocomplete
-  const initAutocomplete = useCallback(() => {
-    const google = getGoogle()
-    if (!autocompleteInputRef.current || !google?.maps?.places) return
-
-    try {
-      if (autocompleteInstanceRef.current) return
-
-      const autocomplete = new google.maps.places.Autocomplete(autocompleteInputRef.current, {
-        componentRestrictions: { country: 'br' },
-        fields: ['address_components', 'geometry', 'formatted_address', 'name'],
-      })
-
-      autocompleteInstanceRef.current = autocomplete
-
-      autocomplete.addListener('place_changed', () => {
-        const place = autocomplete.getPlace()
-        if (!place || !place.geometry || !place.geometry.location) {
-          return
-        }
-
-        const lat = place.geometry.location.lat()
-        const lng = place.geometry.location.lng()
-
-        const parsed = parseGoogleAddressComponents(
-          place.address_components || [],
-          place.formatted_address || place.name || '',
-        )
-
-        applyAddressData(parsed)
-
-        // Set input display value
-        if (autocompleteInputRef.current) {
-          const val = place.formatted_address || place.name || ''
-          setAddressSearchQuery(val)
-        }
-
-        updateMapPosition(lat, lng, 16, false)
-        toast.success('Endereço preenchido com sucesso!')
-      })
-    } catch (err) {
-      console.error('Error attaching Places Autocomplete:', err)
-    }
-  }, [applyAddressData, updateMapPosition])
-
-  // Manual fallback geocode when user presses Enter or clicks search button
-  const handleManualAddressSearch = async () => {
-    const query = addressSearchQuery.trim() || autocompleteInputRef.current?.value.trim()
-    if (!query) {
-      toast.info('Digite um endereço para buscar.')
-      return
-    }
-
-    setIsSearchingAddress(true)
-    let found = false
-
-    // 1. If it looks like a CEP (e.g. 01310-100 or 8 digits)
-    const cepDigits = query.replace(/\D/g, '')
-    if (cepDigits.length === 8 && /^\d+$/.test(cepDigits)) {
-      const viaCepResult = await lookupViaCep(cepDigits)
-      if (viaCepResult) {
-        applyAddressData(viaCepResult)
-        toast.success(`Endereço localizado via CEP ${cepDigits}!`)
-        found = true
-        // Geocode coordinates via Google or Nominatim
-        const fullAddrQuery = `${viaCepResult.street}, ${viaCepResult.neighborhood}, ${viaCepResult.city} - ${viaCepResult.state}, Brasil`
-        const nom = await fallbackGeocodeAddress(fullAddrQuery)
-        if (nom) {
-          updateMapPosition(nom.lat, nom.lng, 16, false)
-        }
-        setIsSearchingAddress(false)
-        return
+  // Callback when user selects address from BaseAddressAutocomplete
+  const handleAddressSelectFromAutocomplete = useCallback(
+    (result: BaseAddressResult) => {
+      if (result.parsed) {
+        applyAddressData(result.parsed)
+      } else {
+        setStreetAndNumber(result.address || result.name || '')
       }
-    }
 
-    // 2. Try Google Maps Geocoder if loaded
-    const google = getGoogle()
-    if (google?.maps?.Geocoder) {
-      try {
-        const geocoder = new google.maps.Geocoder()
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await new Promise<void>((resolve) => {
-          geocoder.geocode(
-            { address: query, componentRestrictions: { country: 'br' } },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (results: any[], status: string) => {
-              if (status === 'OK' && results?.[0]?.geometry?.location) {
-                const loc = results[0].geometry.location
-                const lat = loc.lat()
-                const lng = loc.lng()
-                const parsed = parseGoogleAddressComponents(
-                  results[0].address_components || [],
-                  results[0].formatted_address || query,
-                )
-                applyAddressData(parsed)
-                updateMapPosition(lat, lng, 16, false)
-                toast.success('Endereço localizado no Google Maps!')
-                found = true
-              }
-              resolve()
-            },
-          )
-        })
-      } catch (e) {
-        console.warn('Google geocoding failed:', e)
+      setAddressSearchQuery(result.address || result.name || '')
+
+      if (typeof result.lat === 'number' && typeof result.lng === 'number') {
+        updateMapPosition(result.lat, result.lng, 16, false)
+        toast.success('Endereço selecionado e localizado no mapa!')
       }
-    }
-
-    // 3. Try Fallback Geocoding (Nominatim / OpenStreetMap)
-    if (!found) {
-      try {
-        const fallbackRes = await fallbackGeocodeAddress(query)
-        if (fallbackRes) {
-          applyAddressData(fallbackRes.parsed)
-          updateMapPosition(fallbackRes.lat, fallbackRes.lng, 16, false)
-          toast.success('Endereço localizado via base geográfica!')
-          found = true
-        }
-      } catch (err) {
-        console.warn('Fallback geocode failed:', err)
-      }
-    }
-
-    setIsSearchingAddress(false)
-
-    if (!found) {
-      // Basic fallback without geocoder: parse street and number
-      setStreetAndNumber(query)
-      toast.info(
-        'Texto transferido para o logradouro. Preencha os campos ou informe o CEP para autocompletar.',
-      )
-    }
-  }
+    },
+    [applyAddressData, updateMapPosition],
+  )
 
   // Automatic CEP lookup when user finishes typing 8 digits in CEP field
   const handleCepChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -758,20 +640,18 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     if (!open) {
       mapInstanceRef.current = null
       markerInstanceRef.current = null
-      autocompleteInstanceRef.current = null
     }
   }, [open])
 
-  // Initialize Map and Autocomplete when modal opens and maps API is ready
+  // Initialize Map when modal opens and maps API is ready
   useEffect(() => {
     if (open && isMapsLoaded && isAddingCustomer) {
       const timer = setTimeout(() => {
         initMap()
-        initAutocomplete()
       }, 150)
       return () => clearTimeout(timer)
     }
-  }, [open, isMapsLoaded, isAddingCustomer, initMap, initAutocomplete])
+  }, [open, isMapsLoaded, isAddingCustomer, initMap])
 
   // When selecting existing customer
   const handleSelectExistingCustomer = (id: string) => {
@@ -1307,7 +1187,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   )}
                 </div>
 
-                {/* 1. Google Places Autocomplete Search Bar */}
+                {/* 1. Google Places / ViaCEP Autocomplete Search Bar */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
@@ -1318,39 +1198,16 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                       Digite rua, CEP ou local para preencher tudo
                     </span>
                   </div>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Input
-                        ref={autocompleteInputRef}
-                        value={addressSearchQuery}
-                        onChange={(e) => setAddressSearchQuery(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            handleManualAddressSearch()
-                          }
-                        }}
-                        placeholder="Comece a digitar o endereço ou CEP, ex: Av. Paulista, 1000..."
-                        className="bg-white dark:bg-slate-800 text-xs pl-8 pr-4 shadow-sm border-blue-200 focus:border-blue-500"
-                      />
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleManualAddressSearch}
-                      disabled={isSearchingAddress || !addressSearchQuery.trim()}
-                      className="text-xs font-semibold gap-1 whitespace-nowrap bg-white hover:bg-slate-100 dark:bg-slate-800"
-                    >
-                      {isSearchingAddress ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Search className="h-3.5 w-3.5" />
-                      )}
-                      Buscar
-                    </Button>
-                  </div>
+                  <BaseAddressAutocomplete
+                    value={addressSearchQuery}
+                    onChange={(val) => setAddressSearchQuery(val)}
+                    onAddressSelect={handleAddressSelectFromAutocomplete}
+                    placeholder="Comece a digitar o endereço ou CEP, ex: Av. Paulista, 1000..."
+                    className="w-full"
+                    inputClassName="bg-white dark:bg-slate-800 text-xs border-blue-200 focus-visible:ring-blue-500 text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
+                    biasCoordinates={selectedCoords}
+                    showSearchButton={true}
+                  />
                 </div>
 
                 {/* 2. Customer Location Link Importer (WhatsApp / Google Maps pin) */}

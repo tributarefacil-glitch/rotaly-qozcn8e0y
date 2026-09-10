@@ -31,7 +31,9 @@ interface BaseAddressAutocompleteProps {
   placeholder?: string
   className?: string
   inputClassName?: string
+  buttonClassName?: string
   biasCoordinates?: BiasCoordinates | null
+  showSearchButton?: boolean
 }
 
 // Cache de geolocalização do usuário em memória na sessão (executado uma única vez por sessão do app)
@@ -96,7 +98,9 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   placeholder = 'Buscar endereço da base no Maps (Rua, Número, Bairro, Cidade)...',
   className = '',
   inputClassName = '',
+  buttonClassName = '',
   biasCoordinates = null,
+  showSearchButton = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -105,6 +109,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeRequestIdRef = useRef<number>(0)
   const isSelectedRef = useRef<boolean>(false)
+  const activeAbortControllerRef = useRef<AbortController | null>(null)
 
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
   const [isOpen, setIsOpen] = useState(false)
@@ -246,10 +251,21 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
           nominatimUrl += `&viewbox=${minLon},${maxLat},${maxLon},${minLat}&bounded=0`
         }
 
+        // Cancelar requisição em voo anterior
+        if (activeAbortControllerRef.current) {
+          activeAbortControllerRef.current.abort()
+        }
+        const controller = new AbortController()
+        activeAbortControllerRef.current = controller
+        const timeoutTimer = setTimeout(() => controller.abort(), 4500)
+
         const res = await fetch(nominatimUrl, {
+          signal: controller.signal,
           headers: {
             'Accept-Language': 'pt-BR,pt;q=0.9',
           },
+        }).finally(() => {
+          clearTimeout(timeoutTimer)
         })
 
         if (requestId !== activeRequestIdRef.current) return
@@ -469,11 +485,22 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
     const defaultLat = effectiveBias?.lat ?? -22.906847
     const defaultLng = effectiveBias?.lng ?? -43.172896
 
+    // Cancelar requisição de predição em voo se houver
+    if (activeAbortControllerRef.current) {
+      activeAbortControllerRef.current.abort()
+    }
+    const manualController = new AbortController()
+    activeAbortControllerRef.current = manualController
+
     try {
-      // 1. Tentar CEP se houver padrão de CEP
-      const cepMatch = query.match(/\d{5}-?\d{3}/)
+      // 1. Tentar CEP se houver padrão de CEP ou 8 dígitos
+      const cepDigits = query.replace(/\D/g, '')
+      const cepMatch = query.match(/\d{5}-?\d{3}/) || (cepDigits.length === 8 ? [cepDigits] : null)
       if (cepMatch) {
-        const cepResult = await lookupViaCep(cepMatch[0])
+        const cepResult = await lookupViaCep(cepMatch[0], {
+          signal: manualController.signal,
+          timeoutMs: 4500,
+        })
         if (cepResult) {
           const formatted =
             cepResult.formattedAddress ||
@@ -485,7 +512,10 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
 
           // Tentar geocodificar o endereço do CEP para obter lat/lng precisas
           const fullQuery = `${cepResult.street || ''}, ${cepResult.neighborhood || ''}, ${cepResult.city || ''} - ${cepResult.state || ''}, Brasil`
-          const geoCep = await fallbackGeocodeAddress(fullQuery, activeBias)
+          const geoCep = await fallbackGeocodeAddress(fullQuery, activeBias, {
+            signal: manualController.signal,
+            timeoutMs: 4500,
+          })
 
           onAddressSelect({
             address: formatted || query,
@@ -499,7 +529,10 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
       }
 
       // 2. Geocodificação OpenStreetMap / Nominatim fallback
-      const geo = await fallbackGeocodeAddress(query, activeBias)
+      const geo = await fallbackGeocodeAddress(query, activeBias, {
+        signal: manualController.signal,
+        timeoutMs: 5000,
+      })
       if (geo) {
         onAddressSelect({
           address: geo.parsed?.formattedAddress || query,
@@ -514,8 +547,10 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
           lng: defaultLng,
         })
       }
-    } catch (err) {
-      console.warn('Manual address search error:', err)
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.warn('Manual address search error:', err)
+      }
     } finally {
       setIsManualSearching(false)
     }
@@ -574,8 +609,11 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
             }
           }}
           placeholder={placeholder}
-          className={`pl-8 text-xs ${inputClassName}`}
+          className={`pl-8 ${isLoadingSuggestions ? 'pr-8' : ''} text-xs ${inputClassName}`}
           autoComplete="off"
+          data-form-type="other"
+          data-lpignore="true"
+          spellCheck={false}
         />
 
         {isLoadingSuggestions && (
@@ -588,7 +626,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
         {isOpen && suggestions.length > 0 && (
           <ul
             ref={listRef}
-            className="absolute left-0 right-0 top-full mt-1 max-h-60 overflow-y-auto rounded-md border border-slate-700 bg-slate-900 py-1 text-xs shadow-xl z-50 divide-y divide-slate-800"
+            className="absolute left-0 right-0 top-full mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 text-xs shadow-2xl z-50 divide-y divide-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:divide-slate-800"
           >
             {suggestions.map((suggestion, idx) => {
               const isSelected = idx === selectedIndex
@@ -601,14 +639,18 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
                   }}
                   onMouseEnter={() => setSelectedIndex(idx)}
                   className={`flex items-start gap-2.5 px-3 py-2 cursor-pointer transition-colors ${
-                    isSelected ? 'bg-orange-500/20 text-white' : 'text-slate-200 hover:bg-slate-800'
+                    isSelected
+                      ? 'bg-blue-50 text-blue-900 dark:bg-orange-500/20 dark:text-white'
+                      : 'text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800'
                   }`}
                 >
-                  <Building2 className="h-3.5 w-3.5 text-orange-400 shrink-0 mt-0.5" />
+                  <Building2 className="h-3.5 w-3.5 text-blue-600 dark:text-orange-400 shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-slate-100 truncate">{suggestion.mainText}</p>
+                    <p className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                      {suggestion.mainText}
+                    </p>
                     {suggestion.secondaryText && (
-                      <p className="text-[11px] text-slate-400 truncate">
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
                         {suggestion.secondaryText}
                       </p>
                     )}
@@ -620,21 +662,24 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
         )}
       </div>
 
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        disabled={isBusy || !value.trim()}
-        onClick={handleManualSearch}
-        className="h-8 px-2.5 text-xs text-slate-400 hover:text-white shrink-0"
-        title="Buscar coordenadas no mapa"
-      >
-        {isBusy ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Search className="h-3.5 w-3.5" />
-        )}
-      </Button>
+      {showSearchButton && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={isBusy || !value.trim()}
+          onClick={handleManualSearch}
+          className={`h-9 px-3 text-xs font-semibold gap-1 whitespace-nowrap bg-white hover:bg-slate-100 dark:bg-slate-800 shrink-0 ${buttonClassName}`}
+          title="Buscar endereço e preencher dados"
+        >
+          {isBusy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Search className="h-3.5 w-3.5" />
+          )}
+          Buscar
+        </Button>
+      )}
     </div>
   )
 }

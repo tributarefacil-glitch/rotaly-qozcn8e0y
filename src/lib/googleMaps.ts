@@ -373,12 +373,31 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
 /**
  * Searches address by Brazilian CEP using ViaCEP (free Brazilian Postal API fallback)
  */
-export async function lookupViaCep(cep: string): Promise<ParsedAddress | null> {
+export async function lookupViaCep(
+  cep: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<ParsedAddress | null> {
   const cleanCep = cep.replace(/\D/g, '')
   if (cleanCep.length !== 8) return null
 
+  const timeoutMs = options?.timeoutMs ?? 5000
+  const timeoutController = new AbortController()
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs)
+
+  let combinedSignal: AbortSignal = timeoutController.signal
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timer)
+      return null
+    }
+    // Listen to parent abort
+    options.signal.addEventListener('abort', () => timeoutController.abort(), { once: true })
+  }
+
   try {
-    const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`)
+    const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`, {
+      signal: combinedSignal,
+    })
     if (!res.ok) return null
     const data = await res.json()
     if (data.erro) return null
@@ -395,9 +414,13 @@ export async function lookupViaCep(cep: string): Promise<ParsedAddress | null> {
       postalCode: data.cep || cleanCep,
       formattedAddress: `${data.logradouro || ''}, ${data.bairro || ''}, ${data.localidade || ''} - ${data.uf || ''}, ${data.cep || ''}`,
     }
-  } catch (err) {
-    console.warn('ViaCEP lookup failed:', err)
+  } catch (err: any) {
+    if (err?.name !== 'AbortError') {
+      console.warn('ViaCEP lookup failed:', err)
+    }
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -407,7 +430,20 @@ export async function lookupViaCep(cep: string): Promise<ParsedAddress | null> {
 export async function fallbackGeocodeAddress(
   query: string,
   biasCoords?: { lat: number; lng: number } | null,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<{ lat: number; lng: number; parsed: ParsedAddress } | null> {
+  const timeoutMs = options?.timeoutMs ?? 6000
+  const timeoutController = new AbortController()
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs)
+
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timer)
+      return null
+    }
+    options.signal.addEventListener('abort', () => timeoutController.abort(), { once: true })
+  }
+
   try {
     let url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=br&limit=1&q=${encodeURIComponent(
       query,
@@ -422,6 +458,7 @@ export async function fallbackGeocodeAddress(
       url += `&viewbox=${minLon},${maxLat},${maxLon},${minLat}&bounded=0`
     }
     const res = await fetch(url, {
+      signal: timeoutController.signal,
       headers: {
         'Accept-Language': 'pt-BR,pt;q=0.9',
       },
@@ -468,9 +505,13 @@ export async function fallbackGeocodeAddress(
         formattedAddress: item.display_name,
       },
     }
-  } catch (e) {
-    console.warn('Fallback Nominatim geocode error:', e)
+  } catch (e: any) {
+    if (e?.name !== 'AbortError') {
+      console.warn('Fallback Nominatim geocode error:', e)
+    }
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -480,10 +521,24 @@ export async function fallbackGeocodeAddress(
 export async function fallbackReverseGeocode(
   lat: number,
   lng: number,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<ParsedAddress | null> {
+  const timeoutMs = options?.timeoutMs ?? 6000
+  const timeoutController = new AbortController()
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs)
+
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timer)
+      return null
+    }
+    options.signal.addEventListener('abort', () => timeoutController.abort(), { once: true })
+  }
+
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&lat=${lat}&lon=${lng}`
     const res = await fetch(url, {
+      signal: timeoutController.signal,
       headers: {
         'Accept-Language': 'pt-BR,pt;q=0.9',
       },
@@ -514,8 +569,12 @@ export async function fallbackReverseGeocode(
       postalCode,
       formattedAddress: data.display_name,
     }
-  } catch (e) {
-    console.warn('Fallback Nominatim reverse geocode error:', e)
+  } catch (e: any) {
+    if (e?.name !== 'AbortError') {
+      console.warn('Fallback Nominatim reverse geocode error:', e)
+    }
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
