@@ -24,6 +24,8 @@ import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import { CreateOrderModal } from '@/components/CreateOrderModal'
+import { CreateCourierModal } from '@/components/CreateCourierModal'
+import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { ControlTower } from '@/components/ControlTower'
@@ -86,6 +88,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
+  const [isCreateCourierModalOpen, setIsCreateCourierModalOpen] = useState(false)
+  const [isCreateCustomerModalOpen, setIsCreateCustomerModalOpen] = useState(false)
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -377,22 +381,22 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               </p>
             </div>
 
-            <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={loadData}
-                className="h-9 gap-1.5 text-xs text-slate-600 dark:text-slate-300"
+                className="h-10 min-h-[44px] gap-1.5 text-xs text-slate-300 border-[#1E2B58] hover:bg-[#1E2B58] hover:text-white"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 Atualizar
               </Button>
-              {/* REQUISITO 5: BOTÃO/CAMPO EDITÁVEL PARA MARCAR BASE OU ENDEREÇO FINAL AO LADO DE INICIAR DESPACHO */}
+
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setIsBaseConfigOpen(!isBaseConfigOpen)}
-                className={`h-9 gap-1.5 text-xs border border-[#60A5FA]/40 font-bold ${
+                className={`h-10 min-h-[44px] gap-1.5 text-xs border border-[#60A5FA]/40 font-bold ${
                   isBaseConfigOpen
                     ? 'bg-[#0052CC] text-white'
                     : 'bg-[#0E1738] text-[#60A5FA] hover:bg-[#121E46]'
@@ -400,26 +404,151 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 title="Configurar a Base da Empresa e Endereço Final de Retorno da Rota"
               >
                 <Building className="h-3.5 w-3.5 text-[#FF6B35]" />
-                <span className="hidden md:inline">Base &amp; Endereço Final:</span>
-                <span className="max-w-[130px] truncate text-white">
+                <span className="hidden lg:inline">Base &amp; Retorno:</span>
+                <span className="max-w-[110px] truncate text-white">
                   {baseAddresses.find((b) => b.id === selectedBaseId)?.name || 'Base Central'}
                 </span>
                 <Edit3 className="h-3 w-3 text-slate-400" />
               </Button>
+
+              <Button
+                onClick={() => setIsCreateCustomerModalOpen(true)}
+                className="h-10 min-h-[44px] gap-1.5 bg-[#0A1128] hover:bg-[#121E46] text-[#22C55E] border border-[#22C55E]/40 font-bold text-xs rounded-input shadow-sm transition"
+              >
+                <UserPlus className="h-4 w-4 text-[#22C55E]" />
+                <span>+ Cliente</span>
+              </Button>
+
+              <Button
+                onClick={() => setIsCreateCourierModalOpen(true)}
+                className="h-10 min-h-[44px] gap-1.5 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition"
+              >
+                <Truck className="h-4 w-4 text-[#FF6B35]" />
+                <span>+ Entregador</span>
+              </Button>
+
               <Button
                 onClick={() => setIsOptimizerModalOpen(true)}
-                className="h-9 gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold text-xs shadow-md shadow-indigo-500/20"
+                className="h-10 min-h-[44px] gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 rounded-input"
               >
-                <Sparkles className="h-3.5 w-3.5" />
-                Otimizar Rotas da Frota
+                <Sparkles className="h-4 w-4 text-[#FBBF24]" />
+                <span>Otimizar Rota</span>
               </Button>
+
               <Button
                 onClick={() => setIsCreateModalOpen(true)}
-                className="gap-2 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
+                className="h-10 min-h-[44px] gap-2 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-black text-xs shadow-brand rounded-input transition duration-100"
               >
                 <Plus className="h-4 w-4" />
-                Novo Despacho
-              </Button>{' '}
+                <span>Nova Entrega / Venda</span>
+              </Button>
+            </div>
+          </div>
+
+          {/* Quick Actions Ribbon (LOGHYPE Visual: Dark Navy #0A1128, Fita Verde→Amarelo→Laranja→Vermelho, Mínimo 44px mobile touch) */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-heading flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 text-[#FF6B35]" />
+                Ações Rápidas do Vendedor
+              </span>
+              <span className="text-[11px] text-slate-500 hidden sm:inline">
+                Acesso direto aos fluxos centrais da sua operação
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              {/* Card 1: Nova Entrega / Venda */}
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(true)}
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#FF6B35]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#FF6B35]"
+              >
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#FF6B35] to-[#E74C3C]" />
+                <div className="h-12 w-12 rounded-xl bg-[#FF6B35]/15 border border-[#FF6B35]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Package className="h-6 w-6 text-[#FF6B35]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-heading font-black text-sm text-white group-hover:text-[#FF6B35] transition-colors">
+                      Nova Entrega / Venda
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#FF6B35] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                    Registrar pedido, buscar cliente e calcular rota inteligente
+                  </p>
+                </div>
+              </button>
+
+              {/* Card 2: Cadastrar Cliente */}
+              <button
+                type="button"
+                onClick={() => setIsCreateCustomerModalOpen(true)}
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#22C55E]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#22C55E]"
+              >
+                <div className="absolute top-0 left-0 right-0 h-1 bg-[#22C55E]" />
+                <div className="h-12 w-12 rounded-xl bg-[#22C55E]/15 border border-[#22C55E]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <UserPlus className="h-6 w-6 text-[#22C55E]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-heading font-black text-sm text-white group-hover:text-[#22C55E] transition-colors">
+                      Cadastrar Cliente
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#22C55E] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                    Até 3 telefones, busca CEP e deduplicação automática
+                  </p>
+                </div>
+              </button>
+
+              {/* Card 3: Cadastrar Entregador */}
+              <button
+                type="button"
+                onClick={() => setIsCreateCourierModalOpen(true)}
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#60A5FA]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#0052CC]"
+              >
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#0052CC] to-[#60A5FA]" />
+                <div className="h-12 w-12 rounded-xl bg-[#0052CC]/20 border border-[#0052CC]/40 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Truck className="h-6 w-6 text-[#60A5FA]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-heading font-black text-sm text-white group-hover:text-[#60A5FA] transition-colors">
+                      Cadastrar Entregador
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#60A5FA] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                    Moto, Carro ou Caminhão, placa e acesso ao App
+                  </p>
+                </div>
+              </button>
+
+              {/* Card 4: Otimizar / Iniciar Rota */}
+              <button
+                type="button"
+                onClick={() => setIsOptimizerModalOpen(true)}
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#FBBF24]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#FBBF24]"
+              >
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#22C55E] via-[#FBBF24] to-[#FF6B35]" />
+                <div className="h-12 w-12 rounded-xl bg-[#FBBF24]/15 border border-[#FBBF24]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Sparkles className="h-6 w-6 text-[#FBBF24]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-heading font-black text-sm text-white group-hover:text-[#FBBF24] transition-colors">
+                      Otimizar / Iniciar Rota
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#FBBF24] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                    Divisão por múltiplos entregadores e despacho de frotas
+                  </p>
+                </div>
+              </button>
             </div>
           </div>
 
@@ -995,6 +1124,22 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         customers={customers}
         couriers={couriers}
         onOrderCreated={loadData}
+      />
+
+      {/* Modal para Cadastro Rápido de Entregador pelo Vendedor */}
+      <CreateCourierModal
+        open={isCreateCourierModalOpen}
+        onOpenChange={setIsCreateCourierModalOpen}
+        onCourierCreated={loadData}
+      />
+
+      {/* Modal para Cadastro Direto de Cliente pelo Vendedor */}
+      <CreateCustomerModal
+        open={isCreateCustomerModalOpen}
+        onOpenChange={setIsCreateCustomerModalOpen}
+        onCustomerCreated={() => {
+          loadData()
+        }}
       />
 
       {/* Multi-Courier Route Optimizer Assistant Modal */}
