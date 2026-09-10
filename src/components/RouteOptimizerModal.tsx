@@ -147,9 +147,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 }) => {
   // Pending orders eligible for routing optimization
   const pendingOrders = useMemo(() => {
-    return orders.filter(
-      (o) => o.status === 'pending' || (o.status === 'in_transit' && !o.courier_id),
-    )
+    return orders.filter((o) => {
+      if (o.status === 'delivered' || o.status === 'cancelled') return false
+      if (o.route_released === false || !o.route_released) return true
+      return o.status === 'pending' || o.status === 'assigned'
+    })
   }, [orders])
 
   // Selected available couriers (ids) - ETAPA 1
@@ -209,7 +211,12 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       // Seleciona todas as pendentes inicialmente para conveniência
       setSelectedOrderIds(
         orders
-          .filter((o) => o.status === 'pending' || (o.status === 'in_transit' && !o.courier_id))
+          .filter(
+            (o) =>
+              (o.route_released === false || !o.route_released) &&
+              o.status !== 'delivered' &&
+              o.status !== 'cancelled',
+          )
           .map((o) => o.id),
       )
       setWizardStep('couriers')
@@ -950,13 +957,97 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           }
         })
       } else {
-        // Exibição antes da otimização: entregas pendentes selecionadas/todas
+        // Exibição antes da otimização: inclui PONTO DE PARTIDA 🟢 e PONTO DE CHEGADA 🏁
+        const startBaseObj = baseAddresses.find((b) => b.id === selectedStartBaseId) || {
+          id: 'default-base',
+          name: 'Base Central LOGHYPE',
+          address: 'Centro, Rio de Janeiro - RJ',
+          lat: -22.906847,
+          lng: -43.172896,
+        }
+        const endBaseObj = baseAddresses.find((b) => b.id === selectedEndBaseId) || startBaseObj
+
+        // 1. Ponto de Partida selecionado
+        if (startBaseObj.lat && startBaseObj.lng) {
+          bounds.extend(new google.maps.LatLng(startBaseObj.lat, startBaseObj.lng))
+          hasPoints = true
+          const startMarker = new google.maps.Marker({
+            position: { lat: startBaseObj.lat, lng: startBaseObj.lng },
+            map: mapInstanceRef.current,
+            title: `🟢 PARTIDA: ${startBaseObj.name}`,
+            icon: {
+              path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+              scale: 7,
+              fillColor: '#10b981',
+              fillOpacity: 1,
+              strokeWeight: 2,
+              strokeColor: '#ffffff',
+            },
+            zIndex: 100,
+          })
+          const startInfo = new google.maps.InfoWindow({
+            content: `
+              <div style="padding: 6px; font-family: sans-serif; color: #0f172a;">
+                <span style="background: #10b981; color: white; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: bold;">
+                  🟢 PONTO DE PARTIDA
+                </span>
+                <p style="font-weight: bold; margin: 4px 0 2px; font-size: 12px;">${startBaseObj.name}</p>
+                <p style="font-size: 11px; margin: 0; color: #475569;">${startBaseObj.address || ''}</p>
+              </div>
+            `,
+          })
+          startMarker.addListener('click', () =>
+            startInfo.open(mapInstanceRef.current, startMarker),
+          )
+          markersAndPolylinesRef.current.push(startMarker)
+        }
+
+        // 2. Ponto de Chegada selecionado
+        if (
+          endBaseObj.lat &&
+          endBaseObj.lng &&
+          (endBaseObj.id !== startBaseObj.id ||
+            endBaseObj.lat !== startBaseObj.lat ||
+            endBaseObj.lng !== startBaseObj.lng)
+        ) {
+          bounds.extend(new google.maps.LatLng(endBaseObj.lat, endBaseObj.lng))
+          hasPoints = true
+          const endMarker = new google.maps.Marker({
+            position: { lat: endBaseObj.lat, lng: endBaseObj.lng },
+            map: mapInstanceRef.current,
+            title: `🏁 CHEGADA: ${endBaseObj.name}`,
+            icon: {
+              path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+              scale: 7,
+              fillColor: '#ef4444',
+              fillOpacity: 1,
+              strokeWeight: 2,
+              strokeColor: '#ffffff',
+            },
+            zIndex: 99,
+          })
+          const endInfo = new google.maps.InfoWindow({
+            content: `
+              <div style="padding: 6px; font-family: sans-serif; color: #0f172a;">
+                <span style="background: #ef4444; color: white; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: bold;">
+                  🏁 PONTO DE CHEGADA / RETORNO
+                </span>
+                <p style="font-weight: bold; margin: 4px 0 2px; font-size: 12px;">${endBaseObj.name}</p>
+                <p style="font-size: 11px; margin: 0; color: #475569;">${endBaseObj.address || ''}</p>
+              </div>
+            `,
+          })
+          endMarker.addListener('click', () => endInfo.open(mapInstanceRef.current, endMarker))
+          markersAndPolylinesRef.current.push(endMarker)
+        }
+
+        // 3. Entregas pendentes selecionadas/todas com pin numerado 📍
         const ordersToShow =
           selectedOrderIds.length > 0
             ? pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
             : pendingOrders
 
-        ordersToShow.forEach((o) => {
+        ordersToShow.forEach((o, idx) => {
           const cust = customers.find((c) => c.id === o.customer_id)
           if (cust && cust.lat && cust.lng) {
             bounds.extend(new google.maps.LatLng(cust.lat, cust.lng))
@@ -965,9 +1056,32 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             const m = new google.maps.Marker({
               position: { lat: cust.lat, lng: cust.lng },
               map: mapInstanceRef.current,
-              title: `${cust.name} - ${o.tracking_code}`,
-              icon: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+              title: `#${idx + 1} - ${cust.name} (${o.tracking_code})`,
+              label: {
+                text: `${idx + 1}`,
+                color: '#ffffff',
+                fontWeight: 'bold',
+                fontSize: '11px',
+              },
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 12,
+                fillColor: '#f97316', // Orange pin
+                fillOpacity: 0.95,
+                strokeWeight: 2,
+                strokeColor: '#ffffff',
+              },
             })
+            const info = new google.maps.InfoWindow({
+              content: `
+                <div style="padding: 6px; font-family: sans-serif; color: #0f172a; max-width: 220px;">
+                  <strong style="font-size: 12px; color: #f97316;">Parada #${idx + 1}: ${cust.name}</strong>
+                  <p style="font-size: 11px; margin: 2px 0; color: #475569;">📍 ${cust.address || 'Sem endereço'}</p>
+                  <p style="font-size: 10px; margin: 0; color: #64748b;">Código: <b>${o.tracking_code}</b></p>
+                </div>
+              `,
+            })
+            m.addListener('click', () => info.open(mapInstanceRef.current, m))
             markersAndPolylinesRef.current.push(m)
           }
         })
@@ -1007,7 +1121,22 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     couriers,
     customers,
     locations,
+    selectedStartBaseId,
+    selectedEndBaseId,
+    baseAddresses,
   ])
+
+  // Trigger map resize when modal opens or step changes to avoid black/blank map
+  useEffect(() => {
+    if (!open) return
+    const timer = setTimeout(() => {
+      const google = getGoogle()
+      if (mapInstanceRef.current && google?.maps) {
+        google.maps.event.trigger(mapInstanceRef.current, 'resize')
+      }
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [open, wizardStep, isMapsLoaded])
 
   // Apply & Save Distribution (com opção de atribuir ou já Liberar Rota diretamente)
   const handleApplyDistribution = async (releaseDirectly = false) => {
@@ -1774,7 +1903,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                               {ord.priority || 'Normal'}
                             </b>
                           </span>
-                          <span>Valor: R$ {ord.total_amount?.toFixed(2) || '0.00'}</span>
+                          <span>Valor: R$ {ord.total_price?.toFixed(2) || '0.00'}</span>
                         </div>
                       </div>
                     </label>
@@ -1889,33 +2018,224 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                     )}
                   </div>
 
-                  {/* Nodes breakdown on visual map */}
-                  <div className="relative z-20 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {optimizationResult?.courierPlans.slice(0, 6).map((plan) => (
-                      <div
-                        key={plan.courier.id}
-                        className="bg-slate-900/90 backdrop-blur p-2 rounded-lg border border-slate-700 text-[11px] space-y-1"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className="h-2.5 w-2.5 rounded-full"
-                            style={{ backgroundColor: plan.color }}
-                          />
-                          <strong className="text-white truncate">{plan.courier.name}</strong>
+                  {/* Cartographic canvas with interactive pins: Ponto de Partida 🟢, Chegada 🏁 and Stops 📍 */}
+                  {(() => {
+                    const fallbackStartBase = baseAddresses.find(
+                      (b) => b.id === selectedStartBaseId,
+                    ) || {
+                      id: 'default-base',
+                      name: 'Base Central LOGHYPE',
+                      address: 'Centro, Rio de Janeiro - RJ',
+                      lat: -22.906847,
+                      lng: -43.172896,
+                    }
+                    const fallbackEndBase =
+                      baseAddresses.find((b) => b.id === selectedEndBaseId) || fallbackStartBase
+                    const selectedOrdersList =
+                      selectedOrderIds.length > 0
+                        ? pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
+                        : pendingOrders
+
+                    // Coleta todos os pontos conhecidos para calcular min/max e enquadramento relativo
+                    interface MapPoint {
+                      id: string
+                      label: string
+                      sublabel?: string
+                      lat: number
+                      lng: number
+                      color: string
+                      badge?: string
+                      type: 'start' | 'end' | 'stop' | 'courier'
+                    }
+
+                    const points: MapPoint[] = []
+                    if (fallbackStartBase.lat && fallbackStartBase.lng) {
+                      points.push({
+                        id: 'start-base',
+                        label: `🟢 ${fallbackStartBase.name}`,
+                        sublabel: fallbackStartBase.address,
+                        lat: fallbackStartBase.lat,
+                        lng: fallbackStartBase.lng,
+                        color: '#10b981',
+                        badge: 'PARTIDA',
+                        type: 'start',
+                      })
+                    }
+
+                    if (
+                      fallbackEndBase.lat &&
+                      fallbackEndBase.lng &&
+                      (fallbackEndBase.id !== fallbackStartBase.id ||
+                        fallbackEndBase.lat !== fallbackStartBase.lat ||
+                        fallbackEndBase.lng !== fallbackStartBase.lng)
+                    ) {
+                      points.push({
+                        id: 'end-base',
+                        label: `🏁 ${fallbackEndBase.name}`,
+                        sublabel: fallbackEndBase.address,
+                        lat: fallbackEndBase.lat,
+                        lng: fallbackEndBase.lng,
+                        color: '#ef4444',
+                        badge: 'CHEGADA',
+                        type: 'end',
+                      })
+                    }
+
+                    if (optimizationResult) {
+                      optimizationResult.courierPlans.forEach((plan) => {
+                        const isTabActive =
+                          activeCourierTab === 'all' || activeCourierTab === plan.courier.id
+                        if (!isTabActive) return
+                        plan.stops.forEach((stop, sIdx) => {
+                          points.push({
+                            id: `opt-stop-${stop.id}`,
+                            label: `#${sIdx + 1} ${stop.customer_name}`,
+                            sublabel: stop.address,
+                            lat: stop.lat,
+                            lng: stop.lng,
+                            color: plan.color,
+                            badge: `${sIdx + 1}`,
+                            type: 'stop',
+                          })
+                        })
+                      })
+                    } else {
+                      selectedOrdersList.forEach((ord, oIdx) => {
+                        const cust = customers.find((c) => c.id === ord.customer_id)
+                        const lat =
+                          cust?.lat ||
+                          (fallbackStartBase.lat || -22.906847) + (((oIdx * 17) % 7) - 3) * 0.008
+                        const lng =
+                          cust?.lng ||
+                          (fallbackStartBase.lng || -43.172896) + (((oIdx * 13) % 7) - 3) * 0.008
+                        points.push({
+                          id: `ord-stop-${ord.id}`,
+                          label: `#${oIdx + 1} ${cust?.name || 'Cliente'}`,
+                          sublabel: cust?.address || ord.tracking_code,
+                          lat,
+                          lng,
+                          color: '#f97316',
+                          badge: `${oIdx + 1}`,
+                          type: 'stop',
+                        })
+                      })
+                    }
+
+                    // Bounds calculation for proportional canvas placement
+                    let minLat = Infinity
+                    let maxLat = -Infinity
+                    let minLng = Infinity
+                    let maxLng = -Infinity
+                    points.forEach((p) => {
+                      if (p.lat < minLat) minLat = p.lat
+                      if (p.lat > maxLat) maxLat = p.lat
+                      if (p.lng < minLng) minLng = p.lng
+                      if (p.lng > maxLng) maxLng = p.lng
+                    })
+
+                    const latSpan = maxLat > minLat ? maxLat - minLat : 0.01
+                    const lngSpan = maxLng > minLng ? maxLng - minLng : 0.01
+
+                    return (
+                      <div className="relative z-20 flex-1 my-1 w-full rounded-xl bg-slate-950/70 border border-slate-700/60 p-2 overflow-hidden flex flex-col justify-between">
+                        {/* Cartographic canvas overlay */}
+                        <div className="relative w-full h-full min-h-[140px]">
+                          {/* Simulated route connectors */}
+                          <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-40">
+                            {points.length > 1 && (
+                              <polyline
+                                fill="none"
+                                stroke="#6366f1"
+                                strokeWidth="2"
+                                strokeDasharray="4,4"
+                                points={points
+                                  .slice(0, 15)
+                                  .map((p, idx) => {
+                                    const x = 12 + ((p.lng - minLng) / lngSpan) * 76
+                                    const y = 88 - ((p.lat - minLat) / latSpan) * 76
+                                    const safeX = isNaN(x)
+                                      ? 15 + ((idx * 15) % 70)
+                                      : Math.max(10, Math.min(90, x))
+                                    const safeY = isNaN(y)
+                                      ? 20 + ((idx * 18) % 65)
+                                      : Math.max(15, Math.min(85, y))
+                                    return `${safeX}%,${safeY}%`
+                                  })
+                                  .join(' ')}
+                              />
+                            )}
+                          </svg>
+
+                          {/* Render pins on canvas */}
+                          {points.slice(0, 18).map((p, idx) => {
+                            const x = 12 + ((p.lng - minLng) / lngSpan) * 76
+                            const y = 88 - ((p.lat - minLat) / latSpan) * 76
+                            const safeX = isNaN(x)
+                              ? 15 + ((idx * 15) % 70)
+                              : Math.max(10, Math.min(90, x))
+                            const safeY = isNaN(y)
+                              ? 20 + ((idx * 18) % 65)
+                              : Math.max(15, Math.min(85, y))
+
+                            return (
+                              <div
+                                key={p.id}
+                                style={{ left: `${safeX}%`, top: `${safeY}%` }}
+                                className="absolute -translate-x-1/2 -translate-y-1/2 group z-30 cursor-pointer"
+                                title={`${p.label}${p.sublabel ? ` - ${p.sublabel}` : ''}`}
+                              >
+                                <div
+                                  className={`flex items-center justify-center rounded-full text-white font-bold shadow-lg ring-2 ring-white/60 transition-transform group-hover:scale-125 ${
+                                    p.type === 'start'
+                                      ? 'h-6 px-2 bg-emerald-600 text-[10px] gap-1'
+                                      : p.type === 'end'
+                                        ? 'h-6 px-2 bg-rose-600 text-[10px] gap-1'
+                                        : 'h-5 w-5 bg-orange-500 text-[9px]'
+                                  }`}
+                                  style={
+                                    p.type === 'stop' ? { backgroundColor: p.color } : undefined
+                                  }
+                                >
+                                  {p.type === 'start' && <span>🟢 Saída</span>}
+                                  {p.type === 'end' && <span>🏁 Retorno</span>}
+                                  {p.type === 'stop' && <span>{p.badge}</span>}
+                                </div>
+
+                                {/* Tooltip on hover */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50 whitespace-nowrap bg-slate-900 text-white text-[10px] px-2 py-1 rounded shadow-xl border border-slate-700 pointer-events-none">
+                                  <strong>{p.label}</strong>
+                                  {p.sublabel && (
+                                    <p className="text-slate-400 text-[9px] max-w-[200px] truncate">
+                                      {p.sublabel}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
                         </div>
-                        <p className="text-slate-400 text-[10px]">
-                          🟢 {plan.start_base?.name} → {plan.stops.length} paradas → 🏁{' '}
-                          {plan.end_base?.name}
-                        </p>
+
+                        {/* Bottom legend with departure, finish and stops summary */}
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800 text-[10px] text-slate-300">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="font-bold text-emerald-400">🟢 Partida:</span>
+                            <span className="truncate max-w-[140px] text-slate-200">
+                              {fallbackStartBase.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 text-slate-400">
+                            <span>📍 {points.filter((p) => p.type === 'stop').length} paradas</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 truncate justify-end">
+                            <span className="font-bold text-rose-400">🏁 Chegada:</span>
+                            <span className="truncate max-w-[140px] text-slate-200">
+                              {fallbackEndBase.name}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                    ))}
-                    {!optimizationResult && (
-                      <div className="col-span-full text-center text-xs text-slate-400 py-6">
-                        Selecione entregadores e clientes acima e clique em &quot;Otimizar
-                        Rota&quot; para visualizar no mapa.
-                      </div>
-                    )}
-                  </div>
+                    )
+                  })()}
 
                   <div className="relative z-20 text-[10px] text-slate-400 flex items-center justify-between">
                     <span>🟢 Partida | 📍 Paradas Ordenadas | 🏁 Ponto de Chegada</span>
