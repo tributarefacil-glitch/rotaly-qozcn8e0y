@@ -373,7 +373,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center gap-2.5">
-                Painel Comercial LOGHYPE
+                Painel do Lojista LOGHYPE
               </h1>
               <p className="font-sans text-xs sm:text-sm text-slate-400">
                 Acompanhamento em tempo real de pedidos, mapa de frotas, Torre de Controle e
@@ -450,7 +450,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-heading flex items-center gap-2">
                 <Sparkles className="h-3.5 w-3.5 text-[#FF6B35]" />
-                Ações Rápidas do Vendedor
+                Ações Rápidas do Lojista
               </span>
               <span className="text-[11px] text-slate-500 hidden sm:inline">
                 Acesso direto aos fluxos centrais da sua operação

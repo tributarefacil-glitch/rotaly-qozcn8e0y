@@ -223,7 +223,7 @@ export default function RegisterPage() {
       if (profileType === 'courier') {
         toast.success('Cadastro enviado com sucesso! Aguarde a aprovação do administrador.')
       } else {
-        toast.success('Cadastro de Vendedor criado com sucesso! Faça login para continuar.')
+        toast.success('Cadastro de Lojista criado com sucesso! Faça login para continuar.')
       }
     } catch (err: unknown) {
       console.error('Registration error:', err)
@@ -273,7 +273,7 @@ export default function RegisterPage() {
                 <p className="text-slate-300 text-sm max-w-md mx-auto leading-relaxed">
                   {profileType === 'courier'
                     ? 'Seus dados e documentos foram enviados com sucesso para a equipe administrativa. Assim que seu cadastro for aprovado, você receberá acesso total ao aplicativo do entregador.'
-                    : 'Sua conta de Vendedor está pronta para uso. Acesse agora mesmo com seu e-mail e senha cadastrados.'}
+                    : 'Sua conta de Lojista está pronta para uso. Acesse agora mesmo com seu e-mail e senha cadastrados.'}
                 </p>
               </div>
 
@@ -323,7 +323,7 @@ export default function RegisterPage() {
                       : 'border-[#FF6B35]/30 bg-orange-50 text-[#FF6B35]'
                   }`}
                 >
-                  {profileType === 'courier' ? '🛵 Entregador' : '🏪 Vendedor'}
+                  {profileType === 'courier' ? '🛵 Entregador' : '🏪 Lojista'}
                 </Badge>
               </div>
 
@@ -352,7 +352,7 @@ export default function RegisterPage() {
                     }`}
                   >
                     <Store className="h-4 w-4" />
-                    Quero ser Vendedor
+                    Quero ser Lojista
                   </button>
                 </div>
               )}
@@ -438,7 +438,7 @@ export default function RegisterPage() {
               ) : (
                 <div className="text-xs text-slate-400 flex items-center gap-1.5">
                   <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                  <span>Cadastro simplificado de Vendedor (Etapa única)</span>
+                  <span>Cadastro simplificado de Lojista (Etapa única)</span>
                 </div>
               )}
             </CardHeader>

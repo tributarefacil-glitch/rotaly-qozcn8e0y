@@ -101,7 +101,7 @@ export const Header: React.FC = () => {
   const roleLabel =
     {
       admin: 'Administrador',
-      seller: 'Vendedor',
+      seller: 'Lojista',
       courier: 'Entregador',
     }[role] || 'Usuário'
 

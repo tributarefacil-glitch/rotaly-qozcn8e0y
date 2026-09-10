@@ -2756,7 +2756,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="courier">🛵 Entregador (App Mobile & GPS)</SelectItem>
-                  <SelectItem value="seller">🏪 Vendedor (Painel & Registro de Vendas)</SelectItem>
+                  <SelectItem value="seller">🏪 Lojista (Painel & Registro de Vendas)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

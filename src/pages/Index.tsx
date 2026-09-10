@@ -160,7 +160,7 @@ export default function Index() {
       canRegister: false,
     },
     seller: {
-      title: 'Vendedor & Embarcador',
+      title: 'Lojista & Embarcador',
       subtitle: 'Gestão de pedidos, despacho e rotas de entrega',
       icon: Store,
       gradient: 'from-blue-600 to-indigo-600',
@@ -461,7 +461,7 @@ export default function Index() {
                 </div>
               </div>
 
-              {/* CARD 2: VENDEDOR */}
+              {/* CARD 2: LOJISTA */}
               <div
                 onClick={() => handleSelectProfile('seller')}
                 role="button"
@@ -477,13 +477,13 @@ export default function Index() {
                       variant="outline"
                       className="text-[10px] uppercase font-bold tracking-wider bg-[#FF6B35]/20 text-[#FF6B35] border-[#FF6B35]/40"
                     >
-                      Painel Comercial
+                      Painel do Lojista
                     </Badge>
                   </div>
 
                   <div>
                     <h2 className="font-heading text-xl font-bold text-white group-hover:text-[#FF6B35] transition-colors">
-                      Vendedor
+                      Lojista
                     </h2>
                     <p className="font-sans text-xs text-slate-300 mt-1.5 leading-relaxed">
                       Criação rápida de despachos, acompanhamento de pedidos no mapa em tempo real e
@@ -509,7 +509,7 @@ export default function Index() {
 
                 <div className="pt-6 relative z-10">
                   <div className="flex items-center justify-between text-xs font-bold text-[#FF6B35] group-hover:translate-x-1 transition-transform">
-                    <span>Entrar como Vendedor</span>
+                    <span>Entrar como Lojista</span>
                     <ArrowRight className="h-4 w-4 text-[#60A5FA]" />
                   </div>
                 </div>
@@ -607,7 +607,7 @@ export default function Index() {
                     <span>Novo na Plataforma?</span>
                   </div>
                   <p className="font-sans text-xs text-slate-300 mt-1 leading-relaxed">
-                    Cadastre-se como entregador ou vendedor em menos de 2 minutos.
+                    Cadastre-se como entregador ou lojista em menos de 2 minutos.
                   </p>
                 </div>
 
@@ -625,7 +625,7 @@ export default function Index() {
                       variant="outline"
                       className="w-full h-9 border-[#FF6B35] text-[#FF6B35] hover:bg-[#FF6B35]/20 text-xs font-bold rounded-xl"
                     >
-                      Vendedor
+                      Lojista
                     </Button>
                   </Link>
                 </div>
