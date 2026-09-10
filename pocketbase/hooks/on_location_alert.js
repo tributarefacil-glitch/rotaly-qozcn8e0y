@@ -14,13 +14,14 @@ onRecordAfterCreateSuccess((e) => {
     return
   }
 
-  // Find active in_transit orders for this courier with route_started = true
+  // Find active orders for this courier with route_started = true
+  // Considera status 'in_transit', 'address_error' e 'client_absent' (rotas parciais até o retorno à base)
   let activeOrders = []
   try {
     activeOrders = $app.findRecordsByFilter(
       'orders',
-      `courier_id = '${courierId}' && status = 'in_transit' && route_started = true`,
-      'sequence',
+      `courier_id = '${courierId}' && route_started = true && (status = 'in_transit' || status = 'address_error' || status = 'client_absent')`,
+      '-updated',
       1,
       0,
     )

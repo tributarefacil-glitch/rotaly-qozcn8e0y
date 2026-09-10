@@ -496,21 +496,36 @@ export const deliveryService = {
       const courierAdvances = advances.filter((a) => a.courier_id === courier.id)
       const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
 
-      // Regra 1: Contar APENAS as rotas do sistema (trajetos calculados pela roteirização entre os pontos das entregas)
-      // Regras:
-      // 1. Contabilizar APENAS ordens onde a rota já foi iniciada (route_started === true) ou entregas finalizadas
-      // 2. Considerar IDA E VOLTA quando disponível (return_trip_km ou total_route_with_return_km)
+      // Regra: Contabilizar km (distance_km + return_trip_km) para todo pedido com:
+      // route_started === true OU status in_transit / delivered / address_error / client_absent com entregador vinculado
+      // independente do motivo de finalização (incluindo rotas parciais de retorno)
       const courierOrders = orders.filter(
         (o) =>
-          o.courier_id === courier.id && (o.route_started === true || o.status === 'delivered'),
+          o.courier_id === courier.id &&
+          (o.route_started === true ||
+            o.status === 'delivered' ||
+            o.status === 'in_transit' ||
+            o.status === 'address_error' ||
+            o.status === 'client_absent'),
       )
 
       const totalRouteKm = courierOrders.reduce((sum, o) => {
         // Base distance
-        const baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
+        let baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
         // Return trip addition
-        const returnKm =
+        let returnKm =
           typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+
+        // Se a rota foi iniciada ou é rota parcial (address_error/client_absent/delivered) e distance_km for 0,
+        // aplicar estimativa mínima de percurso urbano para não zerar km de entregador em rota
+        if (
+          baseKm === 0 &&
+          (o.status === 'address_error' || o.status === 'client_absent' || o.route_started)
+        ) {
+          baseKm = 4.5
+          if (returnKm === 0) returnKm = 4.5
+        }
+
         return sum + baseKm + returnKm
       }, 0)
 

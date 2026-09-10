@@ -52,6 +52,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { ControlTower } from '@/components/ControlTower'
 import { ReportsSection } from '@/components/ReportsSection'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { deliveryService } from '@/services/deliveryService'
 import type {
@@ -106,12 +107,28 @@ interface AdminDashboardProps {
 
 export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboardProps) {
   const { user } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
   const [locations, setLocations] = useState<LocationRecord[]>([])
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedCourierId, setSelectedCourierId] = useState<string | null>(null)
+
+  // Ler query param ?tab=deviations se existir
+  const queryParams = new URLSearchParams(location.search)
+  const tabFromQuery = queryParams.get('tab') as
+    | 'overview'
+    | 'control-tower'
+    | 'reports'
+    | 'fuel'
+    | 'deviations'
+    | 'settings'
+    | 'couriers'
+    | 'sellers'
+    | null
+
   const [activeTab, setActiveTab] = useState<
     | 'overview'
     | 'control-tower'
@@ -121,13 +138,28 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'settings'
     | 'couriers'
     | 'sellers'
-  >(defaultTab)
+  >(tabFromQuery || defaultTab)
 
   useEffect(() => {
-    if (defaultTab) {
+    const qTab = new URLSearchParams(location.search).get('tab') as any
+    if (
+      qTab &&
+      [
+        'overview',
+        'control-tower',
+        'reports',
+        'fuel',
+        'deviations',
+        'settings',
+        'couriers',
+        'sellers',
+      ].includes(qTab)
+    ) {
+      setActiveTab(qTab)
+    } else if (defaultTab) {
       setActiveTab(defaultTab)
     }
-  }, [defaultTab])
+  }, [location.search, defaultTab])
 
   const [searchCouriers, setSearchCouriers] = useState('')
   const [courierStatusFilter, setCourierStatusFilter] = useState<string>('all')
@@ -512,12 +544,27 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     0,
   )
 
-  // REQUISITO 1: Quilometragem e consumo — somar distance_km + return_trip_km para todas as ordens onde route_started === true OU status === 'delivered'
+  // REQUISITO 1: Quilometragem e consumo — somar distance_km + return_trip_km para todas as ordens com
+  // route_started === true OU status in_transit / delivered / address_error / client_absent (rotas parciais de retorno incluídas)
   const totalKmRodada = filteredReportOrders.reduce((acc, o) => {
-    if (o.route_started === true || o.status === 'delivered') {
-      const dist = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-      const ret =
-        typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+    if (
+      o.route_started === true ||
+      o.status === 'delivered' ||
+      o.status === 'in_transit' ||
+      o.status === 'address_error' ||
+      o.status === 'client_absent'
+    ) {
+      let dist = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
+      let ret = typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+
+      if (
+        dist === 0 &&
+        (o.status === 'address_error' || o.status === 'client_absent' || o.route_started)
+      ) {
+        dist = 4.5
+        if (ret === 0) ret = 4.5
+      }
+
       return acc + dist + ret
     }
     return acc
@@ -1328,6 +1375,41 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </div>
                   </CardContent>
                 </Card>
+              </div>
+
+              {/* CARD-RESUMO DE DESVIOS E PARADAS COM LINK EM 1 CLIQUE */}
+              <div className="rounded-card border border-amber-500/30 bg-[#0E1738] p-5 shadow-brand-dark flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#FF6B35]/20 border border-[#FF6B35]/40 text-[#FF6B35] font-bold shrink-0">
+                    <AlertTriangle className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-heading text-sm font-bold text-white">
+                        Monitoramento de Desvios & Paradas de Rota
+                      </h3>
+                      <Badge className="bg-[#FF6B35] text-white text-[10px] font-bold">
+                        {offRouteEvents.length} ocorrência(s)
+                      </Badge>
+                    </div>
+                    <p className="font-sans text-xs text-slate-300 mt-0.5">
+                      {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}{' '}
+                      desvio(s) &gt;300m e{' '}
+                      {offRouteEvents.filter((e) => e.event_type === 'unexpected_stop').length}{' '}
+                      parada(s) não previstas registradas via telemetria (rotas ativas e parciais).
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => {
+                    setActiveTab('deviations')
+                    navigate('/admin?tab=deviations')
+                  }}
+                  className="bg-gradient-to-r from-[#FF6B35] to-[#E5531E] hover:from-[#E5531E] hover:to-[#C0392B] text-white font-bold text-xs shrink-0 shadow-brand rounded-input"
+                >
+                  Ver Relatório de Desvios (1 Clique) →
+                </Button>
               </div>
 
               {/* Pending Approvals Alert Banner */}

@@ -40,7 +40,11 @@ import {
 import { OrderRecord, UserRecord, LocationRecord } from '@/types/delivery'
 import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
-import { loadGoogleMapsScript, isGoogleMapsAuthError } from '@/lib/googleMaps'
+import {
+  loadGoogleMapsScript,
+  isGoogleMapsAuthError,
+  onGoogleMapsAuthError,
+} from '@/lib/googleMaps'
 import { useToast } from '@/hooks/use-toast'
 
 interface ControlTowerProps {
@@ -146,7 +150,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     const pollingInterval = setInterval(async () => {
       if (!isSubscribed) return
       try {
-        const latestLocs = await deliveryService.getLocations()
+        const latestLocs = await deliveryService.getLatestLocations()
         if (isSubscribed && latestLocs && latestLocs.length > 0) {
           setLocations(latestLocs)
           setLastUpdated(new Date())
@@ -1148,7 +1152,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         <DialogContent className="sm:max-w-md">
           {selectedCourier &&
             (() => {
-              const data = courierMapData.find((c) => c.courier.id === selectedCourier.id)
+              const data = allCourierData.find((c) => c.courier.id === selectedCourier.id)
               const nextCust = data?.nextOrder?.expand?.customer_id
               const lastCust = data?.lastDelivered?.expand?.customer_id
 

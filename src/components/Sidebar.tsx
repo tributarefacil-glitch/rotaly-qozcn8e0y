@@ -57,6 +57,13 @@ const navItems: NavItem[] = [
     roles: ['courier', 'admin'],
   },
   {
+    title: 'Desvios & Paradas',
+    href: '/admin?tab=deviations',
+    icon: MapPin,
+    roles: ['admin'],
+    badge: 'Alertas',
+  },
+  {
     title: 'Relatórios & KPIs',
     href: '/reports',
     icon: BarChart3,
@@ -96,7 +103,13 @@ export const Sidebar: React.FC = () => {
         <nav className="space-y-1.5">
           {filteredItems.map((item) => {
             const Icon = item.icon
-            const isActive = location.pathname === item.href
+            const currentFull = location.pathname + location.search
+            const isActive =
+              location.pathname === item.href ||
+              currentFull === item.href ||
+              (item.href.includes('?') &&
+                location.pathname === item.href.split('?')[0] &&
+                location.search.includes(item.href.split('?')[1]))
 
             return (
               <Link

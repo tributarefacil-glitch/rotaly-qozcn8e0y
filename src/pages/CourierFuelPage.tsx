@@ -99,9 +99,14 @@ export default function CourierFuelPage() {
     return true
   })
 
-  // Official route orders: Considera TODOS os pedidos onde route_started = true OU status = 'delivered'
+  // Official route orders: Considera rotas com route_started === true OU status in_transit/delivered/address_error/client_absent
   const officialRouteOrders = orders.filter(
-    (o) => o.route_started === true || o.status === 'delivered',
+    (o) =>
+      o.route_started === true ||
+      o.status === 'delivered' ||
+      o.status === 'in_transit' ||
+      o.status === 'address_error' ||
+      o.status === 'client_absent',
   )
 
   const filteredOrders = officialRouteOrders.filter((o) => {
@@ -119,14 +124,22 @@ export default function CourierFuelPage() {
   // Total Advance Received
   const totalAdvances = filteredAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
 
-  // Total Official Route Km (Regra 3: Ida e Volta considerada)
+  // Total Official Route Km (Ida e Volta considerada, incluindo rotas parciais)
   const totalRouteKm = filteredOrders.reduce((sum, o) => {
-    const baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-    const returnKm =
+    let baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
+    let returnKm =
       typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+
+    if (
+      baseKm === 0 &&
+      (o.status === 'address_error' || o.status === 'client_absent' || o.route_started)
+    ) {
+      baseKm = 4.5
+      if (returnKm === 0) returnKm = 4.5
+    }
+
     return sum + baseKm + returnKm
   }, 0)
-
   // Total estimated spent in routes
   const totalSpent = fuelConsumption > 0 ? (totalRouteKm * fuelPrice) / fuelConsumption : 0
 
@@ -403,7 +416,13 @@ export default function CourierFuelPage() {
                           variant="outline"
                           className="text-[9px] bg-[#0A1128] border-[#1E2B58] text-slate-300"
                         >
-                          {order.status === 'delivered' ? '✓ Entregue' : 'Em Rota Iniciada'}
+                          {order.status === 'delivered'
+                            ? '✓ Entregue'
+                            : order.status === 'address_error'
+                              ? '⚠️ Erro Endereço (Rota Parcial)'
+                              : order.status === 'client_absent'
+                                ? '⚠️ Cliente Ausente (Rota Parcial)'
+                                : 'Em Rota Iniciada'}
                         </Badge>
                       </div>
                       <p className="text-[11px] text-slate-400 truncate max-w-[200px] mt-0.5">

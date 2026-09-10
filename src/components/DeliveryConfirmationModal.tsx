@@ -251,6 +251,56 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         }
       }
 
+      // Preservar rota iniciada (route_started: true)
+      // Se distance_km estiver zerado e for rota parcial (address_error ou client_absent),
+      // calcular a distância percorrida até o local via Haversine e estimar retorno até a base
+      const calcHaversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+        const R = 6371
+        const φ1 = (lat1 * Math.PI) / 180
+        const φ2 = (lat2 * Math.PI) / 180
+        const Δφ = ((lat2 - lat1) * Math.PI) / 180
+        const Δλ = ((lon2 - lon1) * Math.PI) / 180
+        const a =
+          Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+          Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return R * c
+      }
+
+      let distanceKm =
+        typeof order.distance_km === 'number' && order.distance_km > 0 ? order.distance_km : 0
+      let returnTripKm =
+        typeof order.return_trip_km === 'number' && order.return_trip_km > 0
+          ? order.return_trip_km
+          : 0
+
+      if ((reason === 'address_error' || reason === 'client_absent') && distanceKm === 0) {
+        const custLat = order.expand?.customer_id?.lat
+        const custLng = order.expand?.customer_id?.lng
+        const baseLat = order.start_base_lat || -23.565734
+        const baseLng = order.start_base_lng || -46.651257
+
+        if (custLat && custLng) {
+          const directKm = calcHaversineKm(baseLat, baseLng, custLat, custLng)
+          // Adicionar fator de rota urbana (~1.3x linha reta)
+          distanceKm = parseFloat((directKm * 1.3).toFixed(2))
+        } else {
+          // Valor fallback razoável para perímetro urbano
+          distanceKm = 4.5
+        }
+
+        if (returnTripKm === 0) {
+          const endLat = order.end_address_lat || baseLat
+          const endLng = order.end_address_lng || baseLng
+          if (custLat && custLng) {
+            const retDirectKm = calcHaversineKm(custLat, custLng, endLat, endLng)
+            returnTripKm = parseFloat((retDirectKm * 1.3).toFixed(2))
+          } else {
+            returnTripKm = distanceKm
+          }
+        }
+      }
+
       // Preparar envio (FormData caso haja arquivos como proof_photo ou signature)
       if (photoFile || signatureFile) {
         const formData = new FormData()
@@ -259,6 +309,9 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         formData.append('actual_arrival', now)
         formData.append('notes', finalNotes)
         formData.append('receiver_name', effectiveReceiverName)
+        formData.append('route_started', 'true')
+        if (distanceKm > 0) formData.append('distance_km', String(distanceKm))
+        if (returnTripKm > 0) formData.append('return_trip_km', String(returnTripKm))
         if (photoFile) {
           formData.append('proof_photo', photoFile)
         }
@@ -274,6 +327,9 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           actual_arrival: now,
           notes: finalNotes,
           receiver_name: effectiveReceiverName,
+          route_started: true,
+          ...(distanceKm > 0 ? { distance_km: distanceKm } : {}),
+          ...(returnTripKm > 0 ? { return_trip_km: returnTripKm } : {}),
         }
         await deliveryService.updateOrder(order.id, updateData)
       }
