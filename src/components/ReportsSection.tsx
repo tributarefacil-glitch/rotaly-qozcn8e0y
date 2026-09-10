@@ -795,8 +795,16 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
                 {filteredOrders.slice(0, 30).map((order) => {
                   const cust = order.expand?.customer_id
                   const courier = couriers.find((c) => c.id === order.courier_id)
-                  const dist = order.distance_km || 4.2
-                  const cost = (dist * fuelPrice) / fuelConsumption
+                  const baseDist =
+                    typeof order.distance_km === 'number' && order.distance_km > 0
+                      ? order.distance_km
+                      : 0
+                  const returnDist =
+                    typeof order.return_trip_km === 'number' && order.return_trip_km > 0
+                      ? order.return_trip_km
+                      : 0
+                  const dist = baseDist > 0 || returnDist > 0 ? baseDist + returnDist : 4.2
+                  const cost = fuelConsumption > 0 ? (dist * fuelPrice) / fuelConsumption : 0
 
                   return (
                     <tr key={order.id} className="hover:bg-gray-50">
@@ -823,7 +831,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
                           <Badge variant="outline">{order.status}</Badge>
                         )}
                       </td>
-                      <td className="py-3 px-4 font-mono text-gray-700">{dist.toFixed(1)} km</td>
+                      <td className="py-3 px-4 font-mono text-gray-700">
+                        {dist.toFixed(1)} km {returnDist > 0 ? '(c/ volta)' : ''}
+                      </td>
                       <td className="py-3 px-4 font-mono text-gray-700">
                         {order.estimated_duration_minutes
                           ? `${order.estimated_duration_minutes} min`

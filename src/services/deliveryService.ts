@@ -502,12 +502,7 @@ export const deliveryService = {
       // 2. Considerar IDA E VOLTA quando disponível (return_trip_km ou total_route_with_return_km)
       const courierOrders = orders.filter(
         (o) =>
-          o.courier_id === courier.id &&
-          (o.route_started === true || o.status === 'delivered') &&
-          (o.status === 'delivered' ||
-            o.status === 'in_transit' ||
-            o.status === 'address_error' ||
-            o.status === 'client_absent'),
+          o.courier_id === courier.id && (o.route_started === true || o.status === 'delivered'),
       )
 
       const totalRouteKm = courierOrders.reduce((sum, o) => {

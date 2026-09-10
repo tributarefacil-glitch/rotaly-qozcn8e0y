@@ -99,14 +99,9 @@ export default function CourierFuelPage() {
     return true
   })
 
-  // Official route orders (Regra 1: Apenas rotas iniciadas [route_started = true] ou entregas já finalizadas)
+  // Official route orders: Considera TODOS os pedidos onde route_started = true OU status = 'delivered'
   const officialRouteOrders = orders.filter(
-    (o) =>
-      (o.route_started === true || o.status === 'delivered') &&
-      (o.status === 'delivered' ||
-        o.status === 'in_transit' ||
-        o.status === 'address_error' ||
-        o.status === 'client_absent'),
+    (o) => o.route_started === true || o.status === 'delivered',
   )
 
   const filteredOrders = officialRouteOrders.filter((o) => {

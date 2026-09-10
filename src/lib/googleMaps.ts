@@ -258,8 +258,12 @@ export function onGoogleMapsAuthError(cb: (errorMsg: string) => void) {
  * Registers window.gm_authFailure handler to detect billing / key issues cleanly.
  */
 export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
-  const envKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim()
-  const keyToUse = apiKey?.trim() || envKey || 'AIzaSyDKQXAMUR4ChVy8lKw61HgjDlHuOt3Ea94'
+  const envKey = (
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) ||
+    (typeof window !== 'undefined' && (window as any).__VITE_GOOGLE_MAPS_API_KEY) ||
+    ''
+  ).trim()
+  const keyToUse = apiKey?.trim() || envKey
 
   // Register gm_authFailure hook globally if not yet registered
   if (typeof window !== 'undefined') {
@@ -286,9 +290,14 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
     }
   }
 
+  // If already marked as auth error
+  if (googleMapsAuthError) {
+    return Promise.resolve(false)
+  }
+
   // If already loaded
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if (typeof window !== 'undefined' && (window as any).google?.maps?.places) {
+  if (typeof window !== 'undefined' && (window as any).google?.maps) {
     return Promise.resolve(!googleMapsAuthError)
   }
 
@@ -313,7 +322,7 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
       // Check if it already loaded or poll for completion
       const checkInterval = setInterval(() => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if ((window as any).google?.maps?.places) {
+        if ((window as any).google?.maps) {
           clearInterval(checkInterval)
           resolve(!googleMapsAuthError)
         }
@@ -322,6 +331,13 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
         clearInterval(checkInterval)
         resolve(false)
       }, 8000)
+      return
+    }
+
+    if (!keyToUse) {
+      // Sem chave configurada: resolver como false sem injetar script quebrado
+      console.warn('[Google Maps] Nenhuma chave VITE_GOOGLE_MAPS_API_KEY fornecida.')
+      resolve(false)
       return
     }
 
@@ -340,7 +356,7 @@ export function loadGoogleMapsScript(apiKey?: string): Promise<boolean> {
         } else {
           resolve(false)
         }
-      }, 50)
+      }, 100)
     }
 
     script.onerror = (err) => {

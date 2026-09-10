@@ -93,11 +93,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     loadGoogleMapsScript().then((success) => {
       if (success && !isGoogleMapsAuthError()) {
         setMapsLoaded(true)
+        setAuthError(false)
         setTimeout(() => {
           initGoogleMap()
         }, 100)
       } else {
         setMapsLoaded(false)
+        setAuthError(true)
       }
     })
 

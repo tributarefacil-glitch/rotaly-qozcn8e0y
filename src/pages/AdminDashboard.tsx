@@ -512,9 +512,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     0,
   )
 
-  // REQUISITO 1: Quilometragem e consumo — contar APENAS as rotas do sistema (trajetos calculados pela roteirização entre os pontos das entregas). Qualquer quilometragem fora da rota NÃO deve contar para custo de combustível nem para km rodado.
+  // REQUISITO 1: Quilometragem e consumo — somar distance_km + return_trip_km para todas as ordens onde route_started === true OU status === 'delivered'
   const totalKmRodada = filteredReportOrders.reduce((acc, o) => {
-    if (typeof o.distance_km === 'number' && o.distance_km > 0) return acc + o.distance_km
+    if (o.route_started === true || o.status === 'delivered') {
+      const dist = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
+      const ret =
+        typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+      return acc + dist + ret
+    }
     return acc
   }, 0)
 

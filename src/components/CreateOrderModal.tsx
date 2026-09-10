@@ -189,7 +189,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     let isMounted = true
     loadGoogleMapsScript().then((success) => {
       if (isMounted) {
-        setIsMapsLoaded(success && !isGoogleMapsAuthError())
+        const ok = success && !isGoogleMapsAuthError()
+        setIsMapsLoaded(ok)
+        if (!ok) {
+          setMapsAuthWarning('Google Maps indisponível ou erro de autenticação.')
+        }
       }
     })
 

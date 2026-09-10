@@ -205,19 +205,27 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   // Map markers computation
   const mapMarkers: MapMarkerItem[] = []
 
-  // Add active couriers markers
+  // REQUISITO 2: Entregadores aparecem no mapa apenas com rota iniciada
   couriers.forEach((c) => {
-    const courierLoc = locations.find((l) => l.user_id === c.id)
-    if (courierLoc) {
-      mapMarkers.push({
-        id: `courier-${c.id}`,
-        title: `🛵 ${c.name}`,
-        subtitle: `Status: ${c.status === 'busy' ? 'Em Entrega' : 'Disponível'}`,
-        lat: courierLoc.lat,
-        lng: courierLoc.lng,
-        type: 'courier',
-        speed: courierLoc.speed || 32,
-      })
+    // Verificar se tem rota iniciada ou pedidos em trânsito
+    const courierOrders = orders.filter((o) => o.courier_id === c.id)
+    const hasRouteStarted =
+      courierOrders.some((o) => o.route_started === true) ||
+      courierOrders.some((o) => o.status === 'in_transit')
+
+    if (hasRouteStarted) {
+      const courierLoc = locations.find((l) => l.user_id === c.id)
+      if (courierLoc) {
+        mapMarkers.push({
+          id: `courier-${c.id}`,
+          title: `🛵 ${c.name} (Em Rota)`,
+          subtitle: `Status: Em Rota • ${courierOrders.filter((o) => o.status === 'in_transit').length} em trânsito`,
+          lat: courierLoc.lat,
+          lng: courierLoc.lng,
+          type: 'courier',
+          speed: courierLoc.speed || 32,
+        })
+      }
     }
   })
 

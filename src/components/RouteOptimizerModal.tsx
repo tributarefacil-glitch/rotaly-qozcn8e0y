@@ -204,7 +204,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         if (defaultEnd) setSelectedEndBaseId(defaultEnd.id)
       })
       loadGoogleMapsScript().then((success) => {
-        setIsMapsLoaded(success && !isGoogleMapsAuthError())
+        const ok = success && !isGoogleMapsAuthError()
+        setIsMapsLoaded(ok)
+        if (!ok) {
+          setMapsAuthError(true)
+        }
       })
     }
   }, [open, couriers])

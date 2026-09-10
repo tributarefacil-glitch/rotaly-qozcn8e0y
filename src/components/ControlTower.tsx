@@ -38,6 +38,7 @@ import {
   Navigation,
 } from 'lucide-react'
 import { OrderRecord, UserRecord, LocationRecord } from '@/types/delivery'
+import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
 import { loadGoogleMapsScript, isGoogleMapsAuthError } from '@/lib/googleMaps'
 import { useToast } from '@/hooks/use-toast'
@@ -76,6 +77,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const [mapsError, setMapsError] = useState(false)
   const [mapInstance, setMapInstance] = useState<any>(null)
   const [markersRef, setMarkersRef] = useState<any[]>([])
+  const mapContainerRef = React.useRef<HTMLDivElement | null>(null)
 
   // Load data
   const fetchData = async () => {
@@ -101,7 +103,6 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       fetchData()
       if (onRefresh) onRefresh()
     }, 10000)
-
     return () => clearInterval(interval)
   }, [])
 
@@ -114,15 +115,76 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     if (initialCouriers) setCouriers(initialCouriers)
   }, [initialCouriers])
 
-  // Load Google Maps Script
+  // Realtime PocketBase subscription on 'locations' collection + Polling Fallback a cada 10s
   useEffect(() => {
+    let isSubscribed = true
+
+    // 1. Iniciar realtime subscription
+    pb.collection('locations')
+      .subscribe('*', (e) => {
+        if (!isSubscribed) return
+        if (e.action === 'create' || e.action === 'update') {
+          const newLoc = e.record as unknown as LocationRecord
+          setLocations((prev) => {
+            // Manter registro mais recente para cada entregador
+            const existingIndex = prev.findIndex((l) => l.user_id === newLoc.user_id)
+            if (existingIndex >= 0) {
+              const updated = [...prev]
+              updated[existingIndex] = newLoc
+              return updated
+            }
+            return [newLoc, ...prev]
+          })
+          setLastUpdated(new Date())
+        }
+      })
+      .catch((err) => {
+        console.warn('Erro ao conectar subscrição realtime de locations na Torre de Controle:', err)
+      })
+
+    // 2. Polling de fallback a cada 10 segundos para garantir dados atualizados mesmo com rede instável
+    const pollingInterval = setInterval(async () => {
+      if (!isSubscribed) return
+      try {
+        const latestLocs = await deliveryService.getLocations()
+        if (isSubscribed && latestLocs && latestLocs.length > 0) {
+          setLocations(latestLocs)
+          setLastUpdated(new Date())
+        }
+      } catch (err) {
+        console.warn('Falha no polling de locations:', err)
+      }
+    }, 10000)
+
+    return () => {
+      isSubscribed = false
+      clearInterval(pollingInterval)
+      pb.collection('locations')
+        .unsubscribe('*')
+        .catch(() => {})
+    }
+  }, [])
+
+  // Load Google Maps Script and listen to auth failures
+  useEffect(() => {
+    const unsub = onGoogleMapsAuthError(() => {
+      setMapsError(true)
+      setMapsLoaded(false)
+    })
+
     loadGoogleMapsScript().then((loaded) => {
       if (loaded && !isGoogleMapsAuthError()) {
         setMapsLoaded(true)
+        setMapsError(false)
       } else {
         setMapsError(true)
+        setMapsLoaded(false)
       }
     })
+
+    return () => {
+      unsub()
+    }
   }, [])
 
   // Today's orders
@@ -152,13 +214,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   }, [todayOrders])
 
   // Map couriers with their status & location & next delivery
-  const courierMapData = useMemo(() => {
+  const allCourierData = useMemo(() => {
     return couriers.map((courier) => {
       // Find latest location record
       const courierLocs = locations.filter((l) => l.user_id === courier.id)
       const latestLoc = courierLocs[0]
 
-      // Determine location coords: fallback to SP / Rio center or default
+      // Determine location coords: fallback to SP center or default
       const lat =
         latestLoc?.lat || -23.55052 + ((parseInt(courier.id.slice(-2), 16) % 20) - 10) * 0.005
       const lng =
@@ -173,22 +235,29 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       )
       const finishedOrders = courierOrders.filter((o) => o.status === 'delivered')
 
+      // Verificar se o entregador iniciou a rota oficial (route_started === true) ou tem pedido in_transit
+      const hasRouteStarted =
+        courierOrders.some((o) => o.route_started === true) || inTransitOrders.length > 0
+
       // Status color rule:
       // Red (vermelho) = problema
-      // Yellow (amarelo) = em rota
-      // Green (verde) = ativo / disponível
+      // Yellow/Orange = em rota oficial iniciada
+      // Green (verde) = ativo / disponível (rota ainda não iniciada)
       let statusColor: 'green' | 'yellow' | 'red' = 'green'
-      let statusLabel = 'Ativo (Disponível)'
+      let statusLabel = 'Disponível — rota não iniciada'
 
       if (problemOrders.length > 0) {
         statusColor = 'red'
         statusLabel = 'Problema na Entrega'
-      } else if (inTransitOrders.length > 0) {
+      } else if (hasRouteStarted) {
         statusColor = 'yellow'
         statusLabel = 'Em Rota'
       } else if (courier.status === 'inactive') {
         statusColor = 'red'
         statusLabel = 'Inativo'
+      } else {
+        statusColor = 'green'
+        statusLabel = 'Disponível — rota não iniciada'
       }
 
       // Next delivery
@@ -200,6 +269,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         courier,
         lat,
         lng,
+        hasRouteStarted,
         statusColor,
         statusLabel,
         activeOrdersCount: inTransitOrders.length + pendingOrders.length,
@@ -210,32 +280,49 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     })
   }, [couriers, locations, todayOrders])
 
-  // Initialize and Render Map
+  // PROBLEMA 2: Entregadores NO MAPA aparecem APENAS com rota iniciada
+  const activeRouteCouriers = useMemo(() => {
+    return allCourierData.filter((c) => c.hasRouteStarted)
+  }, [allCourierData])
+
+  // Entregadores Disponíveis (rota não iniciada) para a lista lateral
+  const availableCouriers = useMemo(() => {
+    return allCourierData.filter((c) => !c.hasRouteStarted)
+  }, [allCourierData])
+
+  // Initialize and Render Map (PROBLEMA 2: APENAS entregadores com rota iniciada aparecem como pin)
   useEffect(() => {
     if (!mapsLoaded || typeof window === 'undefined') return
     const win = window as any
     if (!win.google || !win.google.maps) return
 
-    const mapElement = document.getElementById('control-tower-map')
+    const mapElement = mapContainerRef.current || document.getElementById('control-tower-map')
     if (!mapElement) return
 
     let map = mapInstance
     if (!map) {
-      map = new win.google.maps.Map(mapElement, {
-        center: { lat: -23.55052, lng: -46.633308 },
-        zoom: 12,
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: true,
-        styles: [
-          {
-            featureType: 'poi',
-            elementType: 'labels',
-            stylers: [{ visibility: 'off' }],
-          },
-        ],
-      })
-      setMapInstance(map)
+      try {
+        map = new win.google.maps.Map(mapElement, {
+          center: { lat: -23.55052, lng: -46.633308 },
+          zoom: 12,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: true,
+          styles: [
+            {
+              featureType: 'poi',
+              elementType: 'labels',
+              stylers: [{ visibility: 'off' }],
+            },
+          ],
+        })
+        setMapInstance(map)
+      } catch (err) {
+        console.warn('Erro ao instanciar Google Maps:', err)
+        setMapsError(true)
+        setMapsLoaded(false)
+        return
+      }
     }
 
     // Clear old markers
@@ -244,18 +331,19 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     const bounds = new win.google.maps.LatLngBounds()
     let hasCoords = false
 
-    courierMapData.forEach((item) => {
+    // PROBLEMA 2: Inserir no mapa APENAS entregadores com ROTA INICIADA (activeRouteCouriers)
+    activeRouteCouriers.forEach((item) => {
       const position = { lat: item.lat, lng: item.lng }
       bounds.extend(position)
       hasCoords = true
 
       // Pin Color SVG
       const pinColorHex =
-        item.statusColor === 'green'
-          ? '#10B981'
-          : item.statusColor === 'yellow'
-            ? '#F59E0B'
-            : '#EF4444'
+        item.statusColor === 'yellow'
+          ? '#FF6B35'
+          : item.statusColor === 'red'
+            ? '#E74C3C'
+            : '#00AA44'
 
       const svgMarker = {
         path: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z',
@@ -270,7 +358,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       const marker = new win.google.maps.Marker({
         position,
         map,
-        title: item.courier.name || item.courier.email,
+        title: `[Em Rota] ${item.courier.name || item.courier.email}`,
         icon: svgMarker,
       })
 
@@ -344,7 +432,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         win.google.maps.event.removeListener(listener)
       })
     }
-  }, [mapsLoaded, courierMapData, todayOrders])
+  }, [mapsLoaded, activeRouteCouriers, todayOrders])
 
   // Filtered orders list
   const filteredOrders = useMemo(() => {
@@ -563,8 +651,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               </div>
             </div>
             <div className="mt-2 text-xs text-[#FF6B35] font-semibold font-sans">
-              {courierMapData.filter((c) => c.statusColor === 'yellow').length} entregadores em
-              trânsito
+              {activeRouteCouriers.length} entregadores em rota
             </div>
           </CardContent>
         </Card>
@@ -603,12 +690,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           {/* Legenda de cores */}
           <div className="flex items-center gap-3 text-xs font-sans">
             <div className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-full bg-[#00AA44] inline-block"></span>
-              <span className="text-slate-600">Verde: Ativo / Disponível</span>
+              <span className="h-3 w-3 rounded-full bg-[#FF6B35] inline-block"></span>
+              <span className="text-slate-600">Laranja: Em Rota (no mapa)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-3 w-3 rounded-full bg-[#FF6B35] inline-block"></span>
-              <span className="text-slate-600">Laranja: Em Rota</span>
+              <span className="h-3 w-3 rounded-full bg-[#00AA44] inline-block"></span>
+              <span className="text-slate-600">Verde: Disponível (ao lado)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="h-3 w-3 rounded-full bg-[#E74C3C] inline-block"></span>
@@ -617,167 +704,238 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="relative w-full h-[460px] bg-gray-100">
-            {/* Map Canvas */}
-            <div id="control-tower-map" className="w-full h-full" />
+          <div className="grid grid-cols-1 lg:grid-cols-4 bg-gray-100 min-h-[480px]">
+            {/* Map Canvas (Left 3 cols on large screens) */}
+            <div className="relative w-full h-[420px] lg:h-[500px] lg:col-span-3 bg-gray-100 border-b lg:border-b-0 lg:border-r border-slate-200">
+              <div id="control-tower-map" ref={mapContainerRef} className="w-full h-full" />
 
-            {/* Fallback display if Google Maps API key has quota/billing block */}
-            {mapsError && (
-              <div className="absolute inset-0 bg-slate-900/90 text-white p-6 overflow-y-auto">
-                <div className="max-w-3xl mx-auto space-y-4">
-                  <div className="flex items-center gap-2 text-amber-400">
-                    <AlertCircle className="h-5 w-5" />
-                    <span className="font-semibold text-sm">
-                      Visualização Interativa de Frota (Fallback Geográfico)
-                    </span>
+              {/* Informação sobre os pins no mapa */}
+              <div className="absolute top-3 left-3 z-10 bg-white/95 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-slate-200 shadow-md text-xs font-sans flex items-center gap-2">
+                <span className="flex h-2.5 w-2.5 rounded-full bg-[#FF6B35] animate-ping" />
+                <span className="font-semibold text-slate-800">
+                  {activeRouteCouriers.length} entregador(es) em rota no mapa
+                </span>
+              </div>
+
+              {/* Fallback display if Google Maps API key has quota/billing block */}
+              {mapsError && (
+                <div className="absolute inset-0 bg-slate-900/90 text-white p-6 overflow-y-auto z-20">
+                  <div className="max-w-2xl mx-auto space-y-4">
+                    <div className="flex items-center gap-2 text-amber-400">
+                      <AlertCircle className="h-5 w-5" />
+                      <span className="font-semibold text-sm">
+                        Visualização de Entregadores em Rota (Fallback Geográfico)
+                      </span>
+                    </div>
+                    {activeRouteCouriers.length === 0 ? (
+                      <p className="text-xs text-slate-400">
+                        Nenhum entregador com rota iniciada no momento. Os entregadores disponíveis
+                        estão na lista ao lado.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {activeRouteCouriers.map((item) => (
+                          <div
+                            key={item.courier.id}
+                            onClick={() => setSelectedCourier(item.courier)}
+                            className="bg-slate-800 hover:bg-slate-700/80 cursor-pointer p-3.5 rounded-lg border border-slate-700 transition"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`h-3 w-3 rounded-full ${
+                                    item.statusColor === 'yellow'
+                                      ? 'bg-amber-500'
+                                      : item.statusColor === 'red'
+                                        ? 'bg-red-500'
+                                        : 'bg-emerald-500'
+                                  }`}
+                                />
+                                <span className="font-medium text-sm text-white">
+                                  {item.courier.name || item.courier.email}
+                                </span>
+                              </div>
+                              {renderVehicleIcon(item.vehicle)}
+                            </div>
+                            <div className="text-xs text-slate-400 mt-2 space-y-1">
+                              <p>
+                                Status: <b className="text-slate-200">{item.statusLabel}</b>
+                              </p>
+                              <p>
+                                GPS: {item.lat.toFixed(4)}, {item.lng.toFixed(4)}
+                              </p>
+                              <p>
+                                Próxima:{' '}
+                                <span className="text-blue-300">
+                                  {item.nextOrder?.expand?.customer_id?.name || 'Nenhuma'}
+                                </span>
+                              </p>
+                            </div>
+                            <div className="mt-3 pt-2 border-t border-slate-700 flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="h-7 text-xs flex-1"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  openWhatsApp(item.courier.phone)
+                                }}
+                              >
+                                <MessageCircle className="h-3 w-3 mr-1 text-emerald-400" />
+                                WhatsApp
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs bg-slate-900 border-slate-700 hover:bg-slate-800"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  makePhoneCall(item.courier.phone)
+                                }}
+                              >
+                                <Phone className="h-3 w-3 mr-1 text-blue-400" />
+                                Ligar
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {courierMapData.map((item) => (
+                </div>
+              )}
+            </div>
+
+            {/* PROBLEMA 2: LISTA LATERAL SEPARADA AO LADO DO MAPA */}
+            {/* Exibe: Entregadores Disponíveis (rota não iniciada) + Resumo dos em rota */}
+            <div className="lg:col-span-1 bg-white p-3.5 flex flex-col justify-between max-h-[500px] overflow-y-auto border-t lg:border-t-0 font-sans">
+              <div className="space-y-3">
+                {/* Cabeçalho da Lista Lateral */}
+                <div className="pb-2 border-b border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <span className="font-heading text-xs font-bold text-[#1a1a1a] uppercase tracking-wide">
+                      Disponíveis ({availableCouriers.length})
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] bg-emerald-50 text-[#00AA44] font-bold border-emerald-200"
+                    >
+                      Rota não iniciada
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Não aparecem no mapa até iniciarem rota.
+                  </p>
+                </div>
+
+                {/* Lista de Entregadores Disponíveis (sem pin no mapa) */}
+                <div className="space-y-2">
+                  {availableCouriers.length === 0 ? (
+                    <div className="p-4 rounded-lg bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-400">
+                      Nenhum entregador disponível no momento (todos em rota ou inativos).
+                    </div>
+                  ) : (
+                    availableCouriers.map((item) => (
                       <div
                         key={item.courier.id}
                         onClick={() => setSelectedCourier(item.courier)}
-                        className="bg-slate-800 hover:bg-slate-700/80 cursor-pointer p-3.5 rounded-lg border border-slate-700 transition"
+                        className="p-2.5 rounded-lg border border-slate-200 hover:border-[#0052CC]/50 hover:bg-blue-50/40 cursor-pointer transition text-xs bg-white shadow-xs"
                       >
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`h-3 w-3 rounded-full ${
-                                item.statusColor === 'green'
-                                  ? 'bg-emerald-500'
-                                  : item.statusColor === 'yellow'
-                                    ? 'bg-amber-500'
-                                    : 'bg-red-500'
-                              }`}
-                            />
-                            <span className="font-medium text-sm text-white">
+                          <div className="flex items-center gap-1.5 font-medium text-[#1a1a1a]">
+                            <span className="h-2.5 w-2.5 rounded-full bg-[#00AA44] shrink-0" />
+                            <span className="truncate max-w-[130px] font-semibold">
                               {item.courier.name || item.courier.email}
                             </span>
                           </div>
-                          {renderVehicleIcon(item.vehicle)}
+                          <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                            {renderVehicleIcon(item.vehicle)}
+                            {formatVehicle(item.vehicle)}
+                          </span>
                         </div>
-                        <div className="text-xs text-slate-400 mt-2 space-y-1">
-                          <p>
-                            Status: <b className="text-slate-200">{item.statusLabel}</b>
-                          </p>
-                          <p>
-                            GPS: {item.lat.toFixed(4)}, {item.lng.toFixed(4)}
-                          </p>
-                          <p>
-                            Próxima:{' '}
-                            <span className="text-blue-300">
-                              {item.nextOrder?.expand?.customer_id?.name || 'Nenhuma'}
-                            </span>
-                          </p>
+
+                        <div className="mt-1 text-[11px] text-slate-600 flex items-center justify-between">
+                          <span className="text-emerald-700 font-medium">
+                            Disponível — rota não iniciada
+                          </span>
+                          <span className="text-slate-400 font-mono text-[10px]">
+                            {item.activeOrdersCount} pendentes
+                          </span>
                         </div>
-                        <div className="mt-3 pt-2 border-t border-slate-700 flex gap-2">
+
+                        <div className="mt-2 pt-1.5 border-t border-slate-100 flex gap-1.5">
                           <Button
                             size="sm"
-                            variant="secondary"
-                            className="h-7 text-xs flex-1"
+                            variant="ghost"
+                            className="h-6 text-[11px] px-2 py-0 text-[#00AA44] hover:bg-emerald-50 w-1/2 rounded-md font-semibold"
                             onClick={(e) => {
                               e.stopPropagation()
                               openWhatsApp(item.courier.phone)
                             }}
                           >
-                            <MessageCircle className="h-3 w-3 mr-1 text-emerald-400" />
+                            <MessageCircle className="h-3 w-3 mr-1 text-[#00AA44]" />
                             WhatsApp
                           </Button>
                           <Button
                             size="sm"
-                            variant="outline"
-                            className="h-7 text-xs bg-slate-900 border-slate-700 hover:bg-slate-800"
+                            variant="ghost"
+                            className="h-6 text-[11px] px-2 py-0 text-[#0052CC] hover:bg-blue-50 w-1/2 rounded-md font-semibold"
                             onClick={(e) => {
                               e.stopPropagation()
                               makePhoneCall(item.courier.phone)
                             }}
                           >
-                            <Phone className="h-3 w-3 mr-1 text-blue-400" />
+                            <Phone className="h-3 w-3 mr-1 text-[#0052CC]" />
                             Ligar
                           </Button>
                         </div>
                       </div>
-                    ))}
+                    ))
+                  )}
+                </div>
+
+                {/* Seção Em Rota no Mapa */}
+                <div className="pt-2 border-t border-slate-200">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-heading text-xs font-bold text-[#1a1a1a] uppercase tracking-wide">
+                      Em Rota no Mapa ({activeRouteCouriers.length})
+                    </span>
+                    <Badge className="text-[10px] bg-[#FF6B35] text-white font-bold">
+                      Pin Ativo
+                    </Badge>
+                  </div>
+                  <div className="space-y-1.5">
+                    {activeRouteCouriers.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 italic">
+                        Nenhum entregador em rota no momento.
+                      </p>
+                    ) : (
+                      activeRouteCouriers.map((item) => (
+                        <div
+                          key={item.courier.id}
+                          onClick={() => {
+                            setSelectedCourier(item.courier)
+                            if (mapInstance && typeof window !== 'undefined') {
+                              mapInstance.panTo({ lat: item.lat, lng: item.lng })
+                              mapInstance.setZoom(15)
+                            }
+                          }}
+                          className="p-2 rounded-md border border-orange-200 bg-orange-50/50 hover:bg-orange-100/50 cursor-pointer transition text-xs flex items-center justify-between"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="h-2 w-2 rounded-full bg-[#FF6B35] animate-ping" />
+                            <span className="font-semibold text-slate-900 truncate max-w-[120px]">
+                              {item.courier.name || item.courier.email}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-orange-700 font-bold">
+                            {item.activeOrdersCount} entregas
+                          </span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
-              </div>
-            )}
-
-            {/* Quick Courier Cards Overlay Drawer on Top Right */}
-            <div className="hidden lg:block absolute top-3 right-3 max-h-[430px] w-80 bg-white/95 backdrop-blur-sm shadow-xl rounded-card border border-slate-200 p-3 overflow-y-auto space-y-2 z-10 font-sans">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                <span className="font-heading text-xs font-bold text-[#1a1a1a] uppercase">
-                  Entregadores Conectados ({courierMapData.length})
-                </span>
-                <Badge
-                  variant="secondary"
-                  className="text-[10px] bg-emerald-50 text-[#00AA44] font-bold border-emerald-200"
-                >
-                  {courierMapData.filter((c) => c.statusColor === 'green').length} livres
-                </Badge>
-              </div>
-              <div className="space-y-2">
-                {courierMapData.map((item) => (
-                  <div
-                    key={item.courier.id}
-                    onClick={() => setSelectedCourier(item.courier)}
-                    className="p-2.5 rounded-card border border-slate-200 hover:border-[#0052CC]/50 hover:bg-blue-50/50 cursor-pointer transition text-xs bg-white"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 font-medium text-[#1a1a1a]">
-                        <span
-                          className={`h-2.5 w-2.5 rounded-full ${
-                            item.statusColor === 'green'
-                              ? 'bg-[#00AA44]'
-                              : item.statusColor === 'yellow'
-                                ? 'bg-[#FF6B35]'
-                                : 'bg-[#E74C3C]'
-                          }`}
-                        />
-                        <span className="truncate max-w-[140px] font-semibold">
-                          {item.courier.name || item.courier.email}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                        {renderVehicleIcon(item.vehicle)}
-                        {formatVehicle(item.vehicle)}
-                      </span>
-                    </div>
-
-                    <div className="mt-1 text-[11px] text-slate-600 flex items-center justify-between font-sans">
-                      <span>{item.statusLabel}</span>
-                      <span className="text-[#0052CC] font-bold">
-                        {item.activeOrdersCount} pendentes
-                      </span>
-                    </div>
-
-                    <div className="mt-2 pt-1.5 border-t border-slate-100 flex gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 text-[11px] px-2 py-0 text-[#00AA44] hover:bg-emerald-50 w-1/2 rounded-input font-semibold"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openWhatsApp(item.courier.phone)
-                        }}
-                      >
-                        <MessageCircle className="h-3 w-3 mr-1 text-[#00AA44]" />
-                        WhatsApp
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 text-[11px] px-2 py-0 text-[#0052CC] hover:bg-blue-50 w-1/2 rounded-input font-semibold"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          makePhoneCall(item.courier.phone)
-                        }}
-                      >
-                        <Phone className="h-3 w-3 mr-1 text-[#0052CC]" />
-                        Ligar
-                      </Button>
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
           </div>
