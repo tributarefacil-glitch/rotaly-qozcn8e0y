@@ -920,6 +920,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                           const customer = customers.find((c) => c.id === order.customer_id)
                           const courier = couriers.find((c) => c.id === order.courier_id)
 
+                          const isRouteStarted = Boolean(
+                            order.route_started || order.route_started_at,
+                          )
+
                           const statusBadge = {
                             pending: (
                               <Badge
@@ -929,12 +933,19 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                 Pendente
                               </Badge>
                             ),
-                            in_transit: (
+                            in_transit: isRouteStarted ? (
                               <Badge
                                 variant="outline"
                                 className="bg-orange-50 text-[#FF6B35] border-[#FF6B35]/30 font-bold animate-pulse"
                               >
                                 🛵 Em Trânsito
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="bg-slate-800/80 text-slate-300 border-slate-600/50 font-bold"
+                              >
+                                ⏸️ Não iniciada
                               </Badge>
                             ),
                             delivered: (
