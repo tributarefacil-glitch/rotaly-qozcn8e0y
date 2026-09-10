@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -10,8 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Sparkles,
   Truck,
@@ -31,6 +29,16 @@ import {
   Edit3,
   Plus,
   Play,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
+  UserPlus,
+  Fuel,
+  Gauge,
+  Package,
+  Flag,
+  Move,
+  GripVertical,
 } from 'lucide-react'
 import {
   Select,
@@ -62,16 +70,6 @@ import {
   isGoogleMapsAuthError,
   fallbackGeocodeAddress,
 } from '@/lib/googleMaps'
-import {
-  ArrowUp,
-  ArrowDown,
-  Trash2,
-  UserPlus,
-  Fuel,
-  TrendingDown,
-  Gauge,
-  PlusCircle,
-} from 'lucide-react'
 import { toast } from 'sonner'
 
 interface RouteOptimizerModalProps {
@@ -154,8 +152,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     )
   }, [orders])
 
-  // Selected available couriers (ids)
+  // Selected available couriers (ids) - ETAPA 1
   const [selectedCourierIds, setSelectedCourierIds] = useState<string[]>([])
+
+  // Selected pending orders to optimize (ids) - ETAPA 2 (Seleção dos Clientes/Entregas)
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([])
+  const [searchOrderFilter, setSearchOrderFilter] = useState<string>('')
+
+  // Wizard active step: 'couriers' | 'orders' | 'review'
+  const [wizardStep, setWizardStep] = useState<'couriers' | 'orders' | 'review'>('couriers')
+
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [isApplying, setIsApplying] = useState(false)
   const [activeCourierTab, setActiveCourierTab] = useState<string>('all')
@@ -200,6 +206,13 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       setSelectedCourierIds(
         activeIds.length > 0 ? activeIds : couriers.slice(0, 3).map((c) => c.id),
       )
+      // Seleciona todas as pendentes inicialmente para conveniência
+      setSelectedOrderIds(
+        orders
+          .filter((o) => o.status === 'pending' || (o.status === 'in_transit' && !o.courier_id))
+          .map((o) => o.id),
+      )
+      setWizardStep('couriers')
       setOptimizationResult(null)
       deliveryService.getSettings().then((s) => setAppSettings(s))
       deliveryService.getBaseAddresses().then((bases) => {
@@ -259,6 +272,187 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     })
   }, [couriers, searchCourierFilter, vehicleFilter])
 
+  // Toggle/Select Orders for Step 2
+  const toggleOrderSelection = (id: string) => {
+    setSelectedOrderIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    )
+  }
+
+  const selectAllOrders = () => {
+    setSelectedOrderIds(filteredPendingOrders.map((o) => o.id))
+  }
+
+  const deselectAllOrders = () => {
+    setSelectedOrderIds([])
+  }
+
+  // Filtered pending orders for Step 2
+  const filteredPendingOrders = useMemo(() => {
+    return pendingOrders.filter((o) => {
+      const cust = customers.find((c) => c.id === o.customer_id)
+      const q = searchOrderFilter.toLowerCase().trim()
+      if (!q) return true
+      return (
+        o.tracking_code.toLowerCase().includes(q) ||
+        (cust?.name || '').toLowerCase().includes(q) ||
+        (cust?.address || '').toLowerCase().includes(q) ||
+        (cust?.phone || '').includes(q)
+      )
+    })
+  }, [pendingOrders, customers, searchOrderFilter])
+
+  // Recompute plan distances and metrics when stops order changes (Drag or manual shift)
+  const recalculatePlanMetrics = useCallback(
+    (
+      stops: OptimizedStop[],
+      startLat: number,
+      startLng: number,
+      endLat: number,
+      endLng: number,
+      courierVehicleType?: string,
+    ): {
+      updatedStops: OptimizedStop[]
+      totalDistKm: string
+      outboundKm: number
+      returnKm: number
+      durationMins: number
+      fuelCost: number
+    } => {
+      let curLat = startLat
+      let curLng = startLng
+      let cumMeters = 0
+
+      const updatedStops: OptimizedStop[] = stops.map((stop) => {
+        const stepDist = haversineDistance(curLat, curLng, stop.lat, stop.lng)
+        cumMeters += stepDist
+        curLat = stop.lat
+        curLng = stop.lng
+        return {
+          ...stop,
+          step_distance_meters: Math.round(stepDist),
+          cumulative_distance_meters: Math.round(cumMeters),
+        }
+      })
+
+      const returnMeters = stops.length > 0 ? haversineDistance(curLat, curLng, endLat, endLng) : 0
+      const totalMeters = cumMeters + returnMeters
+      const outboundKm = Number((cumMeters / 1000).toFixed(2))
+      const returnKm = Number((returnMeters / 1000).toFixed(2))
+      const totalDistKmNum = Number((totalMeters / 1000).toFixed(2))
+      const durationMins = Math.round((totalMeters / 1000) * 3.2 + stops.length * 6)
+
+      const { pricePerLiter, consumptionKml } = deliveryService.getVehicleFuelParams(
+        appSettings,
+        courierVehicleType,
+      )
+      const fuelCost = consumptionKml > 0 ? (totalDistKmNum * pricePerLiter) / consumptionKml : 0
+
+      return {
+        updatedStops,
+        totalDistKm: totalDistKmNum.toFixed(1),
+        outboundKm,
+        returnKm,
+        durationMins,
+        fuelCost: Number(fuelCost.toFixed(2)),
+      }
+    },
+    [appSettings],
+  )
+
+  // Deslocamento de parada por drag & drop no mapa: reordena a parada arrastada para a nova posição
+  const handleMarkerDragEnd = (
+    courierId: string,
+    stopId: string,
+    newLat: number,
+    newLng: number,
+  ) => {
+    setOptimizationResult((prev) => {
+      if (!prev) return prev
+
+      const plan = prev.courierPlans.find((p) => p.courier.id === courierId)
+      if (!plan) return prev
+
+      const currentStopIdx = plan.stops.findIndex((s) => s.id === stopId)
+      if (currentStopIdx === -1) return prev
+
+      // Atualiza as coordenadas do stop arrastado
+      const targetStop = { ...plan.stops[currentStopIdx], lat: newLat, lng: newLng }
+      const otherStops = plan.stops.filter((s) => s.id !== stopId)
+
+      // Encontra o melhor ponto de inserção baseado no vizinho mais próximo
+      let bestInsertIdx = 0
+      let bestDist = Infinity
+
+      for (let i = 0; i <= otherStops.length; i++) {
+        const prevPoint =
+          i === 0
+            ? { lat: plan.start_base?.lat || -22.906847, lng: plan.start_base?.lng || -43.172896 }
+            : otherStops[i - 1]
+        const nextPoint =
+          i === otherStops.length
+            ? { lat: plan.end_base?.lat || -22.906847, lng: plan.end_base?.lng || -43.172896 }
+            : otherStops[i]
+
+        const d1 = haversineDistance(prevPoint.lat, prevPoint.lng, newLat, newLng)
+        const d2 = haversineDistance(newLat, newLng, nextPoint.lat, nextPoint.lng)
+        const totalCost = d1 + d2
+
+        if (totalCost < bestDist) {
+          bestDist = totalCost
+          bestInsertIdx = i
+        }
+      }
+
+      const reorderedStops = [...otherStops]
+      reorderedStops.splice(bestInsertIdx, 0, targetStop)
+
+      let grandTotalDistMeters = 0
+
+      const newPlans = prev.courierPlans.map((p) => {
+        if (p.courier.id !== courierId) {
+          grandTotalDistMeters += Number(p.total_distance_km) * 1000
+          return p
+        }
+
+        const metrics = recalculatePlanMetrics(
+          reorderedStops,
+          p.start_base?.lat || -22.906847,
+          p.start_base?.lng || -43.172896,
+          p.end_base?.lat || -22.906847,
+          p.end_base?.lng || -43.172896,
+          p.courier.vehicle_type,
+        )
+
+        grandTotalDistMeters += Number(metrics.totalDistKm) * 1000
+
+        return {
+          ...p,
+          stops: metrics.updatedStops,
+          total_distance_km: metrics.totalDistKm,
+          outbound_distance_km: metrics.outboundKm,
+          return_distance_km: metrics.returnKm,
+          estimated_duration_minutes: metrics.durationMins,
+          estimated_fuel_cost: metrics.fuelCost,
+        }
+      })
+
+      const grandDistKm = (grandTotalDistMeters / 1000).toFixed(1)
+      const totalFuel = newPlans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
+      const totalMins = newPlans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
+
+      return {
+        ...prev,
+        courierPlans: newPlans,
+        totalDistanceKm: grandDistKm,
+        totalEstimatedFuelCost: Number(totalFuel.toFixed(2)),
+        totalDurationMinutes: totalMins,
+      }
+    })
+
+    toast.success('Ponto reposicionado na rota e sequência recalculada!')
+  }
+
   // Helper to handle base creation
   const handleCreateNewBase = async () => {
     if (!newBaseName.trim() || !newBaseAddress.trim()) {
@@ -316,12 +510,20 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Multi-Courier Geographic K-Means Clustering + Nearest Neighbor Sequencing Algorithm (com IDA E VOLTA)
   const runRouteOptimization = async () => {
     if (selectedCourierIds.length === 0) {
-      toast.warning('Selecione pelo menos um entregador disponível.')
+      toast.warning('Selecione pelo menos um entregador disponível na Etapa 1.')
+      setWizardStep('couriers')
       return
     }
 
-    if (pendingOrders.length === 0) {
-      toast.info('Não há entregas pendentes para roteirizar hoje.')
+    // Filtra apenas as entregas selecionadas na Etapa 2 (ou todas as pendentes se nenhuma selecionada explicitamente)
+    const ordersToOptimize =
+      selectedOrderIds.length > 0
+        ? pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
+        : pendingOrders
+
+    if (ordersToOptimize.length === 0) {
+      toast.info('Selecione pelo menos uma entrega/cliente na Etapa 2 para roteirizar.')
+      setWizardStep('orders')
       return
     }
 
@@ -360,7 +562,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
       const unassignedWithoutCoords: OrderRecord[] = []
 
-      for (const ord of pendingOrders) {
+      for (const ord of ordersToOptimize) {
         const cust = customers.find((c) => c.id === ord.customer_id)
         if (cust && cust.lat && cust.lng) {
           validOrdersWithCoords.push({
@@ -545,8 +747,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
       setOptimizationResult(finalResult)
       setActiveCourierTab('all')
+      setWizardStep('review')
       toast.success(
-        `✨ ${finalResult.totalOrders} entregas otimizadas e divididas entre ${plans.length} entregadores!`,
+        `✨ ${finalResult.totalOrders} entregas divididas pelo menor trajeto entre ${plans.length} entregadores!`,
       )
     } catch (err) {
       console.error('Optimization calculation error:', err)
@@ -556,7 +759,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     }
   }
 
-  // Render Visual Routes and Colored Markers on Google Map
+  // Render Visual Routes and Colored Markers on Google Map with Draggable Pins and Start/End Anchors
   useEffect(() => {
     if (!open) return
 
@@ -589,47 +792,63 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
       if (optimizationResult) {
         // Draw each courier plan with its own color
-        optimizationResult.courierPlans.forEach((plan, planIdx) => {
+        optimizationResult.courierPlans.forEach((plan) => {
           const isTabActive = activeCourierTab === 'all' || activeCourierTab === plan.courier.id
           if (!isTabActive) return
 
           const pathCoords: Array<{ lat: number; lng: number }> = []
 
-          // Courier origin
-          const courierLoc = locations.find((l) => l.user_id === plan.courier.id)
-          const startLat = courierLoc?.lat || -22.906847
-          const startLng = courierLoc?.lng || -43.172896
+          // 1. PONTO DE PARTIDA (Base de Saída do Entregador) - Verde
+          const startLat = plan.start_base?.lat || -22.906847
+          const startLng = plan.start_base?.lng || -43.172896
           pathCoords.push({ lat: startLat, lng: startLng })
           bounds.extend(new google.maps.LatLng(startLat, startLng))
           hasPoints = true
 
-          // Courier marker
-          const courierMarker = new google.maps.Marker({
+          const startMarker = new google.maps.Marker({
             position: { lat: startLat, lng: startLng },
             map: mapInstanceRef.current,
-            title: `🛵 ${plan.courier.name} (Ponto Inicial)`,
+            title: `🟢 PARTIDA: ${plan.start_base?.name || 'Base de Saída'} (${plan.courier.name})`,
             icon: {
               path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-              scale: 6,
-              fillColor: plan.color,
+              scale: 7,
+              fillColor: '#10b981', // Emerald green
               fillOpacity: 1,
               strokeWeight: 2,
               strokeColor: '#ffffff',
-              rotation: 45,
+              rotation: 0,
             },
+            zIndex: 100,
           })
-          markersAndPolylinesRef.current.push(courierMarker)
 
-          // Delivery Stops markers & numbered badges
+          const startInfo = new google.maps.InfoWindow({
+            content: `
+              <div style="padding: 6px; font-family: sans-serif; color: #0f172a;">
+                <span style="background: #10b981; color: white; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: bold;">
+                  🟢 PONTO DE PARTIDA
+                </span>
+                <p style="font-weight: bold; margin: 4px 0 2px; font-size: 12px;">${plan.start_base?.name || 'Base'}</p>
+                <p style="font-size: 11px; margin: 0; color: #475569;">${plan.start_base?.address || ''}</p>
+                <p style="font-size: 10px; margin: 4px 0 0; color: #059669;">Entregador: <b>${plan.courier.name}</b></p>
+              </div>
+            `,
+          })
+          startMarker.addListener('click', () =>
+            startInfo.open(mapInstanceRef.current, startMarker),
+          )
+          markersAndPolylinesRef.current.push(startMarker)
+
+          // 2. PARADAS ORDENADAS (Numeradas, com suporte a ARRASTE MANUAL)
           plan.stops.forEach((stop, stopIdx) => {
             pathCoords.push({ lat: stop.lat, lng: stop.lng })
             bounds.extend(new google.maps.LatLng(stop.lat, stop.lng))
 
-            // Custom colored SVG pin with number
+            // Marcador arrastável para ajuste manual no mapa
             const stopMarker = new google.maps.Marker({
               position: { lat: stop.lat, lng: stop.lng },
               map: mapInstanceRef.current,
-              title: `${stopIdx + 1}. ${stop.customer_name} (${stop.tracking_code})`,
+              title: `Parada #${stopIdx + 1}: ${stop.customer_name} (Arraste para ajustar)`,
+              draggable: true, // HABILITA ARRASTE MANUAL
               label: {
                 text: `${stopIdx + 1}`,
                 color: '#ffffff',
@@ -638,12 +857,22 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               },
               icon: {
                 path: google.maps.SymbolPath.CIRCLE,
-                scale: 12,
+                scale: 13,
                 fillColor: plan.color,
                 fillOpacity: 0.95,
-                strokeWeight: 2,
+                strokeWeight: 2.5,
                 strokeColor: '#ffffff',
               },
+              zIndex: 50 + stopIdx,
+            })
+
+            // Evento de final de arraste manual do ponto
+            stopMarker.addListener('dragend', (e: any) => {
+              if (e.latLng) {
+                const newLat = e.latLng.lat()
+                const newLng = e.latLng.lng()
+                handleMarkerDragEnd(plan.courier.id, stop.id, newLat, newLng)
+              }
             })
 
             const infoWindow = new google.maps.InfoWindow({
@@ -657,7 +886,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   </div>
                   <p style="font-size: 11px; margin: 0; color: #475569;">📍 ${stop.address}</p>
                   <p style="font-size: 10px; margin: 4px 0 0; color: #64748b;">Código: <b>${stop.tracking_code}</b></p>
-                  <p style="font-size: 10px; margin: 2px 0 0; color: #8b5cf6;">Distância: +${stop.step_distance_meters}m</p>
+                  <p style="font-size: 10px; margin: 2px 0 0; color: #8b5cf6;">Entregador: <b>${plan.courier.name}</b></p>
+                  <p style="font-size: 10px; margin: 4px 0 0; color: #d97706; font-style: italic;">✋ Arraste este marcador para reposicionar na sequência</p>
                 </div>
               `,
             })
@@ -669,7 +899,44 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             markersAndPolylinesRef.current.push(stopMarker)
           })
 
-          // Route Polyline connection
+          // 3. PONTO DE CHEGADA / RETORNO (End Base) - Vermelho / Bandeira
+          const endLat = plan.end_base?.lat || startLat
+          const endLng = plan.end_base?.lng || startLng
+          pathCoords.push({ lat: endLat, lng: endLng })
+          bounds.extend(new google.maps.LatLng(endLat, endLng))
+
+          const endMarker = new google.maps.Marker({
+            position: { lat: endLat, lng: endLng },
+            map: mapInstanceRef.current,
+            title: `🏁 CHEGADA: ${plan.end_base?.name || 'Ponto de Retorno'} (${plan.courier.name})`,
+            icon: {
+              path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+              scale: 7,
+              fillColor: '#ef4444', // Red
+              fillOpacity: 1,
+              strokeWeight: 2,
+              strokeColor: '#ffffff',
+              rotation: 0,
+            },
+            zIndex: 99,
+          })
+
+          const endInfo = new google.maps.InfoWindow({
+            content: `
+              <div style="padding: 6px; font-family: sans-serif; color: #0f172a;">
+                <span style="background: #ef4444; color: white; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: bold;">
+                  🏁 PONTO DE CHEGADA / RETORNO
+                </span>
+                <p style="font-weight: bold; margin: 4px 0 2px; font-size: 12px;">${plan.end_base?.name || 'Chegada'}</p>
+                <p style="font-size: 11px; margin: 0; color: #475569;">${plan.end_base?.address || ''}</p>
+                <p style="font-size: 10px; margin: 4px 0 0; color: #dc2626;">Retorno da rota de: <b>${plan.courier.name}</b></p>
+              </div>
+            `,
+          })
+          endMarker.addListener('click', () => endInfo.open(mapInstanceRef.current, endMarker))
+          markersAndPolylinesRef.current.push(endMarker)
+
+          // 4. LINHA DA ROTA (Polyline: Partida → Paradas 1..N → Chegada)
           if (pathCoords.length > 1) {
             const polyline = new google.maps.Polyline({
               path: pathCoords,
@@ -683,8 +950,13 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           }
         })
       } else {
-        // Just show pending stops before optimization
-        pendingOrders.forEach((o) => {
+        // Exibição antes da otimização: entregas pendentes selecionadas/todas
+        const ordersToShow =
+          selectedOrderIds.length > 0
+            ? pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
+            : pendingOrders
+
+        ordersToShow.forEach((o) => {
           const cust = customers.find((c) => c.id === o.customer_id)
           if (cust && cust.lat && cust.lng) {
             bounds.extend(new google.maps.LatLng(cust.lat, cust.lng))
@@ -700,30 +972,42 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           }
         })
 
-        // Also show couriers
-        couriers.forEach((c) => {
-          const loc = locations.find((l) => l.user_id === c.id)
-          if (loc && loc.lat && loc.lng) {
-            bounds.extend(new google.maps.LatLng(loc.lat, loc.lng))
-            hasPoints = true
-            const cm = new google.maps.Marker({
-              position: { lat: loc.lat, lng: loc.lng },
-              map: mapInstanceRef.current,
-              title: `🛵 ${c.name}`,
-              icon: 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png',
-            })
-            markersAndPolylinesRef.current.push(cm)
-          }
-        })
+        // Mostra entregadores disponíveis
+        couriers
+          .filter((c) => selectedCourierIds.includes(c.id))
+          .forEach((c) => {
+            const loc = locations.find((l) => l.user_id === c.id)
+            if (loc && loc.lat && loc.lng) {
+              bounds.extend(new google.maps.LatLng(loc.lat, loc.lng))
+              hasPoints = true
+              const cm = new google.maps.Marker({
+                position: { lat: loc.lat, lng: loc.lng },
+                map: mapInstanceRef.current,
+                title: `🛵 ${c.name} (Disponível)`,
+                icon: 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png',
+              })
+              markersAndPolylinesRef.current.push(cm)
+            }
+          })
       }
 
       if (hasPoints && mapInstanceRef.current) {
-        mapInstanceRef.current.fitBounds(bounds, { top: 30, right: 30, bottom: 30, left: 30 })
+        mapInstanceRef.current.fitBounds(bounds, { top: 35, right: 35, bottom: 35, left: 35 })
       }
     } catch (e) {
       console.warn('Error rendering routes on map:', e)
     }
-  }, [open, optimizationResult, activeCourierTab, pendingOrders, couriers, customers, locations])
+  }, [
+    open,
+    optimizationResult,
+    activeCourierTab,
+    pendingOrders,
+    selectedOrderIds,
+    selectedCourierIds,
+    couriers,
+    customers,
+    locations,
+  ])
 
   // Apply & Save Distribution (com opção de atribuir ou já Liberar Rota diretamente)
   const handleApplyDistribution = async (releaseDirectly = false) => {
@@ -818,32 +1102,63 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     }
   }
 
-  // REQUISITO 3: Edição da Otimização (Mover paradas para cima/baixo, remover da rota, reatribuir)
+  // Reordenação de parada dentro de uma rota com recálculo automático de métricas (ida e volta)
   const moveStopInPlan = (courierId: string, stopIndex: number, direction: 'up' | 'down') => {
     if (!optimizationResult) return
 
     setOptimizationResult((prev) => {
       if (!prev) return prev
+      let grandTotalDistMeters = 0
+
       const newPlans = prev.courierPlans.map((p) => {
-        if (p.courier.id !== courierId) return p
+        if (p.courier.id !== courierId) {
+          grandTotalDistMeters += Number(p.total_distance_km) * 1000
+          return p
+        }
 
         const newStops = [...p.stops]
         const targetIndex = direction === 'up' ? stopIndex - 1 : stopIndex + 1
-        if (targetIndex < 0 || targetIndex >= newStops.length) return p
+        if (targetIndex < 0 || targetIndex >= newStops.length) {
+          grandTotalDistMeters += Number(p.total_distance_km) * 1000
+          return p
+        }
 
         const temp = newStops[stopIndex]
         newStops[stopIndex] = newStops[targetIndex]
         newStops[targetIndex] = temp
 
+        const metrics = recalculatePlanMetrics(
+          newStops,
+          p.start_base?.lat || -22.906847,
+          p.start_base?.lng || -43.172896,
+          p.end_base?.lat || -22.906847,
+          p.end_base?.lng || -43.172896,
+          p.courier.vehicle_type,
+        )
+
+        grandTotalDistMeters += Number(metrics.totalDistKm) * 1000
+
         return {
           ...p,
-          stops: newStops,
+          stops: metrics.updatedStops,
+          total_distance_km: metrics.totalDistKm,
+          outbound_distance_km: metrics.outboundKm,
+          return_distance_km: metrics.returnKm,
+          estimated_duration_minutes: metrics.durationMins,
+          estimated_fuel_cost: metrics.fuelCost,
         }
       })
+
+      const grandDistKm = (grandTotalDistMeters / 1000).toFixed(1)
+      const totalFuel = newPlans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
+      const totalMins = newPlans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
 
       return {
         ...prev,
         courierPlans: newPlans,
+        totalDistanceKm: grandDistKm,
+        totalEstimatedFuelCost: Number(totalFuel.toFixed(2)),
+        totalDurationMinutes: totalMins,
       }
     })
   }
@@ -853,18 +1168,46 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
     setOptimizationResult((prev) => {
       if (!prev) return prev
+      let grandTotalDistMeters = 0
+
       const newPlans = prev.courierPlans.map((p) => {
-        if (p.courier.id !== courierId) return p
+        if (p.courier.id !== courierId) {
+          grandTotalDistMeters += Number(p.total_distance_km) * 1000
+          return p
+        }
         const newStops = p.stops.filter((_, idx) => idx !== stopIndex)
+        const metrics = recalculatePlanMetrics(
+          newStops,
+          p.start_base?.lat || -22.906847,
+          p.start_base?.lng || -43.172896,
+          p.end_base?.lat || -22.906847,
+          p.end_base?.lng || -43.172896,
+          p.courier.vehicle_type,
+        )
+
+        grandTotalDistMeters += Number(metrics.totalDistKm) * 1000
+
         return {
           ...p,
-          stops: newStops,
+          stops: metrics.updatedStops,
+          total_distance_km: metrics.totalDistKm,
+          outbound_distance_km: metrics.outboundKm,
+          return_distance_km: metrics.returnKm,
+          estimated_duration_minutes: metrics.durationMins,
+          estimated_fuel_cost: metrics.fuelCost,
         }
       })
+
+      const grandDistKm = (grandTotalDistMeters / 1000).toFixed(1)
+      const totalFuel = newPlans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
+      const totalMins = newPlans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
 
       return {
         ...prev,
         courierPlans: newPlans,
+        totalDistanceKm: grandDistKm,
+        totalEstimatedFuelCost: Number(totalFuel.toFixed(2)),
+        totalDurationMinutes: totalMins,
       }
     })
     toast.info('Parada removida da rota calculada.')
@@ -883,26 +1226,65 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       if (!fromPlan || !fromPlan.stops[stopIndex]) return prev
 
       const stopToMove = fromPlan.stops[stopIndex]
+      let grandTotalDistMeters = 0
 
       const newPlans = prev.courierPlans.map((p) => {
         if (p.courier.id === fromCourierId) {
+          const newStops = p.stops.filter((_, idx) => idx !== stopIndex)
+          const metrics = recalculatePlanMetrics(
+            newStops,
+            p.start_base?.lat || -22.906847,
+            p.start_base?.lng || -43.172896,
+            p.end_base?.lat || -22.906847,
+            p.end_base?.lng || -43.172896,
+            p.courier.vehicle_type,
+          )
+          grandTotalDistMeters += Number(metrics.totalDistKm) * 1000
           return {
             ...p,
-            stops: p.stops.filter((_, idx) => idx !== stopIndex),
+            stops: metrics.updatedStops,
+            total_distance_km: metrics.totalDistKm,
+            outbound_distance_km: metrics.outboundKm,
+            return_distance_km: metrics.returnKm,
+            estimated_duration_minutes: metrics.durationMins,
+            estimated_fuel_cost: metrics.fuelCost,
           }
         }
         if (p.courier.id === toCourierId) {
+          const newStops = [...p.stops, stopToMove]
+          const metrics = recalculatePlanMetrics(
+            newStops,
+            p.start_base?.lat || -22.906847,
+            p.start_base?.lng || -43.172896,
+            p.end_base?.lat || -22.906847,
+            p.end_base?.lng || -43.172896,
+            p.courier.vehicle_type,
+          )
+          grandTotalDistMeters += Number(metrics.totalDistKm) * 1000
           return {
             ...p,
-            stops: [...p.stops, stopToMove],
+            stops: metrics.updatedStops,
+            total_distance_km: metrics.totalDistKm,
+            outbound_distance_km: metrics.outboundKm,
+            return_distance_km: metrics.returnKm,
+            estimated_duration_minutes: metrics.durationMins,
+            estimated_fuel_cost: metrics.fuelCost,
           }
         }
+        grandTotalDistMeters += Number(p.total_distance_km) * 1000
         return p
       })
+
+      const grandDistKm = (grandTotalDistMeters / 1000).toFixed(1)
+      const totalFuel = newPlans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
+      const totalMins = newPlans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
 
       return {
         ...prev,
         courierPlans: newPlans,
+        totalDistanceKm: grandDistKm,
+        totalEstimatedFuelCost: Number(totalFuel.toFixed(2)),
+        totalDurationMinutes: totalMins,
       }
     })
     toast.success('Entrega reatribuída para outro entregador.')
@@ -1067,194 +1449,386 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               </div>
             )}
           </div>
-          {/* Step 1: Courier Selection & Pending Stats */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-900/50 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-indigo-600" />
-                <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                  1. Seleção Individual de Entregadores ({selectedCourierIds.length} selecionados)
-                </Label>
+          {/* FLUXO PASSO A PASSO NA ORDEM EXATA DO PEDIDO LITERAL: */}
+          {/* 1. SELECIONAR ENTREGADORES -> 2. SELECIONAR CLIENTES/ENTREGAS -> 3. OTIMIZAR / MAPA / AJUSTE MANUAL -> 4. LIBERAR */}
+          <div className="grid grid-cols-3 gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+            <button
+              type="button"
+              onClick={() => setWizardStep('couriers')}
+              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition text-left ${
+                wizardStep === 'couriers'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+            >
+              <Users className="h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <p className="truncate">1. Entregadores</p>
+                <p className="text-[10px] font-normal opacity-85 truncate">
+                  {selectedCourierIds.length} selecionado(s)
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setWizardStep('orders')}
+              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition text-left ${
+                wizardStep === 'orders'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+            >
+              <Package className="h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <p className="truncate">2. Clientes / Entregas</p>
+                <p className="text-[10px] font-normal opacity-85 truncate">
+                  {selectedOrderIds.length} de {pendingOrders.length}
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (optimizationResult) setWizardStep('review')
+                else runRouteOptimization()
+              }}
+              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-bold transition text-left ${
+                wizardStep === 'review'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+            >
+              <Navigation className="h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <p className="truncate">3. Mapa & Ajuste Manual</p>
+                <p className="text-[10px] font-normal opacity-85 truncate">
+                  {optimizationResult ? `${optimizationResult.totalDistanceKm} km` : 'Otimizar'}
+                </p>
+              </div>
+            </button>
+          </div>
+          {/* ETAPA 1: PRIMEIRO SELECIONA OS ENTREGADORES */}
+          {wizardStep === 'couriers' && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-900/50 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-indigo-600" />
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                    Etapa 1: Selecionar Entregadores Disponíveis ({selectedCourierIds.length}{' '}
+                    selecionados)
+                  </Label>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={selectAllCouriers}
+                    className="h-6 px-2 text-[11px] text-indigo-600 hover:text-indigo-700"
+                  >
+                    Marcar Todos
+                  </Button>
+                  <span className="text-slate-300">|</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={deselectAllCouriers}
+                    className="h-6 px-2 text-[11px] text-slate-500 hover:text-slate-700"
+                  >
+                    Desmarcar Todos
+                  </Button>
+                </div>
               </div>
 
-              <div className="flex items-center gap-2 text-xs">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={selectAllCouriers}
-                  className="h-6 px-2 text-[11px] text-indigo-600 hover:text-indigo-700"
-                >
-                  Marcar Todos
-                </Button>
-                <span className="text-slate-300">|</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={deselectAllCouriers}
-                  className="h-6 px-2 text-[11px] text-slate-500 hover:text-slate-700"
-                >
-                  Desmarcar Todos
-                </Button>
-              </div>
-            </div>
-
-            {/* Smart Filters (Search & Vehicle Type) */}
-            <div className="flex flex-col sm:flex-row items-center gap-2">
-              <input
-                type="text"
-                placeholder="Filtrar por nome, veículo ou placa..."
-                value={searchCourierFilter}
-                onChange={(e) => setSearchCourierFilter(e.target.value)}
-                className="h-7 px-2.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white w-full sm:w-60 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-              <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setVehicleFilter('all')}
-                  className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
-                    vehicleFilter === 'all'
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  Todos
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVehicleFilter('moto')}
-                  className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
-                    vehicleFilter === 'moto'
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  🛵 Moto
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVehicleFilter('carro')}
-                  className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
-                    vehicleFilter === 'carro'
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  🚗 Carro
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVehicleFilter('van')}
-                  className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
-                    vehicleFilter === 'van'
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  🚐 Van
-                </button>
-              </div>
-            </div>
-
-            {/* Courier Toggles Grid - Permite marcar e desmarcar individualmente CADA entregador */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
-              {filteredCouriers.map((courier, idx) => {
-                const isSelected = selectedCourierIds.includes(courier.id)
-                const palette = COURIER_PALETTE[idx % COURIER_PALETTE.length]
-                const isBusy = courier.status === 'busy'
-
-                return (
-                  <label
-                    key={courier.id}
-                    className={`flex items-center gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none group relative ${
-                      isSelected
-                        ? 'border-indigo-500 bg-indigo-50/80 shadow-sm dark:bg-indigo-950/50 dark:border-indigo-500 ring-2 ring-indigo-500/30'
-                        : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-80 hover:opacity-100'
+              {/* Filtros de Entregadores */}
+              <div className="flex flex-col sm:flex-row items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Filtrar por nome, veículo ou placa..."
+                  value={searchCourierFilter}
+                  onChange={(e) => setSearchCourierFilter(e.target.value)}
+                  className="h-7 px-2.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white w-full sm:w-60 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setVehicleFilter('all')}
+                    className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                      vehicleFilter === 'all'
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
                     }`}
                   >
-                    <Checkbox
-                      id={`courier-chk-${courier.id}`}
-                      checked={isSelected}
-                      onCheckedChange={() => toggleCourierSelection(courier.id)}
-                      className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4"
-                    />
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                          {courier.vehicle_type === 'carro'
-                            ? '🚗'
-                            : courier.vehicle_type === 'van'
-                              ? '🚐'
-                              : '🛵'}{' '}
-                          {courier.name}
-                        </p>
-                        <span
-                          className="h-2.5 w-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: palette.color }}
-                          title={`Cor da rota: ${palette.name}`}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] text-slate-500 mt-0.5">
-                        <span className="truncate">
-                          {isBusy ? '⚠️ Ocupado' : '🟢 Disponível'} •{' '}
-                          {courier.vehicle_model || courier.vehicle_type || 'Moto'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => selectOnlyCourier(courier.id, e)}
-                          className="text-[9px] text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline font-semibold ml-1 shrink-0"
-                          title="Marcar somente este entregador"
-                        >
-                          Só este
-                        </button>
-                      </div>
-                    </div>
-                  </label>
-                )
-              })}
-              {filteredCouriers.length === 0 && (
-                <div className="col-span-full py-4 text-center text-xs text-slate-400">
-                  Nenhum entregador corresponde ao filtro de busca.
+                    Todos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVehicleFilter('moto')}
+                    className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                      vehicleFilter === 'moto'
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    🛵 Moto (35 km/L)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVehicleFilter('carro')}
+                    className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                      vehicleFilter === 'carro'
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    🚗 Carro (12 km/L)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVehicleFilter('caminhao')}
+                    className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                      vehicleFilter === 'caminhao'
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    🚚 Caminhão (7 km/L)
+                  </button>
                 </div>
-              )}
-            </div>
-
-            {/* Action Bar: Run Optimizer */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-200/80 dark:border-slate-800">
-              <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-                <span className="font-semibold text-slate-800 dark:text-slate-200">
-                  📦 {pendingOrders.length} entregas pendentes
-                </span>
-                <span>•</span>
-                <span>
-                  {selectedCourierIds.length > 0
-                    ? `~${Math.ceil(pendingOrders.length / selectedCourierIds.length)} por entregador`
-                    : 'Nenhum entregador selecionado'}
-                </span>
               </div>
 
-              <Button
-                type="button"
-                onClick={runRouteOptimization}
-                disabled={
-                  isOptimizing || selectedCourierIds.length === 0 || pendingOrders.length === 0
-                }
-                className="h-9 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold text-xs shadow-md shadow-indigo-500/20 flex items-center gap-2"
-              >
-                <Sparkles className="h-4 w-4" />
-                {isOptimizing ? 'Otimizando Rotas...' : 'Calcular & Otimizar Distribuição'}
-              </Button>
+              {/* Grid de Entregadores */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
+                {filteredCouriers.map((courier, idx) => {
+                  const isSelected = selectedCourierIds.includes(courier.id)
+                  const palette = COURIER_PALETTE[idx % COURIER_PALETTE.length]
+                  const isBusy = courier.status === 'busy'
+
+                  return (
+                    <label
+                      key={courier.id}
+                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none group relative ${
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-50/80 shadow-sm dark:bg-indigo-950/50 dark:border-indigo-500 ring-2 ring-indigo-500/30'
+                          : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-80 hover:opacity-100'
+                      }`}
+                    >
+                      <Checkbox
+                        id={`courier-chk-${courier.id}`}
+                        checked={isSelected}
+                        onCheckedChange={() => toggleCourierSelection(courier.id)}
+                        className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4"
+                      />
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                            {courier.vehicle_type === 'carro'
+                              ? '🚗'
+                              : courier.vehicle_type === 'caminhao'
+                                ? '🚚'
+                                : courier.vehicle_type === 'van'
+                                  ? '🚐'
+                                  : '🛵'}{' '}
+                            {courier.name}
+                          </p>
+                          <span
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: palette.color }}
+                            title={`Cor da rota: ${palette.name}`}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-slate-500 mt-0.5">
+                          <span className="truncate">
+                            {isBusy ? '⚠️ Ocupado' : '🟢 Disponível'} •{' '}
+                            {courier.vehicle_model || courier.vehicle_type || 'Moto'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => selectOnlyCourier(courier.id, e)}
+                            className="text-[9px] text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline font-semibold ml-1 shrink-0"
+                            title="Marcar somente este entregador"
+                          >
+                            Só este
+                          </button>
+                        </div>
+                      </div>
+                    </label>
+                  )
+                })}
+                {filteredCouriers.length === 0 && (
+                  <div className="col-span-full py-4 text-center text-xs text-slate-400">
+                    Nenhum entregador corresponde ao filtro de busca.
+                  </div>
+                )}
+              </div>
+
+              {/* Botão de Avanço para Etapa 2 */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-200/80 dark:border-slate-800">
+                <span className="text-xs text-slate-500">
+                  {selectedCourierIds.length === 0
+                    ? '⚠️ Selecione pelo menos 1 entregador para continuar'
+                    : `✓ ${selectedCourierIds.length} entregador(es) selecionado(s)`}
+                </span>
+                <Button
+                  type="button"
+                  onClick={() => setWizardStep('orders')}
+                  disabled={selectedCourierIds.length === 0}
+                  className="h-8 px-3 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold flex items-center gap-1"
+                >
+                  Próximo: Selecionar Clientes / Entregas <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
-          </div>
-          {/* Step 2: Visual Map & Distribution Inspection */}
+          )}
+          {/* ETAPA 2: DEPOIS SELECIONA OS CLIENTES / ENTREGAS A ROTEIRIZAR */}
+          {wizardStep === 'orders' && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-900/50 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Package className="h-4 w-4 text-indigo-600" />
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                    Etapa 2: Selecionar Clientes / Entregas ({selectedOrderIds.length} de{' '}
+                    {pendingOrders.length})
+                  </Label>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={selectAllOrders}
+                    className="h-6 px-2 text-[11px] text-indigo-600 hover:text-indigo-700"
+                  >
+                    Marcar Todas
+                  </Button>
+                  <span className="text-slate-300">|</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={deselectAllOrders}
+                    className="h-6 px-2 text-[11px] text-slate-500 hover:text-slate-700"
+                  >
+                    Desmarcar Todas
+                  </Button>
+                </div>
+              </div>
+
+              {/* Filtro de Entregas */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Buscar por cliente, endereço ou código de rastreio..."
+                  value={searchOrderFilter}
+                  onChange={(e) => setSearchOrderFilter(e.target.value)}
+                  className="h-7 px-2.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white w-full focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* Lista Selecionável de Pedidos Pendentes */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
+                {filteredPendingOrders.map((ord) => {
+                  const cust = customers.find((c) => c.id === ord.customer_id)
+                  const isSelected = selectedOrderIds.includes(ord.id)
+
+                  return (
+                    <label
+                      key={ord.id}
+                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none ${
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/50 dark:border-indigo-500 ring-1 ring-indigo-500/40'
+                          : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-75 hover:opacity-100'
+                      }`}
+                    >
+                      <Checkbox
+                        id={`ord-chk-${ord.id}`}
+                        checked={isSelected}
+                        onCheckedChange={() => toggleOrderSelection(ord.id)}
+                        className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4 mt-0.5"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                            {cust?.name || 'Cliente'}
+                          </p>
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] px-1.5 py-0 uppercase font-mono"
+                          >
+                            {ord.tracking_code}
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                          📍 {cust?.address || 'Endereço cadastrado'}
+                        </p>
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
+                          <span>
+                            Prioridade:{' '}
+                            <b className="text-slate-700 dark:text-slate-300">
+                              {ord.priority || 'Normal'}
+                            </b>
+                          </span>
+                          <span>Valor: R$ {ord.total_amount?.toFixed(2) || '0.00'}</span>
+                        </div>
+                      </div>
+                    </label>
+                  )
+                })}
+                {filteredPendingOrders.length === 0 && (
+                  <div className="col-span-full py-6 text-center text-xs text-slate-400">
+                    Nenhuma entrega pendente encontrada. Cadastre novos clientes e entregas no
+                    painel do vendedor.
+                  </div>
+                )}
+              </div>
+
+              {/* Botão de Executar Otimização com Menor Trajeto */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-200/80 dark:border-slate-800">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setWizardStep('couriers')}
+                  className="h-8 px-3 text-xs"
+                >
+                  ← Voltar para Entregadores
+                </Button>
+
+                <Button
+                  type="button"
+                  onClick={runRouteOptimization}
+                  disabled={
+                    isOptimizing || selectedCourierIds.length === 0 || selectedOrderIds.length === 0
+                  }
+                  className="h-9 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold text-xs shadow-md shadow-indigo-500/20 flex items-center gap-2"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {isOptimizing
+                    ? 'Otimizando Menor Trajeto...'
+                    : `Otimizar Rota para ${selectedCourierIds.length} Entregador(es)`}
+                </Button>
+              </div>
+            </div>
+          )}
+          {/* Step 3: Visual Map & Draggable Editing (sempre visível ou focado quando em review) */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                <Navigation className="h-3.5 w-3.5 text-indigo-600" />
-                2. Visualização das Rotas Agrupadas no Mapa
-              </Label>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Navigation className="h-3.5 w-3.5 text-indigo-600" />
+                  Mapa Interativo &amp; Roteamento (Ponto de Partida 🟢 → Paradas 1..N 📍 → Chegada
+                  🏁)
+                </Label>
+                <p className="text-[11px] text-slate-500">
+                  Arraste qualquer marcador no mapa para ajustar a rota manualmente, ou use as setas
+                  na lista abaixo.
+                </p>
+              </div>
               {optimizationResult && (
                 <div className="flex items-center gap-2 text-xs">
                   <Badge
@@ -1263,12 +1837,18 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   >
                     ✓ Total: {optimizationResult.totalDistanceKm} km
                   </Badge>
+                  <Badge
+                    variant="outline"
+                    className="text-indigo-700 bg-indigo-50 border-indigo-200 text-[11px] flex items-center gap-1"
+                  >
+                    <Move className="h-3 w-3" /> Arraste ativo no mapa
+                  </Badge>
                 </div>
               )}
             </div>
 
             {/* Google Map Display Container */}
-            <div className="relative w-full h-64 sm:h-72 rounded-2xl overflow-hidden border border-slate-300 dark:border-slate-700 shadow-inner bg-slate-900">
+            <div className="relative w-full h-72 sm:h-80 rounded-2xl overflow-hidden border border-slate-300 dark:border-slate-700 shadow-inner bg-slate-900">
               <div
                 ref={mapContainerRef}
                 className={`w-full h-full ${isMapsLoaded && !mapsAuthError ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
@@ -1324,20 +1904,22 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           <strong className="text-white truncate">{plan.courier.name}</strong>
                         </div>
                         <p className="text-slate-400 text-[10px]">
-                          {plan.stops.length} paradas • {plan.total_distance_km} km
+                          🟢 {plan.start_base?.name} → {plan.stops.length} paradas → 🏁{' '}
+                          {plan.end_base?.name}
                         </p>
                       </div>
                     ))}
                     {!optimizationResult && (
                       <div className="col-span-full text-center text-xs text-slate-400 py-6">
-                        Clique em &quot;Calcular &amp; Otimizar Distribuição&quot; para traçar as
-                        rotas dos entregadores.
+                        Selecione entregadores e clientes acima e clique em &quot;Otimizar
+                        Rota&quot; para visualizar no mapa.
                       </div>
                     )}
                   </div>
 
-                  <div className="relative z-20 text-[10px] text-slate-400">
-                    💡 Sistema calcula sequenciamento TSP e agrupamento balanceado por proximidade.
+                  <div className="relative z-20 text-[10px] text-slate-400 flex items-center justify-between">
+                    <span>🟢 Partida | 📍 Paradas Ordenadas | 🏁 Ponto de Chegada</span>
+                    <span>💡 Menor trajeto TSP com Ida e Volta</span>
                   </div>
                 </div>
               )}
@@ -1352,7 +1934,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   <Gauge className="h-4 w-4 text-indigo-600" />
                   <div>
                     <span className="text-slate-500 block text-[10px] uppercase font-bold">
-                      Distância Total
+                      Distância Total (Ida + Volta)
                     </span>
                     <span className="font-bold text-slate-900 dark:text-white">
                       {optimizationResult.totalDistanceKm} km
@@ -1389,11 +1971,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 <div>
                   <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                     <Truck className="h-3.5 w-3.5 text-indigo-600" />
-                    3. Edição da Otimização (Reordenar, Remover e Reatribuir)
+                    Sequência das Rotas &amp; Ajuste Manual (Sincronizado com o Mapa)
                   </Label>
                   <p className="text-[11px] text-slate-500">
-                    Você pode subir/descer a prioridade das paradas ou mover pedidos entre
-                    entregadores.
+                    Ponto de partida 🟢 → paradas ordenadas 1..N → ponto de chegada 🏁. Suba/desça
+                    posições ou arraste os pins no mapa.
                   </p>
                 </div>
 
@@ -1439,14 +2021,20 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                         <div className="flex items-center gap-2">
                           <span
-                            className="h-3 w-3 rounded-full shrink-0"
+                            className="h-3 w-3 rounded-full shrink-0 ring-2 ring-white shadow"
                             style={{ backgroundColor: plan.color }}
                           />
-                          <p className="text-xs font-bold text-slate-900 dark:text-white">
-                            {plan.courier.name}
-                          </p>
+                          <div>
+                            <p className="text-xs font-bold text-slate-900 dark:text-white">
+                              {plan.courier.name}
+                            </p>
+                            <p className="text-[10px] text-slate-500">
+                              Veículo: {plan.courier.vehicle_type || 'Moto'} (
+                              {plan.courier.vehicle_plate || 'Sem placa'})
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
                           <Badge className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] border">
                             {plan.stops.length} paradas • {plan.total_distance_km} km
                           </Badge>
@@ -1454,6 +2042,27 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             ⛽ R$ {plan.estimated_fuel_cost.toFixed(2)}
                           </Badge>
                         </div>
+                      </div>
+
+                      {/* Ponto de Partida visual */}
+                      <div className="p-2 rounded-lg bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 flex items-center gap-2 text-[11px]">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white font-bold text-[10px]">
+                          🟢
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-bold text-emerald-900 dark:text-emerald-200 truncate">
+                            Partida: {plan.start_base?.name || 'Base Central LOGHYPE'}
+                          </p>
+                          <p className="text-[10px] text-emerald-700 dark:text-emerald-300 truncate">
+                            {plan.start_base?.address}
+                          </p>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] bg-white text-emerald-700 border-emerald-300"
+                        >
+                          Início
+                        </Badge>
                       </div>
 
                       {/* Sequence stops list with reordering controls */}
@@ -1551,6 +2160,28 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             </div>
                           ))
                         )}
+                      </div>
+
+                      {/* Ponto de Chegada visual */}
+                      <div className="p-2 rounded-lg bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/50 flex items-center gap-2 text-[11px]">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-rose-600 text-white font-bold text-[10px]">
+                          🏁
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-bold text-rose-900 dark:text-rose-200 truncate">
+                            Chegada / Retorno:{' '}
+                            {plan.end_base?.name || plan.start_base?.name || 'Base'}
+                          </p>
+                          <p className="text-[10px] text-rose-700 dark:text-rose-300 truncate">
+                            {plan.end_base?.address || plan.start_base?.address}
+                          </p>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] bg-white text-rose-700 border-rose-300"
+                        >
+                          Fim
+                        </Badge>
                       </div>
                     </div>
                   ))}

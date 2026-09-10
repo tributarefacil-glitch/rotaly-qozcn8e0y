@@ -360,20 +360,30 @@ export default function CourierApp() {
         {activeDeliveries.length > 0 && (
           <div className="rounded-xl border border-[#1E2B58] bg-gradient-to-b from-[#0E1738] to-[#0A1128] p-4 shadow-brand-dark space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1E2B58]/80 pb-3">
-              <div>
+              <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold font-heading uppercase text-slate-300 flex items-center gap-1.5">
-                    <Building className="h-4 w-4 text-[#FF6B35]" />
-                    Origem / Base: <span className="text-white">{startBaseName}</span>
+                    <Building className="h-4 w-4 text-[#22C55E]" />🟢 Ponto de Partida:{' '}
+                    <span className="text-white">{startBaseName}</span>
                   </span>
                 </div>
+                {startBaseAddress && (
+                  <p className="text-[10px] text-slate-400 pl-5 truncate max-w-sm">
+                    {startBaseAddress}
+                  </p>
+                )}
                 <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-1">
-                  <RotateCcw className="h-3.5 w-3.5 text-[#22C55E]" />
+                  <RotateCcw className="h-3.5 w-3.5 text-rose-400" />
                   <span>
-                    Destino Final (Ida e Volta):{' '}
+                    🏁 Ponto de Chegada (Ida e Volta):{' '}
                     <strong className="text-slate-200">{endBaseName}</strong>
                   </span>
                 </div>
+                {endBaseAddress && (
+                  <p className="text-[10px] text-slate-400 pl-5 truncate max-w-sm">
+                    {endBaseAddress}
+                  </p>
+                )}
               </div>
 
               {isRouteStarted ? (

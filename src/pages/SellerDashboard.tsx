@@ -482,10 +482,15 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
               <Button
                 onClick={() => setIsOptimizerModalOpen(true)}
-                className="h-10 min-h-[44px] gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 rounded-input"
+                className="relative h-10 min-h-[44px] gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 rounded-input"
               >
                 <Sparkles className="h-4 w-4 text-[#FBBF24]" />
-                <span>Otimizar Rota</span>
+                <span>Otimizar Rotas</span>
+                {pendingCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-900 text-[10px] font-black animate-pulse">
+                    {pendingCount} aguardando
+                  </span>
+                )}
               </Button>
 
               <Button
@@ -593,12 +598,17 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="font-heading font-black text-sm text-white group-hover:text-[#FBBF24] transition-colors">
-                      Otimizar / Iniciar Rota
+                      Otimizar Rotas
                     </span>
+                    {pendingCount > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 text-[10px] font-bold">
+                        {pendingCount} pendente{pendingCount > 1 ? 's' : ''}
+                      </span>
+                    )}
                     <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#FBBF24] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
-                    Divisão por múltiplos entregadores e despacho de frotas
+                    Divisão por menor trajeto, mapa interativo e liberação para entregador
                   </p>
                 </div>
               </button>
