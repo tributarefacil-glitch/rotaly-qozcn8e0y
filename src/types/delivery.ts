@@ -117,6 +117,8 @@ export interface OrderRecord extends RecordModel {
   route_suggestion_status?: RouteSuggestionStatus
   route_suggestion_details?: RouteSuggestionDetails | string
   // Route Lifecycle & Bases (Regras 1, 3, 4, 5)
+  route_released?: boolean
+  route_released_at?: string
   route_started?: boolean
   route_started_at?: string
   start_base_name?: string

@@ -325,6 +325,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         courier_id: targetCourierId,
         status: 'in_transit',
         sequence: nextSequence,
+        route_released: true,
+        route_released_at: new Date().toISOString(),
         estimated_arrival: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       })
 
@@ -350,6 +352,57 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       toast.error('Erro ao adicionar entrega à rota.')
     } finally {
       setIsAddingToRoute(false)
+    }
+  }
+
+  // 4. Liberar rota individual de um pedido ou liberar todas as rotas pendentes de um entregador
+  const [releasingOrderId, setReleasingOrderId] = useState<string | null>(null)
+  const [isReleasingAllForCourier, setIsReleasingAllForCourier] = useState<string | null>(null)
+
+  const handleReleaseOrderRoute = async (
+    orderId: string,
+    courierId?: string,
+    e?: React.MouseEvent,
+  ) => {
+    if (e) e.stopPropagation()
+    setReleasingOrderId(orderId)
+    try {
+      await deliveryService.releaseRouteForOrders([orderId], courierId)
+      toast.success(
+        '🚀 Rota liberada com sucesso! O entregador já pode visualizar a entrega no app.',
+      )
+      loadData()
+    } catch (err) {
+      console.error('Error releasing order route:', err)
+      toast.error('Erro ao liberar rota.')
+    } finally {
+      setReleasingOrderId(null)
+    }
+  }
+
+  const handleReleaseAllForCourier = async (courierId: string) => {
+    setIsReleasingAllForCourier(courierId)
+    try {
+      const courierOrders = orders.filter(
+        (o) =>
+          o.courier_id === courierId &&
+          o.route_released !== true &&
+          o.status !== 'delivered' &&
+          o.status !== 'cancelled',
+      )
+      const ids = courierOrders.map((o) => o.id)
+      if (ids.length === 0) {
+        toast.info('Não há entregas pendentes de liberação para este entregador.')
+        return
+      }
+      await deliveryService.releaseRouteForOrders(ids, courierId)
+      toast.success(`🚀 Todas as ${ids.length} entregas foram liberadas para o entregador!`)
+      loadData()
+    } catch (err) {
+      console.error('Error releasing all orders for courier:', err)
+      toast.error('Erro ao liberar rota em lote.')
+    } finally {
+      setIsReleasingAllForCourier(null)
     }
   }
 
@@ -848,7 +901,56 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                   </div>
 
                   {/* Status Filters & Search */}
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-wrap">
+                    {/* Botão de Liberação em Lote se houver entregas atribuídas não liberadas */}
+                    {orders.some(
+                      (o) =>
+                        o.courier_id &&
+                        !o.route_released &&
+                        o.status !== 'delivered' &&
+                        o.status !== 'cancelled',
+                    ) && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={async () => {
+                          const unreleasedOrders = orders.filter(
+                            (o) =>
+                              o.courier_id &&
+                              !o.route_released &&
+                              o.status !== 'delivered' &&
+                              o.status !== 'cancelled',
+                          )
+                          if (unreleasedOrders.length === 0) return
+                          try {
+                            const ids = unreleasedOrders.map((o) => o.id)
+                            await deliveryService.releaseRouteForOrders(ids)
+                            toast.success(
+                              `🚀 Todas as ${ids.length} entregas atribuídas foram liberadas para os entregadores!`,
+                            )
+                            loadData()
+                          } catch (err) {
+                            console.error('Error releasing all:', err)
+                            toast.error('Erro ao liberar todas as rotas.')
+                          }
+                        }}
+                        className="h-9 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm flex items-center gap-1.5"
+                        title="Liberar todas as rotas atribuídas para os respectivos entregadores"
+                      >
+                        <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+                        Liberar Todas as Rotas (
+                        {
+                          orders.filter(
+                            (o) =>
+                              o.courier_id &&
+                              !o.route_released &&
+                              o.status !== 'delivered' &&
+                              o.status !== 'cancelled',
+                          ).length
+                        }
+                        )
+                      </Button>
+                    )}
                     <Tabs
                       value={selectedStatus}
                       onValueChange={setSelectedStatus}
@@ -903,6 +1005,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                         <th className="py-3 px-3 font-bold">Cliente & Destino</th>
                         <th className="py-3 px-3 font-bold">Entregador / Fila</th>
                         <th className="py-3 px-3 font-bold">Status / Motivo</th>
+                        <th className="py-3 px-3 font-bold">Liberação da Rota</th>
                         <th className="py-3 px-3 font-bold">Prioridade</th>
                         <th className="py-3 px-3 font-bold text-right">Valor Total</th>
                         <th className="py-3 px-3 font-bold text-right">Ações da Venda</th>
@@ -911,7 +1014,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                     <tbody className="divide-y divide-slate-100">
                       {filteredOrders.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-8 text-center text-slate-400">
+                          <td colSpan={8} className="py-8 text-center text-slate-400">
                             Nenhum pedido encontrado para o filtro aplicado.
                           </td>
                         </tr>
@@ -1020,6 +1123,49 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                     )}
                                 </div>
                               </td>
+                              <td className="py-3 px-3">
+                                {order.status === 'delivered' ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-emerald-950/40 text-emerald-400 border-emerald-500/30 text-[10px] font-bold"
+                                  >
+                                    ✓ Concluída
+                                  </Badge>
+                                ) : order.route_released ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-emerald-950/40 text-[#22C55E] border-[#22C55E]/40 text-[10px] font-bold"
+                                    title={`Rota liberada em ${order.route_released_at ? new Date(order.route_released_at).toLocaleTimeString() : 'sim'}`}
+                                  >
+                                    ✓ Rota Liberada
+                                  </Badge>
+                                ) : order.courier_id ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <Badge
+                                      variant="outline"
+                                      className="bg-amber-950/40 text-[#FBBF24] border-[#FBBF24]/40 text-[10px] font-bold"
+                                    >
+                                      ⏸ Rota Não Liberada
+                                    </Badge>
+                                    <Button
+                                      size="sm"
+                                      type="button"
+                                      disabled={releasingOrderId === order.id}
+                                      onClick={(e) =>
+                                        handleReleaseOrderRoute(order.id, order.courier_id, e)
+                                      }
+                                      className="h-6 px-1.5 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                                      title="Liberar imediatamente para o entregador visualizar no app"
+                                    >
+                                      {releasingOrderId === order.id ? '...' : 'Liberar'}
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-slate-500 italic">
+                                    Sem entregador
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-3 px-3 text-xs">{priorityBadge}</td>
                               <td className="py-3 px-3 text-right font-bold text-white font-mono">
                                 R$ {Number(order.total_price || 0).toFixed(2)}
@@ -1066,6 +1212,29 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                   >
                                     <span>Abrir</span>
                                   </Link>
+
+                                  {/* Botão Rápido: Liberar Rota na linha da ação */}
+                                  {order.courier_id &&
+                                    !order.route_released &&
+                                    order.status !== 'delivered' &&
+                                    order.status !== 'cancelled' && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        type="button"
+                                        disabled={releasingOrderId === order.id}
+                                        onClick={(e) =>
+                                          handleReleaseOrderRoute(order.id, order.courier_id, e)
+                                        }
+                                        className="h-7 px-2 text-[11px] bg-emerald-950/60 hover:bg-emerald-800 text-emerald-300 border-emerald-500/50 gap-1 rounded-input font-bold"
+                                        title="Liberar rota desta entrega para o entregador visualizar"
+                                      >
+                                        <Sparkles className="h-3 w-3 text-emerald-400" />
+                                        {releasingOrderId === order.id
+                                          ? 'Liberando...'
+                                          : 'Liberar Rota'}
+                                      </Button>
+                                    )}
 
                                   {/* Adicionar a Rota Já Iniciada */}
                                   {order.status === 'pending' && (

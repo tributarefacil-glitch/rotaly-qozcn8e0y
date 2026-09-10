@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T16:58:10.442Z",
+  "generatedAt": "2026-09-10T18:02:47.652Z",
   "collections": [
     {
       "name": "users",
@@ -459,6 +459,18 @@
         {
           "name": "total_route_fuel_cost",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "route_released",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "route_released_at",
+          "type": "date",
           "required": false,
           "system": false
         }

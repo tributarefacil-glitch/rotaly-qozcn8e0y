@@ -462,7 +462,60 @@ export const deliveryService = {
     return pb.collection('base_addresses').delete(id)
   },
 
-  // Route Lifecycle (Iniciar Rota, Ida e Volta, Desvios)
+  // Route Lifecycle (Liberar Rota pelo Vendedor, Iniciar Rota pelo Entregador, Ida e Volta, Desvios)
+  async releaseRouteForOrders(
+    orderIds: string[],
+    courierId?: string,
+  ): Promise<{ success: boolean; updatedCount: number }> {
+    try {
+      const now = new Date().toISOString()
+      let ordersToUpdate: OrderRecord[] = []
+
+      if (orderIds && orderIds.length > 0) {
+        const filter = orderIds.map((id) => `id='${id}'`).join(' || ')
+        ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
+          filter,
+          requestKey: null,
+        })
+      } else if (courierId) {
+        ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
+          filter: `courier_id='${courierId}' && (status='assigned' || status='pending' || status='in_transit')`,
+          requestKey: null,
+        })
+      }
+
+      let updatedCount = 0
+      for (const order of ordersToUpdate) {
+        await pb.collection('orders').update(order.id, {
+          route_released: true,
+          route_released_at: order.route_released_at || now,
+        })
+        updatedCount++
+      }
+
+      // Notificar o entregador se houver
+      const targetCourier = courierId || ordersToUpdate[0]?.courier_id
+      if (targetCourier && updatedCount > 0) {
+        try {
+          await this.createNotification({
+            user_id: targetCourier,
+            title: '🚀 Rota Liberada pelo Vendedor!',
+            message: `Sua rota com ${updatedCount} entrega(s) foi liberada e está disponível no seu app.`,
+            type: 'order',
+            read: false,
+          })
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+
+      return { success: true, updatedCount }
+    } catch (err) {
+      console.error('Error releasing route for orders:', err)
+      throw err
+    }
+  },
+
   async startCourierRoute(
     courierId: string,
     orderIds?: string[],

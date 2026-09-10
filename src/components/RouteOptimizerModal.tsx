@@ -703,8 +703,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     }
   }, [open, optimizationResult, activeCourierTab, pendingOrders, couriers, customers, locations])
 
-  // Apply & Save Distribution: Updates orders in database with assigned courier and in_transit status
-  const handleApplyDistribution = async () => {
+  // Apply & Save Distribution (com opção de atribuir ou já Liberar Rota diretamente)
+  const handleApplyDistribution = async (releaseDirectly = false) => {
     if (!optimizationResult || optimizationResult.courierPlans.length === 0) {
       toast.error('Gere a otimização antes de confirmar a distribuição.')
       return
@@ -718,6 +718,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
     try {
       const now = Date.now()
+      const isoNow = new Date(now).toISOString()
 
       for (const plan of optimizationResult.courierPlans) {
         const returnKmPerStop =
@@ -736,7 +737,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
           await deliveryService.updateOrder(stop.id, {
             courier_id: plan.courier.id,
-            status: 'assigned', // Permite que o entregador acione o botão "Iniciar Rota"
+            status: 'assigned', // Permite que o entregador veja na fila e acione "Iniciar Rota"
             sequence: i + 1,
             distance_km: stopDistanceKm,
             return_trip_km: Number(returnKmPerStop.toFixed(2)),
@@ -746,6 +747,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             fuel_cost: stopFuelCost,
             estimated_arrival: etaTimestamp,
             route_started: false, // Regra 1: Entregador deve clicar em "Iniciar Rota"
+            route_released: releaseDirectly, // PEDIDO 1: Flag de liberação
+            route_released_at: releaseDirectly ? isoNow : undefined,
             start_base_name: startBase?.name || 'Base Central LOGHYPE',
             start_base_address: startBase?.address,
             start_base_lat: startBase?.lat,
@@ -762,17 +765,27 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         if (plan.stops.length > 0) {
           await deliveryService.createNotification({
             user_id: plan.courier.id,
-            title: '📦 Nova Rota Atribuída - Clique em Iniciar Rota',
-            message: `Você recebeu ${plan.stops.length} entregas (${plan.total_distance_km} km ida/volta). Acesse o app e clique em "Iniciar Rota" para começar.`,
+            title: releaseDirectly
+              ? '🚀 ROTA LIBERADA PARA VOCÊ!'
+              : '📦 Nova Rota Atribuída (Aguardando Liberação)',
+            message: releaseDirectly
+              ? `Sua rota com ${plan.stops.length} entregas (${plan.total_distance_km} km ida/volta) foi liberada pelo vendedor! Abra o app para iniciar.`
+              : `Você recebeu ${plan.stops.length} entregas (${plan.total_distance_km} km ida/volta). O vendedor liberará a rota em breve.`,
             type: 'order',
             read: false,
           })
         }
       }
 
-      toast.success(
-        `🎉 Sucesso! ${assignedCount} entregas distribuídas para os entregadores (aguardando acionamento de "Iniciar Rota")!`,
-      )
+      if (releaseDirectly) {
+        toast.success(
+          `🚀 Sucesso! ${assignedCount} entregas otimizadas e ROTA LIBERADA para os entregadores!`,
+        )
+      } else {
+        toast.success(
+          `🎉 Sucesso! ${assignedCount} entregas distribuídas. Clique em "Liberar Rota" no painel quando quiser enviar aos entregadores.`,
+        )
+      }
       onRoutesApplied()
       onOpenChange(false)
     } catch (err) {
@@ -1502,20 +1515,33 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           )}{' '}
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <DialogFooter className="gap-2 sm:gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 flex-col sm:flex-row justify-end">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Fechar
           </Button>
           <Button
             type="button"
-            onClick={handleApplyDistribution}
+            onClick={() => handleApplyDistribution(false)}
+            disabled={
+              isApplying || !optimizationResult || optimizationResult.courierPlans.length === 0
+            }
+            className="bg-slate-700 hover:bg-slate-800 text-white font-semibold text-xs flex items-center gap-1.5"
+            title="Apenas salva a ordem otimizada sem liberar no app do entregador ainda"
+          >
+            <Check className="h-4 w-4" />
+            {isApplying ? 'Salvando...' : 'Salvar Ordem (Sem Liberar)'}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => handleApplyDistribution(true)}
             disabled={
               isApplying || !optimizationResult || optimizationResult.courierPlans.length === 0
             }
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/25 flex items-center gap-1.5"
+            title="Salva a rota otimizada e já libera no app do entregador com alerta sonoro/push"
           >
-            <Check className="h-4 w-4" />
-            {isApplying ? 'Atribuindo aos Entregadores...' : 'Confirmar & Atribuir Rotas'}
+            <Sparkles className="h-4 w-4 text-amber-300" />
+            {isApplying ? 'Liberando...' : '🚀 Salvar & Liberar Rota'}
           </Button>
         </DialogFooter>
       </DialogContent>

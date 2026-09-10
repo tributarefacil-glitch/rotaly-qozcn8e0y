@@ -71,12 +71,18 @@ export default function CourierApp() {
     })
   }, [])
 
-  // Load orders assigned to this courier (or all active if none assigned)
+  // Load orders assigned to this courier (apenas pedidos liberados pelo vendedor OU já em trânsito/entregues)
   const loadCourierOrders = async () => {
     try {
-      // Sort primarily by sequence ascending, then created ascending
+      if (!user?.id) {
+        setOrders([])
+        return
+      }
+      // PEDIDO 1: O cliente só fica disponível para os entregadores após o vendedor otimizar e liberar a rota
+      // Mostra apenas pedidos atribuídos a este entregador com route_released = true OU status in_transit/delivered
+      const courierFilter = `courier_id = '${user.id}' && (route_released = true || status = 'in_transit' || status = 'delivered')`
       const allOrders = await deliveryService.getOrders(
-        user?.id ? `courier_id = '${user.id}'` : '',
+        courierFilter,
         'sequence,-created',
         'customer_id,courier_id,seller_id',
       )
@@ -98,12 +104,14 @@ export default function CourierApp() {
       if (
         (e.action === 'create' || e.action === 'update') &&
         e.record.courier_id === user?.id &&
-        (e.record.status === 'in_transit' || e.record.status === 'pending')
+        (e.record.route_released === true ||
+          e.record.status === 'in_transit' ||
+          e.record.status === 'delivered')
       ) {
         // Play notification chime and dispatch push
         notifyCourierNewDelivery(
-          '📦 Nova Entrega na sua Rota!',
-          `Pedido ${e.record.tracking_code} foi adicionado à sua lista de entregas.`,
+          '📦 Nova Rota Liberada!',
+          `Pedido ${e.record.tracking_code} está liberado para entrega na sua rota.`,
         )
       }
       loadCourierOrders()
