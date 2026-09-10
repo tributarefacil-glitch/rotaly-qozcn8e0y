@@ -41,6 +41,10 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { deliveryService } from '@/services/deliveryService'
+import {
+  BaseAddressAutocomplete,
+  type BaseAddressResult,
+} from '@/components/BaseAddressAutocomplete'
 import type {
   OrderRecord,
   UserRecord,
@@ -56,6 +60,7 @@ import {
   loadGoogleMapsScript,
   onGoogleMapsAuthError,
   isGoogleMapsAuthError,
+  fallbackGeocodeAddress,
 } from '@/lib/googleMaps'
 import {
   ArrowUp,
@@ -167,6 +172,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const [isEditingBases, setIsEditingBases] = useState(false)
   const [newBaseName, setNewBaseName] = useState('')
   const [newBaseAddress, setNewBaseAddress] = useState('')
+  const [newBaseLat, setNewBaseLat] = useState<number | null>(null)
+  const [newBaseLng, setNewBaseLng] = useState<number | null>(null)
   const [newBaseType, setNewBaseType] = useState<'base' | 'end_point'>('base')
   const [isCreatingBase, setIsCreatingBase] = useState(false)
 
@@ -261,11 +268,21 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
     setIsCreatingBase(true)
     try {
-      // Simulate/approximate lat/lng for SP if not geocoded
-      const randomOffsetLat = (Math.random() - 0.5) * 0.03
-      const randomOffsetLng = (Math.random() - 0.5) * 0.03
-      const lat = -23.565734 + randomOffsetLat
-      const lng = -46.651257 + randomOffsetLng
+      let lat = newBaseLat
+      let lng = newBaseLng
+
+      // Se não tiver coordenadas do autocomplete, tenta geocodificar com fallback
+      if (typeof lat !== 'number' || typeof lng !== 'number') {
+        const geo = await fallbackGeocodeAddress(newBaseAddress.trim())
+        if (geo) {
+          lat = geo.lat
+          lng = geo.lng
+        } else {
+          // Fallback seguro se geocodificação offline/falhar
+          lat = -23.565734
+          lng = -46.651257
+        }
+      }
 
       const created = await deliveryService.createBaseAddress({
         name: newBaseName.trim(),
@@ -284,6 +301,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
       setNewBaseName('')
       setNewBaseAddress('')
+      setNewBaseLat(null)
+      setNewBaseLng(null)
       toast.success('Local cadastrado com sucesso!')
     } catch (err) {
       console.error('Erro ao cadastrar base:', err)
@@ -984,12 +1003,24 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                     onChange={(e) => setNewBaseName(e.target.value)}
                     className="h-8 text-xs"
                   />
-                  <Input
-                    placeholder="Endereço completo com número, bairro e cidade"
-                    value={newBaseAddress}
-                    onChange={(e) => setNewBaseAddress(e.target.value)}
-                    className="h-8 text-xs sm:col-span-2"
-                  />
+                  <div className="sm:col-span-2">
+                    <BaseAddressAutocomplete
+                      value={newBaseAddress}
+                      onChange={(val) => {
+                        setNewBaseAddress(val)
+                      }}
+                      onAddressSelect={(res: BaseAddressResult) => {
+                        setNewBaseAddress(res.address)
+                        setNewBaseLat(res.lat)
+                        setNewBaseLng(res.lng)
+                        if (res.name && !newBaseName.trim()) {
+                          setNewBaseName(res.name)
+                        }
+                      }}
+                      placeholder="Endereço completo com número, bairro e cidade (busca Maps)..."
+                      inputClassName="h-8 text-xs bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between pt-1">
                   <div className="flex items-center gap-2">
