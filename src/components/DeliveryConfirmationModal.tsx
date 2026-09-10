@@ -237,17 +237,33 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         finalSignature = canvasRef.current.toDataURL('image/png')
       }
 
-      // Preparar envio (foto + assinatura + hora + observações)
-      if (photoFile) {
+      // Converter dataURL da assinatura em File se existir
+      let signatureFile: File | null = null
+      if (finalSignature && finalSignature.startsWith('data:image')) {
+        try {
+          const res = await fetch(finalSignature)
+          const blob = await res.blob()
+          signatureFile = new File([blob], `signature_${order.id || 'sig'}_${Date.now()}.png`, {
+            type: 'image/png',
+          })
+        } catch (e) {
+          console.warn('Não foi possível converter assinatura para arquivo:', e)
+        }
+      }
+
+      // Preparar envio (FormData caso haja arquivos como proof_photo ou signature)
+      if (photoFile || signatureFile) {
         const formData = new FormData()
         formData.append('status', finalStatus)
         formData.append('completion_reason', reason)
         formData.append('actual_arrival', now)
         formData.append('notes', finalNotes)
-        formData.append('proof_photo', photoFile)
         formData.append('receiver_name', effectiveReceiverName)
-        if (finalSignature) {
-          formData.append('signature', finalSignature)
+        if (photoFile) {
+          formData.append('proof_photo', photoFile)
+        }
+        if (signatureFile) {
+          formData.append('signature', signatureFile)
         }
 
         await deliveryService.updateOrder(order.id, formData)
@@ -258,7 +274,6 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           actual_arrival: now,
           notes: finalNotes,
           receiver_name: effectiveReceiverName,
-          signature: finalSignature || undefined,
         }
         await deliveryService.updateOrder(order.id, updateData)
       }
