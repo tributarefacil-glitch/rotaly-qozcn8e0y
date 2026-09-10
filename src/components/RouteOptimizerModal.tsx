@@ -278,9 +278,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           lat = geo.lat
           lng = geo.lng
         } else {
-          // Fallback seguro se geocodificação offline/falhar
-          lat = -23.565734
-          lng = -46.651257
+          // Fallback dinâmico: se houver alguma base já cadastrada, usa ela como referência, senão centro do RJ
+          const refBase = baseAddresses[0]
+          lat = refBase?.lat || -22.906847
+          lng = refBase?.lng || -43.172896
         }
       }
 
@@ -330,9 +331,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       // 1. Determine Start Base and End Base coordinates
       const startBase = baseAddresses.find((b) => b.id === selectedStartBaseId) || {
         name: 'Base Central LOGHYPE',
-        address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
-        lat: -23.565734,
-        lng: -46.651257,
+        address: 'Centro, Rio de Janeiro - RJ',
+        lat: -22.906847,
+        lng: -43.172896,
       }
 
       const endBase = baseAddresses.find((b) => b.id === selectedEndBaseId) || startBase
@@ -344,8 +345,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const courierOrigins = selectedCouriers.map((c) => {
         return {
           courier: c,
-          lat: startBase.lat || -23.565734,
-          lng: startBase.lng || -46.651257,
+          lat: startBase.lat || -22.906847,
+          lng: startBase.lng || -43.172896,
         }
       })
 
@@ -369,9 +370,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             customer: cust,
           })
         } else {
-          // Fallback coords around hub center if missing
-          const hubLat = -23.55052 + (Math.random() - 0.5) * 0.02
-          const hubLng = -46.633308 + (Math.random() - 0.5) * 0.02
+          // Fallback coords around hub center if missing (usa a base de saída como âncora)
+          const hubCenterLat = startBase.lat || -22.906847
+          const hubCenterLng = startBase.lng || -43.172896
+          const hubLat = hubCenterLat + (Math.random() - 0.5) * 0.02
+          const hubLng = hubCenterLng + (Math.random() - 0.5) * 0.02
           validOrdersWithCoords.push({
             order: ord,
             lat: hubLat,
@@ -513,14 +516,14 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           start_base: {
             name: startBase.name,
             address: startBase.address,
-            lat: startBase.lat || -23.565734,
-            lng: startBase.lng || -46.651257,
+            lat: startBase.lat || -22.906847,
+            lng: startBase.lng || -43.172896,
           },
           end_base: {
             name: endBase.name,
             address: endBase.address,
-            lat: endBase.lat || -23.565734,
-            lng: endBase.lng || -46.651257,
+            lat: endBase.lat || -22.906847,
+            lng: endBase.lng || -43.172896,
           },
         })
       }
@@ -1019,6 +1022,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       }}
                       placeholder="Endereço completo com número, bairro e cidade (busca Maps)..."
                       inputClassName="h-8 text-xs bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
+                      biasCoordinates={
+                        baseAddresses.find((b) => b.id === selectedStartBaseId)
+                          ? {
+                              lat: baseAddresses.find((b) => b.id === selectedStartBaseId)!.lat,
+                              lng: baseAddresses.find((b) => b.id === selectedStartBaseId)!.lng,
+                            }
+                          : baseAddresses.length > 0 && baseAddresses[0].lat && baseAddresses[0].lng
+                            ? { lat: baseAddresses[0].lat, lng: baseAddresses[0].lng }
+                            : null
+                      }
                     />
                   </div>
                 </div>

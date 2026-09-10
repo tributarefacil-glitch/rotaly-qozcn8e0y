@@ -406,11 +406,21 @@ export async function lookupViaCep(cep: string): Promise<ParsedAddress | null> {
  */
 export async function fallbackGeocodeAddress(
   query: string,
+  biasCoords?: { lat: number; lng: number } | null,
 ): Promise<{ lat: number; lng: number; parsed: ParsedAddress } | null> {
   try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=br&limit=1&q=${encodeURIComponent(
+    let url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=br&limit=1&q=${encodeURIComponent(
       query,
     )}`
+
+    if (biasCoords && typeof biasCoords.lat === 'number' && typeof biasCoords.lng === 'number') {
+      const delta = 0.5
+      const minLon = (biasCoords.lng - delta).toFixed(5)
+      const maxLon = (biasCoords.lng + delta).toFixed(5)
+      const minLat = (biasCoords.lat - delta).toFixed(5)
+      const maxLat = (biasCoords.lat + delta).toFixed(5)
+      url += `&viewbox=${minLon},${maxLat},${maxLon},${minLat}&bounded=0`
+    }
     const res = await fetch(url, {
       headers: {
         'Accept-Language': 'pt-BR,pt;q=0.9',

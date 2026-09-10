@@ -19,6 +19,11 @@ export interface BaseAddressResult {
   parsed?: ParsedAddress
 }
 
+export interface BiasCoordinates {
+  lat: number
+  lng: number
+}
+
 interface BaseAddressAutocompleteProps {
   value: string
   onChange: (value: string) => void
@@ -26,6 +31,55 @@ interface BaseAddressAutocompleteProps {
   placeholder?: string
   className?: string
   inputClassName?: string
+  biasCoordinates?: BiasCoordinates | null
+}
+
+// Cache de geolocalização do usuário em memória na sessão (executado uma única vez por sessão do app)
+let cachedUserPosition: BiasCoordinates | null = null
+let userPositionPromise: Promise<BiasCoordinates | null> | null = null
+
+export function getCachedUserCoordinates(): BiasCoordinates | null {
+  return cachedUserPosition
+}
+
+export function getUserGeolocation(): Promise<BiasCoordinates | null> {
+  if (cachedUserPosition) {
+    return Promise.resolve(cachedUserPosition)
+  }
+  if (userPositionPromise) {
+    return userPositionPromise
+  }
+  if (typeof window === 'undefined' || !navigator.geolocation) {
+    return Promise.resolve(null)
+  }
+
+  userPositionPromise = new Promise<BiasCoordinates | null>((resolve) => {
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const coords = {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          }
+          cachedUserPosition = coords
+          resolve(coords)
+        },
+        () => {
+          // Permissão negada ou erro de timeout; resolve silenciosamente com null sem travar a UI
+          resolve(null)
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 7000,
+          maximumAge: 10 * 60 * 1000, // aceita posição de até 10 minutos
+        },
+      )
+    } catch {
+      resolve(null)
+    }
+  })
+
+  return userPositionPromise
 }
 
 interface PlaceSuggestion {
@@ -42,6 +96,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   placeholder = 'Buscar endereço da base no Maps (Rua, Número, Bairro, Cidade)...',
   className = '',
   inputClassName = '',
+  biasCoordinates = null,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -57,7 +112,22 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   const [isResolvingPlace, setIsResolvingPlace] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState<number>(-1)
   const [isManualSearching, setIsManualSearching] = useState(false)
+  const [userCoords, setUserCoords] = useState<BiasCoordinates | null>(cachedUserPosition)
+  const userCoordsRef = useRef<BiasCoordinates | null>(cachedUserPosition)
 
+  // Carregar geolocalização do usuário de forma silenciosa e não-bloqueante uma única vez por sessão
+  useEffect(() => {
+    getUserGeolocation().then((coords) => {
+      if (coords) {
+        userCoordsRef.current = coords
+        setUserCoords(coords)
+      }
+    })
+  }, [])
+
+  // Determinar a coordenada de referência atual (usuário GPS > base de saída recebida via prop)
+  const activeBias =
+    userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || null
   // Pre-carregar Google Maps Script silenciosamente
   useEffect(() => {
     loadGoogleMapsScript().catch(() => {
@@ -79,34 +149,56 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   }, [])
 
   // Função para buscar predições programáticas (com Google AutocompleteService ou fallback)
-  const fetchPredictions = useCallback(async (queryText: string, requestId: number) => {
-    const trimmed = queryText.trim()
-    // Não buscar se for muito curto ou se for URL
-    if (trimmed.length < 3 || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      if (requestId === activeRequestIdRef.current) {
-        setSuggestions([])
-        setIsOpen(false)
-        setIsLoadingSuggestions(false)
+  const fetchPredictions = useCallback(
+    async (queryText: string, requestId: number) => {
+      const trimmed = queryText.trim()
+      // Não buscar se for muito curto ou se for URL
+      if (trimmed.length < 3 || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        if (requestId === activeRequestIdRef.current) {
+          setSuggestions([])
+          setIsOpen(false)
+          setIsLoadingSuggestions(false)
+        }
+        return
       }
-      return
-    }
 
-    setIsLoadingSuggestions(true)
+      setIsLoadingSuggestions(true)
 
-    try {
-      const mapsLoaded = await loadGoogleMapsScript()
-      const win = window as unknown as { google?: any }
+      try {
+        const mapsLoaded = await loadGoogleMapsScript()
+        const win = window as unknown as { google?: any }
 
-      // 1. Tentar AutocompleteService nativo da API JS
-      if (mapsLoaded && !isGoogleMapsAuthError() && win.google?.maps?.places?.AutocompleteService) {
-        const service = new win.google.maps.places.AutocompleteService()
+        // 1. Tentar AutocompleteService nativo da API JS
+        if (
+          mapsLoaded &&
+          !isGoogleMapsAuthError() &&
+          win.google?.maps?.places?.AutocompleteService
+        ) {
+          const service = new win.google.maps.places.AutocompleteService()
 
-        service.getPlacePredictions(
-          {
+          // Montar requisição com restrição de país e enviesamento por localização se disponível
+          const requestOptions: any = {
             input: trimmed,
             componentRestrictions: { country: 'br' },
-          },
-          (predictions: any[], status: string) => {
+          }
+
+          const currentBias =
+            userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+          if (
+            currentBias &&
+            typeof currentBias.lat === 'number' &&
+            typeof currentBias.lng === 'number'
+          ) {
+            if (win.google.maps.LatLng) {
+              requestOptions.location = new win.google.maps.LatLng(currentBias.lat, currentBias.lng)
+            } else {
+              requestOptions.location = { lat: currentBias.lat, lng: currentBias.lng }
+            }
+            // Raio de 50.000m (50km) para priorizar a região metropolitana do usuário/base (ex: RJ)
+            requestOptions.radius = 50000
+          }
+
+          service.getPlacePredictions(requestOptions, (predictions: any[], status: string) => {
             if (requestId !== activeRequestIdRef.current) return
             setIsLoadingSuggestions(false)
 
@@ -128,60 +220,79 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
               setSuggestions([])
               setIsOpen(false)
             }
-          },
-        )
-        return
-      }
-
-      // 2. Se o Google Maps não estiver disponível ou autenticado, usar Nominatim OpenStreetMap como busca preditiva de endereços no Brasil
-      const nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=br&limit=5&q=${encodeURIComponent(
-        trimmed,
-      )}`
-      const res = await fetch(nominatimUrl, {
-        headers: {
-          'Accept-Language': 'pt-BR,pt;q=0.9',
-        },
-      })
-
-      if (requestId !== activeRequestIdRef.current) return
-
-      if (res.ok) {
-        const data = await res.json()
-        if (Array.isArray(data) && data.length > 0) {
-          const items: PlaceSuggestion[] = data.map((item: any) => {
-            const displayName: string = item.display_name || ''
-            const parts = displayName.split(', ')
-            const main = parts[0] || displayName
-            const secondary = parts.slice(1, 4).join(', ')
-            return {
-              placeId: `osm_${item.osm_type || 'node'}_${item.osm_id || Math.random()}`,
-              mainText: main,
-              secondaryText: secondary,
-              fullText: displayName,
-            }
           })
-          setSuggestions(items)
-          setIsOpen(true)
-          setSelectedIndex(-1)
+          return
+        }
+
+        // 2. Se o Google Maps não estiver disponível ou autenticado, usar Nominatim OpenStreetMap como busca preditiva de endereços no Brasil
+        // Se houver coordenadas de bias (GPS ou base de saída), adiciona viewbox para priorizar a região (bounded=0 apenas enviesa os resultados)
+        let nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=br&limit=5&q=${encodeURIComponent(
+          trimmed,
+        )}`
+
+        const currentBias =
+          userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+        if (
+          currentBias &&
+          typeof currentBias.lat === 'number' &&
+          typeof currentBias.lng === 'number'
+        ) {
+          // Caixa de ~0.45 graus em torno da coordenada (~50km)
+          const delta = 0.45
+          const minLon = (currentBias.lng - delta).toFixed(5)
+          const maxLon = (currentBias.lng + delta).toFixed(5)
+          const minLat = (currentBias.lat - delta).toFixed(5)
+          const maxLat = (currentBias.lat + delta).toFixed(5)
+          nominatimUrl += `&viewbox=${minLon},${maxLat},${maxLon},${minLat}&bounded=0`
+        }
+
+        const res = await fetch(nominatimUrl, {
+          headers: {
+            'Accept-Language': 'pt-BR,pt;q=0.9',
+          },
+        })
+
+        if (requestId !== activeRequestIdRef.current) return
+
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data) && data.length > 0) {
+            const items: PlaceSuggestion[] = data.map((item: any) => {
+              const displayName: string = item.display_name || ''
+              const parts = displayName.split(', ')
+              const main = parts[0] || displayName
+              const secondary = parts.slice(1, 4).join(', ')
+              return {
+                placeId: `osm_${item.osm_type || 'node'}_${item.osm_id || Math.random()}`,
+                mainText: main,
+                secondaryText: secondary,
+                fullText: displayName,
+              }
+            })
+            setSuggestions(items)
+            setIsOpen(true)
+            setSelectedIndex(-1)
+          } else {
+            setSuggestions([])
+            setIsOpen(false)
+          }
         } else {
           setSuggestions([])
           setIsOpen(false)
         }
-      } else {
-        setSuggestions([])
-        setIsOpen(false)
+      } catch (err) {
+        if (requestId === activeRequestIdRef.current) {
+          setSuggestions([])
+          setIsOpen(false)
+        }
+      } finally {
+        if (requestId === activeRequestIdRef.current) {
+          setIsLoadingSuggestions(false)
+        }
       }
-    } catch (err) {
-      if (requestId === activeRequestIdRef.current) {
-        setSuggestions([])
-        setIsOpen(false)
-      }
-    } finally {
-      if (requestId === activeRequestIdRef.current) {
-        setIsLoadingSuggestions(false)
-      }
-    }
-  }, [])
+    },
+    [activeBias],
+  )
 
   // Gerenciar digitação com debounce
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -262,18 +373,29 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
                 onChange(formattedAddress)
               }
 
+              // Coordenadas default calibradas com o bias ativo (GPS ou base de saída) se lat/lng vier indefinido
+              const effectiveBias =
+                userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+              const defaultLat = effectiveBias?.lat ?? -22.906847
+              const defaultLng = effectiveBias?.lng ?? -43.172896
+
               onAddressSelect({
                 name: place.name || suggestion.mainText,
                 address: formattedAddress,
-                lat: lat ?? -23.565734,
-                lng: lng ?? -46.651257,
+                lat: lat ?? defaultLat,
+                lng: lng ?? defaultLng,
                 parsed,
               })
               return
             }
 
             // Fallback caso getDetails falhe
-            fallbackGeocodeAddress(suggestion.fullText).then((geo) => {
+            const effectiveBias =
+              userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+            const fallbackDefaultLat = effectiveBias?.lat ?? -22.906847
+            const fallbackDefaultLng = effectiveBias?.lng ?? -43.172896
+
+            fallbackGeocodeAddress(suggestion.fullText, activeBias).then((geo) => {
               if (geo) {
                 onAddressSelect({
                   name: suggestion.mainText,
@@ -286,8 +408,8 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
                 onAddressSelect({
                   name: suggestion.mainText,
                   address: suggestion.fullText,
-                  lat: -23.565734,
-                  lng: -46.651257,
+                  lat: fallbackDefaultLat,
+                  lng: fallbackDefaultLng,
                 })
               }
             })
@@ -298,6 +420,10 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
 
       // Se for do OpenStreetMap ou Google Maps não disponível
       const geo = await fallbackGeocodeAddress(suggestion.fullText)
+      const effectiveBias =
+        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+      const defaultLat = effectiveBias?.lat ?? -22.906847
+      const defaultLng = effectiveBias?.lng ?? -43.172896
       if (geo) {
         onAddressSelect({
           name: suggestion.mainText,
@@ -310,17 +436,21 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
         onAddressSelect({
           name: suggestion.mainText,
           address: suggestion.fullText,
-          lat: -23.565734,
-          lng: -46.651257,
+          lat: defaultLat,
+          lng: defaultLng,
         })
       }
     } catch (err) {
       console.warn('Erro ao resolver detalhes do endereço:', err)
+      const effectiveBias =
+        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+      const defaultLat = effectiveBias?.lat ?? -22.906847
+      const defaultLng = effectiveBias?.lng ?? -43.172896
       onAddressSelect({
         name: suggestion.mainText,
         address: suggestion.fullText,
-        lat: -23.565734,
-        lng: -46.651257,
+        lat: defaultLat,
+        lng: defaultLng,
       })
     } finally {
       setIsResolvingPlace(false)
@@ -334,6 +464,11 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
 
     setIsOpen(false)
     setIsManualSearching(true)
+    const effectiveBias =
+      userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+    const defaultLat = effectiveBias?.lat ?? -22.906847
+    const defaultLng = effectiveBias?.lng ?? -43.172896
+
     try {
       // 1. Tentar CEP se houver padrão de CEP
       const cepMatch = query.match(/\d{5}-?\d{3}/)
@@ -347,11 +482,16 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
               '',
             )
           onChange(formatted || query)
+
+          // Tentar geocodificar o endereço do CEP para obter lat/lng precisas
+          const fullQuery = `${cepResult.street || ''}, ${cepResult.neighborhood || ''}, ${cepResult.city || ''} - ${cepResult.state || ''}, Brasil`
+          const geoCep = await fallbackGeocodeAddress(fullQuery, activeBias)
+
           onAddressSelect({
             address: formatted || query,
-            lat: -23.565734,
-            lng: -46.651257,
-            parsed: cepResult,
+            lat: geoCep?.lat ?? defaultLat,
+            lng: geoCep?.lng ?? defaultLng,
+            parsed: geoCep?.parsed || cepResult,
           })
           setIsManualSearching(false)
           return
@@ -359,13 +499,19 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
       }
 
       // 2. Geocodificação OpenStreetMap / Nominatim fallback
-      const geo = await fallbackGeocodeAddress(query)
+      const geo = await fallbackGeocodeAddress(query, activeBias)
       if (geo) {
         onAddressSelect({
           address: geo.parsed?.formattedAddress || query,
           lat: geo.lat,
           lng: geo.lng,
           parsed: geo.parsed,
+        })
+      } else {
+        onAddressSelect({
+          address: query,
+          lat: defaultLat,
+          lng: defaultLng,
         })
       }
     } catch (err) {
