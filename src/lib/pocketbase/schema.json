@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T20:58:42.147Z",
+  "generatedAt": "2026-09-10T21:12:58.169Z",
   "collections": [
     {
       "name": "users",
@@ -268,7 +268,8 @@
             "delivered",
             "address_error",
             "client_absent",
-            "cancelled"
+            "cancelled",
+            "assigned"
           ]
         },
         {
