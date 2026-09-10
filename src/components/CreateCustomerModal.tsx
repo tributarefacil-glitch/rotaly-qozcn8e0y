@@ -24,8 +24,11 @@ import {
   lookupViaCep,
   fallbackGeocodeAddress,
   fallbackReverseGeocode,
-  parseGoogleAddressComponents,
 } from '@/lib/googleMaps'
+import {
+  BaseAddressAutocomplete,
+  type BaseAddressResult,
+} from '@/components/BaseAddressAutocomplete'
 import type { CustomerRecord } from '@/types/delivery'
 import {
   UserPlus,
@@ -33,10 +36,7 @@ import {
   Search,
   Loader2,
   Sparkles,
-  MapPin,
   CheckCircle2,
-  AlertCircle,
-  HelpCircle,
   Link2,
   Crosshair,
 } from 'lucide-react'
@@ -68,7 +68,6 @@ export function CreateCustomerModal({
   const [lng, setLng] = useState<number | undefined>(undefined)
 
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
-  const [isSearchingAddress, setIsSearchingAddress] = useState(false)
   const [isLoadingViaCep, setIsLoadingViaCep] = useState(false)
   const [isSearchingPhone, setIsSearchingPhone] = useState(false)
   const [matchedExistingCustomer, setMatchedExistingCustomer] = useState<CustomerRecord | null>(
@@ -151,6 +150,49 @@ export function CreateCustomerModal({
     }
   }
 
+  // Callback disparado ao selecionar ou buscar um endereço pelo BaseAddressAutocomplete
+  const handleAddressSelect = useCallback((result: BaseAddressResult) => {
+    if (result.parsed) {
+      if (result.parsed.streetAndNumber) {
+        setStreetAndNumber(result.parsed.streetAndNumber)
+      } else if (result.parsed.street) {
+        const fullStreet = result.parsed.number
+          ? `${result.parsed.street}, ${result.parsed.number}`
+          : result.parsed.street
+        setStreetAndNumber(fullStreet)
+      } else if (result.address) {
+        setStreetAndNumber(result.address.split(',')[0] || result.address)
+      }
+
+      if (result.parsed.neighborhood) {
+        setNeighborhood(result.parsed.neighborhood)
+      }
+      if (result.parsed.city) {
+        setCity(result.parsed.city)
+      }
+      if (result.parsed.state) {
+        const uf = normalizeBrazilianUF(result.parsed.state)
+        if (uf && BRAZILIAN_STATES.includes(uf)) {
+          setUfState(uf)
+        }
+      }
+      if (result.parsed.postalCode) {
+        setPostalCode(result.parsed.postalCode)
+      }
+    } else if (result.address) {
+      setStreetAndNumber(result.address.split(',')[0] || result.address)
+    }
+
+    setAddressSearchQuery(result.address || result.name || '')
+
+    if (typeof result.lat === 'number' && typeof result.lng === 'number') {
+      setLat(result.lat)
+      setLng(result.lng)
+    }
+
+    toast.success('Endereço localizado e campos preenchidos com sucesso!')
+  }, [])
+
   // Lookup CEP via ViaCEP
   const handleCepChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     let raw = e.target.value.replace(/\D/g, '')
@@ -174,9 +216,9 @@ export function CreateCustomerModal({
           }
           toast.success('Endereço preenchido automaticamente pelo CEP!')
 
-          // Tentar geocodificar para obter coordenadas
+          // Tentar geocodificar para obter coordenadas (polo operacional RJ como bias)
           const full = `${res.street || ''}, ${res.neighborhood || ''}, ${res.city || ''} - ${res.state || ''}, Brasil`
-          fallbackGeocodeAddress(full).then((geo) => {
+          fallbackGeocodeAddress(full, { lat: -22.906847, lng: -43.172896 }).then((geo) => {
             if (geo) {
               setLat(geo.lat)
               setLng(geo.lng)
@@ -190,34 +232,6 @@ export function CreateCustomerModal({
       } finally {
         setIsLoadingViaCep(false)
       }
-    }
-  }
-
-  // Busca manual de endereço
-  const handleManualSearch = async () => {
-    if (!addressSearchQuery.trim()) return
-    setIsSearchingAddress(true)
-    try {
-      const geo = await fallbackGeocodeAddress(addressSearchQuery)
-      if (geo) {
-        setLat(geo.lat)
-        setLng(geo.lng)
-        if (geo.parsed?.streetAndNumber) setStreetAndNumber(geo.parsed.streetAndNumber)
-        if (geo.parsed?.neighborhood) setNeighborhood(geo.parsed.neighborhood)
-        if (geo.parsed?.city) setCity(geo.parsed.city)
-        if (geo.parsed?.state) {
-          const uf = normalizeBrazilianUF(geo.parsed.state)
-          if (uf && BRAZILIAN_STATES.includes(uf)) setUfState(uf)
-        }
-        if (geo.parsed?.postalCode) setPostalCode(geo.parsed.postalCode)
-        toast.success('Endereço localizado com sucesso!')
-      } else {
-        toast.error('Endereço não encontrado. Tente digitar o CEP.')
-      }
-    } catch {
-      toast.error('Falha ao buscar endereço.')
-    } finally {
-      setIsSearchingAddress(false)
     }
   }
 
@@ -491,43 +505,28 @@ export function CreateCustomerModal({
             )}
           </div>
 
-          {/* Busca Rápida por Endereço ou CEP */}
+          {/* Busca Rápida por Endereço ou CEP com Google Maps Autocomplete */}
           <div className="p-3.5 rounded-xl bg-[#0A1128] border border-[#1E2B58] space-y-3">
             <div className="flex items-center justify-between">
               <Label className="text-xs font-bold text-[#60A5FA] uppercase tracking-wider flex items-center gap-1.5 font-heading">
                 <Search className="h-3.5 w-3.5 text-[#60A5FA]" />
-                Buscar Endereço Inteligente
+                Buscar Endereço Inteligente (Google Maps / CEP)
               </Label>
-              <span className="text-[10px] text-slate-400">Preencha por texto ou CEP</span>
+              <span className="text-[10px] text-slate-400">Autocompleta enquanto você digita</span>
             </div>
 
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  placeholder="Digite o endereço completo ou CEP para buscar..."
-                  value={addressSearchQuery}
-                  onChange={(e) => setAddressSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      handleManualSearch()
-                    }
-                  }}
-                  className="h-9 text-xs pl-8 bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
-                />
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleManualSearch}
-                disabled={isSearchingAddress || !addressSearchQuery.trim()}
-                className="h-9 text-xs border-[#1E2B58] text-slate-200 hover:bg-[#1E2B58] hover:text-white"
-              >
-                {isSearchingAddress ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Buscar'}
-              </Button>
-            </div>
+            <BaseAddressAutocomplete
+              value={addressSearchQuery}
+              onChange={(val) => setAddressSearchQuery(val)}
+              onAddressSelect={handleAddressSelect}
+              placeholder="Comece a digitar o endereço ou CEP, ex: Av. Brasil, 1000..."
+              className="w-full"
+              inputClassName="h-9 bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus-visible:border-[#60A5FA] focus-visible:ring-[#60A5FA]/30"
+              buttonClassName="h-9 bg-[#1E2B58] hover:bg-[#2A3B7A] text-slate-100 border-[#1E2B58]"
+              dropdownClassName="border-[#1E2B58] bg-[#0E1738] divide-[#1E2B58]/60 text-white"
+              biasCoordinates={lat && lng ? { lat, lng } : { lat: -22.906847, lng: -43.172896 }}
+              showSearchButton={true}
+            />
 
             {/* Link de WhatsApp / Maps */}
             <div className="flex gap-2 pt-1 border-t border-[#1E2B58]/60">

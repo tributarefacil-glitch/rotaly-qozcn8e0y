@@ -32,6 +32,7 @@ interface BaseAddressAutocompleteProps {
   className?: string
   inputClassName?: string
   buttonClassName?: string
+  dropdownClassName?: string
   biasCoordinates?: BiasCoordinates | null
   showSearchButton?: boolean
 }
@@ -99,6 +100,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   className = '',
   inputClassName = '',
   buttonClassName = '',
+  dropdownClassName = '',
   biasCoordinates = null,
   showSearchButton = true,
 }) => {
@@ -652,7 +654,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
         {isOpen && suggestions.length > 0 && (
           <ul
             ref={listRef}
-            className="absolute left-0 right-0 top-full mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 text-xs shadow-2xl z-50 divide-y divide-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:divide-slate-800"
+            className={`absolute left-0 right-0 top-full mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 text-xs shadow-2xl z-50 divide-y divide-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:divide-slate-800 ${dropdownClassName}`}
           >
             {suggestions.map((suggestion, idx) => {
               const isSelected = idx === selectedIndex
@@ -666,19 +668,15 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
                   onMouseEnter={() => setSelectedIndex(idx)}
                   className={`flex items-start gap-2.5 px-3 py-2 cursor-pointer transition-colors ${
                     isSelected
-                      ? 'bg-blue-50 text-blue-900 dark:bg-orange-500/20 dark:text-white'
+                      ? 'bg-blue-50 text-blue-900 dark:bg-orange-500/20 dark:text-white dark:hover:bg-orange-500/30'
                       : 'text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800'
                   }`}
                 >
                   <Building2 className="h-3.5 w-3.5 text-blue-600 dark:text-orange-400 shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-900 dark:text-slate-100 truncate">
-                      {suggestion.mainText}
-                    </p>
+                    <p className="font-semibold truncate">{suggestion.mainText}</p>
                     {suggestion.secondaryText && (
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                        {suggestion.secondaryText}
-                      </p>
+                      <p className="text-[11px] opacity-75 truncate">{suggestion.secondaryText}</p>
                     )}
                   </div>
                 </li>
