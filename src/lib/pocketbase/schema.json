@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T15:48:45.687Z",
+  "generatedAt": "2026-09-10T16:14:30.255Z",
   "collections": [
     {
       "name": "users",
@@ -644,6 +644,42 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "moto_fuel_price",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "moto_consumption_kml",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "carro_fuel_price",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "carro_consumption_kml",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "caminhao_fuel_price",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "caminhao_consumption_kml",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE UNIQUE INDEX idx_app_settings_key ON app_settings (key)"]

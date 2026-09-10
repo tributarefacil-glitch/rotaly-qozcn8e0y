@@ -138,10 +138,23 @@ export interface OrderRecord extends RecordModel {
   }
 }
 
+export type OfficialVehicleCategory = 'moto' | 'carro' | 'caminhao'
+
+export interface VehicleFuelParam {
+  pricePerLiter: number
+  consumptionKml: number
+}
+
 export interface AppSettingsRecord extends RecordModel {
   key: string
   fuel_price_per_liter: number
   fuel_consumption_kml: number
+  moto_fuel_price?: number
+  moto_consumption_kml?: number
+  carro_fuel_price?: number
+  carro_consumption_kml?: number
+  caminhao_fuel_price?: number
+  caminhao_consumption_kml?: number
   extra?: Record<string, unknown>
 }
 

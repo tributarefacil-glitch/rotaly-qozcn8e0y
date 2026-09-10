@@ -314,6 +314,12 @@ export const deliveryService = {
       key: 'global_settings',
       fuel_price_per_liter: 5.59,
       fuel_consumption_kml: 35.0,
+      moto_fuel_price: 5.59,
+      moto_consumption_kml: 35.0,
+      carro_fuel_price: 5.59,
+      carro_consumption_kml: 12.0,
+      caminhao_fuel_price: 5.59,
+      caminhao_consumption_kml: 7.0,
       created: '',
       updated: '',
       collectionId: '',
@@ -321,7 +327,48 @@ export const deliveryService = {
     } as AppSettingsRecord
   },
 
-  async updateSettings(data: { fuel_price_per_liter: number; fuel_consumption_kml: number }) {
+  // Helper para normalizar qualquer veículo para a categoria oficial ('moto' | 'carro' | 'caminhao')
+  normalizeVehicleCategory(vehicleType?: string): 'moto' | 'carro' | 'caminhao' {
+    if (!vehicleType) return 'moto'
+    const lower = vehicleType.toLowerCase().trim()
+    if (lower === 'carro' || lower === 'car' || lower === 'van') return 'carro'
+    if (lower === 'caminhao' || lower === 'caminhão' || lower === 'truck') return 'caminhao'
+    return 'moto'
+  },
+
+  // Helper para obter parâmetros de combustível de um determinado veículo/categoria
+  getVehicleFuelParams(
+    settings?: Partial<AppSettingsRecord> | null,
+    vehicleType?: string,
+  ): { pricePerLiter: number; consumptionKml: number; category: 'moto' | 'carro' | 'caminhao' } {
+    const category = this.normalizeVehicleCategory(vehicleType)
+    const baseFallbackPrice = settings?.fuel_price_per_liter || 5.59
+
+    if (category === 'carro') {
+      return {
+        category: 'carro',
+        pricePerLiter: settings?.carro_fuel_price || baseFallbackPrice,
+        consumptionKml: settings?.carro_consumption_kml || 12.0,
+      }
+    }
+
+    if (category === 'caminhao') {
+      return {
+        category: 'caminhao',
+        pricePerLiter: settings?.caminhao_fuel_price || baseFallbackPrice,
+        consumptionKml: settings?.caminhao_consumption_kml || 7.0,
+      }
+    }
+
+    // Default moto
+    return {
+      category: 'moto',
+      pricePerLiter: settings?.moto_fuel_price || baseFallbackPrice,
+      consumptionKml: settings?.moto_consumption_kml || settings?.fuel_consumption_kml || 35.0,
+    }
+  },
+
+  async updateSettings(data: Partial<AppSettingsRecord>) {
     try {
       const records = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1, {
         filter: "key = 'global_settings'",
@@ -461,6 +508,15 @@ export const deliveryService = {
     return (distanceKm * fuelPrice) / consumptionKml
   },
 
+  calculateFuelCostForVehicle(
+    distanceKm: number,
+    settings?: Partial<AppSettingsRecord> | null,
+    vehicleType?: string,
+  ): number {
+    const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(settings, vehicleType)
+    return this.calculateFuelCost(distanceKm, pricePerLiter, consumptionKml)
+  },
+
   // Fuel Advances & Current Account
   async getFuelAdvances(filter = '', sort = '-date,-created', expand = 'courier_id,created_by') {
     return pb.collection<FuelAdvanceRecord>('fuel_advances').getFullList({
@@ -481,6 +537,7 @@ export const deliveryService = {
 
   // Compute Real-time Courier Current Account
   // Regra: Soma dos Adiantamentos - Gasto em Rotas Oficiais (apenas km roteirizados das ordens)
+  // Usando parâmetros de consumo e preço específicos do tipo de veículo do entregador (moto, carro ou caminhão)
   async getCourierFuelAccounts(): Promise<CourierFuelAccount[]> {
     const [couriers, advances, orders, settings] = await Promise.all([
       this.getCouriers(),
@@ -488,9 +545,6 @@ export const deliveryService = {
       this.getOrders(),
       this.getSettings(),
     ])
-
-    const fuelPrice = settings.fuel_price_per_liter || 5.59
-    const fuelConsumption = settings.fuel_consumption_kml || 35.0
 
     return couriers.map((courier) => {
       const courierAdvances = advances.filter((a) => a.courier_id === courier.id)
@@ -529,7 +583,12 @@ export const deliveryService = {
         return sum + baseKm + returnKm
       }, 0)
 
-      const totalSpent = fuelConsumption > 0 ? (totalRouteKm * fuelPrice) / fuelConsumption : 0
+      const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
+        settings,
+        courier.vehicle_type,
+      )
+
+      const totalSpent = consumptionKml > 0 ? (totalRouteKm * pricePerLiter) / consumptionKml : 0
       const balance = totalAdvances - totalSpent
 
       return {
@@ -729,16 +788,22 @@ export const deliveryService = {
     originLng = -46.651257,
     destLat?: number,
     destLng?: number,
+    vehicleType?: string,
   ): Promise<OptimizedRouteResult> {
     const allOrders = await pb.collection<OrderRecord>('orders').getFullList({
       filter: orderIds.map((id) => `id = '${id}'`).join(' || '),
-      expand: 'customer_id',
+      expand: 'customer_id,courier_id',
       requestKey: null,
     })
 
     const settings = await this.getSettings()
-    const fuelPrice = settings.fuel_price_per_liter || 5.59
-    const fuelConsumption = settings.fuel_consumption_kml || 35.0
+    // Determine vehicle type from parameter or from first order's courier
+    const effectiveVehicleType =
+      vehicleType || allOrders[0]?.expand?.courier_id?.vehicle_type || 'moto'
+    const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
+      settings,
+      effectiveVehicleType,
+    )
 
     const calcDist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
       const R = 6371e3
@@ -915,7 +980,7 @@ export const deliveryService = {
     const returnMins = Math.round((returnDistKm / 25) * 60)
     const totalDurationMins = durationMins + returnMins
 
-    const fuelCost = (totalDistKm * fuelPrice) / fuelConsumption
+    const fuelCost = consumptionKml > 0 ? (totalDistKm * pricePerLiter) / consumptionKml : 0
 
     return {
       optimized_orders: optimized,

@@ -79,9 +79,11 @@ export default function CourierFuelPage() {
     }
   })
 
-  // Calculation parameters
-  const fuelPrice = settings?.fuel_price_per_liter || 5.59
-  const fuelConsumption = settings?.fuel_consumption_kml || 35.0
+  // Calculation parameters baseados no tipo de veículo do entregador (Moto, Carro ou Caminhão)
+  const vehicleFuelParams = deliveryService.getVehicleFuelParams(settings, user?.vehicle_type)
+  const fuelPrice = vehicleFuelParams.pricePerLiter
+  const fuelConsumption = vehicleFuelParams.consumptionKml
+  const vehicleCategory = vehicleFuelParams.category
 
   // Filtered advances by period
   const now = new Date()
@@ -292,8 +294,14 @@ export default function CourierFuelPage() {
             <div className="p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58] text-[11px] text-slate-300 flex items-start gap-2">
               <Info className="h-4 w-4 text-[#60A5FA] shrink-0 mt-0.5" />
               <div>
-                <p className="text-white font-semibold font-heading">
-                  Regra de Cálculo de Combustível:
+                <p className="text-white font-semibold font-heading flex items-center gap-1.5">
+                  Regra de Cálculo (
+                  {vehicleCategory === 'carro'
+                    ? '🚗 Carro'
+                    : vehicleCategory === 'caminhao'
+                      ? '🚚 Caminhão'
+                      : '🏍️ Moto'}
+                  ):
                 </p>
                 <p className="mt-0.5 text-slate-300">
                   R$ {fuelPrice.toFixed(2)} / Litro ÷ {fuelConsumption.toFixed(1)} km/L ={' '}

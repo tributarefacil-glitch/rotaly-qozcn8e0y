@@ -477,9 +477,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         const totalDistKmNum = totalClusterMetersWithReturn / 1000
         const outboundKmNum = clusterDistMeters / 1000
         const returnKmNum = returnMeters / 1000
-        const fuelPrice = appSettings?.fuel_price_per_liter || 5.59
-        const fuelCons = appSettings?.fuel_consumption_kml || 35.0
-        const planFuelCost = (totalDistKmNum * fuelPrice) / fuelCons
+        const { pricePerLiter: planFuelPrice, consumptionKml: planFuelCons } =
+          deliveryService.getVehicleFuelParams(appSettings, courierData.courier.vehicle_type)
+        const planFuelCost = planFuelCons > 0 ? (totalDistKmNum * planFuelPrice) / planFuelCons : 0
 
         plans.push({
           courier: courierData.courier,
@@ -507,9 +507,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
 
       const grandDistKm = grandTotalDistanceMeters / 1000
-      const totalFuelPrice = appSettings?.fuel_price_per_liter || 5.59
-      const totalFuelCons = appSettings?.fuel_consumption_kml || 35.0
-      const totalFuelCost = (grandDistKm * totalFuelPrice) / totalFuelCons
+      const totalFuelCost = plans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
       const totalEstDuration = plans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
 
       const finalResult: MultiCourierOptimizationResult = {
@@ -729,9 +727,12 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           const stop = plan.stops[i]
           const etaTimestamp = new Date(now + (20 + i * 15) * 60 * 1000).toISOString()
           const stopDistanceKm = Number((stop.step_distance_meters / 1000).toFixed(2))
-          const fuelPrice = appSettings?.fuel_price_per_liter || 5.59
-          const fuelCons = appSettings?.fuel_consumption_kml || 35.0
-          const stopFuelCost = Number(((stopDistanceKm * fuelPrice) / fuelCons).toFixed(2))
+          const { pricePerLiter: courierFuelPrice, consumptionKml: courierFuelCons } =
+            deliveryService.getVehicleFuelParams(appSettings, plan.courier.vehicle_type)
+          const stopFuelCost =
+            courierFuelCons > 0
+              ? Number(((stopDistanceKm * courierFuelPrice) / courierFuelCons).toFixed(2))
+              : 0
 
           await deliveryService.updateOrder(stop.id, {
             courier_id: plan.courier.id,

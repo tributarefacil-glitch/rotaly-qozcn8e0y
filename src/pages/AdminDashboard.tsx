@@ -165,11 +165,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [courierStatusFilter, setCourierStatusFilter] = useState<string>('all')
   const [searchSellers, setSearchSellers] = useState('')
 
-  // Settings State (REQUISITO 1 & 5: Preço do litro e consumo km/L)
+  // Settings State: Moto, Carro e Caminhão (Preço do litro e consumo km/L)
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
-  const [fuelPriceInput, setFuelPriceInput] = useState('5.59')
-  const [fuelConsumptionInput, setFuelConsumptionInput] = useState('35.0')
+  const [motoPriceInput, setMotoPriceInput] = useState('5.59')
+  const [motoConsInput, setMotoConsInput] = useState('35.0')
+  const [carroPriceInput, setCarroPriceInput] = useState('5.59')
+  const [carroConsInput, setCarroConsInput] = useState('12.0')
+  const [caminhaoPriceInput, setCaminhaoPriceInput] = useState('5.59')
+  const [caminhaoConsInput, setCaminhaoConsInput] = useState('7.0')
   const [isSavingSettings, setIsSavingSettings] = useState(false)
+  const [savingCategory, setSavingCategory] = useState<string | null>(null)
 
   // Fuel Advances & Current Accounts State (REQUISITO 5)
   const [fuelAdvances, setFuelAdvances] = useState<FuelAdvanceRecord[]>([])
@@ -244,8 +249,15 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setFuelAccounts(accountsData)
       setOffRouteEvents(eventsData)
       setReviews(reviewsData)
-      setFuelPriceInput(String(appSettings.fuel_price_per_liter || 5.59))
-      setFuelConsumptionInput(String(appSettings.fuel_consumption_kml || 35.0))
+      const fallbackPrice = appSettings.fuel_price_per_liter || 5.59
+      setMotoPriceInput(String(appSettings.moto_fuel_price ?? fallbackPrice))
+      setMotoConsInput(
+        String(appSettings.moto_consumption_kml ?? appSettings.fuel_consumption_kml ?? 35.0),
+      )
+      setCarroPriceInput(String(appSettings.carro_fuel_price ?? fallbackPrice))
+      setCarroConsInput(String(appSettings.carro_consumption_kml ?? 12.0))
+      setCaminhaoPriceInput(String(appSettings.caminhao_fuel_price ?? fallbackPrice))
+      setCaminhaoConsInput(String(appSettings.caminhao_consumption_kml ?? 7.0))
     } catch (err) {
       console.error('Error loading admin data:', err)
     } finally {
@@ -331,37 +343,120 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     loadData()
   }, [])
 
-  // Save Admin Settings
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault()
+  // Save Admin Settings (all categories in batch)
+  const handleSaveAllFuelSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
     setIsSavingSettings(true)
     try {
-      const priceNum = parseFloat(fuelPriceInput.replace(',', '.'))
-      const consNum = parseFloat(fuelConsumptionInput.replace(',', '.'))
+      const motoPrice = parseFloat(motoPriceInput.replace(',', '.'))
+      const motoCons = parseFloat(motoConsInput.replace(',', '.'))
+      const carroPrice = parseFloat(carroPriceInput.replace(',', '.'))
+      const carroCons = parseFloat(carroConsInput.replace(',', '.'))
+      const caminhaoPrice = parseFloat(caminhaoPriceInput.replace(',', '.'))
+      const caminhaoCons = parseFloat(caminhaoConsInput.replace(',', '.'))
 
-      if (isNaN(priceNum) || priceNum <= 0) {
-        toast.error('Informe um preço de combustível válido.')
+      if (isNaN(motoPrice) || motoPrice <= 0 || isNaN(motoCons) || motoCons <= 0) {
+        toast.error('Preencha valores válidos para MOTO.')
         setIsSavingSettings(false)
         return
       }
-      if (isNaN(consNum) || consNum <= 0) {
-        toast.error('Informe um consumo em km/L válido.')
+      if (isNaN(carroPrice) || carroPrice <= 0 || isNaN(carroCons) || carroCons <= 0) {
+        toast.error('Preencha valores válidos para CARRO.')
+        setIsSavingSettings(false)
+        return
+      }
+      if (isNaN(caminhaoPrice) || caminhaoPrice <= 0 || isNaN(caminhaoCons) || caminhaoCons <= 0) {
+        toast.error('Preencha valores válidos para CAMINHÃO.')
         setIsSavingSettings(false)
         return
       }
 
       const updated = await deliveryService.updateSettings({
-        fuel_price_per_liter: priceNum,
-        fuel_consumption_kml: consNum,
+        fuel_price_per_liter: motoPrice,
+        fuel_consumption_kml: motoCons,
+        moto_fuel_price: motoPrice,
+        moto_consumption_kml: motoCons,
+        carro_fuel_price: carroPrice,
+        carro_consumption_kml: carroCons,
+        caminhao_fuel_price: caminhaoPrice,
+        caminhao_consumption_kml: caminhaoCons,
       })
 
       setSettings(updated as AppSettingsRecord)
-      toast.success('Configurações de combustível salvas com sucesso!')
+      toast.success('Todos os parâmetros de combustível (Moto, Carro, Caminhão) foram salvos!')
     } catch (err) {
       console.error('Error saving settings:', err)
       toast.error('Erro ao salvar configurações.')
     } finally {
       setIsSavingSettings(false)
+    }
+  }
+
+  // Save specific category individually
+  const handleSaveIndividualCategory = async (category: 'moto' | 'carro' | 'caminhao') => {
+    setSavingCategory(category)
+    try {
+      let price = 0
+      let cons = 0
+      const payload: Partial<AppSettingsRecord> = {}
+
+      if (category === 'moto') {
+        price = parseFloat(motoPriceInput.replace(',', '.'))
+        cons = parseFloat(motoConsInput.replace(',', '.'))
+        payload.moto_fuel_price = price
+        payload.moto_consumption_kml = cons
+        // also keep default fields synchronized with moto
+        payload.fuel_price_per_liter = price
+        payload.fuel_consumption_kml = cons
+      } else if (category === 'carro') {
+        price = parseFloat(carroPriceInput.replace(',', '.'))
+        cons = parseFloat(carroConsInput.replace(',', '.'))
+        payload.carro_fuel_price = price
+        payload.carro_consumption_kml = cons
+      } else {
+        price = parseFloat(caminhaoPriceInput.replace(',', '.'))
+        cons = parseFloat(caminhaoConsInput.replace(',', '.'))
+        payload.caminhao_fuel_price = price
+        payload.caminhao_consumption_kml = cons
+      }
+
+      if (isNaN(price) || price <= 0 || isNaN(cons) || cons <= 0) {
+        toast.error(`Informe valores válidos de preço e consumo para ${category.toUpperCase()}.`)
+        setSavingCategory(null)
+        return
+      }
+
+      const updated = await deliveryService.updateSettings(payload)
+      setSettings(updated as AppSettingsRecord)
+      const label = category === 'moto' ? 'Moto' : category === 'carro' ? 'Carro' : 'Caminhão'
+      toast.success(`Parâmetros de ${label} salvos com sucesso!`)
+    } catch (err) {
+      console.error('Error saving category settings:', err)
+      toast.error('Erro ao salvar parâmetros da categoria.')
+    } finally {
+      setSavingCategory(null)
+    }
+  }
+
+  // Change user vehicle type (Admin quick edit)
+  const handleUpdateCourierVehicleType = async (
+    courier: UserRecord,
+    newVehicleType: 'moto' | 'carro' | 'caminhao',
+  ) => {
+    try {
+      await deliveryService.updateUser(courier.id, {
+        vehicle_type: newVehicleType,
+      })
+      setUsers((prev) =>
+        prev.map((u) => (u.id === courier.id ? { ...u, vehicle_type: newVehicleType } : u)),
+      )
+      toast.success(
+        `Tipo de veículo de ${courier.name || 'Entregador'} alterado para ${newVehicleType.toUpperCase()}!`,
+      )
+      loadData()
+    } catch (err) {
+      console.error('Error updating courier vehicle type:', err)
+      toast.error('Erro ao atualizar tipo de veículo do entregador.')
     }
   }
 
@@ -502,10 +597,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     )
   })
 
-  // REQUISITO 4 & 5: Configurações e Relatórios
-  const fuelPrice = settings?.fuel_price_per_liter || 5.59
-  const fuelConsumption = settings?.fuel_consumption_kml || 35.0
-
+  // REQUISITO 4 & 5: Configurações e Relatórios por tipo de veículo do entregador
   // Filter orders by report period
   const filteredReportOrders = orders.filter((o) => {
     if (reportPeriod === 'all') return true
@@ -544,9 +636,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     0,
   )
 
-  // REQUISITO 1: Quilometragem e consumo — somar distance_km + return_trip_km para todas as ordens com
+  // REQUISITO 1: Quilometragem e consumo por veículo — somar distance_km + return_trip_km para todas as ordens com
   // route_started === true OU status in_transit / delivered / address_error / client_absent (rotas parciais de retorno incluídas)
-  const totalKmRodada = filteredReportOrders.reduce((acc, o) => {
+  let totalKmRodada = 0
+  let totalFuelCostCalculated = 0
+
+  filteredReportOrders.forEach((o) => {
     if (
       o.route_started === true ||
       o.status === 'delivered' ||
@@ -565,15 +660,22 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         if (ret === 0) ret = 4.5
       }
 
-      return acc + dist + ret
-    }
-    return acc
-  }, 0)
+      const orderKm = dist + ret
+      totalKmRodada += orderKm
 
-  // Total Fuel Cost
-  // Formula: Distância (km) * Preço do Litro / Consumo (km/L)
-  const totalFuelCostCalculated =
-    fuelConsumption > 0 ? (totalKmRodada * fuelPrice) / fuelConsumption : 0
+      // Obter veículo do entregador
+      const courier = users.find((u) => u.id === o.courier_id) || o.expand?.courier_id
+      const vehicleType = courier?.vehicle_type || 'moto'
+      const { pricePerLiter, consumptionKml } = deliveryService.getVehicleFuelParams(
+        settings,
+        vehicleType,
+      )
+
+      if (consumptionKml > 0) {
+        totalFuelCostCalculated += (orderKm * pricePerLiter) / consumptionKml
+      }
+    }
+  })
 
   // Filtered Fuel Advances by Courier & Period (REQUISITO 5)
   const filteredFuelAdvances = fuelAdvances.filter((adv) => {
@@ -800,9 +902,24 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
                                   {acc.courier.name || 'Entregador'}
                                 </CardTitle>
-                                <p className="text-[10px] text-slate-500">
-                                  {acc.courier.vehicle_plate || 'Sem placa'} •{' '}
-                                  {acc.courier.vehicle_model || 'Moto'}
+                                <p className="text-[10px] text-slate-500 flex items-center gap-1">
+                                  <span>{acc.courier.vehicle_plate || 'Sem placa'}</span> •{' '}
+                                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                    {acc.courier.vehicle_model ||
+                                      (acc.courier.vehicle_type === 'carro'
+                                        ? 'Carro'
+                                        : acc.courier.vehicle_type === 'caminhao'
+                                          ? 'Caminhão'
+                                          : 'Moto')}
+                                  </span>
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] px-1 py-0 uppercase font-mono font-bold ml-0.5"
+                                  >
+                                    {deliveryService.normalizeVehicleCategory(
+                                      acc.courier.vehicle_type,
+                                    )}
+                                  </Badge>
                                 </p>
                               </div>
                             </div>
@@ -1178,116 +1295,368 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               <ReportsSection orders={orders} couriers={couriers} settings={settings} />
             </TabsContent>
 
-            {/* TAB: CONFIGURAÇÕES DO ADMINISTRADOR (REQUISITO 4) */}
+            {/* TAB: CONFIGURAÇÕES DO ADMINISTRADOR (PARÂMETROS DE COMBUSTÍVEL POR TIPO DE VEÍCULO) */}
             <TabsContent value="settings" className="space-y-6">
-              <Card className="border-slate-200 dark:border-slate-800 max-w-2xl shadow-sm">
+              <Card className="border-slate-200 dark:border-slate-800 shadow-sm max-w-4xl">
                 <CardHeader>
-                  <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-white">
-                    <Settings className="h-5 w-5 text-indigo-600" />
-                    Configurações Operacionais & Parâmetros de Combustível
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Cadastre e edite os valores globais utilizados no cálculo do custo provável de
-                    combustível das rotas e relatórios.
-                  </CardDescription>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-white">
+                        <Fuel className="h-5 w-5 text-indigo-600" />
+                        Configurações Operacionais &amp; Parâmetros de Combustível
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        Configure o preço do litro (R$/L) e o consumo médio (km/L) para cada
+                        categoria de veículo. Os cálculos de custo de rota e conta corrente passam a
+                        utilizar os parâmetros oficiais do entregador.
+                      </CardDescription>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() => handleSaveAllFuelSettings()}
+                      disabled={isSavingSettings}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs gap-1.5 shrink-0 shadow-sm"
+                    >
+                      <Save className="h-4 w-4" />
+                      {isSavingSettings ? 'Salvando Todos...' : 'Salvar Todos em Lote'}
+                    </Button>
+                  </div>
                 </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleSaveSettings} className="space-y-5">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {/* Preço do Combustível (R$ / Litro) */}
-                      <div className="space-y-1.5">
-                        <Label
-                          htmlFor="fuelPrice"
-                          className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5"
-                        >
-                          <DollarSign className="h-4 w-4 text-emerald-600" />
-                          Preço do Combustível (R$ por Litro) *
-                        </Label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
-                            R$
-                          </span>
-                          <Input
-                            id="fuelPrice"
-                            type="number"
-                            step="0.01"
-                            min="0.1"
-                            required
-                            value={fuelPriceInput}
-                            onChange={(e) => setFuelPriceInput(e.target.value)}
-                            className="pl-9 font-mono font-bold text-sm"
-                            placeholder="5.59"
-                          />
+                <CardContent className="space-y-6">
+                  {/* Cards de cada tipo de veículo (Moto, Carro, Caminhão) */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* CARD 1: MOTO */}
+                    <div className="rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 p-4 space-y-4 flex flex-col justify-between">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-blue-200/60 dark:border-blue-800">
+                          <div className="flex items-center gap-2">
+                            <span className="text-2xl">🏍️</span>
+                            <div>
+                              <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
+                                Moto
+                              </h3>
+                              <p className="text-[11px] text-slate-500">Scooter / Motocicleta</p>
+                            </div>
+                          </div>
+                          <Badge className="bg-blue-600 text-white text-[10px] font-bold">
+                            Padrão
+                          </Badge>
                         </div>
-                        <p className="text-[11px] text-slate-500">
-                          Valor padrão inicial: <strong>R$ 5,59</strong> por litro.
-                        </p>
+
+                        {/* Preço Litro Moto */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                            <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
+                            Preço do Litro (R$/L)
+                          </Label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
+                              R$
+                            </span>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0.1"
+                              value={motoPriceInput}
+                              onChange={(e) => setMotoPriceInput(e.target.value)}
+                              className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
+                              placeholder="5.59"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Consumo Moto */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                            <Gauge className="h-3.5 w-3.5 text-indigo-600" />
+                            Consumo (km por Litro)
+                          </Label>
+                          <div className="relative">
+                            <Input
+                              type="number"
+                              step="0.1"
+                              min="0.1"
+                              value={motoConsInput}
+                              onChange={(e) => setMotoConsInput(e.target.value)}
+                              className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
+                              placeholder="35.0"
+                            />
+                            <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
+                              km/L
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Estimativa em tempo real */}
+                        <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
+                          <p className="font-semibold text-slate-700 dark:text-slate-200">
+                            Custo por km:
+                          </p>
+                          <p className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                            R${' '}
+                            {(
+                              (parseFloat(motoPriceInput.replace(',', '.')) || 5.59) /
+                              (parseFloat(motoConsInput.replace(',', '.')) || 35.0)
+                            ).toFixed(4)}
+                            /km
+                          </p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            Ex: 10 km = R${' '}
+                            {(
+                              (10 * (parseFloat(motoPriceInput.replace(',', '.')) || 5.59)) /
+                              (parseFloat(motoConsInput.replace(',', '.')) || 35.0)
+                            ).toFixed(2)}
+                          </p>
+                        </div>
                       </div>
 
-                      {/* Consumo do Veículo (km / Litro) */}
-                      <div className="space-y-1.5">
-                        <Label
-                          htmlFor="fuelConsumption"
-                          className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5"
-                        >
-                          <Gauge className="h-4 w-4 text-indigo-600" />
-                          Consumo Médio (km por Litro) *
-                        </Label>
-                        <div className="relative">
-                          <Input
-                            id="fuelConsumption"
-                            type="number"
-                            step="0.1"
-                            min="0.1"
-                            required
-                            value={fuelConsumptionInput}
-                            onChange={(e) => setFuelConsumptionInput(e.target.value)}
-                            className="font-mono font-bold text-sm pr-12"
-                            placeholder="35.0"
-                          />
-                          <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
-                            km/L
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500">
-                          Valor padrão inicial: <strong>35 km/L</strong> (moto padrão).
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Fórmula explicativa */}
-                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border text-xs space-y-1 text-slate-600 dark:text-slate-300">
-                      <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1">
-                        <Fuel className="h-3.5 w-3.5 text-amber-500" />
-                        Fórmula de Cálculo Aplicada Automaticamente:
-                      </p>
-                      <p className="font-mono text-[11px] bg-white dark:bg-slate-900 p-2 rounded border text-indigo-600 dark:text-indigo-400">
-                        Custo (R$) = [ Distância (km) × Preço do Litro (R$) ] ÷ Consumo (km/L)
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        Com os valores atuais: 10 km rodados equivalem a cerca de{' '}
-                        <strong>
-                          R${' '}
-                          {(
-                            (10 * (parseFloat(fuelPriceInput.replace(',', '.')) || 5.59)) /
-                            (parseFloat(fuelConsumptionInput.replace(',', '.')) || 35.0)
-                          ).toFixed(2)}
-                        </strong>{' '}
-                        em combustível.
-                      </p>
-                    </div>
-
-                    <div className="pt-2 flex justify-end">
                       <Button
-                        type="submit"
-                        disabled={isSavingSettings}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-2"
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveIndividualCategory('moto')}
+                        disabled={savingCategory === 'moto' || isSavingSettings}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 mt-2"
                       >
-                        <Save className="h-4 w-4" />
-                        {isSavingSettings ? 'Salvando...' : 'Salvar Configurações'}
+                        <Save className="h-3.5 w-3.5" />
+                        {savingCategory === 'moto' ? 'Salvando...' : 'Salvar Moto'}
                       </Button>
                     </div>
-                  </form>
+
+                    {/* CARD 2: CARRO */}
+                    <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 flex flex-col justify-between">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-emerald-200/60 dark:border-emerald-800">
+                          <div className="flex items-center gap-2">
+                            <span className="text-2xl">🚗</span>
+                            <div>
+                              <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
+                                Carro
+                              </h3>
+                              <p className="text-[11px] text-slate-500">
+                                Passeio / Utilitário Leve
+                              </p>
+                            </div>
+                          </div>
+                          <Badge className="bg-emerald-600 text-white text-[10px] font-bold">
+                            Urbano
+                          </Badge>
+                        </div>
+
+                        {/* Preço Litro Carro */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                            <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
+                            Preço do Litro (R$/L)
+                          </Label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
+                              R$
+                            </span>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0.1"
+                              value={carroPriceInput}
+                              onChange={(e) => setCarroPriceInput(e.target.value)}
+                              className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
+                              placeholder="5.59"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Consumo Carro */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                            <Gauge className="h-3.5 w-3.5 text-emerald-600" />
+                            Consumo (km por Litro)
+                          </Label>
+                          <div className="relative">
+                            <Input
+                              type="number"
+                              step="0.1"
+                              min="0.1"
+                              value={carroConsInput}
+                              onChange={(e) => setCarroConsInput(e.target.value)}
+                              className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
+                              placeholder="12.0"
+                            />
+                            <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
+                              km/L
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Estimativa em tempo real */}
+                        <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
+                          <p className="font-semibold text-slate-700 dark:text-slate-200">
+                            Custo por km:
+                          </p>
+                          <p className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            R${' '}
+                            {(
+                              (parseFloat(carroPriceInput.replace(',', '.')) || 5.59) /
+                              (parseFloat(carroConsInput.replace(',', '.')) || 12.0)
+                            ).toFixed(4)}
+                            /km
+                          </p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            Ex: 10 km = R${' '}
+                            {(
+                              (10 * (parseFloat(carroPriceInput.replace(',', '.')) || 5.59)) /
+                              (parseFloat(carroConsInput.replace(',', '.')) || 12.0)
+                            ).toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveIndividualCategory('carro')}
+                        disabled={savingCategory === 'carro' || isSavingSettings}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 mt-2"
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                        {savingCategory === 'carro' ? 'Salvando...' : 'Salvar Carro'}
+                      </Button>
+                    </div>
+
+                    {/* CARD 3: CAMINHÃO */}
+                    <div className="rounded-xl border border-orange-200 dark:border-orange-900/60 bg-orange-50/40 dark:bg-orange-950/20 p-4 space-y-4 flex flex-col justify-between">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-orange-200/60 dark:border-orange-800">
+                          <div className="flex items-center gap-2">
+                            <span className="text-2xl">🚚</span>
+                            <div>
+                              <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
+                                Caminhão
+                              </h3>
+                              <p className="text-[11px] text-slate-500">VUC / Carga Pesada</p>
+                            </div>
+                          </div>
+                          <Badge className="bg-orange-600 text-white text-[10px] font-bold">
+                            Carga
+                          </Badge>
+                        </div>
+
+                        {/* Preço Litro Caminhão */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                            <DollarSign className="h-3.5 w-3.5 text-orange-600" />
+                            Preço do Litro (R$/L)
+                          </Label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
+                              R$
+                            </span>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0.1"
+                              value={caminhaoPriceInput}
+                              onChange={(e) => setCaminhaoPriceInput(e.target.value)}
+                              className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
+                              placeholder="5.59"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Consumo Caminhão */}
+                        <div className="space-y-1">
+                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                            <Gauge className="h-3.5 w-3.5 text-orange-600" />
+                            Consumo (km por Litro)
+                          </Label>
+                          <div className="relative">
+                            <Input
+                              type="number"
+                              step="0.1"
+                              min="0.1"
+                              value={caminhaoConsInput}
+                              onChange={(e) => setCaminhaoConsInput(e.target.value)}
+                              className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
+                              placeholder="7.0"
+                            />
+                            <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
+                              km/L
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Estimativa em tempo real */}
+                        <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
+                          <p className="font-semibold text-slate-700 dark:text-slate-200">
+                            Custo por km:
+                          </p>
+                          <p className="font-mono font-bold text-orange-600 dark:text-orange-400">
+                            R${' '}
+                            {(
+                              (parseFloat(caminhaoPriceInput.replace(',', '.')) || 5.59) /
+                              (parseFloat(caminhaoConsInput.replace(',', '.')) || 7.0)
+                            ).toFixed(4)}
+                            /km
+                          </p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            Ex: 10 km = R${' '}
+                            {(
+                              (10 * (parseFloat(caminhaoPriceInput.replace(',', '.')) || 5.59)) /
+                              (parseFloat(caminhaoConsInput.replace(',', '.')) || 7.0)
+                            ).toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveIndividualCategory('caminhao')}
+                        disabled={savingCategory === 'caminhao' || isSavingSettings}
+                        className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs gap-1.5 mt-2"
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                        {savingCategory === 'caminhao' ? 'Salvando...' : 'Salvar Caminhão'}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Fórmula explicativa unificada */}
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border text-xs space-y-2 text-slate-600 dark:text-slate-300">
+                    <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <Fuel className="h-4 w-4 text-amber-500" />
+                      Fórmula de Cálculo Automática por Tipo de Veículo:
+                    </p>
+                    <p className="font-mono text-xs bg-white dark:bg-slate-900 p-2.5 rounded-lg border text-indigo-600 dark:text-indigo-400">
+                      Custo (R$) = [ Distância Total (km) × Preço do Litro do Tipo (R$) ] ÷ Consumo
+                      do Tipo (km/L)
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
+                      <div className="p-2 rounded bg-white dark:bg-slate-900 border">
+                        <span className="font-bold text-slate-700 dark:text-slate-300">
+                          🏍️ Moto:
+                        </span>{' '}
+                        Consumo base <strong>{motoConsInput} km/L</strong> (preço R${' '}
+                        {motoPriceInput}/L)
+                      </div>
+                      <div className="p-2 rounded bg-white dark:bg-slate-900 border">
+                        <span className="font-bold text-slate-700 dark:text-slate-300">
+                          🚗 Carro:
+                        </span>{' '}
+                        Consumo base <strong>{carroConsInput} km/L</strong> (preço R${' '}
+                        {carroPriceInput}/L)
+                      </div>
+                      <div className="p-2 rounded bg-white dark:bg-slate-900 border">
+                        <span className="font-bold text-slate-700 dark:text-slate-300">
+                          🚚 Caminhão:
+                        </span>{' '}
+                        Consumo base <strong>{caminhaoConsInput} km/L</strong> (preço R${' '}
+                        {caminhaoPriceInput}/L)
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 pt-1">
+                      ℹ️ Caso um entregador não tenha veículo definido ou possua cadastro antigo, o
+                      sistema aplica <strong>Moto (35 km/L)</strong> como fallback de segurança.
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -1700,9 +2069,31 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                       >
                                         {c.vehicle_plate || 'SEM PLACA'}
                                       </Badge>
-                                      <span className="text-[10px] text-slate-400 capitalize">
-                                        {c.vehicle_type || 'moto'}
-                                      </span>
+                                    </div>
+                                    <div className="mt-1.5">
+                                      <Select
+                                        value={deliveryService.normalizeVehicleCategory(
+                                          c.vehicle_type,
+                                        )}
+                                        onValueChange={(val: 'moto' | 'carro' | 'caminhao') =>
+                                          handleUpdateCourierVehicleType(c, val)
+                                        }
+                                      >
+                                        <SelectTrigger className="h-6 w-28 text-[11px] font-bold px-2 py-0 border-slate-300">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="moto" className="text-xs">
+                                            🏍️ Moto
+                                          </SelectItem>
+                                          <SelectItem value="carro" className="text-xs">
+                                            🚗 Carro
+                                          </SelectItem>
+                                          <SelectItem value="caminhao" className="text-xs">
+                                            🚚 Caminhão
+                                          </SelectItem>
+                                        </SelectContent>
+                                      </Select>
                                     </div>
                                   </div>
                                 </td>
@@ -2386,10 +2777,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="moto">🏍️ Moto</SelectItem>
-                      <SelectItem value="carro">🚗 Carro</SelectItem>
-                      <SelectItem value="van">🚐 Van</SelectItem>
-                      <SelectItem value="caminhao">🚚 Caminhão</SelectItem>
+                      <SelectItem value="moto">🏍️ Moto (35 km/L)</SelectItem>
+                      <SelectItem value="carro">🚗 Carro (12 km/L)</SelectItem>
+                      <SelectItem value="caminhao">🚚 Caminhão (7 km/L)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

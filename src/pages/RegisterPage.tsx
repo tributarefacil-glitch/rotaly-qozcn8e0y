@@ -563,21 +563,24 @@ export default function RegisterPage() {
               {currentStep === 2 && profileType === 'courier' && (
                 <div className="space-y-4">
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-slate-300">Tipo de Veículo</Label>
+                    <Label className="text-xs font-semibold text-slate-300">
+                      Tipo de Veículo *{' '}
+                      <span className="text-purple-400 font-normal">
+                        (usado no cálculo de combustível)
+                      </span>
+                    </Label>
                     <Select
                       value={vehicleType}
-                      onValueChange={(v) =>
-                        setVehicleType(v as 'moto' | 'carro' | 'van' | 'caminhao')
-                      }
+                      onValueChange={(v) => setVehicleType(v as 'moto' | 'carro' | 'caminhao')}
+                      required
                     >
                       <SelectTrigger className="bg-slate-950 border-slate-700 text-xs text-white">
                         <SelectValue placeholder="Selecione o tipo de veículo" />
                       </SelectTrigger>
                       <SelectContent className="bg-slate-900 border-slate-800 text-white">
-                        <SelectItem value="moto">🏍️ Moto / Scooter</SelectItem>
-                        <SelectItem value="carro">🚗 Carro / Passeio</SelectItem>
-                        <SelectItem value="van">🚐 Utilitário / Van</SelectItem>
-                        <SelectItem value="caminhao">🚚 Caminhão / VUC</SelectItem>
+                        <SelectItem value="moto">🏍️ Moto (Média 35 km/L)</SelectItem>
+                        <SelectItem value="carro">🚗 Carro (Média 12 km/L)</SelectItem>
+                        <SelectItem value="caminhao">🚚 Caminhão (Média 7 km/L)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

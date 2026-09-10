@@ -39,6 +39,7 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { OrderRecord, UserRecord, AppSettingsRecord } from '@/types/delivery'
+import { deliveryService } from '@/services/deliveryService'
 import { useToast } from '@/hooks/use-toast'
 
 interface ReportsSectionProps {
@@ -204,11 +205,12 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
     }
   }, [filteredOrders])
 
-  // MÉTRICA 4: Análise de Custo (custo médio, custo total, custo por km - Regras 1, 2 e 3)
+  // MÉTRICA 4: Análise de Custo por Tipo de Veículo (custo médio, custo total, custo por km)
   // Contabiliza rotas com route_started === true OU status in_transit, delivered, address_error, client_absent com entregador
-  // Considera IDA E VOLTA (return_trip_km) e rotas parciais
+  // Considera IDA E VOLTA (return_trip_km) e rotas parciais, aplicando os parâmetros do veículo do entregador
   const costAnalysis = useMemo(() => {
     let totalKm = 0
+    let totalCost = 0
     const activeRouteOrders = filteredOrders.filter(
       (o) =>
         o.route_started === true ||
@@ -231,11 +233,22 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
         if (returnKm === 0) returnKm = 4.5
       }
 
-      totalKm += baseKm + returnKm
+      const orderKm = baseKm + returnKm
+      totalKm += orderKm
+
+      const courier = couriers.find((c) => c.id === o.courier_id) || o.expand?.courier_id
+      const vehicleType = courier?.vehicle_type || 'moto'
+      const { pricePerLiter, consumptionKml } = deliveryService.getVehicleFuelParams(
+        settings,
+        vehicleType,
+      )
+
+      if (consumptionKml > 0) {
+        totalCost += (orderKm * pricePerLiter) / consumptionKml
+      }
     })
 
-    const costPerKm = fuelConsumption > 0 ? fuelPrice / fuelConsumption : 0.16
-    const totalCost = totalKm * costPerKm
+    const costPerKm = totalKm > 0 ? totalCost / totalKm : 0.16
     const avgCostPerDelivery =
       activeRouteOrders.length > 0 ? totalCost / activeRouteOrders.length : 0
 
@@ -246,7 +259,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
       avgCostPerDelivery: Number(avgCostPerDelivery.toFixed(2)),
       activeRouteOrdersCount: activeRouteOrders.length,
     }
-  }, [filteredOrders, fuelPrice, fuelConsumption])
+  }, [filteredOrders, couriers, settings])
 
   // MÉTRICA 5: Problemas Registrados (tipo de problema, frequência, entregador)
   const problemRecords = useMemo(() => {
