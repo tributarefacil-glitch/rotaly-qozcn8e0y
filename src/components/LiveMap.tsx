@@ -47,7 +47,7 @@ interface LiveMapProps {
 
 export const LiveMap: React.FC<LiveMapProps> = ({
   markers = [],
-  center = { lat: -23.555, lng: -46.65 },
+  center = { lat: -22.906847, lng: -43.172896 },
   zoom = 13,
   height = '480px',
   selectedMarkerId,

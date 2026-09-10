@@ -761,8 +761,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                           name: newBaseName.trim(),
                           address: newBaseAddress.trim(),
                           type: newBaseType,
-                          lat: -23.565734 + (Math.random() - 0.5) * 0.04,
-                          lng: -46.651257 + (Math.random() - 0.5) * 0.04,
+                          lat: -22.906847 + (Math.random() - 0.5) * 0.04,
+                          lng: -43.172896 + (Math.random() - 0.5) * 0.04,
                           is_default: baseAddresses.length === 0,
                         })
                         setBaseAddresses((prev) => [...prev, created])

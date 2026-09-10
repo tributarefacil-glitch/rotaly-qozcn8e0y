@@ -69,8 +69,8 @@ interface CreateOrderModalProps {
   onOrderCreated: () => void
 }
 
-// Fallback Default Center (São Paulo / Brazil center)
-const DEFAULT_CENTER = { lat: -23.55052, lng: -46.633308 }
+// Fallback Default Center (Rio de Janeiro - centro / polo operacional)
+const DEFAULT_CENTER = { lat: -22.906847, lng: -43.172896 }
 
 export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   open,
@@ -104,7 +104,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [streetAndNumber, setStreetAndNumber] = useState('')
   const [neighborhood, setNeighborhood] = useState('')
   const [city, setCity] = useState('')
-  const [ufState, setUfState] = useState('SP')
+  const [ufState, setUfState] = useState('RJ')
   const [postalCode, setPostalCode] = useState('')
   const [complement, setComplement] = useState('')
 
@@ -1202,10 +1202,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     value={addressSearchQuery}
                     onChange={(val) => setAddressSearchQuery(val)}
                     onAddressSelect={handleAddressSelectFromAutocomplete}
-                    placeholder="Comece a digitar o endereço ou CEP, ex: Av. Paulista, 1000..."
+                    placeholder="Comece a digitar o endereço ou CEP, ex: Rua das Laranjeiras, 100..."
                     className="w-full"
                     inputClassName="bg-white dark:bg-slate-800 text-xs border-blue-200 focus-visible:ring-blue-500 text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
-                    biasCoordinates={selectedCoords}
+                    biasCoordinates={hasLocationPinned ? selectedCoords : null}
                     showSearchButton={true}
                   />
                 </div>
@@ -1223,7 +1223,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   </div>
                   <div className="flex gap-2">
                     <Input
-                      placeholder="Cole link do Google Maps, WhatsApp ou coordenadas (-23.55, -46.63)..."
+                      placeholder="Cole link do Google Maps, WhatsApp ou coordenadas (-22.90, -43.17)..."
                       value={locationLinkInput}
                       onChange={(e) => setLocationLinkInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -1300,7 +1300,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                       Cidade
                     </Label>
                     <Input
-                      placeholder="Ex: São Paulo"
+                      placeholder="Ex: Rio de Janeiro"
                       value={city}
                       onChange={(e) => setCity(e.target.value)}
                       className="mt-1 bg-white dark:bg-slate-800 text-xs"

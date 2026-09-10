@@ -89,7 +89,7 @@ export function CreateCustomerModal({
     setComplement('')
     setNeighborhood('')
     setCity('')
-    setUfState('SP')
+    setUfState('RJ')
     setPostalCode('')
     setLat(undefined)
     setLng(undefined)
@@ -226,7 +226,7 @@ export function CreateCustomerModal({
     const raw = locationLinkInput.trim()
     if (!raw) return
 
-    // Coordenadas @lat,lng ou q=lat,lng ou -23.55,-46.63
+    // Coordenadas @lat,lng ou q=lat,lng ou -22.90,-43.17
     const match =
       raw.match(/@\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)/) ||
       raw.match(/(?:q|ll|loc|destination)=([+-]?\d+\.\d+)[,\s%20]+([+-]?\d+\.\d+)/i) ||
@@ -305,8 +305,8 @@ export function CreateCustomerModal({
       state: ufState.trim(),
       postal_code: postalCode.trim(),
       complement: complement.trim(),
-      lat: lat || -23.565734,
-      lng: lng || -46.651257,
+      lat: lat || -22.906847,
+      lng: lng || -43.172896,
     }
 
     setIsSubmitting(true)
@@ -597,7 +597,7 @@ export function CreateCustomerModal({
             <div className="sm:col-span-4">
               <Label className="text-xs font-semibold text-slate-300">Cidade</Label>
               <Input
-                placeholder="Ex: São Paulo"
+                placeholder="Ex: Rio de Janeiro"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
                 className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500"

@@ -405,16 +405,16 @@ export const deliveryService = {
     return [
       {
         id: 'default_central_base',
-        name: 'Base Central LOGHYPE (Loja Principal)',
+        name: 'Base Central LOGHYPE (Polo Operacional)',
         type: 'base',
-        address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
-        street: 'Av. Paulista, 1000',
-        neighborhood: 'Bela Vista',
-        city: 'São Paulo',
-        state: 'SP',
-        postal_code: '01310-100',
-        lat: -23.565734,
-        lng: -46.651257,
+        address: 'Av. Rio Branco, 156 - Centro, Rio de Janeiro - RJ',
+        street: 'Av. Rio Branco, 156',
+        neighborhood: 'Centro',
+        city: 'Rio de Janeiro',
+        state: 'RJ',
+        postal_code: '20040-003',
+        lat: -22.906847,
+        lng: -43.172896,
         is_default: true,
         is_end_default: true,
         collectionId: 'base_addresses',
@@ -426,14 +426,14 @@ export const deliveryService = {
         id: 'default_endpoint_base',
         name: 'Galpão / Ponto de Apoio Zona Sul',
         type: 'end_point',
-        address: 'Av. Santo Amaro, 3450 - Brooklin, São Paulo - SP',
-        street: 'Av. Santo Amaro, 3450',
-        neighborhood: 'Brooklin',
-        city: 'São Paulo',
-        state: 'SP',
-        postal_code: '04556-300',
-        lat: -23.61845,
-        lng: -46.68532,
+        address: 'Rua São Clemente, 185 - Botafogo, Rio de Janeiro - RJ',
+        street: 'Rua São Clemente, 185',
+        neighborhood: 'Botafogo',
+        city: 'Rio de Janeiro',
+        state: 'RJ',
+        postal_code: '22260-001',
+        lat: -22.951917,
+        lng: -43.184852,
         is_default: false,
         is_end_default: false,
         collectionId: 'base_addresses',
@@ -699,8 +699,8 @@ export const deliveryService = {
   // Route optimization with Google Maps Traffic or fallback
   async optimizeRoute(
     orderIds: string[],
-    originLat = -23.55052,
-    originLng = -46.633308,
+    originLat = -22.906847,
+    originLng = -43.172896,
   ): Promise<OptimizedRouteResult> {
     return this.clientSideOptimizeRoute(orderIds, originLat, originLng)
   },
@@ -776,8 +776,8 @@ export const deliveryService = {
     const scoredCouriers = activeCouriers.map((courier) => {
       // Find latest GPS coordinate for this courier
       const loc = latestLocations.find((l) => l.user_id === courier.id)
-      const courierLat = loc?.lat || -23.55052
-      const courierLng = loc?.lng || -46.633308
+      const courierLat = loc?.lat || -22.906847
+      const courierLng = loc?.lng || -43.172896
 
       const distDirectKm = calcDist(courierLat, courierLng, customerLat, customerLng)
       const courierActiveOrders = orders.filter((o) => o.courier_id === courier.id)
@@ -837,8 +837,8 @@ export const deliveryService = {
   // Client-side intelligent TSP router using Google Maps Directions with trafficModel (departureTime=now)
   async clientSideOptimizeRoute(
     orderIds: string[],
-    originLat = -23.565734,
-    originLng = -46.651257,
+    originLat = -22.906847,
+    originLng = -43.172896,
     destLat?: number,
     destLng?: number,
     vehicleType?: string,

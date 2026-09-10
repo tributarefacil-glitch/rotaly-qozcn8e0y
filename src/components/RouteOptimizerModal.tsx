@@ -566,7 +566,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     try {
       if (!mapInstanceRef.current) {
         mapInstanceRef.current = new google.maps.Map(mapContainerRef.current, {
-          center: { lat: -23.55052, lng: -46.633308 },
+          center: { lat: -22.906847, lng: -43.172896 },
           zoom: 12,
           disableDefaultUI: false,
           zoomControl: true,
@@ -597,8 +597,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
           // Courier origin
           const courierLoc = locations.find((l) => l.user_id === plan.courier.id)
-          const startLat = courierLoc?.lat || -23.55052
-          const startLng = courierLoc?.lng || -46.633308
+          const startLat = courierLoc?.lat || -22.906847
+          const startLng = courierLoc?.lng || -43.172896
           pathCoords.push({ lat: startLat, lng: startLng })
           bounds.extend(new google.maps.LatLng(startLat, startLng))
           hasPoints = true

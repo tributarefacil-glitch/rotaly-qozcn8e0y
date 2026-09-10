@@ -50,8 +50,8 @@ export default function CourierApp() {
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false)
   const [isGpsActive, setIsGpsActive] = useState(true)
   const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number }>({
-    lat: -23.55052,
-    lng: -46.633308,
+    lat: -22.906847,
+    lng: -43.172896,
   })
   const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRouteResult | null>(null)
   const [isOptimizing, setIsOptimizing] = useState(false)
@@ -153,8 +153,8 @@ export default function CourierApp() {
           },
           async () => {
             // Simulated slight jitter around SP Center
-            const lat = -23.55052 + (Math.random() - 0.5) * 0.008
-            const lng = -46.633308 + (Math.random() - 0.5) * 0.008
+            const lat = -22.906847 + (Math.random() - 0.5) * 0.008
+            const lng = -43.172896 + (Math.random() - 0.5) * 0.008
             setCurrentCoords({ lat, lng })
             try {
               await deliveryService.updateCourierLocation(user.id, lat, lng, 34, 110)

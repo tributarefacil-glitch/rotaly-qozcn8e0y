@@ -121,7 +121,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   const userCoordsRef = useRef<BiasCoordinates | null>(cachedUserPosition)
 
   // Carregar geolocalização do usuário de forma silenciosa e não-bloqueante uma única vez por sessão
-  useEffect(() => {
+  const triggerGeolocation = useCallback(() => {
     getUserGeolocation().then((coords) => {
       if (coords) {
         userCoordsRef.current = coords
@@ -130,9 +130,20 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
     })
   }, [])
 
-  // Determinar a coordenada de referência atual (usuário GPS > base de saída recebida via prop)
-  const activeBias =
-    userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || null
+  useEffect(() => {
+    triggerGeolocation()
+  }, [triggerGeolocation])
+
+  // Determinar a coordenada de referência atual:
+  // GPS do dispositivo prevalece sempre sobre qualquer fallback (ou prop externa de bias)
+  // Caso o GPS ainda não esteja pronto ou não concedido, usa biasCoordinates (base cadastrada) -> RJ
+  const activeBias: BiasCoordinates = userCoordsRef.current ||
+    userCoords ||
+    cachedUserPosition ||
+    biasCoordinates || {
+      lat: -22.906847,
+      lng: -43.172896,
+    }
   // Pre-carregar Google Maps Script silenciosamente
   useEffect(() => {
     loadGoogleMapsScript().catch(() => {
@@ -187,8 +198,13 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
             componentRestrictions: { country: 'br' },
           }
 
+          // Prioridade absoluta: GPS do dispositivo detectado > biasCoordinates (base/pin) > activeBias
           const currentBias =
-            userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+            userCoordsRef.current ||
+            userCoords ||
+            cachedUserPosition ||
+            biasCoordinates ||
+            activeBias
           if (
             currentBias &&
             typeof currentBias.lat === 'number' &&
@@ -199,7 +215,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
             } else {
               requestOptions.location = { lat: currentBias.lat, lng: currentBias.lng }
             }
-            // Raio de 50.000m (50km) para priorizar a região metropolitana do usuário/base (ex: RJ)
+            // Raio de 50.000m (50km) para priorizar a região metropolitana mais próxima do usuário/dispositivo
             requestOptions.radius = 50000
           }
 
@@ -236,13 +252,13 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
         )}`
 
         const currentBias =
-          userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+          userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
         if (
           currentBias &&
           typeof currentBias.lat === 'number' &&
           typeof currentBias.lng === 'number'
         ) {
-          // Caixa de ~0.45 graus em torno da coordenada (~50km)
+          // Caixa de ~0.45 graus em torno da coordenada (~50km) para priorizar a localização do dispositivo
           const delta = 0.45
           const minLon = (currentBias.lng - delta).toFixed(5)
           const maxLon = (currentBias.lng + delta).toFixed(5)
@@ -389,9 +405,13 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
                 onChange(formattedAddress)
               }
 
-              // Coordenadas default calibradas com o bias ativo (GPS ou base de saída) se lat/lng vier indefinido
+              // Coordenadas default calibradas com o bias ativo (GPS do dispositivo > base de saída > RJ)
               const effectiveBias =
-                userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+                userCoordsRef.current ||
+                userCoords ||
+                cachedUserPosition ||
+                biasCoordinates ||
+                activeBias
               const defaultLat = effectiveBias?.lat ?? -22.906847
               const defaultLng = effectiveBias?.lng ?? -43.172896
 
@@ -407,7 +427,11 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
 
             // Fallback caso getDetails falhe
             const effectiveBias =
-              userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+              userCoordsRef.current ||
+              userCoords ||
+              cachedUserPosition ||
+              biasCoordinates ||
+              activeBias
             const fallbackDefaultLat = effectiveBias?.lat ?? -22.906847
             const fallbackDefaultLng = effectiveBias?.lng ?? -43.172896
 
@@ -435,9 +459,9 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
       }
 
       // Se for do OpenStreetMap ou Google Maps não disponível
-      const geo = await fallbackGeocodeAddress(suggestion.fullText)
+      const geo = await fallbackGeocodeAddress(suggestion.fullText, activeBias)
       const effectiveBias =
-        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
       const defaultLat = effectiveBias?.lat ?? -22.906847
       const defaultLng = effectiveBias?.lng ?? -43.172896
       if (geo) {
@@ -459,7 +483,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
     } catch (err) {
       console.warn('Erro ao resolver detalhes do endereço:', err)
       const effectiveBias =
-        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
       const defaultLat = effectiveBias?.lat ?? -22.906847
       const defaultLng = effectiveBias?.lng ?? -43.172896
       onAddressSelect({
@@ -481,7 +505,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
     setIsOpen(false)
     setIsManualSearching(true)
     const effectiveBias =
-      userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates
+      userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
     const defaultLat = effectiveBias?.lat ?? -22.906847
     const defaultLng = effectiveBias?.lng ?? -43.172896
 
@@ -604,6 +628,8 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           onFocus={() => {
+            // Disparar/acelerar geolocalização no foco para que esteja pronta nas primeiras digitações
+            triggerGeolocation()
             if (suggestions.length > 0 && !isSelectedRef.current) {
               setIsOpen(true)
             }

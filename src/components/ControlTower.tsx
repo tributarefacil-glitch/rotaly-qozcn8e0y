@@ -226,9 +226,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
       // Determine location coords: fallback to SP center or default
       const lat =
-        latestLoc?.lat || -23.55052 + ((parseInt(courier.id.slice(-2), 16) % 20) - 10) * 0.005
+        latestLoc?.lat || -22.906847 + ((parseInt(courier.id.slice(-2), 16) % 20) - 10) * 0.005
       const lng =
-        latestLoc?.lng || -46.633308 + ((parseInt(courier.id.slice(-3), 16) % 20) - 10) * 0.005
+        latestLoc?.lng || -43.172896 + ((parseInt(courier.id.slice(-3), 16) % 20) - 10) * 0.005
 
       // Active orders for this courier
       const courierOrders = todayOrders.filter((o) => o.courier_id === courier.id)
@@ -307,7 +307,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     if (!map) {
       try {
         map = new win.google.maps.Map(mapElement, {
-          center: { lat: -23.55052, lng: -46.633308 },
+          center: { lat: -22.906847, lng: -43.172896 },
           zoom: 12,
           mapTypeControl: false,
           streetViewControl: false,

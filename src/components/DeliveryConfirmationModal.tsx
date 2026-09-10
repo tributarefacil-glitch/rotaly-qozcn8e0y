@@ -277,8 +277,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       if ((reason === 'address_error' || reason === 'client_absent') && distanceKm === 0) {
         const custLat = order.expand?.customer_id?.lat
         const custLng = order.expand?.customer_id?.lng
-        const baseLat = order.start_base_lat || -23.565734
-        const baseLng = order.start_base_lng || -46.651257
+        const baseLat = order.start_base_lat || -22.906847
+        const baseLng = order.start_base_lng || -43.172896
 
         if (custLat && custLng) {
           const directKm = calcHaversineKm(baseLat, baseLng, custLat, custLng)

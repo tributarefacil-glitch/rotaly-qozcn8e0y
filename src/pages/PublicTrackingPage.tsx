@@ -326,7 +326,7 @@ export default function PublicTrackingPage() {
                     ? { lat: courierLocation.lat, lng: courierLocation.lng }
                     : customer?.lat && customer?.lng
                       ? { lat: customer.lat, lng: customer.lng }
-                      : { lat: -23.555, lng: -46.65 }
+                      : { lat: -22.906847, lng: -43.172896 }
                 }
                 zoom={14}
                 height="400px"
