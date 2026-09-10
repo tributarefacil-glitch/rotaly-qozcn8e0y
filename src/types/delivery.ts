@@ -32,6 +32,8 @@ export interface CustomerRecord extends RecordModel {
   phone: string
   phone2?: string
   phone3?: string
+  document?: string
+  notes?: string
   address: string
   street?: string
   neighborhood?: string

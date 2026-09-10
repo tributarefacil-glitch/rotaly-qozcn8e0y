@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T20:44:39.863Z",
+  "generatedAt": "2026-09-10T20:58:42.147Z",
   "collections": [
     {
       "name": "users",
@@ -203,13 +203,26 @@
           "type": "text",
           "required": false,
           "system": false
+        },
+        {
+          "name": "document",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "notes",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
         "CREATE INDEX idx_customers_name ON customers (name)",
         "CREATE INDEX idx_customers_phone ON customers (phone)",
         "CREATE INDEX `idx_customers_phone2` ON `customers` (phone2)",
-        "CREATE INDEX `idx_customers_phone3` ON `customers` (phone3)"
+        "CREATE INDEX `idx_customers_phone3` ON `customers` (phone3)",
+        "CREATE INDEX `idx_customers_document` ON `customers` (document)"
       ]
     },
     {

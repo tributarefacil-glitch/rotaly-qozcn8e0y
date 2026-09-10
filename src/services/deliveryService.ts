@@ -66,6 +66,42 @@ export const deliveryService = {
   },
 
   /**
+   * Search customers by name, phone (phone, phone2, phone3) or document (CPF/CNPJ)
+   */
+  async searchCustomers(term: string): Promise<CustomerRecord[]> {
+    const raw = term.trim()
+    if (!raw) return this.getCustomers()
+    const digits = raw.replace(/\D/g, '')
+
+    const filters: string[] = [
+      `name ~ '${raw.replace(/'/g, "\\'")}'`,
+      `address ~ '${raw.replace(/'/g, "\\'")}'`,
+    ]
+
+    if (raw) {
+      filters.push(`document ~ '${raw.replace(/'/g, "\\'")}'`)
+    }
+
+    if (digits.length >= 3) {
+      filters.push(`phone ~ '${digits}'`)
+      filters.push(`phone2 ~ '${digits}'`)
+      filters.push(`phone3 ~ '${digits}'`)
+      filters.push(`document ~ '${digits}'`)
+    }
+
+    try {
+      return await pb.collection<CustomerRecord>('customers').getFullList({
+        filter: filters.join(' || '),
+        sort: 'name',
+        requestKey: null,
+      })
+    } catch (e) {
+      console.warn('searchCustomers error:', e)
+      return []
+    }
+  },
+
+  /**
    * Searches for customer by any of their up to 3 phone numbers (digits normalized).
    * Excludes a specific customerId if passed (useful during customer edits).
    */

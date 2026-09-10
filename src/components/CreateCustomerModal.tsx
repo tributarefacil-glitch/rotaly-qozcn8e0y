@@ -54,6 +54,7 @@ export function CreateCustomerModal({
   onCustomerCreated,
 }: CreateCustomerModalProps) {
   const [name, setName] = useState('')
+  const [document, setDocument] = useState('')
   const [phone, setPhone] = useState('')
   const [phone2, setPhone2] = useState('')
   const [phone3, setPhone3] = useState('')
@@ -80,6 +81,7 @@ export function CreateCustomerModal({
 
   const resetForm = () => {
     setName('')
+    setDocument('')
     setPhone('')
     setPhone2('')
     setPhone3('')
@@ -108,6 +110,7 @@ export function CreateCustomerModal({
       if (found) {
         setMatchedExistingCustomer(found)
         setName(found.name || '')
+        setDocument(found.document || '')
         setPhone(found.phone || '')
         setPhone2(found.phone2 || '')
         setPhone3(found.phone3 || '')
@@ -309,6 +312,7 @@ export function CreateCustomerModal({
 
     const payload: Partial<CustomerRecord> = {
       name: trimmedName,
+      document: document.trim() || undefined,
       phone: mainPhone,
       phone2: phone2.trim() || undefined,
       phone3: phone3.trim() || undefined,
@@ -424,11 +428,11 @@ export function CreateCustomerModal({
             </div>
           )}
 
-          {/* Nome e Telefone Principal */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
+          {/* Nome, Documento (CPF/CNPJ) e Telefone Principal */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-1">
               <Label className="text-xs font-semibold text-slate-300">
-                Nome do Cliente / Empresa <span className="text-[#FF6B35]">*</span>
+                Nome / Empresa <span className="text-[#FF6B35]">*</span>
               </Label>
               <Input
                 placeholder="Ex: Ana Maria Silva"
@@ -439,15 +443,25 @@ export function CreateCustomerModal({
               />
             </div>
 
-            <div>
+            <div className="sm:col-span-1">
+              <Label className="text-xs font-semibold text-slate-300">CPF / CNPJ</Label>
+              <Input
+                placeholder="000.000.000-00 ou CNPJ"
+                value={document}
+                onChange={(e) => setDocument(e.target.value)}
+                className="mt-1 h-9 text-xs font-mono bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
+              />
+            </div>
+
+            <div className="sm:col-span-1">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
                   <Phone className="h-3 w-3 text-[#22C55E]" />
-                  Telefone Principal (WhatsApp) <span className="text-[#FF6B35]">*</span>
+                  Telefone (WhatsApp) <span className="text-[#FF6B35]">*</span>
                 </Label>
                 {isSearchingPhone && (
                   <span className="text-[10px] text-[#60A5FA] flex items-center gap-1">
-                    <Loader2 className="h-2.5 w-2.5 animate-spin" /> verificando...
+                    <Loader2 className="h-2.5 w-2.5 animate-spin" /> buscando...
                   </span>
                 )}
               </div>

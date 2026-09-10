@@ -20,6 +20,7 @@ import {
   AlertCircle,
   RefreshCw,
   Users,
+  User,
   ChevronRight,
   ArrowRight,
   Zap,
@@ -39,6 +40,12 @@ import {
   Flag,
   Move,
   GripVertical,
+  Search,
+  ChevronDown,
+  Phone,
+  FileText,
+  Loader2,
+  X,
 } from 'lucide-react'
 import {
   Select,
@@ -185,6 +192,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const [newBaseType, setNewBaseType] = useState<'base' | 'end_point'>('base')
   const [isCreatingBase, setIsCreatingBase] = useState(false)
 
+  // Busca e Seleção do Ponto de Partida (Bases + Clientes por Nome, Telefone, CPF e CNPJ)
+  const [startPointSearchQuery, setStartPointSearchQuery] = useState('')
+  const [isStartPointDropdownOpen, setIsStartPointDropdownOpen] = useState(false)
+  const [endPointSearchQuery, setEndPointSearchQuery] = useState('')
+  const [isEndPointDropdownOpen, setIsEndPointDropdownOpen] = useState(false)
+  const [isGeocodingStartCustomer, setIsGeocodingStartCustomer] = useState(false)
+  const [startPointGeocodeWarning, setStartPointGeocodeWarning] = useState<string | null>(null)
+  const startPointDropdownRef = useRef<HTMLDivElement>(null)
+  const endPointDropdownRef = useRef<HTMLDivElement>(null)
+
   // Optimization Result
   const [optimizationResult, setOptimizationResult] =
     useState<MultiCourierOptimizationResult | null>(null)
@@ -248,6 +265,23 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     return unsub
   }, [])
 
+  // Fechar dropdowns de busca ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        startPointDropdownRef.current &&
+        !startPointDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsStartPointDropdownOpen(false)
+      }
+      if (endPointDropdownRef.current && !endPointDropdownRef.current.contains(e.target as Node)) {
+        setIsEndPointDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const toggleCourierSelection = (id: string) => {
     setSelectedCourierIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
@@ -308,6 +342,322 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       )
     })
   }, [pendingOrders, customers, searchOrderFilter])
+
+  // Helper para resolver informações do Ponto de Partida ou Chegada
+  // Seja uma Base (id puro) ou um Cliente (prefixo "cust_")
+  const resolveLocationEntity = useCallback(
+    (
+      id: string,
+    ): {
+      id: string
+      type: 'base' | 'customer'
+      name: string
+      address: string
+      lat?: number
+      lng?: number
+      phone?: string
+      document?: string
+      isDefault?: boolean
+    } | null => {
+      if (!id) return null
+
+      if (id.startsWith('cust_')) {
+        const custId = id.replace('cust_', '')
+        const cust = customers.find((c) => c.id === custId)
+        if (!cust) return null
+        return {
+          id,
+          type: 'customer',
+          name: cust.name,
+          address: cust.address,
+          lat: cust.lat,
+          lng: cust.lng,
+          phone: cust.phone,
+          document: cust.document,
+          isDefault: false,
+        }
+      }
+
+      const base = baseAddresses.find((b) => b.id === id)
+      if (base) {
+        return {
+          id: base.id,
+          type: 'base',
+          name: base.name,
+          address: base.address,
+          lat: base.lat,
+          lng: base.lng,
+          isDefault: base.is_default,
+        }
+      }
+
+      return null
+    },
+    [baseAddresses, customers],
+  )
+
+  // Entidade de partida selecionada
+  const resolvedStartEntity = useMemo(() => {
+    return (
+      resolveLocationEntity(selectedStartBaseId) || {
+        id: 'default-base',
+        type: 'base' as const,
+        name: 'Base Central LOGHYPE (Loja Principal)',
+        address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
+        lat: -23.565734,
+        lng: -46.651257,
+        isDefault: true,
+      }
+    )
+  }, [resolveLocationEntity, selectedStartBaseId])
+
+  // Entidade de chegada selecionada
+  const resolvedEndEntity = useMemo(() => {
+    return resolveLocationEntity(selectedEndBaseId) || resolvedStartEntity
+  }, [resolveLocationEntity, selectedEndBaseId, resolvedStartEntity])
+
+  // Itens unificados filtrados para a seleção de Ponto de Partida (Bases + Clientes)
+  // Busca em tempo real por NOME, TELEFONE, CPF e CNPJ
+  const filteredStartPointOptions = useMemo(() => {
+    const q = startPointSearchQuery.toLowerCase().trim()
+    const digits = startPointSearchQuery.replace(/\D/g, '')
+
+    // 1. Bases cadastradas
+    const basesList = baseAddresses.map((base) => ({
+      id: base.id,
+      type: 'base' as const,
+      name: base.name,
+      address: base.address,
+      lat: base.lat,
+      lng: base.lng,
+      isDefault: base.is_default,
+      phone: undefined,
+      document: undefined,
+    }))
+
+    // 2. Clientes cadastrados
+    const customersList = customers.map((c) => ({
+      id: `cust_${c.id}`,
+      type: 'customer' as const,
+      name: c.name,
+      address: c.address,
+      lat: c.lat,
+      lng: c.lng,
+      isDefault: false,
+      phone: c.phone,
+      phone2: c.phone2,
+      phone3: c.phone3,
+      document: c.document,
+    }))
+
+    if (!q) {
+      return {
+        bases: basesList,
+        customers: customersList,
+        total: basesList.length + customersList.length,
+      }
+    }
+
+    const matchesSearch = (item: {
+      name: string
+      address: string
+      phone?: string
+      phone2?: string
+      phone3?: string
+      document?: string
+    }) => {
+      // Busca textual no Nome e Endereço
+      if (item.name.toLowerCase().includes(q)) return true
+      if (item.address.toLowerCase().includes(q)) return true
+
+      // Busca no Documento (CPF / CNPJ) formatado ou números limpos
+      if (item.document) {
+        if (item.document.toLowerCase().includes(q)) return true
+        if (digits && item.document.replace(/\D/g, '').includes(digits)) return true
+      }
+
+      // Busca nos Telefones (formatados ou apenas dígitos)
+      const phones = [item.phone, item.phone2, item.phone3].filter(Boolean) as string[]
+      for (const p of phones) {
+        if (p.toLowerCase().includes(q)) return true
+        if (digits && p.replace(/\D/g, '').includes(digits)) return true
+      }
+
+      return false
+    }
+
+    const filteredBases = basesList.filter(matchesSearch)
+    const filteredCusts = customersList.filter(matchesSearch)
+
+    return {
+      bases: filteredBases,
+      customers: filteredCusts,
+      total: filteredBases.length + filteredCusts.length,
+    }
+  }, [baseAddresses, customers, startPointSearchQuery])
+
+  // Itens unificados filtrados para a seleção de Ponto de Chegada
+  const filteredEndPointOptions = useMemo(() => {
+    const q = endPointSearchQuery.toLowerCase().trim()
+    const digits = endPointSearchQuery.replace(/\D/g, '')
+
+    const basesList = baseAddresses.map((base) => ({
+      id: base.id,
+      type: 'base' as const,
+      name: base.name,
+      address: base.address,
+      lat: base.lat,
+      lng: base.lng,
+      isDefault: base.is_default,
+      phone: undefined,
+      document: undefined,
+    }))
+
+    const customersList = customers.map((c) => ({
+      id: `cust_${c.id}`,
+      type: 'customer' as const,
+      name: c.name,
+      address: c.address,
+      lat: c.lat,
+      lng: c.lng,
+      isDefault: false,
+      phone: c.phone,
+      phone2: c.phone2,
+      phone3: c.phone3,
+      document: c.document,
+    }))
+
+    if (!q) {
+      return {
+        bases: basesList,
+        customers: customersList,
+        total: basesList.length + customersList.length,
+      }
+    }
+
+    const matchesSearch = (item: {
+      name: string
+      address: string
+      phone?: string
+      phone2?: string
+      phone3?: string
+      document?: string
+    }) => {
+      if (item.name.toLowerCase().includes(q)) return true
+      if (item.address.toLowerCase().includes(q)) return true
+      if (item.document) {
+        if (item.document.toLowerCase().includes(q)) return true
+        if (digits && item.document.replace(/\D/g, '').includes(digits)) return true
+      }
+      const phones = [item.phone, item.phone2, item.phone3].filter(Boolean) as string[]
+      for (const p of phones) {
+        if (p.toLowerCase().includes(q)) return true
+        if (digits && p.replace(/\D/g, '').includes(digits)) return true
+      }
+      return false
+    }
+
+    const filteredBases = basesList.filter(matchesSearch)
+    const filteredCusts = customersList.filter(matchesSearch)
+
+    return {
+      bases: filteredBases,
+      customers: filteredCusts,
+      total: filteredBases.length + filteredCusts.length,
+    }
+  }, [baseAddresses, customers, endPointSearchQuery])
+
+  // Ação ao selecionar um ponto de partida (com geocodificação automática e validação)
+  const handleSelectStartPoint = async (option: {
+    id: string
+    type: 'base' | 'customer'
+    name: string
+    address: string
+    lat?: number
+    lng?: number
+  }) => {
+    setStartPointGeocodeWarning(null)
+    setSelectedStartBaseId(option.id)
+    setIsStartPointDropdownOpen(false)
+    setStartPointSearchQuery('')
+
+    // Se for cliente e não tiver coordenadas lat/lng, tenta geocodificar pelo endereço
+    if (option.type === 'customer' && (!option.lat || !option.lng)) {
+      if (!option.address || option.address.trim().length < 5) {
+        const warning = `O cliente "${option.name}" não possui endereço completo nem coordenadas cadastradas. Cadastre o endereço para usar como ponto de partida.`
+        setStartPointGeocodeWarning(warning)
+        toast.warning(warning)
+        return
+      }
+
+      setIsGeocodingStartCustomer(true)
+      toast.info(`Geocodificando endereço de "${option.name}"...`)
+      try {
+        const geo = await fallbackGeocodeAddress(option.address)
+        if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+          // Atualiza as coordenadas do cliente no PocketBase para persistência
+          const rawCustId = option.id.replace('cust_', '')
+          await deliveryService.updateCustomer(rawCustId, {
+            lat: geo.lat,
+            lng: geo.lng,
+          })
+          // Atualiza o estado local de customers
+          const target = customers.find((c) => c.id === rawCustId)
+          if (target) {
+            target.lat = geo.lat
+            target.lng = geo.lng
+          }
+          toast.success(
+            `Localização de "${option.name}" obtida com sucesso (${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)})!`,
+          )
+        } else {
+          const warning = `Não foi possível geocodificar o endereço de "${option.name}". Verifique o cadastro do cliente.`
+          setStartPointGeocodeWarning(warning)
+          toast.error(warning)
+        }
+      } catch (e) {
+        console.warn('Geocoding error for start customer:', e)
+        const warning = `Erro ao geocodificar endereço de "${option.name}".`
+        setStartPointGeocodeWarning(warning)
+        toast.error(warning)
+      } finally {
+        setIsGeocodingStartCustomer(false)
+      }
+    }
+  }
+
+  // Ação ao selecionar um ponto de chegada
+  const handleSelectEndPoint = async (option: {
+    id: string
+    type: 'base' | 'customer'
+    name: string
+    address: string
+    lat?: number
+    lng?: number
+  }) => {
+    setSelectedEndBaseId(option.id)
+    setIsEndPointDropdownOpen(false)
+    setEndPointSearchQuery('')
+
+    if (option.type === 'customer' && (!option.lat || !option.lng)) {
+      if (option.address && option.address.trim().length >= 5) {
+        try {
+          const geo = await fallbackGeocodeAddress(option.address)
+          if (geo) {
+            const rawCustId = option.id.replace('cust_', '')
+            await deliveryService.updateCustomer(rawCustId, { lat: geo.lat, lng: geo.lng })
+            const target = customers.find((c) => c.id === rawCustId)
+            if (target) {
+              target.lat = geo.lat
+              target.lng = geo.lng
+            }
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+    }
+  }
 
   // Recompute plan distances and metrics when stops order changes (Drag or manual shift)
   const recalculatePlanMetrics = useCallback(
@@ -537,15 +887,22 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     setIsOptimizing(true)
 
     try {
-      // 1. Determine Start Base and End Base coordinates
-      const startBase = baseAddresses.find((b) => b.id === selectedStartBaseId) || {
-        name: 'Base Central LOGHYPE',
-        address: 'Centro, Rio de Janeiro - RJ',
-        lat: -22.906847,
-        lng: -43.172896,
+      // 1. Determine Start Base and End Base coordinates (suporta tanto BaseAddressRecord quanto CustomerRecord)
+      const startEntity = resolvedStartEntity
+      const startBase = {
+        name: startEntity.name,
+        address: startEntity.address,
+        lat: startEntity.lat || -22.906847,
+        lng: startEntity.lng || -43.172896,
       }
 
-      const endBase = baseAddresses.find((b) => b.id === selectedEndBaseId) || startBase
+      const endEntity = resolvedEndEntity
+      const endBase = {
+        name: endEntity.name,
+        address: endEntity.address,
+        lat: endEntity.lat || startBase.lat,
+        lng: endEntity.lng || startBase.lng,
+      }
 
       // 2. Prepare courier objects with starting locations (at Start Base or live GPS)
       const selectedCouriers = couriers.filter((c) => selectedCourierIds.includes(c.id))
@@ -958,14 +1315,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         })
       } else {
         // Exibição antes da otimização: inclui PONTO DE PARTIDA 🟢 e PONTO DE CHEGADA 🏁
-        const startBaseObj = baseAddresses.find((b) => b.id === selectedStartBaseId) || {
-          id: 'default-base',
-          name: 'Base Central LOGHYPE',
-          address: 'Centro, Rio de Janeiro - RJ',
-          lat: -22.906847,
-          lng: -43.172896,
-        }
-        const endBaseObj = baseAddresses.find((b) => b.id === selectedEndBaseId) || startBaseObj
+        const startBaseObj = resolvedStartEntity
+        const endBaseObj = resolvedEndEntity
 
         // 1. Ponto de Partida selecionado
         if (startBaseObj.lat && startBaseObj.lng) {
@@ -1145,8 +1496,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       return
     }
 
-    const startBase = baseAddresses.find((b) => b.id === selectedStartBaseId)
-    const endBase = baseAddresses.find((b) => b.id === selectedEndBaseId) || startBase
+    const startBase = resolvedStartEntity
+    const endBase = resolvedEndEntity
 
     setIsApplying(true)
     let assignedCount = 0
@@ -1455,51 +1806,443 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               </Button>
             </div>
 
-            {/* Quick selectors for Start Base and Final Address */}
+            {/* Quick selectors for Start Base (Bases + Clientes com busca por Nome, Telefone, CPF/CNPJ) and Final Address */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  🏢 Base da Empresa / Loja (Ponto de Partida):
+              {/* PONTO DE PARTIDA COM BUSCA POR NOME, TELEFONE, CPF E CNPJ */}
+              <div className="relative" ref={startPointDropdownRef}>
+                <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between mb-1">
+                  <span className="flex items-center gap-1.5">
+                    🏢 Base da Empresa / Loja (Ponto de Partida):
+                  </span>
+                  <span className="text-[10px] font-normal text-indigo-600 dark:text-indigo-400">
+                    Bases &amp; Clientes
+                  </span>
                 </Label>
-                <Select value={selectedStartBaseId} onValueChange={setSelectedStartBaseId}>
-                  <SelectTrigger className="h-9 text-xs bg-white dark:bg-slate-800 border-slate-300">
-                    <SelectValue placeholder="Selecione a base de saída..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {baseAddresses.map((base) => (
-                      <SelectItem key={base.id} value={base.id}>
-                        {base.name} {base.is_default ? '★ (Padrão)' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-[10px] text-slate-500 mt-1 truncate">
-                  📍{' '}
-                  {baseAddresses.find((b) => b.id === selectedStartBaseId)?.address ||
-                    'Endereço da base'}
-                </p>
+
+                {/* Caixa Seletora / Botão de abertura com resumo do selecionado */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setIsStartPointDropdownOpen((prev) => !prev)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      setIsStartPointDropdownOpen((prev) => !prev)
+                    }
+                  }}
+                  className={`h-9 px-3 rounded-lg border text-xs flex items-center justify-between bg-white dark:bg-slate-800 cursor-pointer transition select-none ${
+                    isStartPointDropdownOpen
+                      ? 'border-indigo-500 ring-2 ring-indigo-500/20'
+                      : 'border-slate-300 dark:border-slate-700 hover:border-slate-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="shrink-0 text-sm">
+                      {resolvedStartEntity.type === 'customer' ? '👤' : '🏢'}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-slate-900 dark:text-white truncate leading-none">
+                        {resolvedStartEntity.name}{' '}
+                        {resolvedStartEntity.isDefault ? '★ (Padrão)' : ''}
+                      </p>
+                    </div>
+                    {resolvedStartEntity.type === 'customer' && (
+                      <Badge
+                        variant="secondary"
+                        className="text-[9px] px-1.5 py-0 h-4 bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 shrink-0"
+                      >
+                        Cliente
+                      </Badge>
+                    )}
+                  </div>
+                  <ChevronDown
+                    className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
+                      isStartPointDropdownOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </div>
+
+                {/* Dropdown Flutuante com Campo de Busca e Resultados */}
+                {isStartPointDropdownOpen && (
+                  <div className="absolute z-50 left-0 right-0 top-full mt-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100">
+                    {/* Input de Busca Dinâmica por Nome, Telefone, CPF e CNPJ */}
+                    <div className="p-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/50">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                        <input
+                          type="text"
+                          autoFocus
+                          value={startPointSearchQuery}
+                          onChange={(e) => setStartPointSearchQuery(e.target.value)}
+                          placeholder="Buscar por nome, telefone, CPF ou CNPJ..."
+                          className="w-full h-8 pl-8 pr-7 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        />
+                        {startPointSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setStartPointSearchQuery('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1 px-1">
+                        Ex: &ldquo;Central&rdquo;, &ldquo;Pimenta&rdquo;, celular ou CPF/CNPJ
+                      </p>
+                    </div>
+
+                    {/* Lista com seções separadas de Bases e Clientes */}
+                    <div className="max-h-64 overflow-y-auto p-1.5 space-y-2 text-xs">
+                      {/* Seção 1: Bases Cadastradas */}
+                      {filteredStartPointOptions.bases.length > 0 && (
+                        <div>
+                          <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                            <Building className="h-3 w-3 text-indigo-500" />
+                            <span>
+                              Bases de Saída Cadastradas ({filteredStartPointOptions.bases.length})
+                            </span>
+                          </div>
+                          <div className="space-y-0.5">
+                            {filteredStartPointOptions.bases.map((base) => {
+                              const isSelected = selectedStartBaseId === base.id
+                              return (
+                                <button
+                                  key={base.id}
+                                  type="button"
+                                  onClick={() => handleSelectStartPoint(base)}
+                                  className={`w-full text-left p-2 rounded-lg transition flex items-start gap-2 ${
+                                    isSelected
+                                      ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-950 dark:text-indigo-100 border border-indigo-200 dark:border-indigo-800 font-semibold'
+                                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                                  }`}
+                                >
+                                  <span className="text-base shrink-0">🏢</span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <p className="font-bold text-slate-900 dark:text-white truncate">
+                                        {base.name}
+                                      </p>
+                                      {base.isDefault && (
+                                        <Badge
+                                          variant="secondary"
+                                          className="text-[9px] px-1 py-0 h-3.5 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                                        >
+                                          ★ Padrão
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                      📍 {base.address}
+                                    </p>
+                                  </div>
+                                  {isSelected && (
+                                    <Check className="h-4 w-4 text-indigo-600 shrink-0 self-center" />
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Seção 2: Clientes Cadastrados */}
+                      {filteredStartPointOptions.customers.length > 0 && (
+                        <div>
+                          <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                            <User className="h-3 w-3 text-sky-500" />
+                            <span>Clientes ({filteredStartPointOptions.customers.length})</span>
+                          </div>
+                          <div className="space-y-0.5">
+                            {filteredStartPointOptions.customers.map((cust) => {
+                              const isSelected = selectedStartBaseId === cust.id
+                              return (
+                                <button
+                                  key={cust.id}
+                                  type="button"
+                                  onClick={() => handleSelectStartPoint(cust)}
+                                  className={`w-full text-left p-2 rounded-lg transition flex items-start gap-2 ${
+                                    isSelected
+                                      ? 'bg-sky-50 dark:bg-sky-950/60 text-sky-950 dark:text-sky-100 border border-sky-200 dark:border-sky-800 font-semibold'
+                                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                                  }`}
+                                >
+                                  <span className="text-base shrink-0">👤</span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between gap-1">
+                                      <p className="font-bold text-slate-900 dark:text-white truncate">
+                                        {cust.name}
+                                      </p>
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[9px] px-1 py-0 h-3.5 text-sky-700 dark:text-sky-300 border-sky-300 shrink-0"
+                                      >
+                                        Cliente
+                                      </Badge>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                      📍 {cust.address || 'Sem endereço informado'}
+                                    </p>
+                                    {/* Exibe Telefone e CPF/CNPJ quando existirem */}
+                                    {(cust.phone || cust.document) && (
+                                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400 truncate">
+                                        {cust.phone && (
+                                          <span className="flex items-center gap-0.5">
+                                            <Phone className="h-2.5 w-2.5 text-emerald-500 shrink-0" />
+                                            {cust.phone}
+                                          </span>
+                                        )}
+                                        {cust.document && (
+                                          <span className="flex items-center gap-0.5 font-mono">
+                                            <FileText className="h-2.5 w-2.5 text-indigo-500 shrink-0" />
+                                            {cust.document}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isSelected && (
+                                    <Check className="h-4 w-4 text-sky-600 shrink-0 self-center" />
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Vazio se não encontrar nada */}
+                      {filteredStartPointOptions.total === 0 && (
+                        <div className="p-4 text-center text-xs text-slate-400">
+                          <p>
+                            Nenhuma base ou cliente encontrado para &ldquo;{startPointSearchQuery}
+                            &rdquo;.
+                          </p>
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            Tente buscar por nome, telefone ou CPF/CNPJ.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Endereço real da origem selecionada */}
+                <div className="flex items-center justify-between gap-1 mt-1">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                    📍 {resolvedStartEntity.address || 'Endereço da base / cliente'}
+                  </p>
+                  {isGeocodingStartCustomer && (
+                    <span className="flex items-center gap-1 text-[10px] text-amber-600 font-semibold shrink-0 animate-pulse">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Buscando coordenadas...
+                    </span>
+                  )}
+                </div>
+
+                {/* Aviso quando o cliente selecionado não tem coordenadas e não foi possível geocodificar */}
+                {startPointGeocodeWarning && (
+                  <div className="mt-1 p-1.5 rounded-md bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-[10px] text-amber-800 dark:text-amber-200 flex items-start gap-1">
+                    <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                    <span>{startPointGeocodeWarning}</span>
+                  </div>
+                )}
               </div>
 
-              <div>
-                <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  🔄 Endereço Final da Rota (Retorno / Ponto de Chegada):
+              {/* PONTO DE CHEGADA / RETORNO (Bases e Clientes com busca e opção Mesma Base de Saída) */}
+              <div className="relative" ref={endPointDropdownRef}>
+                <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between mb-1">
+                  <span className="flex items-center gap-1.5">
+                    🔄 Endereço Final da Rota (Retorno / Ponto de Chegada):
+                  </span>
+                  <span className="text-[10px] font-normal text-slate-400">Retorno</span>
                 </Label>
-                <Select value={selectedEndBaseId} onValueChange={setSelectedEndBaseId}>
-                  <SelectTrigger className="h-9 text-xs bg-white dark:bg-slate-800 border-slate-300">
-                    <SelectValue placeholder="Selecione onde o motoboy finaliza..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {baseAddresses.map((base) => (
-                      <SelectItem key={base.id} value={base.id}>
-                        {base.name} {base.id === selectedStartBaseId ? '(Mesma Base de Saída)' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-[10px] text-slate-500 mt-1 truncate">
-                  🏁{' '}
-                  {baseAddresses.find((b) => b.id === selectedEndBaseId)?.address ||
-                    'Endereço de finalização'}
+
+                {/* Caixa Seletora / Botão de abertura */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setIsEndPointDropdownOpen((prev) => !prev)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      setIsEndPointDropdownOpen((prev) => !prev)
+                    }
+                  }}
+                  className={`h-9 px-3 rounded-lg border text-xs flex items-center justify-between bg-white dark:bg-slate-800 cursor-pointer transition select-none ${
+                    isEndPointDropdownOpen
+                      ? 'border-indigo-500 ring-2 ring-indigo-500/20'
+                      : 'border-slate-300 dark:border-slate-700 hover:border-slate-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="shrink-0 text-sm">
+                      {resolvedEndEntity.id === resolvedStartEntity.id
+                        ? '🔄'
+                        : resolvedEndEntity.type === 'customer'
+                          ? '👤'
+                          : '🏁'}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-slate-900 dark:text-white truncate leading-none">
+                        {resolvedEndEntity.name}{' '}
+                        {resolvedEndEntity.id === resolvedStartEntity.id
+                          ? '(Mesma Base de Saída)'
+                          : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronDown
+                    className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
+                      isEndPointDropdownOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </div>
+
+                {/* Dropdown Flutuante de Chegada com Busca */}
+                {isEndPointDropdownOpen && (
+                  <div className="absolute z-50 left-0 right-0 top-full mt-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl overflow-hidden animate-in fade-in-50 zoom-in-95 duration-100">
+                    {/* Input de Busca Dinâmica */}
+                    <div className="p-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/50">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                        <input
+                          type="text"
+                          autoFocus
+                          value={endPointSearchQuery}
+                          onChange={(e) => setEndPointSearchQuery(e.target.value)}
+                          placeholder="Buscar base ou cliente final por nome, fone, CPF/CNPJ..."
+                          className="w-full h-8 pl-8 pr-7 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                        />
+                        {endPointSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setEndPointSearchQuery('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="max-h-64 overflow-y-auto p-1.5 space-y-2 text-xs">
+                      {/* Opção rápida: Mesma Origem/Ponto de Partida */}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectEndPoint(resolvedStartEntity)}
+                          className={`w-full text-left p-2 rounded-lg transition flex items-center gap-2 ${
+                            selectedEndBaseId === selectedStartBaseId || !selectedEndBaseId
+                              ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-950 dark:text-indigo-100 border border-indigo-200 dark:border-indigo-800 font-semibold'
+                              : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                          }`}
+                        >
+                          <span className="text-base shrink-0">🔄</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-bold text-slate-900 dark:text-white truncate">
+                              Mesma Base de Saída (Ida e Volta)
+                            </p>
+                            <p className="text-[11px] text-slate-500 truncate">
+                              📍 {resolvedStartEntity.name} ({resolvedStartEntity.address})
+                            </p>
+                          </div>
+                          {(selectedEndBaseId === selectedStartBaseId || !selectedEndBaseId) && (
+                            <Check className="h-4 w-4 text-indigo-600 shrink-0" />
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Bases Alternativas */}
+                      {filteredEndPointOptions.bases.length > 0 && (
+                        <div>
+                          <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                            <Building className="h-3 w-3 text-indigo-500" />
+                            <span>Bases Cadastradas ({filteredEndPointOptions.bases.length})</span>
+                          </div>
+                          <div className="space-y-0.5">
+                            {filteredEndPointOptions.bases.map((base) => {
+                              const isSelected = selectedEndBaseId === base.id
+                              return (
+                                <button
+                                  key={base.id}
+                                  type="button"
+                                  onClick={() => handleSelectEndPoint(base)}
+                                  className={`w-full text-left p-2 rounded-lg transition flex items-start gap-2 ${
+                                    isSelected
+                                      ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-950 dark:text-indigo-100 border border-indigo-200 dark:border-indigo-800 font-semibold'
+                                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                                  }`}
+                                >
+                                  <span className="text-base shrink-0">🏢</span>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="font-bold text-slate-900 dark:text-white truncate">
+                                      {base.name}
+                                    </p>
+                                    <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                      📍 {base.address}
+                                    </p>
+                                  </div>
+                                  {isSelected && (
+                                    <Check className="h-4 w-4 text-indigo-600 shrink-0 self-center" />
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Clientes Alternativos de Chegada */}
+                      {filteredEndPointOptions.customers.length > 0 && (
+                        <div>
+                          <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                            <User className="h-3 w-3 text-sky-500" />
+                            <span>
+                              Clientes para Retorno ({filteredEndPointOptions.customers.length})
+                            </span>
+                          </div>
+                          <div className="space-y-0.5">
+                            {filteredEndPointOptions.customers.map((cust) => {
+                              const isSelected = selectedEndBaseId === cust.id
+                              return (
+                                <button
+                                  key={cust.id}
+                                  type="button"
+                                  onClick={() => handleSelectEndPoint(cust)}
+                                  className={`w-full text-left p-2 rounded-lg transition flex items-start gap-2 ${
+                                    isSelected
+                                      ? 'bg-sky-50 dark:bg-sky-950/60 text-sky-950 dark:text-sky-100 border border-sky-200 dark:border-sky-800 font-semibold'
+                                      : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                                  }`}
+                                >
+                                  <span className="text-base shrink-0">👤</span>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="font-bold text-slate-900 dark:text-white truncate">
+                                      {cust.name}
+                                    </p>
+                                    <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                      📍 {cust.address}
+                                    </p>
+                                    {(cust.phone || cust.document) && (
+                                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400 truncate">
+                                        {cust.phone && <span>📞 {cust.phone}</span>}
+                                        {cust.document && <span>📄 {cust.document}</span>}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isSelected && (
+                                    <Check className="h-4 w-4 text-sky-600 shrink-0 self-center" />
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 truncate">
+                  🏁 {resolvedEndEntity.address || 'Endereço de finalização'}
                 </p>
               </div>
             </div>
@@ -1534,10 +2277,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       placeholder="Endereço completo com número, bairro e cidade (busca Maps)..."
                       inputClassName="h-8 text-xs bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
                       biasCoordinates={
-                        baseAddresses.find((b) => b.id === selectedStartBaseId)
+                        resolvedStartEntity?.lat && resolvedStartEntity?.lng
                           ? {
-                              lat: baseAddresses.find((b) => b.id === selectedStartBaseId)!.lat,
-                              lng: baseAddresses.find((b) => b.id === selectedStartBaseId)!.lng,
+                              lat: resolvedStartEntity.lat,
+                              lng: resolvedStartEntity.lng,
                             }
                           : baseAddresses.length > 0 && baseAddresses[0].lat && baseAddresses[0].lng
                             ? { lat: baseAddresses[0].lat, lng: baseAddresses[0].lng }
@@ -2020,17 +2763,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
                   {/* Cartographic canvas with interactive pins: Ponto de Partida 🟢, Chegada 🏁 and Stops 📍 */}
                   {(() => {
-                    const fallbackStartBase = baseAddresses.find(
-                      (b) => b.id === selectedStartBaseId,
-                    ) || {
-                      id: 'default-base',
-                      name: 'Base Central LOGHYPE',
-                      address: 'Centro, Rio de Janeiro - RJ',
-                      lat: -22.906847,
-                      lng: -43.172896,
-                    }
-                    const fallbackEndBase =
-                      baseAddresses.find((b) => b.id === selectedEndBaseId) || fallbackStartBase
+                    const fallbackStartBase = resolvedStartEntity
+                    const fallbackEndBase = resolvedEndEntity
                     const selectedOrdersList =
                       selectedOrderIds.length > 0
                         ? pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
