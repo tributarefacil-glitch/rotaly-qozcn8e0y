@@ -210,7 +210,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
           deliveryService.getCouriers(),
           deliveryService.getLatestLocations(),
-          deliveryService.getOffRouteEvents('', '-created', 30).catch(() => []),
+          deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
         ])
       setOrders(fetchedOrders)
       setCouriers(fetchedCouriers)
@@ -752,6 +752,14 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     setIsDrawerOpen(true)
   }
 
+  // Get courier data for the selected order
+  const orderCourierInfo = useMemo(() => {
+    if (!selectedOrder) return null
+    const courierId = selectedOrder.courier_id
+    if (!courierId) return null
+    return allCourierData.find((c) => c.courier.id === courierId) || null
+  }, [selectedOrder, allCourierData])
+
   // Buscar rota viária real via OSRM quando um pedido é selecionado no Drawer
   useEffect(() => {
     if (!isDrawerOpen || !selectedOrder) return
@@ -794,14 +802,6 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     orderCourierInfo?.lat,
     orderCourierInfo?.lng,
   ])
-
-  // Get courier data for the selected order
-  const orderCourierInfo = useMemo(() => {
-    if (!selectedOrder) return null
-    const courierId = selectedOrder.courier_id
-    if (!courierId) return null
-    return allCourierData.find((c) => c.courier.id === courierId) || null
-  }, [selectedOrder, allCourierData])
 
   // Courier's route stops for the selected order
   const courierRouteOrders = useMemo(() => {
