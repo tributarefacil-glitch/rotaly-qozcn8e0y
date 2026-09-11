@@ -163,12 +163,29 @@ export default function CourierApp() {
     }
   })
 
+  // Captura do nível de bateria com fallback gracioso
+  const getBatteryLevel = async (): Promise<number | null> => {
+    try {
+      const nav = typeof navigator !== 'undefined' ? (navigator as any) : null
+      if (nav && typeof nav.getBattery === 'function') {
+        const battery = await nav.getBattery()
+        if (typeof battery?.level === 'number') {
+          return Math.round(battery.level * 100)
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null
+  }
+
   // Telemetria GPS ativa a cada 30 segundos
   useEffect(() => {
     if (!user || !isGpsActive) return
 
     const updateLocation = async () => {
       if (navigator.geolocation) {
+        const batteryLevel = await getBatteryLevel()
         navigator.geolocation.getCurrentPosition(
           async (pos) => {
             const lat = pos.coords.latitude
@@ -176,7 +193,14 @@ export default function CourierApp() {
             setCurrentCourierLocation({ lat, lng })
             const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 28
             try {
-              await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90)
+              await deliveryService.updateCourierLocation(
+                user.id,
+                lat,
+                lng,
+                speed,
+                90,
+                batteryLevel,
+              )
             } catch (e) {
               console.error('Failed to post live location:', e)
             }
@@ -187,7 +211,7 @@ export default function CourierApp() {
             const lng = -43.172896 + (Math.random() - 0.5) * 0.008
             setCurrentCourierLocation({ lat, lng })
             try {
-              await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110)
+              await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110, batteryLevel)
             } catch {
               /* ignore */
             }

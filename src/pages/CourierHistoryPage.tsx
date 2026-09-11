@@ -84,13 +84,31 @@ export default function CourierHistoryPage() {
 
     const updateLocation = async () => {
       if (navigator.geolocation) {
+        let batteryLevel: number | null = null
+        try {
+          const nav = typeof navigator !== 'undefined' ? (navigator as any) : null
+          if (nav && typeof nav.getBattery === 'function') {
+            const b = await nav.getBattery()
+            if (typeof b?.level === 'number') batteryLevel = Math.round(b.level * 100)
+          }
+        } catch {
+          /* ignore */
+        }
+
         navigator.geolocation.getCurrentPosition(
           async (pos) => {
             const lat = pos.coords.latitude
             const lng = pos.coords.longitude
             const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 28
             try {
-              await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90)
+              await deliveryService.updateCourierLocation(
+                user.id,
+                lat,
+                lng,
+                speed,
+                90,
+                batteryLevel,
+              )
             } catch (e) {
               console.error('Failed to post live location in history page:', e)
             }
@@ -99,7 +117,7 @@ export default function CourierHistoryPage() {
             const lat = -22.906847 + (Math.random() - 0.5) * 0.008
             const lng = -43.172896 + (Math.random() - 0.5) * 0.008
             try {
-              await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110)
+              await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110, batteryLevel)
             } catch {
               /* ignore */
             }

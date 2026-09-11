@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T18:06:54.486Z",
+  "generatedAt": "2026-09-11T18:28:29.572Z",
   "collections": [
     {
       "name": "users",
@@ -563,6 +563,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "battery_level",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE INDEX idx_locations_user_created ON locations (user_id, created DESC)"]

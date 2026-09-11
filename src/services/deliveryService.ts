@@ -414,14 +414,25 @@ export const deliveryService = {
     })
   },
 
-  async updateCourierLocation(userId: string, lat: number, lng: number, speed = 0, heading = 0) {
-    return pb.collection<LocationRecord>('locations').create({
+  async updateCourierLocation(
+    userId: string,
+    lat: number,
+    lng: number,
+    speed = 0,
+    heading = 0,
+    batteryLevel?: number | null,
+  ) {
+    const payload: Partial<LocationRecord> = {
       user_id: userId,
       lat,
       lng,
       speed,
       heading,
-    })
+    }
+    if (typeof batteryLevel === 'number' && !isNaN(batteryLevel)) {
+      payload.battery_level = Math.max(0, Math.min(100, Math.round(batteryLevel)))
+    }
+    return pb.collection<LocationRecord>('locations').create(payload)
   },
 
   async getLatestLocationForCourier(courierId: string) {

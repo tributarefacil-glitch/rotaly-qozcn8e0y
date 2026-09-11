@@ -229,6 +229,7 @@ export interface LocationRecord extends RecordModel {
   lng: number
   speed?: number
   heading?: number
+  battery_level?: number
   expand?: {
     user_id?: UserRecord
   }
