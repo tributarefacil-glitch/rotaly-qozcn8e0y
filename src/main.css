@@ -1,6 +1,6 @@
 /* Global styles - Theme, font, utilities, animations and global components */
 
-/* LOGHYPE Design System Fonts: Montserrat & Inter */
+/* Rotaly Design System Fonts: Montserrat & Inter */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@400;500;600;700;800;900&display=swap');
 
 @tailwind base;
@@ -9,7 +9,7 @@
 
 @layer base {
   :root {
-    /* LOGHYPE Theme: Dark Navy (#0A1128), Royal Blue (#0052CC), Neon Orange (#FF6B35), Route Green (#22C55E), Route Yellow (#EAB308), Alert Red (#EF4444) */
+    /* Rotaly Theme: Navy Blue (#1B3A8C), Cyan (#00A8E8), Dark Navy (#0A1128), Route Green (#22C55E), Route Yellow (#EAB308), Alert Red (#EF4444) */
     --background: 226 60% 98%;
     --foreground: 226 60% 10%;
 
@@ -19,7 +19,7 @@
     --popover: 0 0% 100%;
     --popover-foreground: 226 60% 10%;
 
-    --primary: 216 100% 40%; /* #0052CC */
+    --primary: 223 68% 33%; /* #1B3A8C Rotaly Navy */
     --primary-foreground: 0 0% 100%;
 
     --secondary: 16 100% 60%; /* #FF6B35 */

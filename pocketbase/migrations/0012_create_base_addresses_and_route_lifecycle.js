@@ -52,7 +52,7 @@ migrate(
       const existing = app.findRecordsByFilter('base_addresses', '', '-created', 1, 0)
       if (!existing || existing.length === 0) {
         const seedBase = new Record(baseAddressesCol)
-        seedBase.set('name', 'Base Central LOGHYPE (Loja Principal)')
+        seedBase.set('name', 'Base Central Rotaly (Loja Principal)')
         seedBase.set('type', 'base')
         seedBase.set('address', 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP')
         seedBase.set('street', 'Av. Paulista, 1000')

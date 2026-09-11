@@ -449,7 +449,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center gap-2.5">
-                Painel do Lojista LOGHYPE
+                Painel do Lojista Rotaly
               </h1>
               <p className="font-sans text-xs sm:text-sm text-slate-400">
                 Acompanhamento em tempo real de pedidos, mapa de frotas, Torre de Controle e
@@ -526,7 +526,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             </div>
           </div>
 
-          {/* Quick Actions Ribbon (LOGHYPE Visual: Dark Navy #0A1128, Fita Verde→Amarelo→Laranja→Vermelho, Mínimo 44px mobile touch) */}
+          {/* Quick Actions Ribbon (Rotaly Visual: Dark Navy #0A1128, Fita Verde→Amarelo→Laranja→Vermelho, Mínimo 44px mobile touch) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-heading flex items-center gap-2">

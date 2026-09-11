@@ -266,7 +266,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     markers.forEach((item) => {
       if (!item.lat || !item.lng) return
 
-      // LOGHYPE Color Scheme: Blue for couriers, Orange for customers/orders, Green for delivered
+      // Rotaly Color Scheme: Blue for couriers, Orange for customers/orders, Green for delivered
       let iconUrl = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
       if (item.type === 'courier') {
         iconUrl = 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png' // Blue for Couriers

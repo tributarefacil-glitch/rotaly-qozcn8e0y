@@ -1,7 +1,7 @@
 /* 404 Page - Displays when a user attempts to access a non-existent route - translate to the language of the user */
 import { useLocation, Link } from 'react-router-dom'
 import { useEffect } from 'react'
-import { LoghypeLogo } from '@/components/LoghypeLogo'
+import { RotalyLogo } from '@/components/RotalyLogo'
 
 const NotFound = () => {
   const location = useLocation()
@@ -13,7 +13,7 @@ const NotFound = () => {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#070D1E] p-4 text-center text-white font-sans">
       <div className="mb-6">
-        <LoghypeLogo size="lg" theme="dark" showTagline={true} />
+        <RotalyLogo size="lg" theme="dark" showTagline={true} />
       </div>
       <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-[#0E1738] border border-[#1E2B58] shadow-brand-dark">
         <span className="font-heading font-black text-2xl text-[#FF6B35]">404</span>
@@ -26,7 +26,7 @@ const NotFound = () => {
         to="/"
         className="inline-flex items-center px-5 py-2.5 bg-[#0052CC] hover:bg-[#003E99] text-white text-xs font-bold rounded-xl shadow-brand transition duration-100 border border-blue-400/30"
       >
-        Voltar para a LOGHYPE
+        Voltar para a Rotaly
       </Link>
     </div>
   )

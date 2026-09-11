@@ -22,7 +22,7 @@ import {
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
-import { LoghypeLogo } from '@/components/LoghypeLogo'
+import { RotalyLogo } from '@/components/RotalyLogo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -240,7 +240,7 @@ export default function RegisterPage() {
       <header className="relative z-10 w-full border-b border-[#1E2B58] bg-[#0A1128]/90 backdrop-blur-md px-6 py-3.5 shadow-brand-dark">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <Link to="/" className="flex items-center hover:opacity-95">
-            <LoghypeLogo size="sm" theme="dark" showTagline={false} />
+            <RotalyLogo size="md" theme="dark" showTagline={false} />
           </Link>
 
           <Button
@@ -311,7 +311,7 @@ export default function RegisterPage() {
                     Criar Nova Conta
                   </CardTitle>
                   <CardDescription className="font-sans text-slate-400 text-xs">
-                    Cadastre-se na LOGHYPE para começar a operar entregas.
+                    Cadastre-se na Rotaly para começar a operar entregas.
                   </CardDescription>
                 </div>
 
@@ -779,7 +779,7 @@ export default function RegisterPage() {
       </main>
       {/* Footer */}
       <footer className="border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
-        <p>LOGHYPE — Entrega rápida, confiança garantida • Plataforma Segura</p>
+        <p>Rotaly — Entrega rápida, confiança garantida • Plataforma Segura</p>
       </footer>{' '}
     </div>
   )

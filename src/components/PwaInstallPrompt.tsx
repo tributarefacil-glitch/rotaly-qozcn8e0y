@@ -101,7 +101,7 @@ export const PwaInstallPrompt: React.FC = () => {
         toast.success('Notificações nativas ativadas com sucesso!')
         if ('serviceWorker' in navigator) {
           const reg = await navigator.serviceWorker.ready
-          reg.showNotification('Gestão de Entregas', {
+          reg.showNotification('Rotaly Entregas', {
             body: 'Notificações push ativas! Você será avisado sobre novos pedidos e rotas.',
             icon: '/icons/icon.svg',
           })
@@ -141,7 +141,7 @@ export const PwaInstallPrompt: React.FC = () => {
           <Smartphone className="h-4 w-4" />
         </div>
         <div className="min-w-0">
-          <p className="font-bold truncate">Instalar App Gestão de Entregas</p>
+          <p className="font-bold truncate">Instalar App Rotaly</p>
           <p className="text-[11px] text-blue-100/80 truncate">
             Acesse direto da tela inicial com funcionamento offline e alertas push!
           </p>

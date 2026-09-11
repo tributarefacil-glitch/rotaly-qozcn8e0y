@@ -86,7 +86,7 @@ self.addEventListener('fetch', (event) => {
 // Native Push Notifications event handler
 self.addEventListener('push', (event) => {
   let data = {
-    title: 'Gestão de Entregas',
+    title: 'Rotaly Entregas',
     body: 'Nova atualização de entrega disponível!',
     icon: '/icons/icon.svg',
     badge: '/icons/icon.svg',

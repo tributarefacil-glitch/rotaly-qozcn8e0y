@@ -484,7 +484,7 @@ export const deliveryService = {
     return [
       {
         id: 'default_central_base',
-        name: 'Base Central LOGHYPE (Polo Operacional)',
+        name: 'Base Central Rotaly (Polo Operacional)',
         type: 'base',
         address: 'Av. Rio Branco, 156 - Centro, Rio de Janeiro - RJ',
         street: 'Av. Rio Branco, 156',

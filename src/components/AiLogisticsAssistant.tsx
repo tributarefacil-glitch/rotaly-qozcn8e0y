@@ -198,7 +198,7 @@ export const AiLogisticsAssistant: React.FC = () => {
             </div>
             <div>
               <CardTitle className="font-heading text-sm font-bold text-white flex items-center gap-2">
-                LOGHYPE Copilot IA
+                Rotaly Copilot IA
                 <Badge
                   variant="outline"
                   className="text-[10px] bg-[#0052CC]/30 text-[#60A5FA] border-[#60A5FA]/30 font-bold"

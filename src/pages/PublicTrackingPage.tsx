@@ -22,7 +22,7 @@ import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { OrderRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
-import { LoghypeLogo } from '@/components/LoghypeLogo'
+import { RotalyLogo } from '@/components/RotalyLogo'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -159,7 +159,7 @@ export default function PublicTrackingPage() {
       {/* Public Header */}
       <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between bg-[#0A1128] border-b border-[#1E2B58] text-white px-4 shadow-brand-dark sm:px-6">
         <Link to="/" className="flex items-center hover:opacity-95">
-          <LoghypeLogo size="sm" theme="dark" showTagline={false} />
+          <RotalyLogo size="md" theme="dark" showTagline={false} />
         </Link>
 
         <div className="flex items-center gap-2">
@@ -249,7 +249,7 @@ export default function PublicTrackingPage() {
                   <div>
                     <p className="text-[11px] text-slate-400 font-sans">Entregador Responsável</p>
                     <p className="text-xs font-bold text-white font-heading">
-                      {courier?.name || 'Equipe de Logística LOGHYPE'}
+                      {courier?.name || 'Equipe de Logística Rotaly'}
                     </p>
                   </div>
                 </div>
@@ -372,7 +372,7 @@ export default function PublicTrackingPage() {
                   </div>
                   <div>
                     <h3 className="font-heading text-base font-bold text-[#1a1a1a] flex items-center gap-2">
-                      Avalie sua Experiência de Entrega LOGHYPE
+                      Avalie sua Experiência de Entrega Rotaly
                       <Badge className="bg-orange-100 text-[#FF6B35] border-orange-200 text-[10px] font-bold">
                         Feedback do Cliente
                       </Badge>
@@ -515,7 +515,7 @@ export default function PublicTrackingPage() {
 
       {/* Footer */}
       <footer className="border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
-        <p>LOGHYPE — Entrega rápida, confiança garantida • Rastreio em Tempo Real</p>
+        <p>Rotaly — Entrega rápida, confiança garantida • Rastreio em Tempo Real</p>
       </footer>
     </div>
   )

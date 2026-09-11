@@ -440,7 +440,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       resolveLocationEntity(selectedStartBaseId) || {
         id: 'default-base',
         type: 'base' as const,
-        name: 'Base Central LOGHYPE (Loja Principal)',
+        name: 'Base Central Rotaly (Loja Principal)',
         address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
         lat: -23.565734,
         lng: -46.651257,
@@ -1815,11 +1815,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             route_started: false, // Regra 1: Entregador deve clicar em "Iniciar Rota"
             route_released: releaseDirectly, // PEDIDO 1: Flag de liberação
             route_released_at: releaseDirectly ? isoNow : undefined,
-            start_base_name: startBase?.name || 'Base Central LOGHYPE',
+            start_base_name: startBase?.name || 'Base Central Rotaly',
             start_base_address: startBase?.address,
             start_base_lat: startBase?.lat,
             start_base_lng: startBase?.lng,
-            end_address_name: endBase?.name || startBase?.name || 'Base Central LOGHYPE',
+            end_address_name: endBase?.name || startBase?.name || 'Base Central Rotaly',
             end_address_text: endBase?.address || startBase?.address,
             end_address_lat: endBase?.lat || startBase?.lat,
             end_address_lng: endBase?.lng || startBase?.lng,
@@ -3484,7 +3484,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                         </span>
                         <div className="min-w-0 flex-1">
                           <p className="font-bold text-emerald-900 dark:text-emerald-200 truncate">
-                            Partida: {plan.start_base?.name || 'Base Central LOGHYPE'}
+                            Partida: {plan.start_base?.name || 'Base Central Rotaly'}
                           </p>
                           <p className="text-[10px] text-emerald-700 dark:text-emerald-300 truncate">
                             {plan.start_base?.address}

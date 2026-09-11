@@ -976,7 +976,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-bold text-[#1a1a1a] font-heading">
             <ShoppingBag className="h-5 w-5 text-[#FF6B35]" />
-            Registrar Nova Venda & Entrega LOGHYPE
+            Registrar Nova Venda & Entrega Rotaly
           </DialogTitle>
         </DialogHeader>
 

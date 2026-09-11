@@ -22,7 +22,7 @@ export default function GenericModulePage({
           </div>
           <div className="p-12 rounded-2xl border border-dashed border-[#1E2B58] bg-[#0E1738] text-center shadow-brand-dark">
             <p className="font-sans text-sm font-semibold text-slate-300">
-              Módulo LOGHYPE sincronizado diretamente com a plataforma e telemetria de frotas ao
+              Módulo Rotaly sincronizado diretamente com a plataforma e telemetria de frotas ao
               vivo.
             </p>
           </div>

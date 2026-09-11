@@ -350,7 +350,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
           <div className="flex items-center gap-2">
             <BarChart2 className="h-6 w-6 text-[#0052CC]" />
             <h1 className="font-heading text-2xl font-bold tracking-tight text-[#1a1a1a]">
-              Relatórios & Inteligência Operacional LOGHYPE
+              Relatórios & Inteligência Operacional Rotaly
             </h1>
           </div>
           <p className="font-sans text-sm text-slate-600">

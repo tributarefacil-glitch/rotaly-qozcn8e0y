@@ -317,7 +317,7 @@ export default function CourierProfilePage() {
           <div className="flex items-center gap-2">
             <MapPin className="h-4 w-4 text-emerald-400 shrink-0" />
             <h3 className="text-xs font-bold font-heading uppercase tracking-wider text-slate-300">
-              Base Operacional LOGHYPE
+              Base Operacional Rotaly
             </h3>
           </div>
           <p className="text-xs text-slate-300 leading-relaxed pl-6">
@@ -334,7 +334,7 @@ export default function CourierProfilePage() {
             className="w-full h-12 border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition"
           >
             <LogOut className="h-4 w-4 text-rose-400" />
-            <span>Sair da Minha Conta LOGHYPE</span>
+            <span>Sair da Minha Conta Rotaly</span>
           </Button>
         </div>
       </main>

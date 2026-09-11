@@ -1,35 +1,41 @@
 {
-  "short_name": "Entregas",
-  "name": "Gestão de Entregas & Logística Express",
-  "description": "Aplicativo PWA de gestão logística, despacho de pedidos e rastreamento em tempo real de frotas e entregadores.",
+  "short_name": "Rotaly",
+  "name": "Rotaly — Gestão de Entregas & Logística Express",
+  "description": "Aplicativo PWA Rotaly: gestão logística, despacho de pedidos e rastreamento em tempo real de frotas e entregadores.",
   "icons": [
     {
       "src": "/icons/icon.svg",
       "sizes": "192x192 512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "64x64",
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ],
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#090d16",
-  "theme_color": "#2563eb",
+  "background_color": "#070D1E",
+  "theme_color": "#1B3A8C",
   "lang": "pt-BR",
   "categories": ["business", "logistics", "productivity", "utilities"],
   "shortcuts": [
     {
-      "name": "Nova Venda / Pedido",
+      "name": "Rotaly — Nova Venda / Pedido",
       "short_name": "Nova Venda",
-      "description": "Cadastrar novo pedido de entrega rápido",
+      "description": "Cadastrar novo pedido de entrega rápido na Rotaly",
       "url": "/seller",
       "icons": [{ "src": "/icons/icon.svg", "sizes": "192x192" }]
     },
     {
-      "name": "App do Entregador",
-      "short_name": "Entregas",
-      "description": "Minhas entregas atribuídas e GPS",
+      "name": "Rotaly — App do Entregador",
+      "short_name": "Entregas Rotaly",
+      "description": "Minhas entregas atribuídas e GPS Rotaly",
       "url": "/courier",
       "icons": [{ "src": "/icons/icon.svg", "sizes": "192x192" }]
     }

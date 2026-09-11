@@ -806,7 +806,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               <div className="flex items-center gap-2.5">
                 <ShieldCheck className="h-6 w-6 text-[#60A5FA]" />
                 <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-white">
-                  Painel Executivo &amp; Gestão LOGHYPE
+                  Painel Executivo &amp; Gestão Rotaly
                 </h1>
               </div>
               <p className="font-sans text-xs sm:text-sm text-slate-400 mt-1">
@@ -1816,7 +1816,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     <p className="font-heading text-2xl font-black text-[#1a1a1a] mt-2">27.4 min</p>
                     <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
                       <TrendingUp className="h-3.5 w-3.5" />
-                      <span>-4.2 min (otimização de rota LOGHYPE)</span>
+                      <span>-4.2 min (otimização de rota Rotaly)</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -1913,7 +1913,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       </h3>
                       <p className="font-sans text-xs text-slate-600 mt-0.5">
                         Verifique a CNH e a foto de selfie para liberar o acesso ao aplicativo
-                        LOGHYPE.
+                        Rotaly.
                       </p>
                     </div>
                   </div>

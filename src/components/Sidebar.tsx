@@ -98,7 +98,7 @@ export const Sidebar: React.FC = () => {
       {/* Navigation Links */}
       <div className="flex-1 space-y-1.5 p-4 overflow-y-auto">
         <div className="px-3 py-1 font-heading text-[11px] font-black uppercase tracking-wider text-slate-400">
-          Navegação LOGHYPE
+          Navegação Rotaly
         </div>
         <nav className="space-y-1.5">
           {filteredItems.map((item) => {
@@ -151,7 +151,7 @@ export const Sidebar: React.FC = () => {
           <div className="flex items-center gap-2 mb-1.5">
             <Sparkles className="h-4 w-4 text-[#FF6B35] animate-pulse" />
             <span className="font-heading text-xs font-bold text-white tracking-wide">
-              LOGHYPE Copilot IA
+              Rotaly Copilot IA
             </span>
           </div>
           <p className="font-sans text-[11px] text-slate-300 leading-relaxed">

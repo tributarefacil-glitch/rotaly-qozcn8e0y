@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
-import { LoghypeLogo } from '@/components/LoghypeLogo'
+import { RotalyLogo } from '@/components/RotalyLogo'
 import { deliveryService } from '@/services/deliveryService'
 import type { NotificationRecord } from '@/types/delivery'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -116,7 +116,7 @@ export const Header: React.FC = () => {
       {/* Left section: App Brand & Status */}
       <div className="flex items-center gap-3.5">
         <Link to="/" className="flex items-center hover:opacity-95 transition-opacity">
-          <LoghypeLogo size="md" theme="dark" showTagline={false} />
+          <RotalyLogo size="md" theme="dark" showTagline={false} />
         </Link>
         <div className="hidden md:flex items-center gap-2 rounded-full border border-[#1E2B58] bg-[#0E1738]/80 px-3 py-1 text-xs font-semibold text-slate-200">
           <span className="relative flex h-2 w-2">
@@ -133,7 +133,7 @@ export const Header: React.FC = () => {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input
             type="text"
-            placeholder="Rastrear entrega LOGHYPE (ex: TRK-2025-001)..."
+            placeholder="Rastrear entrega Rotaly (ex: TRK-2025-001)..."
             value={searchTracking}
             onChange={(e) => setSearchTracking(e.target.value)}
             className="h-9 w-full rounded-lg border border-[#1E2B58] bg-[#0E1738] pl-9 pr-4 text-xs text-white placeholder:text-slate-400 transition focus:border-[#60A5FA] focus:bg-[#121E46] focus:ring-1 focus:ring-[#60A5FA]"
@@ -232,7 +232,7 @@ export const Header: React.FC = () => {
 
             <div className="border-t border-slate-200 p-2 text-center bg-[#F5F5F5]">
               <span className="text-[11px] text-slate-500 font-medium">
-                Push Real-time LOGHYPE ativo
+                Push Real-time Rotaly ativo
               </span>
             </div>
           </PopoverContent>

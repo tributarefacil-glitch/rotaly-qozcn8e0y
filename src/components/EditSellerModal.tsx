@@ -249,7 +249,7 @@ export function EditSellerModal({
                 </Label>
                 <Input
                   type="email"
-                  placeholder="loja@loghype.com"
+                  placeholder="loja@rotaly.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="off"

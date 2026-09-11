@@ -14,7 +14,7 @@ import {
   Mail,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { LoghypeLogo } from '@/components/LoghypeLogo'
+import { RotalyLogo } from '@/components/RotalyLogo'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -53,7 +53,7 @@ export default function PendingApprovalPage() {
       <header className="relative z-10 w-full border-b border-[#1E2B58] bg-[#0A1128]/90 backdrop-blur-md px-6 py-3.5 shadow-brand-dark">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <Link to="/" className="flex items-center hover:opacity-95">
-            <LoghypeLogo size="sm" theme="dark" showTagline={false} />
+            <RotalyLogo size="md" theme="dark" showTagline={false} />
           </Link>
 
           <Button
@@ -116,7 +116,7 @@ export default function PendingApprovalPage() {
               </div>
               <div className="flex items-center justify-between pb-2 border-b border-[#1E2B58]">
                 <span className="text-slate-400">Perfil:</span>
-                <span className="font-bold text-[#60A5FA]">🛵 Entregador LOGHYPE</span>
+                <span className="font-bold text-[#60A5FA]">🛵 Entregador Rotaly</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-400">Status atual:</span>
@@ -138,7 +138,7 @@ export default function PendingApprovalPage() {
               </div>
               <div className="flex items-start gap-2.5">
                 <FileText className="h-4 w-4 text-[#FF6B35] shrink-0 mt-0.5" />
-                <span>Análise documental pelo time de validação e compliance da LOGHYPE.</span>
+                <span>Análise documental pelo time de validação e compliance da Rotaly.</span>
               </div>
               <div className="flex items-start gap-2.5">
                 <ShieldCheck className="h-4 w-4 text-[#60A5FA] shrink-0 mt-0.5" />
@@ -171,7 +171,7 @@ export default function PendingApprovalPage() {
 
       {/* Footer */}
       <footer className="relative z-10 border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400">
-        <p>LOGHYPE — Entrega rápida, confiança garantida • Sistema de Credenciamento</p>
+        <p>Rotaly — Entrega rápida, confiança garantida • Sistema de Credenciamento</p>
       </footer>
     </div>
   )

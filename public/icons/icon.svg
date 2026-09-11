@@ -1,58 +1,54 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1e3a8a" />
-      <stop offset="50%" stop-color="#2563eb" />
-      <stop offset="100%" stop-color="#4f46e5" />
-    </linearGradient>
-    <linearGradient id="truckGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ffffff" />
-      <stop offset="100%" stop-color="#e2e8f0" />
-    </linearGradient>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#001845" flood-opacity="0.18"/>
     </filter>
   </defs>
 
-  <!-- Background Rounded Canvas -->
-  <rect width="512" height="512" rx="112" fill="url(#grad)" />
+  <!-- Clean rounded white container matching Rotaly brand -->
+  <rect width="512" height="512" rx="112" fill="#FFFFFF" />
 
-  <!-- Speed lines glow -->
-  <path d="M 60 210 L 140 210" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
-  <path d="M 40 256 L 130 256" stroke="#93c5fd" stroke-width="8" stroke-linecap="round" opacity="0.8"/>
-  <path d="M 70 302 L 150 302" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" opacity="0.6"/>
-
-  <!-- Truck Delivery Icon -->
-  <g filter="url(#shadow)">
-    <!-- Truck Cargo Body -->
-    <rect x="150" y="160" width="180" height="150" rx="16" fill="url(#truckGrad)" />
+  <!-- The stylized Rotaly "R" Emblem with Navy Blue (#1B3A8C) + Cyan (#00A8E8) chevron & vehicles -->
+  <g id="rotaly-symbol" filter="url(#shadow)">
+    <!-- Main "R" Spine and Top Loop (Navy Blue #1B3A8C) -->
+    <!-- Vertical stem of R -->
+    <path d="M 96 112 L 148 112 L 148 340 L 96 340 Z" fill="#1B3A8C" />
+    <!-- Top horizontal arm and loop -->
+    <path d="M 148 112 L 280 112 C 342 112 376 142 376 198 C 376 250 342 278 280 278 L 148 278 L 148 226 L 276 226 C 308 226 324 212 324 196 C 324 178 308 164 276 164 L 148 164 Z" fill="#1B3A8C" />
     
-    <!-- Truck Cabin -->
-    <path d="M 330 200 L 390 200 C 405 200 415 212 418 228 L 428 270 C 430 282 422 292 410 292 L 330 292 Z" fill="url(#truckGrad)" />
-    
-    <!-- Cabin Window -->
-    <path d="M 345 214 L 382 214 C 390 214 396 220 398 228 L 404 250 L 345 250 Z" fill="#2563eb" opacity="0.85" />
-    
-    <!-- Delivery Box Logo on Cargo -->
-    <rect x="210" y="200" width="60" height="60" rx="8" fill="#2563eb" />
-    <path d="M 225 220 L 255 220 M 240 205 L 240 245" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+    <!-- Diagonal right leg of R -->
+    <path d="M 232 250 L 372 388 L 312 388 L 192 270 Z" fill="#1B3A8C" />
 
-    <!-- Left Wheel -->
-    <circle cx="210" cy="315" r="38" fill="#0f172a" stroke="#64748b" stroke-width="6"/>
-    <circle cx="210" cy="315" r="16" fill="#cbd5e1" />
+    <!-- Cyan Chevron Track (#00A8E8) flowing beneath the R -->
+    <path d="M 96 364 L 204 290 L 344 398" stroke="#00A8E8" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" fill="none" />
 
-    <!-- Right Wheel -->
-    <circle cx="370" cy="315" r="38" fill="#0f172a" stroke="#64748b" stroke-width="6"/>
-    <circle cx="370" cy="315" r="16" fill="#cbd5e1" />
+    <!-- Small Delivery Van / Truck on the left side of Chevron (Navy Blue #1B3A8C) -->
+    <g transform="translate(68, 360)">
+      <!-- Van Body -->
+      <path d="M 0 14 L 0 52 C 0 54 2 56 4 56 L 68 56 C 70 56 72 54 72 52 L 72 32 L 58 14 Z" fill="#1B3A8C" />
+      <!-- Van Window -->
+      <path d="M 44 20 L 55 20 L 65 33 L 44 33 Z" fill="#FFFFFF" opacity="0.95" />
+      <!-- Wheels -->
+      <circle cx="16" cy="56" r="10" fill="#0A1128" />
+      <circle cx="16" cy="56" r="4" fill="#FFFFFF" />
+      <circle cx="54" cy="56" r="10" fill="#0A1128" />
+      <circle cx="54" cy="56" r="4" fill="#FFFFFF" />
+    </g>
 
-    <!-- Headlight beam -->
-    <path d="M 428 275 L 470 265 L 470 295 Z" fill="#fbbf24" opacity="0.9"/>
-  </g>
-
-  <!-- GPS Pin Location Accent -->
-  <g transform="translate(350, 90)">
-    <circle cx="25" cy="25" r="28" fill="#ef4444" />
-    <circle cx="25" cy="25" r="12" fill="#ffffff" />
-    <path d="M 25 50 L 25 62" stroke="#ef4444" stroke-width="6" stroke-linecap="round"/>
+    <!-- Delivery Motorcycle on the right side of Chevron -->
+    <g transform="translate(328, 362)">
+      <!-- Delivery Top Box (Cyan #00A8E8) -->
+      <rect x="0" y="8" width="28" height="26" rx="4" fill="#00A8E8" />
+      <!-- Bike Frame & Rider Handlebar (Navy Blue #1B3A8C) -->
+      <path d="M 18 32 L 40 32 L 54 18 L 62 18" stroke="#1B3A8C" stroke-width="6" stroke-linecap="round" fill="none" />
+      <path d="M 40 32 L 68 34" stroke="#1B3A8C" stroke-width="6" stroke-linecap="round" fill="none" />
+      <!-- Front light / cowl -->
+      <circle cx="68" cy="22" r="6" fill="#00A8E8" />
+      <!-- Wheels -->
+      <circle cx="18" cy="46" r="12" fill="#1B3A8C" stroke="#FFFFFF" stroke-width="2" />
+      <circle cx="18" cy="46" r="5" fill="#FFFFFF" />
+      <circle cx="70" cy="46" r="12" fill="#1B3A8C" stroke="#FFFFFF" stroke-width="2" />
+      <circle cx="70" cy="46" r="5" fill="#FFFFFF" />
+    </g>
   </g>
 </svg>

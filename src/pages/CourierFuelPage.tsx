@@ -177,7 +177,7 @@ export default function CourierFuelPage() {
           <div>
             <h1 className="font-heading text-xl font-black text-white flex items-center gap-2">
               <Fuel className="h-5 w-5 text-[#22C55E]" />
-              Minha Conta de Combustível LOGHYPE
+              Minha Conta de Combustível Rotaly
             </h1>
             <p className="font-sans text-xs text-slate-400">
               Telemetria real oficial sincronizada com o administrador.

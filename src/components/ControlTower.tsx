@@ -822,7 +822,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     }
     const cleanNumber = phone.replace(/\D/g, '')
     const finalNumber = cleanNumber.startsWith('55') ? cleanNumber : `55${cleanNumber}`
-    const defaultMsg = encodeURIComponent(text || 'Olá! Mensagem da Torre de Controle LOGHYPE.')
+    const defaultMsg = encodeURIComponent(text || 'Olá! Mensagem da Torre de Controle Rotaly.')
     window.open(`https://wa.me/${finalNumber}?text=${defaultMsg}`, '_blank')
   }
 
@@ -924,7 +924,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                 Torre de Controle
               </h1>
               <Badge className="bg-[#0052CC] text-white hover:bg-[#0052CC] font-bold text-xs uppercase px-2.5 py-0.5 shadow-sm">
-                LOGHYPE • Dark Navy
+                Rotaly • Dark Navy
               </Badge>
             </div>
 
@@ -1605,7 +1605,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                         onClick={() =>
                           openWhatsApp(
                             selectedOrder.expand?.customer_id?.phone,
-                            `Olá ${selectedOrder.expand?.customer_id?.name || ''}! Somos da LOGHYPE acompanhando sua entrega cód ${selectedOrder.tracking_code}.`,
+                            `Olá ${selectedOrder.expand?.customer_id?.name || ''}! Somos da Rotaly acompanhando sua entrega cód ${selectedOrder.tracking_code}.`,
                           )
                         }
                         className="h-6 text-[11px] text-emerald-400 hover:bg-emerald-500/10 px-2 font-bold"

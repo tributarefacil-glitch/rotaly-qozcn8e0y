@@ -136,7 +136,7 @@ export function CreateSellerModal({ open, onOpenChange, onSellerCreated }: Creat
               </Label>
               <Input
                 type="email"
-                placeholder="loja@loghype.com"
+                placeholder="loja@rotaly.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"

@@ -21,7 +21,7 @@ import {
   KeyRound,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { LoghypeLogo } from '@/components/LoghypeLogo'
+import { RotalyLogo } from '@/components/RotalyLogo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -198,7 +198,7 @@ export default function Index() {
             onClick={() => setSelectedProfile(null)}
             className="flex items-center hover:opacity-95"
           >
-            <LoghypeLogo size="md" theme="dark" showTagline={true} />
+            <RotalyLogo size="md" theme="dark" showTagline={true} />
           </Link>
 
           <div className="flex items-center gap-3">
@@ -390,9 +390,9 @@ export default function Index() {
           <div className="space-y-10">
             {/* Header intro */}
             <div className="text-center space-y-3 max-w-2xl mx-auto">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 border border-[#0052CC]/20 text-[#0052CC] text-xs font-bold font-sans">
-                <Zap className="h-3.5 w-3.5 text-[#FF6B35]" />
-                LOGHYPE • Plataforma de Gestão e Rastreamento
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 border border-[#1B3A8C]/20 text-[#1B3A8C] text-xs font-bold font-sans">
+                <Zap className="h-3.5 w-3.5 text-[#00A8E8]" />
+                Rotaly • Plataforma de Gestão e Rastreamento
               </div>
 
               <h1 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#1a1a1a] leading-tight">
@@ -576,7 +576,7 @@ export default function Index() {
               <div className="lg:col-span-7 rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-5 shadow-brand-dark space-y-3">
                 <div className="flex items-center gap-2 text-[#60A5FA] font-bold text-xs uppercase tracking-wider font-heading">
                   <Search className="h-4 w-4 text-[#FF6B35]" />
-                  <span>Acompanhe sua Encomenda (Rastreio Público LOGHYPE)</span>
+                  <span>Acompanhe sua Encomenda (Rastreio Público Rotaly)</span>
                 </div>
 
                 <form onSubmit={handlePublicTracking} className="flex flex-col sm:flex-row gap-2">
@@ -638,7 +638,7 @@ export default function Index() {
       {/* Footer */}
       <footer className="relative z-10 border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
         <p>
-          LOGHYPE © {new Date().getFullYear()} — Entrega rápida, confiança garantida • Sua logística
+          Rotaly © {new Date().getFullYear()} — Entrega rápida, confiança garantida • Sua logística
           no próximo nível
         </p>
       </footer>
