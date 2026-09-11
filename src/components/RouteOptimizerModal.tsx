@@ -342,11 +342,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }
 
   // Filtered pending orders for Step 2
-  // Regra: abre VAZIA até que o vendedor digite algo na busca.
-  // Busca filtra por Nome do cliente, CPF, CNPJ e Telefone (ignorando pontuação).
+  // Regra Atualizada: Não abre mais vazia! Todas as entregas com venda pendente aparecem visíveis de cara.
+  // O campo de busca funciona como filtro OPCIONAL em tempo real por Nome, CPF, CNPJ, Telefone e Rastreio.
   const filteredPendingOrders = useMemo(() => {
     const q = searchOrderFilter.toLowerCase().trim()
-    if (!q) return []
+    if (!q) return pendingOrders
 
     const digits = searchOrderFilter.replace(/\D/g, '')
 
@@ -985,45 +985,293 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         }
       }
 
-      // 3. Cluster Orders among K couriers (Balanced geographic nearest centroid assignment)
-      // Initialize centroids at courier positions
-      let centroids = courierOrigins.map((co) => ({ lat: co.lat, lng: co.lng }))
-      const maxIter = 8
+      // 3. OTIMIZAÇÃO POR TIPO DE VEÍCULO (Bicicleta raio <= 3km, Moto mais distantes, múltiplos de Moto balanceados)
+      // Classificamos os entregadores selecionados
+      const isBike = (c: UserRecord) =>
+        c.vehicle_type === 'bicicleta' || c.vehicle_type === 'bicycle'
+      const isMoto = (c: UserRecord) => {
+        const v = (c.vehicle_type || '').toLowerCase()
+        return (
+          v === 'moto' ||
+          v === 'motocicleta' ||
+          (!isBike(c) && v !== 'carro' && v !== 'caminhao' && v !== 'van')
+        )
+      }
+
+      // Pré-computa a distância de cada pedido em relação à base de saída
+      const ordersWithBaseDist = validOrdersWithCoords.map((item) => {
+        const distFromBaseMeters = haversineDistance(
+          startBase.lat,
+          startBase.lng,
+          item.lat,
+          item.lng,
+        )
+        return {
+          ...item,
+          distFromBaseMeters,
+          distFromBaseKm: distFromBaseMeters / 1000,
+        }
+      })
+
       let clusters: Array<typeof validOrdersWithCoords> = Array.from({ length: k }, () => [])
 
-      for (let iter = 0; iter < maxIter; iter++) {
-        clusters = Array.from({ length: k }, () => [])
+      const bikeIndices: number[] = []
+      const motorizedIndices: number[] = []
 
-        // Assign each order to closest centroid (balanced with capacity weighting)
-        for (const item of validOrdersWithCoords) {
-          let bestIdx = 0
-          let bestDist = Infinity
+      selectedCouriers.forEach((c, idx) => {
+        if (isBike(c)) {
+          bikeIndices.push(idx)
+        } else {
+          motorizedIndices.push(idx)
+        }
+      })
 
-          for (let ci = 0; ci < k; ci++) {
-            const cent = centroids[ci]
-            const dist = haversineDistance(item.lat, item.lng, cent.lat, cent.lng)
-            // Balance penalty factor based on current cluster size
-            const sizePenalty =
-              1 + (clusters[ci].length / Math.max(1, validOrdersWithCoords.length / k)) * 0.25
-            const score = dist * sizePenalty
+      // REGRA ESPECIAL: Se houver combinação de Bicicleta(s) e Veículos Motorizados (ex: Moto)
+      if (bikeIndices.length > 0 && motorizedIndices.length > 0) {
+        // Pedidos dentro do raio de 3km da base de saída são elegíveis para bicicleta
+        const BIKE_MAX_RADIUS_METERS = 3000
 
-            if (score < bestDist) {
-              bestDist = score
-              bestIdx = ci
-            }
+        // Separar pedidos dentro do raio (≤ 3km) e fora do raio (> 3km)
+        const insideBikeRadius = ordersWithBaseDist.filter(
+          (o) => o.distFromBaseMeters <= BIKE_MAX_RADIUS_METERS,
+        )
+        const outsideBikeRadius = ordersWithBaseDist.filter(
+          (o) => o.distFromBaseMeters > BIKE_MAX_RADIUS_METERS,
+        )
+
+        // Se houver pedidos fora do raio, eles DEVEM ir obrigatoriamente para as motos/veículos motorizados
+        // Se todos forem <= 3km, as motos também podem receber a fatia restante para não sobrecarregar as bikes
+        const bikeCapacityTarget = Math.max(
+          1,
+          Math.round((validOrdersWithCoords.length * bikeIndices.length) / k),
+        )
+
+        // Ordena os pedidos de dentro do raio do mais próximo ao mais distante
+        insideBikeRadius.sort((a, b) => a.distFromBaseMeters - b.distFromBaseMeters)
+
+        const ordersForBikes: typeof validOrdersWithCoords = []
+        const remainingForMotos: typeof validOrdersWithCoords = [...outsideBikeRadius]
+
+        // Atribui os mais próximos (até a capacidade) para as bicicletas
+        for (const item of insideBikeRadius) {
+          if (
+            ordersForBikes.length < bikeCapacityTarget * bikeIndices.length ||
+            remainingForMotos.length >= validOrdersWithCoords.length - ordersForBikes.length
+          ) {
+            ordersForBikes.push(item)
+          } else {
+            remainingForMotos.push(item)
           }
-
-          clusters[bestIdx].push(item)
         }
 
-        // Recompute centroids
-        centroids = clusters.map((cluster, ci) => {
-          if (cluster.length === 0)
-            return { lat: courierOrigins[ci].lat, lng: courierOrigins[ci].lng }
-          const avgLat = cluster.reduce((sum, item) => sum + item.lat, 0) / cluster.length
-          const avgLng = cluster.reduce((sum, item) => sum + item.lng, 0) / cluster.length
-          return { lat: avgLat, lng: avgLng }
-        })
+        // Se ainda não deu pelo menos 1 pedido para a bike e tem pedidos no raio, garante 1
+        if (ordersForBikes.length === 0 && insideBikeRadius.length > 0) {
+          ordersForBikes.push(insideBikeRadius[0])
+          const idxInRemaining = remainingForMotos.findIndex(
+            (o) => o.order.id === insideBikeRadius[0].order.id,
+          )
+          if (idxInRemaining >= 0) remainingForMotos.splice(idxInRemaining, 1)
+        }
+
+        // Se não tiver nenhum pedido <= 3km, mas houver bike, atribui os mais próximos disponíveis para a bike
+        if (ordersForBikes.length === 0 && validOrdersWithCoords.length > 0) {
+          const sortedAll = [...ordersWithBaseDist].sort(
+            (a, b) => a.distFromBaseMeters - b.distFromBaseMeters,
+          )
+          const takeCount = Math.min(
+            sortedAll.length,
+            Math.max(1, Math.round(sortedAll.length / k)),
+          )
+          for (let i = 0; i < takeCount; i++) {
+            ordersForBikes.push(sortedAll[i])
+          }
+          const bikeIds = new Set(ordersForBikes.map((o) => o.order.id))
+          remainingForMotos.length = 0
+          for (const item of validOrdersWithCoords) {
+            if (!bikeIds.has(item.order.id)) remainingForMotos.push(item)
+          }
+        }
+
+        // Distribuir ordersForBikes entre as bikes (se houver mais de uma)
+        if (bikeIndices.length === 1) {
+          clusters[bikeIndices[0]] = ordersForBikes
+        } else {
+          // K-means entre as bikes
+          let bikeCentroids = bikeIndices.map((bi) => ({
+            lat: courierOrigins[bi].lat,
+            lng: courierOrigins[bi].lng,
+          }))
+          for (let iter = 0; iter < 5; iter++) {
+            const subClusters: Array<typeof validOrdersWithCoords> = Array.from(
+              { length: bikeIndices.length },
+              () => [],
+            )
+            for (const item of ordersForBikes) {
+              let bBest = 0
+              let bDist = Infinity
+              for (let b = 0; b < bikeIndices.length; b++) {
+                const cDist = haversineDistance(
+                  item.lat,
+                  item.lng,
+                  bikeCentroids[b].lat,
+                  bikeCentroids[b].lng,
+                )
+                if (cDist < bDist) {
+                  bDist = cDist
+                  bBest = b
+                }
+              }
+              subClusters[bBest].push(item)
+            }
+            bikeCentroids = subClusters.map((sc, b) => {
+              if (sc.length === 0) return bikeCentroids[b]
+              return {
+                lat: sc.reduce((s, o) => s + o.lat, 0) / sc.length,
+                lng: sc.reduce((s, o) => s + o.lng, 0) / sc.length,
+              }
+            })
+            if (iter === 4) {
+              bikeIndices.forEach((bi, bIdx) => {
+                clusters[bi] = subClusters[bIdx]
+              })
+            }
+          }
+        }
+
+        // Distribuir remainingForMotos entre as motos/veículos motorizados
+        if (motorizedIndices.length === 1) {
+          clusters[motorizedIndices[0]] = remainingForMotos
+        } else if (motorizedIndices.length > 1) {
+          // Dois ou mais entregadores de moto: clusterização geográfica balanceada para menor km rodado
+          // Inicializa centróides espaçados ou baseados nas coordenadas dos pedidos mais distantes
+          let motoCentroids: Array<{ lat: number; lng: number }> = []
+
+          // Usa K-Means++ initialization para espalhar os centróides das motos e cobrir setores geográficos distintos
+          if (remainingForMotos.length > 0) {
+            motoCentroids.push({ lat: remainingForMotos[0].lat, lng: remainingForMotos[0].lng })
+            while (
+              motoCentroids.length < motorizedIndices.length &&
+              motoCentroids.length < remainingForMotos.length
+            ) {
+              let bestCand = remainingForMotos[0]
+              let maxMinDist = -1
+              for (const ord of remainingForMotos) {
+                const minDistToCent = Math.min(
+                  ...motoCentroids.map((mc) => haversineDistance(ord.lat, ord.lng, mc.lat, mc.lng)),
+                )
+                if (minDistToCent > maxMinDist) {
+                  maxMinDist = minDistToCent
+                  bestCand = ord
+                }
+              }
+              motoCentroids.push({ lat: bestCand.lat, lng: bestCand.lng })
+            }
+          }
+          while (motoCentroids.length < motorizedIndices.length) {
+            motoCentroids.push({ lat: startBase.lat, lng: startBase.lng })
+          }
+
+          for (let iter = 0; iter < 8; iter++) {
+            const subClusters: Array<typeof validOrdersWithCoords> = Array.from(
+              { length: motorizedIndices.length },
+              () => [],
+            )
+            for (const item of remainingForMotos) {
+              let mBest = 0
+              let mScore = Infinity
+              for (let m = 0; m < motorizedIndices.length; m++) {
+                const cent = motoCentroids[m]
+                const dist = haversineDistance(item.lat, item.lng, cent.lat, cent.lng)
+                const sizePenalty =
+                  1 +
+                  (subClusters[m].length /
+                    Math.max(1, remainingForMotos.length / motorizedIndices.length)) *
+                    0.35
+                const score = dist * sizePenalty
+                if (score < mScore) {
+                  mScore = score
+                  mBest = m
+                }
+              }
+              subClusters[mBest].push(item)
+            }
+
+            motoCentroids = subClusters.map((sc, m) => {
+              if (sc.length === 0) return motoCentroids[m]
+              return {
+                lat: sc.reduce((s, o) => s + o.lat, 0) / sc.length,
+                lng: sc.reduce((s, o) => s + o.lng, 0) / sc.length,
+              }
+            })
+
+            if (iter === 7) {
+              motorizedIndices.forEach((mi, mIdx) => {
+                clusters[mi] = subClusters[mIdx]
+              })
+            }
+          }
+        }
+      } else {
+        // CASO PADRÃO: Somente Motos (ou somente Bikes, ou frotas homogêneas)
+        // Quando ocorrer dois ou mais entregadores de moto: balancear entregas por proximidade geográfica
+        // e menor custo de km rodado (clusterização com K-Means++ e penalidade de capacidade balanceada).
+        let centroids = courierOrigins.map((co) => ({ lat: co.lat, lng: co.lng }))
+
+        // Se todos começam no mesmo ponto de partida (startBase), usa K-Means++ para semear os centróides
+        // espalhados geograficamente nos pedidos, garantindo agrupamento regional nítido sem sobreposição de rotas
+        if (validOrdersWithCoords.length >= k && k > 1) {
+          centroids = [{ lat: validOrdersWithCoords[0].lat, lng: validOrdersWithCoords[0].lng }]
+          while (centroids.length < k) {
+            let bestCandidate = validOrdersWithCoords[0]
+            let maxMinDist = -1
+            for (const ord of validOrdersWithCoords) {
+              const minDist = Math.min(
+                ...centroids.map((c) => haversineDistance(ord.lat, ord.lng, c.lat, c.lng)),
+              )
+              if (minDist > maxMinDist) {
+                maxMinDist = minDist
+                bestCandidate = ord
+              }
+            }
+            centroids.push({ lat: bestCandidate.lat, lng: bestCandidate.lng })
+          }
+        }
+
+        const maxIter = 10
+        for (let iter = 0; iter < maxIter; iter++) {
+          clusters = Array.from({ length: k }, () => [])
+
+          // Assign each order to closest centroid (balanced with capacity weighting)
+          for (const item of validOrdersWithCoords) {
+            let bestIdx = 0
+            let bestDist = Infinity
+
+            for (let ci = 0; ci < k; ci++) {
+              const cent = centroids[ci]
+              const dist = haversineDistance(item.lat, item.lng, cent.lat, cent.lng)
+              // Balance penalty factor based on current cluster size
+              const sizePenalty =
+                1 + (clusters[ci].length / Math.max(1, validOrdersWithCoords.length / k)) * 0.3
+              const score = dist * sizePenalty
+
+              if (score < bestDist) {
+                bestDist = score
+                bestIdx = ci
+              }
+            }
+
+            clusters[bestIdx].push(item)
+          }
+
+          // Recompute centroids
+          centroids = clusters.map((cluster, ci) => {
+            if (cluster.length === 0)
+              return { lat: courierOrigins[ci].lat, lng: courierOrigins[ci].lng }
+            const avgLat = cluster.reduce((sum, item) => sum + item.lat, 0) / cluster.length
+            const avgLng = cluster.reduce((sum, item) => sum + item.lng, 0) / cluster.length
+            return { lat: avgLat, lng: avgLng }
+          })
+        }
       }
 
       // 4. For each courier cluster, sequence stops via Nearest Neighbor TSP with priority weights
@@ -1812,7 +2060,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           </DialogTitle>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Agrupe as entregas por proximidade geográfica e ordene automaticamente o melhor trajeto
-            para cada entregador.
+            para cada entregador (Bike prioriza raio de 3 km da base; Moto prioriza mais distantes
+            ou balanceia menor km rodado).
           </p>
         </DialogHeader>
 
@@ -2473,6 +2722,17 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   </button>
                   <button
                     type="button"
+                    onClick={() => setVehicleFilter('bicicleta')}
+                    className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
+                      vehicleFilter === 'bicicleta'
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    🚲 Bike (Raio ≤3km)
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setVehicleFilter('moto')}
                     className={`text-[11px] px-2 py-0.5 rounded-md border transition ${
                       vehicleFilter === 'moto'
@@ -2533,13 +2793,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-1">
                           <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                            {courier.vehicle_type === 'carro'
-                              ? '🚗'
-                              : courier.vehicle_type === 'caminhao'
-                                ? '🚚'
-                                : courier.vehicle_type === 'van'
-                                  ? '🚐'
-                                  : '🛵'}{' '}
+                            {courier.vehicle_type === 'bicicleta' ||
+                            courier.vehicle_type === 'bicycle'
+                              ? '🚲'
+                              : courier.vehicle_type === 'carro'
+                                ? '🚗'
+                                : courier.vehicle_type === 'caminhao'
+                                  ? '🚚'
+                                  : courier.vehicle_type === 'van'
+                                    ? '🚐'
+                                    : '🛵'}{' '}
                             {courier.name}
                           </p>
                           <span
@@ -2674,105 +2937,100 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
               {/* Lista Selecionável de Pedidos Pendentes */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
-                {/* ESTADO VAZIO: Nenhuma busca digitada */}
-                {!searchOrderFilter.trim() && (
+                {/* 1. SE NÃO HOUVER PEDIDOS PENDENTES NO SISTEMA */}
+                {pendingOrders.length === 0 && (
                   <div className="col-span-full py-8 px-4 text-center rounded-xl border border-dashed border-slate-300 dark:border-slate-800 bg-white/50 dark:bg-slate-900/40">
-                    <div className="w-10 h-10 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 mx-auto flex items-center justify-center mb-2">
-                      <Search className="h-5 w-5" />
+                    <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 mx-auto flex items-center justify-center mb-2">
+                      <Package className="h-5 w-5" />
                     </div>
                     <p className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200">
-                      🔍 Digite nome, CPF, CNPJ ou telefone do cliente para buscar
+                      Nenhum cliente com entrega pendente no momento
                     </p>
                     <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
-                      Nenhum cliente é exibido inicialmente. Faça a busca para encontrar e marcar os
-                      pedidos que farão parte desta rota.
+                      Todos os pedidos já foram liberados, iniciados ou finalizados. Novos pedidos
+                      cadastrados com venda aparecerão aqui automaticamente.
                     </p>
-                    {selectedOrderIds.length > 0 && (
-                      <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 text-[11px] font-medium border border-indigo-200 dark:border-indigo-800">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-indigo-600" />
-                        {selectedOrderIds.length} entrega(s) já adicionada(s) à rota
-                      </div>
-                    )}
                   </div>
                 )}
 
-                {/* RESULTADOS DA BUSCA */}
-                {searchOrderFilter.trim() &&
-                  filteredPendingOrders.map((ord) => {
-                    const cust = customers.find((c) => c.id === ord.customer_id)
-                    const isSelected = selectedOrderIds.includes(ord.id)
+                {/* 2. LISTAGEM DIRETA DOS CLIENTES / ENTREGAS PENDENTES (com ou sem filtro de busca) */}
+                {filteredPendingOrders.map((ord) => {
+                  const cust = customers.find((c) => c.id === ord.customer_id)
+                  const isSelected = selectedOrderIds.includes(ord.id)
 
-                    return (
-                      <label
-                        key={ord.id}
-                        className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none ${
-                          isSelected
-                            ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/50 dark:border-indigo-500 ring-1 ring-indigo-500/40'
-                            : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-90 hover:opacity-100'
-                        }`}
-                      >
-                        <Checkbox
-                          id={`ord-chk-${ord.id}`}
-                          checked={isSelected}
-                          onCheckedChange={() => toggleOrderSelection(ord.id)}
-                          className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4 mt-0.5"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-1">
-                            <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                              {cust?.name || 'Cliente'}
-                            </p>
-                            <Badge
-                              variant="outline"
-                              className="text-[9px] px-1.5 py-0 uppercase font-mono"
-                            >
-                              {ord.tracking_code}
-                            </Badge>
-                          </div>
-                          {(cust?.document || cust?.phone) && (
-                            <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex-wrap">
-                              {cust?.document && (
-                                <span>
-                                  Doc: <b>{cust.document}</b>
-                                </span>
-                              )}
-                              {cust?.phone && (
-                                <span>
-                                  Tel: <b>{cust.phone}</b>
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                            📍 {cust?.address || 'Endereço cadastrado'}
+                  return (
+                    <label
+                      key={ord.id}
+                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none ${
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/50 dark:border-indigo-500 ring-1 ring-indigo-500/40'
+                          : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-90 hover:opacity-100'
+                      }`}
+                    >
+                      <Checkbox
+                        id={`ord-chk-${ord.id}`}
+                        checked={isSelected}
+                        onCheckedChange={() => toggleOrderSelection(ord.id)}
+                        className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4 mt-0.5"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                            {cust?.name || 'Cliente'}
                           </p>
-                          <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
-                            <span>
-                              Prioridade:{' '}
-                              <b className="text-slate-700 dark:text-slate-300">
-                                {ord.priority || 'Normal'}
-                              </b>
-                            </span>
-                            <span>Valor: R$ {ord.total_price?.toFixed(2) || '0.00'}</span>
-                          </div>
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] px-1.5 py-0 uppercase font-mono"
+                          >
+                            {ord.tracking_code}
+                          </Badge>
                         </div>
-                      </label>
-                    )
-                  })}
+                        {(cust?.document || cust?.phone) && (
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex-wrap">
+                            {cust?.document && (
+                              <span>
+                                Doc: <b>{cust.document}</b>
+                              </span>
+                            )}
+                            {cust?.phone && (
+                              <span>
+                                Tel: <b>{cust.phone}</b>
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                          📍 {cust?.address || 'Endereço cadastrado'}
+                        </p>
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
+                          <span>
+                            Prioridade:{' '}
+                            <b className="text-slate-700 dark:text-slate-300">
+                              {ord.priority || 'Normal'}
+                            </b>
+                          </span>
+                          <span>Valor: R$ {ord.total_price?.toFixed(2) || '0.00'}</span>
+                        </div>
+                      </div>
+                    </label>
+                  )
+                })}
 
-                {/* ESTADO DE BUSCA SEM RESULTADOS */}
-                {searchOrderFilter.trim() && filteredPendingOrders.length === 0 && (
-                  <div className="col-span-full py-8 px-4 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/30">
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Nenhum cliente ou entrega pendente encontrado para &ldquo;
-                      <b className="text-slate-700 dark:text-slate-200">{searchOrderFilter}</b>
-                      &rdquo;.
-                    </p>
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Verifique se digitou o nome, CPF, CNPJ ou telefone correto do cliente.
-                    </p>
-                  </div>
-                )}
+                {/* 3. ESTADO DE BUSCA SEM RESULTADOS (quando há pendentes, mas a busca digitada não bateu) */}
+                {pendingOrders.length > 0 &&
+                  searchOrderFilter.trim() &&
+                  filteredPendingOrders.length === 0 && (
+                    <div className="col-span-full py-8 px-4 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/30">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Nenhum cliente ou entrega pendente encontrado para &ldquo;
+                        <b className="text-slate-700 dark:text-slate-200">{searchOrderFilter}</b>
+                        &rdquo;.
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Verifique se digitou o nome, CPF, CNPJ ou telefone correto do cliente.
+                      </p>
+                    </div>
+                  )}
               </div>
 
               {/* Botão de Executar Otimização com Menor Trajeto */}
@@ -3206,9 +3464,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           <Badge className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] border">
                             {plan.stops.length} paradas • {plan.total_distance_km} km
                           </Badge>
-                          <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] border-emerald-200">
-                            ⛽ R$ {plan.estimated_fuel_cost.toFixed(2)}
-                          </Badge>
+                          {plan.courier.vehicle_type === 'bicicleta' ||
+                          plan.courier.vehicle_type === 'bicycle' ? (
+                            <Badge className="bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300 text-[10px] border-sky-200">
+                              🚲 Telemetria GPS (0L)
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] border-emerald-200">
+                              ⛽ R$ {plan.estimated_fuel_cost.toFixed(2)}
+                            </Badge>
+                          )}
                         </div>
                       </div>
 
