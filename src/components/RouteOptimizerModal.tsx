@@ -225,17 +225,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       setSelectedCourierIds(
         activeIds.length > 0 ? activeIds : couriers.slice(0, 3).map((c) => c.id),
       )
-      // Seleciona todas as pendentes inicialmente para conveniência
-      setSelectedOrderIds(
-        orders
-          .filter(
-            (o) =>
-              (o.route_released === false || !o.route_released) &&
-              o.status !== 'delivered' &&
-              o.status !== 'cancelled',
-          )
-          .map((o) => o.id),
-      )
+      // ETAPA 2: Abre vazia sem clientes pré-marcados; vendedor busca e marca os pedidos
+      setSelectedOrderIds([])
+      setSearchOrderFilter('')
       setWizardStep('couriers')
       setOptimizationResult(null)
       deliveryService.getSettings().then((s) => setAppSettings(s))
@@ -321,25 +313,57 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }
 
   const selectAllOrders = () => {
-    setSelectedOrderIds(filteredPendingOrders.map((o) => o.id))
+    if (filteredPendingOrders.length === 0) return
+    const idsToAdd = filteredPendingOrders.map((o) => o.id)
+    setSelectedOrderIds((prev) => Array.from(new Set([...prev, ...idsToAdd])))
   }
 
   const deselectAllOrders = () => {
-    setSelectedOrderIds([])
+    if (searchOrderFilter.trim()) {
+      const idsToRemove = new Set(filteredPendingOrders.map((o) => o.id))
+      setSelectedOrderIds((prev) => prev.filter((id) => !idsToRemove.has(id)))
+    } else {
+      setSelectedOrderIds([])
+    }
   }
 
   // Filtered pending orders for Step 2
+  // Regra: abre VAZIA até que o vendedor digite algo na busca.
+  // Busca filtra por Nome do cliente, CPF, CNPJ e Telefone (ignorando pontuação).
   const filteredPendingOrders = useMemo(() => {
+    const q = searchOrderFilter.toLowerCase().trim()
+    if (!q) return []
+
+    const digits = searchOrderFilter.replace(/\D/g, '')
+
     return pendingOrders.filter((o) => {
       const cust = customers.find((c) => c.id === o.customer_id)
-      const q = searchOrderFilter.toLowerCase().trim()
-      if (!q) return true
-      return (
-        o.tracking_code.toLowerCase().includes(q) ||
-        (cust?.name || '').toLowerCase().includes(q) ||
-        (cust?.address || '').toLowerCase().includes(q) ||
-        (cust?.phone || '').includes(q)
-      )
+
+      // 1. Código de rastreio
+      if (o.tracking_code && o.tracking_code.toLowerCase().includes(q)) return true
+
+      if (!cust) return false
+
+      // 2. Nome do cliente
+      if (cust.name && cust.name.toLowerCase().includes(q)) return true
+
+      // 3. Documento (CPF / CNPJ) - com e sem máscara
+      if (cust.document) {
+        if (cust.document.toLowerCase().includes(q)) return true
+        if (digits && cust.document.replace(/\D/g, '').includes(digits)) return true
+      }
+
+      // 4. Telefones (phone, phone2, phone3) - com e sem máscara
+      const phones = [cust.phone, cust.phone2, cust.phone3].filter(Boolean) as string[]
+      for (const p of phones) {
+        if (p.toLowerCase().includes(q)) return true
+        if (digits && p.replace(/\D/g, '').includes(digits)) return true
+      }
+
+      // 5. Endereço (bônus útil para localização do cliente)
+      if (cust.address && cust.address.toLowerCase().includes(q)) return true
+
+      return false
     })
   }, [pendingOrders, customers, searchOrderFilter])
 
@@ -872,14 +896,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       return
     }
 
-    // Filtra apenas as entregas selecionadas na Etapa 2 (ou todas as pendentes se nenhuma selecionada explicitamente)
-    const ordersToOptimize =
-      selectedOrderIds.length > 0
-        ? pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
-        : pendingOrders
+    // Filtra apenas as entregas que o vendedor buscou e selecionou na Etapa 2
+    const ordersToOptimize = pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
 
     if (ordersToOptimize.length === 0) {
-      toast.info('Selecione pelo menos uma entrega/cliente na Etapa 2 para roteirizar.')
+      toast.info('Busque e marque pelo menos um cliente/entrega na Etapa 2 para roteirizar.')
       setWizardStep('orders')
       return
     }
@@ -1392,11 +1413,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           markersAndPolylinesRef.current.push(endMarker)
         }
 
-        // 3. Entregas pendentes selecionadas/todas com pin numerado 📍
-        const ordersToShow =
-          selectedOrderIds.length > 0
-            ? pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
-            : pendingOrders
+        // 3. Entregas pendentes selecionadas com pin numerado 📍
+        const ordersToShow = pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
 
         ordersToShow.forEach((o, idx) => {
           const cust = customers.find((c) => c.id === o.customer_id)
@@ -2355,7 +2373,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               <div className="min-w-0">
                 <p className="truncate">2. Clientes / Entregas</p>
                 <p className="text-[10px] font-normal opacity-85 truncate">
-                  {selectedOrderIds.length} de {pendingOrders.length}
+                  {selectedOrderIds.length === 0
+                    ? 'Buscar & selecionar'
+                    : `${selectedOrderIds.length} selecionada(s)`}
                 </p>
               </div>
             </button>
@@ -2564,98 +2584,179 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4 text-indigo-600" />
                   <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                    Etapa 2: Selecionar Clientes / Entregas ({selectedOrderIds.length} de{' '}
-                    {pendingOrders.length})
+                    Etapa 2: Selecionar Clientes / Entregas ({selectedOrderIds.length}{' '}
+                    selecionada(s) de {pendingOrders.length} pendentes)
                   </Label>
                 </div>
 
                 <div className="flex items-center gap-2 text-xs">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={selectAllOrders}
-                    className="h-6 px-2 text-[11px] text-indigo-600 hover:text-indigo-700"
-                  >
-                    Marcar Todas
-                  </Button>
-                  <span className="text-slate-300">|</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={deselectAllOrders}
-                    className="h-6 px-2 text-[11px] text-slate-500 hover:text-slate-700"
-                  >
-                    Desmarcar Todas
-                  </Button>
+                  {filteredPendingOrders.length > 0 && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={selectAllOrders}
+                        className="h-6 px-2 text-[11px] text-indigo-600 hover:text-indigo-700 font-semibold"
+                      >
+                        Marcar{' '}
+                        {filteredPendingOrders.length > 1
+                          ? `todas da busca (${filteredPendingOrders.length})`
+                          : 'resultado'}
+                      </Button>
+                      <span className="text-slate-300">|</span>
+                    </>
+                  )}
+                  {selectedOrderIds.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={deselectAllOrders}
+                      className="h-6 px-2 text-[11px] text-slate-500 hover:text-slate-700"
+                    >
+                      {searchOrderFilter.trim() ? 'Desmarcar da busca' : 'Desmarcar Todas'}
+                    </Button>
+                  )}
                 </div>
               </div>
 
-              {/* Filtro de Entregas */}
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Buscar por cliente, endereço ou código de rastreio..."
-                  value={searchOrderFilter}
-                  onChange={(e) => setSearchOrderFilter(e.target.value)}
-                  className="h-7 px-2.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white w-full focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
+              {/* Campo de Busca em Destaque — Nome, CPF, CNPJ ou Telefone */}
+              <div className="space-y-1.5">
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-indigo-600 dark:text-indigo-400">
+                    <Search className="h-4 w-4" />
+                  </div>
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Buscar cliente por Nome, CPF, CNPJ ou Telefone..."
+                    value={searchOrderFilter}
+                    onChange={(e) => setSearchOrderFilter(e.target.value)}
+                    className="h-10 pl-9 pr-9 text-xs sm:text-sm rounded-xl border-2 border-indigo-200 dark:border-indigo-900/60 bg-white dark:bg-slate-800 text-slate-900 dark:text-white w-full placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 shadow-sm transition"
+                  />
+                  {searchOrderFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchOrderFilter('')}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      title="Limpar busca"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-slate-500 px-1">
+                  <span>
+                    💡 Digite com ou sem pontos/traços para encontrar CPF, CNPJ ou Telefone
+                  </span>
+                  {selectedOrderIds.length > 0 && (
+                    <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                      ✓ {selectedOrderIds.length} entrega(s) selecionada(s) para a rota
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Lista Selecionável de Pedidos Pendentes */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
-                {filteredPendingOrders.map((ord) => {
-                  const cust = customers.find((c) => c.id === ord.customer_id)
-                  const isSelected = selectedOrderIds.includes(ord.id)
-
-                  return (
-                    <label
-                      key={ord.id}
-                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none ${
-                        isSelected
-                          ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/50 dark:border-indigo-500 ring-1 ring-indigo-500/40'
-                          : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-75 hover:opacity-100'
-                      }`}
-                    >
-                      <Checkbox
-                        id={`ord-chk-${ord.id}`}
-                        checked={isSelected}
-                        onCheckedChange={() => toggleOrderSelection(ord.id)}
-                        className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4 mt-0.5"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1">
-                          <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                            {cust?.name || 'Cliente'}
-                          </p>
-                          <Badge
-                            variant="outline"
-                            className="text-[9px] px-1.5 py-0 uppercase font-mono"
-                          >
-                            {ord.tracking_code}
-                          </Badge>
-                        </div>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                          📍 {cust?.address || 'Endereço cadastrado'}
-                        </p>
-                        <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
-                          <span>
-                            Prioridade:{' '}
-                            <b className="text-slate-700 dark:text-slate-300">
-                              {ord.priority || 'Normal'}
-                            </b>
-                          </span>
-                          <span>Valor: R$ {ord.total_price?.toFixed(2) || '0.00'}</span>
-                        </div>
+                {/* ESTADO VAZIO: Nenhuma busca digitada */}
+                {!searchOrderFilter.trim() && (
+                  <div className="col-span-full py-8 px-4 text-center rounded-xl border border-dashed border-slate-300 dark:border-slate-800 bg-white/50 dark:bg-slate-900/40">
+                    <div className="w-10 h-10 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 mx-auto flex items-center justify-center mb-2">
+                      <Search className="h-5 w-5" />
+                    </div>
+                    <p className="text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      🔍 Digite nome, CPF, CNPJ ou telefone do cliente para buscar
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-1 max-w-md mx-auto">
+                      Nenhum cliente é exibido inicialmente. Faça a busca para encontrar e marcar os
+                      pedidos que farão parte desta rota.
+                    </p>
+                    {selectedOrderIds.length > 0 && (
+                      <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 text-[11px] font-medium border border-indigo-200 dark:border-indigo-800">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-indigo-600" />
+                        {selectedOrderIds.length} entrega(s) já adicionada(s) à rota
                       </div>
-                    </label>
-                  )
-                })}
-                {filteredPendingOrders.length === 0 && (
-                  <div className="col-span-full py-6 text-center text-xs text-slate-400">
-                    Nenhuma entrega pendente encontrada. Cadastre novos clientes e entregas no
-                    painel do vendedor.
+                    )}
+                  </div>
+                )}
+
+                {/* RESULTADOS DA BUSCA */}
+                {searchOrderFilter.trim() &&
+                  filteredPendingOrders.map((ord) => {
+                    const cust = customers.find((c) => c.id === ord.customer_id)
+                    const isSelected = selectedOrderIds.includes(ord.id)
+
+                    return (
+                      <label
+                        key={ord.id}
+                        className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none ${
+                          isSelected
+                            ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/50 dark:border-indigo-500 ring-1 ring-indigo-500/40'
+                            : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-90 hover:opacity-100'
+                        }`}
+                      >
+                        <Checkbox
+                          id={`ord-chk-${ord.id}`}
+                          checked={isSelected}
+                          onCheckedChange={() => toggleOrderSelection(ord.id)}
+                          className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4 mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1">
+                            <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                              {cust?.name || 'Cliente'}
+                            </p>
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] px-1.5 py-0 uppercase font-mono"
+                            >
+                              {ord.tracking_code}
+                            </Badge>
+                          </div>
+                          {(cust?.document || cust?.phone) && (
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex-wrap">
+                              {cust?.document && (
+                                <span>
+                                  Doc: <b>{cust.document}</b>
+                                </span>
+                              )}
+                              {cust?.phone && (
+                                <span>
+                                  Tel: <b>{cust.phone}</b>
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                            📍 {cust?.address || 'Endereço cadastrado'}
+                          </p>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
+                            <span>
+                              Prioridade:{' '}
+                              <b className="text-slate-700 dark:text-slate-300">
+                                {ord.priority || 'Normal'}
+                              </b>
+                            </span>
+                            <span>Valor: R$ {ord.total_price?.toFixed(2) || '0.00'}</span>
+                          </div>
+                        </div>
+                      </label>
+                    )
+                  })}
+
+                {/* ESTADO DE BUSCA SEM RESULTADOS */}
+                {searchOrderFilter.trim() && filteredPendingOrders.length === 0 && (
+                  <div className="col-span-full py-8 px-4 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/30">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Nenhum cliente ou entrega pendente encontrado para &ldquo;
+                      <b className="text-slate-700 dark:text-slate-200">{searchOrderFilter}</b>
+                      &rdquo;.
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Verifique se digitou o nome, CPF, CNPJ ou telefone correto do cliente.
+                    </p>
                   </div>
                 )}
               </div>
@@ -2765,10 +2866,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   {(() => {
                     const fallbackStartBase = resolvedStartEntity
                     const fallbackEndBase = resolvedEndEntity
-                    const selectedOrdersList =
-                      selectedOrderIds.length > 0
-                        ? pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
-                        : pendingOrders
+                    const selectedOrdersList = pendingOrders.filter((o) =>
+                      selectedOrderIds.includes(o.id),
+                    )
 
                     // Coleta todos os pontos conhecidos para calcular min/max e enquadramento relativo
                     interface MapPoint {
