@@ -297,7 +297,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   }
 
-  // 2. Retirar da rota (volta para status "pending" sem entregador atribuído)
+  // 2. Retirar da rota / Desfazer rota de uma entrega (volta para status "pending" e desfaz liberação/atribuição)
   const handleRemoveFromRoute = async (orderId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
 
@@ -306,8 +306,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         status: 'pending',
         courier_id: '',
         sequence: undefined,
+        route_released: false,
+        route_started: false,
       })
-      toast.info('Entrega retirada da rota e retornada para o status "Pendente" (sem entregador).')
+      toast.info(
+        'Entrega retirada da rota e retornada para o status "Pendente" (disponível para nova otimização).',
+      )
       loadData()
     } catch (err) {
       console.error('Error removing order from route:', err)
@@ -1279,19 +1283,23 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                     </Button>
                                   )}
 
-                                  {/* Retirar da Rota */}
-                                  {order.status === 'in_transit' && (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={(e) => handleRemoveFromRoute(order.id, e)}
-                                      className="h-7 px-2 text-[11px] text-[#FF6B35] border-[#FF6B35]/30 hover:bg-orange-50 gap-1 rounded-input font-medium"
-                                      title="Retirar da rota e voltar para pendente"
-                                    >
-                                      <Undo2 className="h-3 w-3" />
-                                      Retirar
-                                    </Button>
-                                  )}
+                                  {/* Retirar da Rota / Desfazer Rota */}
+                                  {(order.status === 'in_transit' ||
+                                    order.status === 'assigned' ||
+                                    order.route_released) &&
+                                    order.status !== 'delivered' &&
+                                    order.status !== 'cancelled' && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={(e) => handleRemoveFromRoute(order.id, e)}
+                                        className="h-7 px-2 text-[11px] text-[#FF6B35] border-[#FF6B35]/30 hover:bg-orange-50 gap-1 rounded-input font-medium"
+                                        title="Desfazer rota desta entrega e retornar para Pendente"
+                                      >
+                                        <Undo2 className="h-3 w-3" />
+                                        Desfazer Rota
+                                      </Button>
+                                    )}
 
                                   {/* Cancelar Entrega */}
                                   {order.status !== 'cancelled' && order.status !== 'delivered' && (

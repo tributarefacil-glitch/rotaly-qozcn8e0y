@@ -153,11 +153,25 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   onRoutesApplied,
 }) => {
   // Pending orders eligible for routing optimization
+  // Regras de Negócio:
+  // 1. Somente clientes com venda/entrega PENDENTE cadastrada pelo vendedor (pedidos criados e ainda não incluídos em rota liberada/atribuída). Cliente sem venda/entrega pendente NÃO aparece.
+  // 2. Após "Salvar & Liberar Rota", as entregas incluídas na rota SAEM da Etapa 2 (não aparecem mais como pendentes na busca de uma nova otimização).
+  // 3. Se a rota for desfeita/cancelada e a entrega voltar para pendente (sem rota liberada nem iniciada), ela reaparece na busca.
   const pendingOrders = useMemo(() => {
     return orders.filter((o) => {
+      // Pedidos entregues ou cancelados nunca devem aparecer
       if (o.status === 'delivered' || o.status === 'cancelled') return false
-      if (o.route_released === false || !o.route_released) return true
-      return o.status === 'pending' || o.status === 'assigned'
+      // Se a rota foi liberada (route_released = true), NÃO aparece na Etapa 2
+      if (o.route_released) return false
+      // Se a rota já foi iniciada pelo entregador, NÃO aparece
+      if (o.route_started) return false
+      // Se já estiver em trânsito ou finalizado, não aparece
+      if (o.status === 'in_transit' || o.status === 'address_error' || o.status === 'client_absent')
+        return false
+      // Se já foi atribuído e salvo para um entregador (status 'assigned' com courier_id), já está em rota salva
+      if (o.status === 'assigned' && Boolean(o.courier_id)) return false
+      // Retorna pedidos pendentes de roteirização
+      return o.status === 'pending' || !o.courier_id
     })
   }, [orders])
 
