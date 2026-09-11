@@ -44,6 +44,7 @@ import {
   ArrowUp,
   ArrowDown,
   Trash2,
+  Pencil,
   UserPlus,
   Fuel,
   Gauge,
@@ -67,6 +68,7 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { deliveryService } from '@/services/deliveryService'
+import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import {
   BaseAddressAutocomplete,
   type BaseAddressResult,
@@ -160,19 +162,37 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   open,
   onOpenChange,
-  orders,
+  orders: initialOrders,
   couriers,
-  customers,
+  customers: initialCustomers,
   locations,
   onRoutesApplied,
 }) => {
+  // Estado local sincronizado de pedidos e clientes para atualização e exclusão instantâneas no modal
+  const [localOrders, setLocalOrders] = useState<OrderRecord[]>(initialOrders)
+  const [localCustomers, setLocalCustomers] = useState<CustomerRecord[]>(initialCustomers)
+
+  useEffect(() => {
+    setLocalOrders(initialOrders)
+  }, [initialOrders])
+
+  useEffect(() => {
+    setLocalCustomers(initialCustomers)
+  }, [initialCustomers])
+
+  // Estados para Edição e Exclusão de Clientes na Etapa 2
+  const [customerToEdit, setCustomerToEdit] = useState<CustomerRecord | null>(null)
+  const [isEditCustomerModalOpen, setIsEditCustomerModalOpen] = useState(false)
+  const [customerToDelete, setCustomerToDelete] = useState<CustomerRecord | null>(null)
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState(false)
+
   // Pending orders eligible for routing optimization
   // Regras de Negócio:
   // 1. Somente clientes com venda/entrega PENDENTE cadastrada pelo vendedor (pedidos criados e ainda não incluídos em rota liberada/atribuída). Cliente sem venda/entrega pendente NÃO aparece.
   // 2. Após "Salvar & Liberar Rota", as entregas incluídas na rota SAEM da Etapa 2 (não aparecem mais como pendentes na busca de uma nova otimização).
   // 3. Se a rota for desfeita/cancelada e a entrega voltar para pendente (sem rota liberada nem iniciada), ela reaparece na busca.
   const pendingOrders = useMemo(() => {
-    return orders.filter((o) => {
+    return localOrders.filter((o) => {
       // Pedidos entregues ou cancelados nunca devem aparecer
       if (o.status === 'delivered' || o.status === 'cancelled') return false
       // Se a rota foi liberada (route_released = true), NÃO aparece na Etapa 2
@@ -187,7 +207,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       // Retorna pedidos pendentes de roteirização
       return o.status === 'pending' || !o.courier_id
     })
-  }, [orders])
+  }, [localOrders])
 
   // Selected available couriers (ids) - ETAPA 1
   const [selectedCourierIds, setSelectedCourierIds] = useState<string[]>([])
@@ -258,7 +278,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Verificar se um entregador tem rota em andamento (iniciada e ainda não finalizada na base)
   const isCourierWithActiveRoute = useCallback(
     (courierId: string) => {
-      return orders.some(
+      return localOrders.some(
         (o) =>
           o.courier_id === courierId &&
           o.route_started === true &&
@@ -267,7 +287,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             o.route_finished === undefined),
       )
     },
-    [orders],
+    [localOrders],
   )
 
   // Initialize selected couriers and load app settings when opened
@@ -415,7 +435,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     const digits = searchOrderFilter.replace(/\D/g, '')
 
     return pendingOrders.filter((o) => {
-      const cust = customers.find((c) => c.id === o.customer_id)
+      const cust = localCustomers.find((c) => c.id === o.customer_id)
 
       // 1. Código de rastreio
       if (o.tracking_code && o.tracking_code.toLowerCase().includes(q)) return true
@@ -443,7 +463,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
       return false
     })
-  }, [pendingOrders, customers, searchOrderFilter])
+  }, [pendingOrders, localCustomers, searchOrderFilter])
 
   // Helper para resolver informações do Ponto de Partida ou Chegada
   // Seja uma Base (id puro) ou um Cliente (prefixo "cust_")
@@ -465,7 +485,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
       if (id.startsWith('cust_')) {
         const custId = id.replace('cust_', '')
-        const cust = customers.find((c) => c.id === custId)
+        const cust = localCustomers.find((c) => c.id === custId)
         if (!cust) return null
         return {
           id,
@@ -495,7 +515,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
       return null
     },
-    [baseAddresses, customers],
+    [baseAddresses, localCustomers],
   )
 
   // Entidade de partida selecionada
@@ -553,7 +573,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     }))
 
     // 2. Clientes cadastrados
-    const customersList = customers.map((c) => ({
+    const customersList = localCustomers.map((c) => ({
       id: `cust_${c.id}`,
       type: 'customer' as const,
       name: c.name,
@@ -611,7 +631,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       customers: filteredCusts,
       total: filteredBases.length + filteredCusts.length,
     }
-  }, [baseAddresses, customers, startPointSearchQuery])
+  }, [baseAddresses, localCustomers, startPointSearchQuery])
 
   // Itens unificados filtrados para a seleção de Ponto de Chegada
   const filteredEndPointOptions = useMemo(() => {
@@ -630,7 +650,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       document: undefined,
     }))
 
-    const customersList = customers.map((c) => ({
+    const customersList = localCustomers.map((c) => ({
       id: `cust_${c.id}`,
       type: 'customer' as const,
       name: c.name,
@@ -682,7 +702,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       customers: filteredCusts,
       total: filteredBases.length + filteredCusts.length,
     }
-  }, [baseAddresses, customers, endPointSearchQuery])
+  }, [baseAddresses, localCustomers, endPointSearchQuery])
 
   // Ação ao selecionar um ponto de partida (com geocodificação automática e validação)
   const handleSelectStartPoint = async (option: {
@@ -719,11 +739,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             lng: geo.lng,
           })
           // Atualiza o estado local de customers
-          const target = customers.find((c) => c.id === rawCustId)
-          if (target) {
-            target.lat = geo.lat
-            target.lng = geo.lng
-          }
+          setLocalCustomers((prev) =>
+            prev.map((c) => (c.id === rawCustId ? { ...c, lat: geo.lat, lng: geo.lng } : c)),
+          )
           toast.success(
             `Localização de "${option.name}" obtida com sucesso (${geo.lat.toFixed(4)}, ${geo.lng.toFixed(4)})!`,
           )
@@ -763,11 +781,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           if (geo) {
             const rawCustId = option.id.replace('cust_', '')
             await deliveryService.updateCustomer(rawCustId, { lat: geo.lat, lng: geo.lng })
-            const target = customers.find((c) => c.id === rawCustId)
-            if (target) {
-              target.lat = geo.lat
-              target.lng = geo.lng
-            }
+            setLocalCustomers((prev) =>
+              prev.map((c) => (c.id === rawCustId ? { ...c, lat: geo.lat, lng: geo.lng } : c)),
+            )
           }
         } catch {
           /* intentionally ignored */
@@ -1012,7 +1028,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       // Coletar coordenadas válidas dos clientes selecionados para calcular o centróide
       const validPoints: Array<{ lat: number; lng: number }> = []
       for (const ord of ordersToOptimize) {
-        const cust = customers.find((c) => c.id === ord.customer_id)
+        const cust = localCustomers.find((c) => c.id === ord.customer_id)
         if (
           cust &&
           typeof cust.lat === 'number' &&
@@ -1090,7 +1106,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const unassignedWithoutCoords: OrderRecord[] = []
 
       for (const ord of ordersToOptimize) {
-        const cust = customers.find((c) => c.id === ord.customer_id)
+        const cust = localCustomers.find((c) => c.id === ord.customer_id)
         if (cust && cust.lat && cust.lng) {
           validOrdersWithCoords.push({
             order: ord,
@@ -1807,7 +1823,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         const ordersToShow = pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
 
         ordersToShow.forEach((o, idx) => {
-          const cust = customers.find((c) => c.id === o.customer_id)
+          const cust = localCustomers.find((c) => c.id === o.customer_id)
           if (cust && cust.lat && cust.lng) {
             bounds.extend(new google.maps.LatLng(cust.lat, cust.lng))
             hasPoints = true
@@ -1878,7 +1894,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     selectedOrderIds,
     selectedCourierIds,
     couriers,
-    customers,
+    localCustomers,
     locations,
     selectedStartBaseId,
     selectedEndBaseId,
@@ -2111,6 +2127,70 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
     })
     toast.info('Parada removida da rota calculada.')
+  }
+
+  // Manipuladores de Edição e Exclusão em Cascata de Cliente na Etapa 2
+  const handleOpenEditCustomer = (cust: CustomerRecord, e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setCustomerToEdit(cust)
+    setIsEditCustomerModalOpen(true)
+  }
+
+  const handleCustomerSaved = (savedCust: CustomerRecord) => {
+    // Atualiza localmente no estado do modal
+    setLocalCustomers((prev) => prev.map((c) => (c.id === savedCust.id ? savedCust : c)))
+    toast.success(`Cliente "${savedCust.name}" atualizado com sucesso!`)
+    setIsEditCustomerModalOpen(false)
+    setCustomerToEdit(null)
+    // Notifica o painel pai para recarregar dados
+    onRoutesApplied()
+  }
+
+  const handleOpenDeleteConfirm = (cust: CustomerRecord, e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setCustomerToDelete(cust)
+  }
+
+  const handleConfirmDeleteCustomer = async () => {
+    if (!customerToDelete) return
+    const targetCust = customerToDelete
+    setIsDeletingCustomer(true)
+    try {
+      const res = await deliveryService.deleteCustomerCascade(targetCust.id)
+      const countDeleted = res.deletedOrdersCount || 0
+
+      // Encontrar todos os ids de pedidos vinculados a esse cliente
+      const affectedOrderIds = localOrders
+        .filter((o) => o.customer_id === targetCust.id)
+        .map((o) => o.id)
+
+      // 1. Remover pedidos da seleção (setSelectedOrderIds filter)
+      setSelectedOrderIds((prev) => prev.filter((id) => !affectedOrderIds.includes(id)))
+
+      // 2. Remover pedidos da listagem local
+      setLocalOrders((prev) => prev.filter((o) => o.customer_id !== targetCust.id))
+
+      // 3. Remover cliente da listagem local
+      setLocalCustomers((prev) => prev.filter((c) => c.id !== targetCust.id))
+
+      toast.success(
+        `Cliente "${targetCust.name}" e ${countDeleted} entrega(s) pendente(s) excluídos com sucesso!`,
+      )
+
+      // 4. Disparar callback de recarregamento do painel pai
+      onRoutesApplied()
+
+      setCustomerToDelete(null)
+    } catch (err: unknown) {
+      console.error('Erro ao excluir cliente:', err)
+      const message =
+        err instanceof Error ? err.message : 'Falha ao excluir cliente e entregas vinculadas.'
+      toast.error(message)
+    } finally {
+      setIsDeletingCustomer(false)
+    }
   }
 
   const reassignStopToAnotherCourier = (
@@ -3118,35 +3198,74 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
                 {/* 2. LISTAGEM DIRETA DOS CLIENTES / ENTREGAS PENDENTES (com ou sem filtro de busca) */}
                 {filteredPendingOrders.map((ord) => {
-                  const cust = customers.find((c) => c.id === ord.customer_id)
+                  const cust = localCustomers.find((c) => c.id === ord.customer_id)
                   const isSelected = selectedOrderIds.includes(ord.id)
 
                   return (
-                    <label
+                    <div
                       key={ord.id}
-                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none ${
+                      onClick={() => toggleOrderSelection(ord.id)}
+                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition cursor-pointer select-none group relative ${
                         isSelected
                           ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/50 dark:border-indigo-500 ring-1 ring-indigo-500/40'
                           : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-90 hover:opacity-100'
                       }`}
                     >
-                      <Checkbox
-                        id={`ord-chk-${ord.id}`}
-                        checked={isSelected}
-                        onCheckedChange={() => toggleOrderSelection(ord.id)}
-                        className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4 mt-0.5"
-                      />
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center mt-0.5"
+                      >
+                        <Checkbox
+                          id={`ord-chk-${ord.id}`}
+                          checked={isSelected}
+                          onCheckedChange={() => toggleOrderSelection(ord.id)}
+                          className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4"
+                        />
+                      </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1">
+                        <div className="flex items-center justify-between gap-1.5">
                           <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                             {cust?.name || 'Cliente'}
                           </p>
-                          <Badge
-                            variant="outline"
-                            className="text-[9px] px-1.5 py-0 uppercase font-mono"
-                          >
-                            {ord.tracking_code}
-                          </Badge>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] px-1.5 py-0 uppercase font-mono"
+                            >
+                              {ord.tracking_code}
+                            </Badge>
+
+                            {/* Botões de Ação Rápida: Editar e Excluir Cliente */}
+                            {cust && (
+                              <div
+                                className="flex items-center gap-0.5 ml-1"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  title="Editar cadastro do cliente"
+                                  aria-label="Editar cliente"
+                                  onClick={(e) => handleOpenEditCustomer(cust, e)}
+                                  className="h-6 w-6 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100/60 dark:hover:bg-indigo-950/50 rounded-md transition"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  title="Excluir cliente e entregas vinculadas"
+                                  aria-label="Excluir cliente"
+                                  onClick={(e) => handleOpenDeleteConfirm(cust, e)}
+                                  className="h-6 w-6 text-slate-400 hover:text-red-600 hover:bg-red-100/60 dark:hover:bg-red-950/50 rounded-md transition"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                         {(cust?.document || cust?.phone) && (
                           <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex-wrap">
@@ -3175,7 +3294,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           <span>Valor: R$ {ord.total_price?.toFixed(2) || '0.00'}</span>
                         </div>
                       </div>
-                    </label>
+                    </div>
                   )
                 })}
 
@@ -3370,7 +3489,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       })
                     } else {
                       selectedOrdersList.forEach((ord, oIdx) => {
-                        const cust = customers.find((c) => c.id === ord.customer_id)
+                        const cust = localCustomers.find((c) => c.id === ord.customer_id)
                         const lat =
                           cust?.lat ||
                           (fallbackStartBase.lat || -22.906847) + (((oIdx * 17) % 7) - 3) * 0.008
@@ -3816,6 +3935,65 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* Modal de Edição de Cliente na Etapa 2 */}
+      {customerToEdit && (
+        <CreateCustomerModal
+          open={isEditCustomerModalOpen}
+          onOpenChange={(isOpen) => {
+            setIsEditCustomerModalOpen(isOpen)
+            if (!isOpen) setCustomerToEdit(null)
+          }}
+          customerToEdit={customerToEdit}
+          onCustomerCreated={handleCustomerSaved}
+        />
+      )}
+
+      {/* Confirmação de Exclusão de Cliente e Entregas em Cascata */}
+      <AlertDialog
+        open={Boolean(customerToDelete)}
+        onOpenChange={(isOpen) => {
+          if (!isOpen && !isDeletingCustomer) {
+            setCustomerToDelete(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+              <Trash2 className="h-5 w-5 text-rose-600 shrink-0" />
+              Excluir Cliente e Entregas Pendentes?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 pt-2 text-slate-700 dark:text-slate-300">
+              <p>
+                Tem certeza que deseja excluir o cliente{' '}
+                <strong className="text-slate-900 dark:text-white">
+                  &ldquo;{customerToDelete?.name}&rdquo;
+                </strong>
+                ?
+              </p>
+              <div className="text-xs bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 p-2.5 rounded-lg text-rose-800 dark:text-rose-300">
+                ⚠️ <strong>Atenção:</strong> Esta ação apagará permanentemente o cadastro do cliente
+                e <strong>todas as entregas pendentes vinculadas a ele</strong>. Pedidos já em
+                trânsito ou em rota iniciada bloquearão a exclusão por segurança.
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel disabled={isDeletingCustomer} className="w-full sm:w-auto">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDeleteCustomer}
+              disabled={isDeletingCustomer}
+              className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center gap-1.5"
+            >
+              <Trash2 className="h-4 w-4" />
+              {isDeletingCustomer ? 'Excluindo...' : 'Sim, Excluir Cliente'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Alerta de Blindagem: Base de Partida a mais de 100 km do centróide das entregas */}
       <AlertDialog open={distanceAlertOpen} onOpenChange={setDistanceAlertOpen}>
