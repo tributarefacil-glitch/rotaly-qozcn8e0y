@@ -42,16 +42,22 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { useEffect } from 'react'
+
 interface CreateCustomerModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCustomerCreated: (customer: CustomerRecord) => void
+  customerToEdit?: CustomerRecord | null
+  onOpenSearch?: () => void
 }
 
 export function CreateCustomerModal({
   open,
   onOpenChange,
   onCustomerCreated,
+  customerToEdit = null,
+  onOpenSearch,
 }: CreateCustomerModalProps) {
   const [name, setName] = useState('')
   const [document, setDocument] = useState('')
@@ -78,6 +84,40 @@ export function CreateCustomerModal({
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const phoneDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const isEditMode = Boolean(customerToEdit)
+
+  // Preenche o formulário quando o modal abre em modo de edição
+  useEffect(() => {
+    if (open && customerToEdit) {
+      setName(customerToEdit.name || '')
+      setDocument(customerToEdit.document || '')
+      setPhone(customerToEdit.phone || '')
+      setPhone2(customerToEdit.phone2 || '')
+      setPhone3(customerToEdit.phone3 || '')
+      if (customerToEdit.phone2 || customerToEdit.phone3) {
+        setShowExtraPhones(true)
+      } else {
+        setShowExtraPhones(false)
+      }
+      setStreetAndNumber(customerToEdit.street || customerToEdit.address?.split(',')[0] || '')
+      setComplement(customerToEdit.complement || '')
+      setNeighborhood(customerToEdit.neighborhood || '')
+      setCity(customerToEdit.city || '')
+      if (customerToEdit.state) {
+        const uf = normalizeBrazilianUF(customerToEdit.state)
+        if (uf && BRAZILIAN_STATES.includes(uf)) setUfState(uf)
+      }
+      setPostalCode(customerToEdit.postal_code || '')
+      setLat(customerToEdit.lat)
+      setLng(customerToEdit.lng)
+      setAddressSearchQuery(customerToEdit.address || '')
+      setMatchedExistingCustomer(customerToEdit)
+      setLocationLinkInput('')
+    } else if (open && !customerToEdit) {
+      resetForm()
+    }
+  }, [open, customerToEdit])
 
   const resetForm = () => {
     setName('')
@@ -329,11 +369,13 @@ export function CreateCustomerModal({
 
     setIsSubmitting(true)
     try {
-      if (matchedExistingCustomer) {
+      const targetCustomer = customerToEdit || matchedExistingCustomer
+
+      if (targetCustomer) {
         // Checar conflito com OUTRO cliente
         const conflict = await deliveryService.checkPhoneConflict(
           phonesToValidate,
-          matchedExistingCustomer.id,
+          targetCustomer.id,
         )
         if (conflict.conflict && conflict.customer) {
           toast.error(
@@ -342,7 +384,7 @@ export function CreateCustomerModal({
           return
         }
 
-        const updated = await deliveryService.updateCustomer(matchedExistingCustomer.id, payload)
+        const updated = await deliveryService.updateCustomer(targetCustomer.id, payload)
         toast.success(`Cadastro do cliente "${trimmedName}" atualizado com sucesso!`)
         resetForm()
         onCustomerCreated(updated)
@@ -369,7 +411,7 @@ export function CreateCustomerModal({
       }
     } catch (err) {
       console.error('Erro ao salvar cliente:', err)
-      toast.error('Erro ao cadastrar cliente.')
+      toast.error('Erro ao salvar cliente.')
     } finally {
       setIsSubmitting(false)
     }
@@ -379,19 +421,41 @@ export function CreateCustomerModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto bg-[#0E1738] text-white border-[#1E2B58] p-5 sm:p-6 shadow-brand-dark">
         <DialogHeader className="pb-2 border-b border-[#1E2B58]">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-[#22C55E]/20 border border-[#22C55E]/40 text-[#22C55E]">
-              <UserPlus className="h-5 w-5" />
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div
+                className={`p-2 rounded-xl border ${
+                  isEditMode
+                    ? 'bg-[#0052CC]/20 border-[#0052CC]/40 text-[#60A5FA]'
+                    : 'bg-[#22C55E]/20 border-[#22C55E]/40 text-[#22C55E]'
+                }`}
+              >
+                <UserPlus className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-lg font-black text-white font-heading">
+                  {isEditMode ? 'Editar Cliente' : 'Cadastrar Novo Cliente'}
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-400">
+                  {isEditMode
+                    ? 'Atualize os dados, telefones ou endereço do cliente selecionado.'
+                    : 'Cadastre clientes com até 3 telefones, busca automática por CEP e deduplicação inteligente.'}
+                </DialogDescription>
+              </div>
             </div>
-            <div>
-              <DialogTitle className="text-lg font-black text-white font-heading">
-                Cadastrar Novo Cliente
-              </DialogTitle>
-              <DialogDescription className="text-xs text-slate-400">
-                Cadastre clientes com até 3 telefones, busca automática por CEP e deduplicação
-                inteligente.
-              </DialogDescription>
-            </div>
+
+            {onOpenSearch && !isEditMode && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onOpenSearch}
+                className="shrink-0 h-8 text-xs gap-1.5 border-[#1E2B58] bg-[#0A1128] hover:bg-[#1E2B58] text-[#60A5FA] hover:text-white"
+              >
+                <Search className="h-3.5 w-3.5 text-[#60A5FA]" />
+                <span className="hidden sm:inline">Buscar Cadastrado</span>
+              </Button>
+            )}
           </div>
         </DialogHeader>
 
@@ -673,9 +737,15 @@ export function CreateCustomerModal({
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="bg-[#22C55E] hover:bg-[#1CA24D] text-white font-bold text-xs h-9 min-w-[140px] shadow-md"
+              className={`${
+                isEditMode ? 'bg-[#0052CC] hover:bg-[#003E99]' : 'bg-[#22C55E] hover:bg-[#1CA24D]'
+              } text-white font-bold text-xs h-9 min-w-[140px] shadow-md`}
             >
-              {isSubmitting ? 'Salvando...' : 'Cadastrar Cliente'}
+              {isSubmitting
+                ? 'Salvando...'
+                : isEditMode
+                  ? 'Salvar Alterações'
+                  : 'Cadastrar Cliente'}
             </Button>
           </DialogFooter>
         </form>

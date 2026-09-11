@@ -10,6 +10,8 @@ import {
   Sparkles,
   MapPin,
   FileText,
+  Users,
+  Search,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +37,12 @@ const navItems: NavItem[] = [
     title: 'Painel do Lojista',
     href: '/seller',
     icon: Package,
+    roles: ['seller', 'admin'],
+  },
+  {
+    title: 'Buscar / Clientes',
+    href: '/customers',
+    icon: Search,
     roles: ['seller', 'admin'],
   },
   {

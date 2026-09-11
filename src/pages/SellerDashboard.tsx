@@ -27,6 +27,7 @@ import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import { CreateOrderModal } from '@/components/CreateOrderModal'
 import { CreateCourierModal } from '@/components/CreateCourierModal'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
+import { CustomerSearchModal } from '@/components/CustomerSearchModal'
 import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { ControlTower } from '@/components/ControlTower'
@@ -77,11 +78,14 @@ import {
   CheckCircle2,
   XCircle,
   HelpCircle,
+  X,
+  Phone,
+  Edit,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface SellerDashboardProps {
-  defaultTab?: 'overview' | 'control-tower' | 'reports' | 'fuel'
+  defaultTab?: 'overview' | 'control-tower' | 'reports' | 'fuel' | 'customers'
 }
 
 export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashboardProps) {
@@ -98,12 +102,15 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isCreateCourierModalOpen, setIsCreateCourierModalOpen] = useState(false)
   const [isCreateCustomerModalOpen, setIsCreateCustomerModalOpen] = useState(false)
+  const [isCustomerSearchModalOpen, setIsCustomerSearchModalOpen] = useState(false)
+  const [customerToEdit, setCustomerToEdit] = useState<CustomerRecord | null>(null)
+  const [customerTabSearch, setCustomerTabSearch] = useState('')
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [mainViewTab, setMainViewTab] = useState<'overview' | 'control-tower' | 'reports' | 'fuel'>(
-    defaultTab,
-  )
+  const [mainViewTab, setMainViewTab] = useState<
+    'overview' | 'control-tower' | 'reports' | 'fuel' | 'customers'
+  >(defaultTab)
 
   // Base Addresses & Editable Quick Config beside Iniciar Despacho (Regras 4 e 5)
   const [baseAddresses, setBaseAddresses] = useState<BaseAddressRecord[]>([])
@@ -550,7 +557,20 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               </Button>
 
               <Button
-                onClick={() => setIsCreateCustomerModalOpen(true)}
+                onClick={() => setIsCustomerSearchModalOpen(true)}
+                className="h-10 min-h-[44px] gap-1.5 bg-[#0A1128] hover:bg-[#121E46] text-[#60A5FA] border border-[#60A5FA]/40 font-bold text-xs rounded-input shadow-sm transition"
+                title="Buscar e Editar Clientes por Nome, CPF, CNPJ e Telefone"
+              >
+                <Search className="h-4 w-4 text-[#60A5FA]" />
+                <span className="hidden sm:inline">Buscar / Editar</span>
+                <span className="sm:hidden">Buscar</span>
+              </Button>
+
+              <Button
+                onClick={() => {
+                  setCustomerToEdit(null)
+                  setIsCreateCustomerModalOpen(true)
+                }}
                 className="h-10 min-h-[44px] gap-1.5 bg-[#0A1128] hover:bg-[#121E46] text-[#22C55E] border border-[#22C55E]/40 font-bold text-xs rounded-input shadow-sm transition"
               >
                 <UserPlus className="h-4 w-4 text-[#22C55E]" />
@@ -627,7 +647,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               {/* Card 2: Cadastrar Cliente */}
               <button
                 type="button"
-                onClick={() => setIsCreateCustomerModalOpen(true)}
+                onClick={() => {
+                  setCustomerToEdit(null)
+                  setIsCreateCustomerModalOpen(true)
+                }}
                 className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#22C55E]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#22C55E]"
               >
                 <div className="absolute top-0 left-0 right-0 h-1 bg-[#22C55E]" />
@@ -762,6 +785,17 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-[#22C55E] text-[10px] font-mono">
                 GPS
               </span>
+            </button>
+            <button
+              onClick={() => setMainViewTab('customers')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
+                mainViewTab === 'customers'
+                  ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Users className="h-3.5 w-3.5" />
+              Gestão de Clientes ({customers.length})
             </button>
             <button
               onClick={() => setMainViewTab('reports')}
@@ -954,6 +988,171 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               offRouteEvents={offRouteEvents}
               locations={locations}
             />
+          )}
+
+          {/* TAB: GESTÃO & BUSCA DE CLIENTES (BUSCAR POR NOME, CPF, CNPJ E TELEFONE) */}
+          {mainViewTab === 'customers' && (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 sm:p-6 shadow-brand-dark space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1E2B58] pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-[#0052CC]/20 border border-[#0052CC]/40 text-[#60A5FA]">
+                      <Users className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-base font-bold text-white font-heading">
+                        Clientes Cadastrados ({customers.length})
+                      </h2>
+                      <p className="text-xs text-slate-400">
+                        Busque e edite qualquer cliente por Nome, CPF, CNPJ ou Telefone (com ou sem
+                        pontuação).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      onClick={() => setIsCustomerSearchModalOpen(true)}
+                      className="h-9 px-3.5 text-xs font-bold bg-[#0052CC] hover:bg-[#003E99] text-white flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      <span>Busca Avançada</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setCustomerToEdit(null)
+                        setIsCreateCustomerModalOpen(true)
+                      }}
+                      className="h-9 px-3.5 text-xs font-bold bg-[#22C55E] hover:bg-[#1CA24D] text-white flex items-center gap-1.5 shadow-sm"
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
+                      <span>Novo Cliente</span>
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Filtro rápido inline */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    placeholder="Filtrar clientes por Nome, CPF, CNPJ ou Telefone..."
+                    value={customerTabSearch}
+                    onChange={(e) => setCustomerTabSearch(e.target.value)}
+                    className="pl-9 pr-9 h-10 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 rounded-xl"
+                  />
+                  {customerTabSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setCustomerTabSearch('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Tabela / Lista de Clientes */}
+                {(() => {
+                  const raw = customerTabSearch.trim().toLowerCase()
+                  const digits = customerTabSearch.replace(/\D/g, '')
+
+                  const list = customers.filter((c) => {
+                    if (!raw) return true
+                    if (c.name && c.name.toLowerCase().includes(raw)) return true
+                    if (c.document) {
+                      if (c.document.toLowerCase().includes(raw)) return true
+                      if (digits && c.document.replace(/\D/g, '').includes(digits)) return true
+                    }
+                    const phones = [c.phone, c.phone2, c.phone3].filter(Boolean) as string[]
+                    for (const p of phones) {
+                      if (p.toLowerCase().includes(raw)) return true
+                      if (digits && p.replace(/\D/g, '').includes(digits)) return true
+                    }
+                    if (c.address && c.address.toLowerCase().includes(raw)) return true
+                    return false
+                  })
+
+                  if (list.length === 0) {
+                    return (
+                      <div className="py-12 text-center text-slate-400">
+                        <Users className="h-10 w-10 mx-auto text-slate-600 mb-2" />
+                        <p className="text-xs font-semibold text-slate-300">
+                          Nenhum cliente encontrado
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Tente refinar sua busca ou cadastre um novo cliente.
+                        </p>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                      {list.map((c) => (
+                        <div
+                          key={c.id}
+                          className="p-3.5 rounded-xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#60A5FA]/60 hover:bg-[#0E1738] transition-all flex flex-col justify-between gap-2.5"
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-bold text-sm text-white font-heading">
+                                {c.name}
+                              </span>
+                              {c.document && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#1E2B58] text-slate-300 border border-[#2A3B7A] shrink-0">
+                                  {c.document}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                              <span className="text-[#22C55E] font-medium flex items-center gap-1">
+                                <Phone className="h-3 w-3" />
+                                {c.phone || 'Sem telefone'}
+                              </span>
+                              {c.phone2 && (
+                                <span className="text-[11px] text-slate-400">• {c.phone2}</span>
+                              )}
+                              {c.phone3 && (
+                                <span className="text-[11px] text-slate-400">• {c.phone3}</span>
+                              )}
+                            </div>
+
+                            <div className="text-[11px] text-slate-400 flex items-start gap-1">
+                              <MapPin className="h-3 w-3 text-[#FF6B35] shrink-0 mt-0.5" />
+                              <span className="line-clamp-2">
+                                {c.address ||
+                                  [c.street, c.neighborhood, c.city, c.state]
+                                    .filter(Boolean)
+                                    .join(', ') ||
+                                  'Sem endereço'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-[#1E2B58]/60 flex items-center justify-end">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                setCustomerToEdit(c)
+                                setIsCreateCustomerModalOpen(true)
+                              }}
+                              className="h-7 text-xs bg-[#0052CC] hover:bg-[#003E99] text-white font-bold flex items-center gap-1.5"
+                            >
+                              <Edit className="h-3 w-3" />
+                              <span>Editar Dados</span>
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
+            </div>
           )}
 
           {/* TAB 4: VISÃO GERAL & GESTÃO DE PEDIDOS (PRESERVANDO FLUXO ORIGINAL) */}
@@ -1480,12 +1679,39 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         onCourierCreated={loadData}
       />
 
-      {/* Modal para Cadastro Direto de Cliente pelo Vendedor */}
+      {/* Modal para Cadastro / Edição Direta de Cliente pelo Vendedor */}
       <CreateCustomerModal
         open={isCreateCustomerModalOpen}
-        onOpenChange={setIsCreateCustomerModalOpen}
+        onOpenChange={(open) => {
+          setIsCreateCustomerModalOpen(open)
+          if (!open) {
+            setCustomerToEdit(null)
+          }
+        }}
+        customerToEdit={customerToEdit}
         onCustomerCreated={() => {
           loadData()
+        }}
+        onOpenSearch={() => {
+          setIsCreateCustomerModalOpen(false)
+          setIsCustomerSearchModalOpen(true)
+        }}
+      />
+
+      {/* Modal para Busca Inteligente de Clientes por Nome, CPF, CNPJ e Telefone */}
+      <CustomerSearchModal
+        open={isCustomerSearchModalOpen}
+        onOpenChange={setIsCustomerSearchModalOpen}
+        customers={customers}
+        onSelectCustomerToEdit={(customer) => {
+          setCustomerToEdit(customer)
+          setIsCustomerSearchModalOpen(false)
+          setIsCreateCustomerModalOpen(true)
+        }}
+        onOpenCreateNew={() => {
+          setCustomerToEdit(null)
+          setIsCustomerSearchModalOpen(false)
+          setIsCreateCustomerModalOpen(true)
         }}
       />
 

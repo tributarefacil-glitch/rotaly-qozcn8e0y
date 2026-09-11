@@ -68,37 +68,44 @@ export const deliveryService = {
   /**
    * Search customers by name, phone (phone, phone2, phone3) or document (CPF/CNPJ)
    */
+  /**
+   * Search customers by name, phone (phone, phone2, phone3) or document (CPF/CNPJ).
+   * Fetches the customer list and performs in-memory multi-field matching with normalized digits,
+   * guaranteeing robust results matching with or without masks.
+   */
   async searchCustomers(term: string): Promise<CustomerRecord[]> {
     const raw = term.trim()
-    if (!raw) return this.getCustomers()
+    const all = await this.getCustomers()
+    if (!raw) return all
+
+    const q = raw.toLowerCase()
     const digits = raw.replace(/\D/g, '')
 
-    const filters: string[] = [
-      `name ~ '${raw.replace(/'/g, "\\'")}'`,
-      `address ~ '${raw.replace(/'/g, "\\'")}'`,
-    ]
+    return all.filter((c) => {
+      // 1. Nome
+      if (c.name && c.name.toLowerCase().includes(q)) return true
 
-    if (raw) {
-      filters.push(`document ~ '${raw.replace(/'/g, "\\'")}'`)
-    }
+      // 2. Documento (CPF / CNPJ) - formatado ou dígitos limpos
+      if (c.document) {
+        if (c.document.toLowerCase().includes(q)) return true
+        if (digits && c.document.replace(/\D/g, '').includes(digits)) return true
+      }
 
-    if (digits.length >= 3) {
-      filters.push(`phone ~ '${digits}'`)
-      filters.push(`phone2 ~ '${digits}'`)
-      filters.push(`phone3 ~ '${digits}'`)
-      filters.push(`document ~ '${digits}'`)
-    }
+      // 3. Telefones (phone, phone2, phone3) - formatados ou dígitos limpos
+      const phones = [c.phone, c.phone2, c.phone3].filter(Boolean) as string[]
+      for (const p of phones) {
+        if (p.toLowerCase().includes(q)) return true
+        if (digits && p.replace(/\D/g, '').includes(digits)) return true
+      }
 
-    try {
-      return await pb.collection<CustomerRecord>('customers').getFullList({
-        filter: filters.join(' || '),
-        sort: 'name',
-        requestKey: null,
-      })
-    } catch (e) {
-      console.warn('searchCustomers error:', e)
-      return []
-    }
+      // 4. Endereço
+      if (c.address && c.address.toLowerCase().includes(q)) return true
+      if (c.street && c.street.toLowerCase().includes(q)) return true
+      if (c.neighborhood && c.neighborhood.toLowerCase().includes(q)) return true
+      if (c.city && c.city.toLowerCase().includes(q)) return true
+
+      return false
+    })
   },
 
   /**

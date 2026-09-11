@@ -124,7 +124,7 @@ const App = () => (
             path="/customers"
             element={
               <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                <SellerDashboard defaultTab="overview" />
+                <SellerDashboard defaultTab="customers" />
               </ProtectedRoute>
             }
           />
