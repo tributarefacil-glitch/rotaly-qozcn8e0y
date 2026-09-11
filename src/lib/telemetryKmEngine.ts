@@ -22,6 +22,12 @@
 
 import type { LocationRecord, OffRouteEventRecord, OrderRecord } from '@/types/delivery'
 
+/**
+ * Limiar de tolerância de afastamento da rota oficial em metros (600 metros).
+ * Utilizado para alertas de exceção da Torre de Controle e contagem de km de desvio/combustível.
+ */
+export const DEVIATION_THRESHOLD_METERS = 600
+
 export interface RealKmCalculationResult {
   /** KM Real rodado dentro da rota oficial (utilizado para reembolso e custo operacional oficial) */
   officialRealKm: number
@@ -359,14 +365,14 @@ export function calculateRealKmForOrder(params: {
     if (stepDist <= 0) continue
 
     // Verificar se o segmento está em desvio (>300m)
-    // Critério 1: Ponto está próximo de um evento de desvio (>300m) registrado nessa janela
+    // Critério 1: Ponto está próximo de um evento de desvio registrado nessa janela
     const isNearDeviationEvent = offRouteEventsList.some((devEv) => {
       const d1 = haversineDistanceMeters(p1.lat, p1.lng, devEv.lat, devEv.lng)
       const d2 = haversineDistanceMeters(p2.lat, p2.lng, devEv.lat, devEv.lng)
-      return d1 <= 400 || d2 <= 400
+      return d1 <= DEVIATION_THRESHOLD_METERS || d2 <= DEVIATION_THRESHOLD_METERS
     })
 
-    // Critério 2: Afastamento do corredor entre a base e o cliente > 400m
+    // Critério 2: Afastamento do corredor entre a base e o cliente > DEVIATION_THRESHOLD_METERS (600m)
     const distToCorridor1 = pointToSegmentDistanceMeters(
       p1.lat,
       p1.lng,
@@ -383,7 +389,8 @@ export function calculateRealKmForOrder(params: {
       endLat,
       endLng,
     )
-    const isFarFromCorridor = distToCorridor1 > 400 && distToCorridor2 > 400
+    const isFarFromCorridor =
+      distToCorridor1 > DEVIATION_THRESHOLD_METERS && distToCorridor2 > DEVIATION_THRESHOLD_METERS
 
     // Critério 3: O ponto de GPS ocorreu dentro de uma parada inesperada
     const isInsideUnexpectedStop = unexpectedStopsList.some((stopEv) => {

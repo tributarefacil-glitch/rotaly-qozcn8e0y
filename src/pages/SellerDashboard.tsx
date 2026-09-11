@@ -177,6 +177,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   const loadData = async () => {
     try {
+      const isSeller = user?.role === 'seller'
+      const ordersFilter = isSeller && user?.id ? `seller_id = '${user.id}'` : ''
+
       const [
         ordersData,
         custData,
@@ -187,7 +190,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         eventsData,
         fuelData,
       ] = await Promise.all([
-        deliveryService.getOrders(),
+        deliveryService.getOrders(ordersFilter),
         deliveryService.getCustomers(),
         deliveryService.getCouriers(),
         deliveryService.getLatestLocations(),
@@ -218,10 +221,15 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [user?.id, user?.role])
 
   // Realtime subscriptions for orders and courier locations
   useRealtime<OrderRecord>('orders', (e) => {
+    const isSeller = user?.role === 'seller'
+    if (isSeller && user?.id && e.record?.seller_id && e.record.seller_id !== user.id) {
+      return
+    }
+
     if (e.action === 'create') {
       setOrders((prev) => [e.record, ...prev])
       toast.info(`📦 Novo pedido criado: ${e.record.tracking_code}`)

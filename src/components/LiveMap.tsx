@@ -857,7 +857,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             </div>
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-4 rounded-full bg-[#EF4444]"></span>
-              <span className="font-medium text-rose-400">Linha Vermelha: Desvio &gt;150m</span>
+              <span className="font-medium text-rose-400">Linha Vermelha: Desvio &gt;600m</span>
             </div>
           </div>
         </div>

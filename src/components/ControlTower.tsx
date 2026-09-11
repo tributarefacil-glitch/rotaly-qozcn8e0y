@@ -83,7 +83,9 @@ import {
   type LatLngPoint,
   type OsrmRouteResult,
 } from '@/services/osrmRoutingService'
-import { playRouteAlertSound } from '@/lib/notificationSound'
+import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificationSound'
+import { DEVIATION_THRESHOLD_METERS } from '@/lib/telemetryKmEngine'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface ControlTowerProps {
   orders?: OrderRecord[]
@@ -157,9 +159,11 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   orders: initialOrders,
   couriers: initialCouriers,
   onRefresh,
-  userRole = 'seller',
+  userRole: propUserRole = 'seller',
 }) => {
   const { toast } = useToast()
+  const { user } = useAuth()
+  const userRole = user?.role || propUserRole
   const [orders, setOrders] = useState<OrderRecord[]>(initialOrders || [])
   const [couriers, setCouriers] = useState<UserRecord[]>(initialCouriers || [])
   const [locations, setLocations] = useState<LocationRecord[]>([])
@@ -188,6 +192,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const [polylineRef, setPolylineRef] = useState<any>(null)
   const googlePolylinesRef = useRef<any[]>([])
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
+
+  // Modo de exibição das abas do mapa: 'in_transit' (Em Rota) ou 'delivered' (Entregues)
+  const [mapDisplayMode, setMapDisplayMode] = useState<'in_transit' | 'delivered'>('in_transit')
+
+  // Set de controle para não disparar alerta sonoro/toast repetidamente para o mesmo evento de exceção
+  const notifiedEventsRef = useRef<Set<string>>(new Set())
   // Cache de rotas ativas viárias calculadas para a Torre
   const [activeRoutesData, setActiveRoutesData] = useState<
     Array<{
@@ -335,9 +345,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   // Fetch initial/refreshed data
   const fetchData = async () => {
     try {
+      const isSeller = user?.role === 'seller'
+      const ordersFilter = isSeller && user?.id ? `seller_id = '${user.id}'` : ''
+
       const [fetchedOrders, fetchedCouriers, fetchedLocations, fetchedDeviations] =
         await Promise.all([
-          deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
+          deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
           deliveryService.getCouriers(),
           deliveryService.getLatestLocations(),
           deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
@@ -360,7 +373,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       if (onRefresh) onRefresh()
     }, 10000)
     return () => clearInterval(interval)
-  }, [])
+  }, [user?.id, user?.role])
 
   // Sync with incoming props
   useEffect(() => {
@@ -402,6 +415,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       .subscribe('*', (e) => {
         if (!isSubscribed) return
         const rec = e.record as unknown as OrderRecord
+
+        // Filtro seller_id: descartar eventos de outros lojistas se o usuário for seller
+        const isSeller = user?.role === 'seller'
+        if (isSeller && user?.id && rec?.seller_id && rec.seller_id !== user.id) {
+          return
+        }
+
         if (e.action === 'create') {
           setOrders((prev) => [rec, ...prev])
           setLastUpdated(new Date())
@@ -477,7 +497,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         .unsubscribe('*')
         .catch(() => {})
     }
-  }, [])
+  }, [user?.id, user?.role])
 
   // Load Google Maps Script
   useEffect(() => {
@@ -681,21 +701,22 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const distToClientMeters = distanceMeters(courierPos, destination)
 
           // 1. DESVIO DE ROTA:
-          // Se o entregador está a mais de 150m da rota azul indicada pelo sistema, OU há evento off_route_events
+          // Se o entregador está a mais de DEVIATION_THRESHOLD_METERS (600m) da rota azul indicada pelo sistema, OU há evento off_route_events
           const hasDeviationEvent = recentDeviations.some(
             (dev) =>
               dev.courier_id === item.courier.id &&
               (dev.order_id === primaryOrder.id || !dev.order_id) &&
               dev.resolved !== true,
           )
-          const isDeviated = hasDeviationEvent || nearest.distanceMeters > 150
+          const isDeviated =
+            hasDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS
 
           // 2. PARADA FORA DO LOCAL:
-          // Velocidade baixa ou nula (<= 2 km/h) estando longe do cliente (> 150m) e longe da base (> 150m)
+          // Velocidade baixa ou nula (<= 2 km/h) estando longe do cliente (> DEVIATION_THRESHOLD_METERS) e longe da base (> DEVIATION_THRESHOLD_METERS)
           const distToBaseMeters = distanceMeters(courierPos, origin)
           const isStopped = typeof item.speed === 'number' && item.speed <= 2
-          const isFarFromClient = distToClientMeters > 150
-          const isFarFromBase = distToBaseMeters > 150
+          const isFarFromClient = distToClientMeters > DEVIATION_THRESHOLD_METERS
+          const isFarFromBase = distToBaseMeters > DEVIATION_THRESHOLD_METERS
           const isUnexpectedStop = isStopped && isFarFromClient && isFarFromBase
 
           // 3. PRAZO DE ENTREGA / ETA EM TEMPO REAL:
@@ -727,6 +748,68 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       const results = (await Promise.all(activePromises)).filter(Boolean) as any[]
       if (isCurrent) {
         setActiveRoutesData(results)
+
+        // 3. Alerta sonoro de exceção na Torre com deduplicação por Set:
+        // Ao detectar desvio (isDeviated) ou parada fora do local / atraso relevante (isUnexpectedStop ou ETA > 60 min em entrega in_transit)
+        const currentActiveEventKeys = new Set<string>()
+
+        results.forEach((r) => {
+          const courierId = r.courierId
+          const orderId = r.orderId
+          const courierName = r.courier?.name || r.courier?.email || 'Entregador'
+
+          // Caso de desvio
+          if (r.isDeviated) {
+            const devKey = `dev-${courierId}-${orderId}`
+            currentActiveEventKeys.add(devKey)
+            if (!notifiedEventsRef.current.has(devKey)) {
+              notifiedEventsRef.current.add(devKey)
+              playOffRouteWarningSound()
+              toast({
+                title: '⚠️ ALERTA DE EXCEÇÃO NA ROTA',
+                description: `Desvio de rota detectado: ${courierName} está a ${r.deviationMeters}m fora do trajeto oficial!`,
+                variant: 'destructive',
+              })
+            }
+          }
+
+          // Caso de parada fora do local
+          if (r.isUnexpectedStop) {
+            const stopKey = `stop-${courierId}`
+            currentActiveEventKeys.add(stopKey)
+            if (!notifiedEventsRef.current.has(stopKey)) {
+              notifiedEventsRef.current.add(stopKey)
+              playOffRouteWarningSound()
+              toast({
+                title: '⚠️ ALERTA DE EXCEÇÃO NA ROTA',
+                description: `Parada fora do local: ${courierName} parado longe do cliente e da base!`,
+                variant: 'destructive',
+              })
+            }
+          }
+
+          // Caso de atraso relevante (ETA > 60 min em entrega em trânsito)
+          if (r.etaMinutes > 60) {
+            const etaKey = `eta-${courierId}-${orderId}`
+            currentActiveEventKeys.add(etaKey)
+            if (!notifiedEventsRef.current.has(etaKey)) {
+              notifiedEventsRef.current.add(etaKey)
+              playOffRouteWarningSound()
+              toast({
+                title: '⚠️ ALERTA DE EXCEÇÃO NA ROTA',
+                description: `Atraso relevante: ${courierName} com previsão de entrega acima de ${r.etaMinutes} min!`,
+                variant: 'destructive',
+              })
+            }
+          }
+        })
+
+        // Remover do Set ocorrências que voltaram à rota ou foram concluídas
+        notifiedEventsRef.current.forEach((k) => {
+          if (!currentActiveEventKeys.has(k)) {
+            notifiedEventsRef.current.delete(k)
+          }
+        })
       }
     }
 
@@ -734,17 +817,49 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       computeActiveRoutes()
     } else {
       setActiveRoutesData([])
+      notifiedEventsRef.current.clear()
     }
 
     return () => {
       isCurrent = false
     }
-  }, [activeRouteCouriers, recentDeviations])
+  }, [activeRouteCouriers, recentDeviations, toast])
 
   // Marcadores formatados para o mapa vetorial e Google Maps
   const controlTowerMapMarkers = useMemo<MapMarkerItem[]>(() => {
     const list: MapMarkerItem[] = []
 
+    if (mapDisplayMode === 'delivered') {
+      // No modo 'delivered', mostra APENAS entregas concluídas com type: 'order_delivered' (pin verde #10B981)
+      todayOrders
+        .filter((o) => o.status === 'delivered')
+        .forEach((order) => {
+          const cust = order.expand?.customer_id
+          if (cust?.lat && cust?.lng) {
+            const courier = order.expand?.courier_id
+            const seqText = order.sequence ? `[#${order.sequence}] ` : ''
+            list.push({
+              id: `order-${order.id}`,
+              title: `${seqText}${cust.name || 'Cliente'} • ${order.tracking_code} (✓ Entregue)`,
+              subtitle: `${cust.address || 'Endereço'} • Concluído por ${courier?.name || 'Entregador'}`,
+              lat: cust.lat,
+              lng: cust.lng,
+              type: 'order_delivered',
+              tracking_code: order.tracking_code,
+              customer_name: cust.name,
+              customer_address: cust.address,
+              total_price: Number(order.total_price || 0),
+              estimated_arrival: order.estimated_arrival,
+              courier_name: courier?.name,
+              delivery_sequence: order.sequence,
+            })
+          }
+        })
+
+      return list
+    }
+
+    // Modo 'in_transit': mostra entregadores ativos + pedidos in_transit/pending (pin laranja com nome e sequência)
     // 1. Entregadores em rota ativa (marcador azul com ícone de veículo)
     activeRouteCouriers.forEach((item) => {
       const courierName = item.courier.name || item.courier.email
@@ -801,7 +916,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       })
 
     return list
-  }, [activeRouteCouriers, todayOrders, activeRoutesData])
+  }, [mapDisplayMode, activeRouteCouriers, todayOrders, activeRoutesData])
 
   // Filtered orders for Kanban
   const filteredOrders = useMemo(() => {
@@ -933,77 +1048,79 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     googlePolylinesRef.current.forEach((p) => p.setMap(null))
     googlePolylinesRef.current = []
 
-    // 1. DESENHAR ROTAS REAIS VIÁRIAS NO GOOGLE MAPS NATIVO (LINHA AZUL DO SISTEMA)
-    activeRoutesData.forEach((routeData) => {
-      if (routeData.points && routeData.points.length >= 2) {
-        // LINHA AZUL VIÁRIA: Trajeto indicado pelo sistema
-        const mainPolyline = new win.google.maps.Polyline({
-          path: routeData.points.map((p) => ({ lat: p.lat, lng: p.lng })),
-          geodesic: true,
-          strokeColor: '#2563EB',
-          strokeOpacity: 0.95,
-          strokeWeight: 5,
-          map,
-        })
-        googlePolylinesRef.current.push(mainPolyline)
+    // No modo 'delivered', não desenhamos as linhas viárias ativas nem linhas de desvio
+    if (mapDisplayMode !== 'delivered') {
+      // 1. DESENHAR ROTAS REAIS VIÁRIAS NO GOOGLE MAPS NATIVO (LINHA AZUL DO SISTEMA)
+      activeRoutesData.forEach((routeData) => {
+        if (routeData.points && routeData.points.length >= 2) {
+          // LINHA AZUL VIÁRIA: Trajeto indicado pelo sistema
+          const mainPolyline = new win.google.maps.Polyline({
+            path: routeData.points.map((p) => ({ lat: p.lat, lng: p.lng })),
+            geodesic: true,
+            strokeColor: '#2563EB',
+            strokeOpacity: 0.95,
+            strokeWeight: 5,
+            map,
+          })
+          googlePolylinesRef.current.push(mainPolyline)
 
-        // Traço interno suave para efeito visual e destaque do percurso
-        const innerPolyline = new win.google.maps.Polyline({
-          path: routeData.points.map((p) => ({ lat: p.lat, lng: p.lng })),
-          geodesic: true,
-          strokeColor: '#93C5FD',
-          strokeOpacity: 0.85,
-          strokeWeight: 2,
-          map,
-        })
-        googlePolylinesRef.current.push(innerPolyline)
-
-        routeData.points.forEach((p) => bounds.extend(p))
-        hasCoords = true
-      }
-
-      // 2. DESVIO DE ROTA NO GOOGLE MAPS NATIVO: LINHA VERMELHA TRACEJADA
-      if (routeData.isDeviated && routeData.nearestPointOnRoute) {
-        const deviationPolyline = new win.google.maps.Polyline({
-          path: [
-            { lat: routeData.courierPos.lat, lng: routeData.courierPos.lng },
-            { lat: routeData.nearestPointOnRoute.lat, lng: routeData.nearestPointOnRoute.lng },
-          ],
-          geodesic: true,
-          strokeColor: '#EF4444',
-          strokeOpacity: 1.0,
-          strokeWeight: 4,
-          icons: [
-            {
-              icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-              offset: '0',
-              repeat: '10px',
-            },
-          ],
-          map,
-        })
-        googlePolylinesRef.current.push(deviationPolyline)
-      }
-
-      // Base Marker se presente
-      if (routeData.basePos) {
-        const baseMarker = new win.google.maps.Marker({
-          position: routeData.basePos,
-          map,
-          title: `🟢 Base de Partida (${routeData.courier.name})`,
-          icon: {
-            path: win.google.maps.SymbolPath.CIRCLE,
-            scale: 7,
-            fillColor: '#10B981',
-            fillOpacity: 1,
+          // Traço interno suave para efeito visual e destaque do percurso
+          const innerPolyline = new win.google.maps.Polyline({
+            path: routeData.points.map((p) => ({ lat: p.lat, lng: p.lng })),
+            geodesic: true,
+            strokeColor: '#93C5FD',
+            strokeOpacity: 0.85,
             strokeWeight: 2,
-            strokeColor: '#FFFFFF',
-          },
-        })
-        newMarkers.push(baseMarker)
-      }
-    })
+            map,
+          })
+          googlePolylinesRef.current.push(innerPolyline)
 
+          routeData.points.forEach((p) => bounds.extend(p))
+          hasCoords = true
+        }
+
+        // 2. DESVIO DE ROTA NO GOOGLE MAPS NATIVO: LINHA VERMELHA TRACEJADA
+        if (routeData.isDeviated && routeData.nearestPointOnRoute) {
+          const deviationPolyline = new win.google.maps.Polyline({
+            path: [
+              { lat: routeData.courierPos.lat, lng: routeData.courierPos.lng },
+              { lat: routeData.nearestPointOnRoute.lat, lng: routeData.nearestPointOnRoute.lng },
+            ],
+            geodesic: true,
+            strokeColor: '#EF4444',
+            strokeOpacity: 1.0,
+            strokeWeight: 4,
+            icons: [
+              {
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                offset: '0',
+                repeat: '10px',
+              },
+            ],
+            map,
+          })
+          googlePolylinesRef.current.push(deviationPolyline)
+        }
+
+        // Base Marker se presente
+        if (routeData.basePos) {
+          const baseMarker = new win.google.maps.Marker({
+            position: routeData.basePos,
+            map,
+            title: `🟢 Base de Partida (${routeData.courier.name})`,
+            icon: {
+              path: win.google.maps.SymbolPath.CIRCLE,
+              scale: 7,
+              fillColor: '#10B981',
+              fillOpacity: 1,
+              strokeWeight: 2,
+              strokeColor: '#FFFFFF',
+            },
+          })
+          newMarkers.push(baseMarker)
+        }
+      })
+    }
     // Helpers de ícones SVG reaproveitados de LiveMap.tsx com adaptação para win.google.maps
     const makeNativeCourierSvg = (vehicle?: string, pinColor = '#0052CC') => {
       const generated = makeCourierSvgIcon(vehicle, pinColor, 46)
@@ -1023,72 +1140,120 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       }
     }
 
-    // Pins: Entregadores com rota iniciada
-    activeRouteCouriers.forEach((item) => {
-      const position = { lat: item.lat, lng: item.lng }
-      bounds.extend(position)
-      hasCoords = true
+    if (mapDisplayMode === 'delivered') {
+      // Pins: Apenas entregas concluídas ('order_delivered') com pin verde
+      todayOrders
+        .filter((o) => o.status === 'delivered')
+        .forEach((order) => {
+          const cust = order.expand?.customer_id
+          if (cust?.lat && cust?.lng) {
+            const destPos = { lat: cust.lat, lng: cust.lng }
+            bounds.extend(destPos)
+            hasCoords = true
 
-      const routeInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
-      const isDeviated = routeInfo?.isDeviated ?? false
-      const isStoppedOut = routeInfo?.isUnexpectedStop ?? false
+            const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
+            const destMarker = new win.google.maps.Marker({
+              position: destPos,
+              map,
+              title: `✓ ${seqText}Entregue: ${cust.name || 'Cliente'} (${order.tracking_code})`,
+              // pin verde #10B981 gerado via makeCustomerSvgIcon com deliveryStatus === 'delivered'
+              icon: (() => {
+                const generated = makeCustomerSvgIcon(
+                  cust.name,
+                  order.sequence,
+                  false,
+                  110,
+                  48,
+                  'delivered',
+                )
+                return {
+                  url: generated.url,
+                  scaledSize: new win.google.maps.Size(110, 48),
+                  anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
+                }
+              })(),
+            })
 
-      // Cor do marcador do entregador: se tiver desvio ou parada indevida, destaque
-      const pinColor =
-        isDeviated || item.statusColor === 'red' ? '#EF4444' : isStoppedOut ? '#F59E0B' : '#0052CC'
+            destMarker.addListener('click', () => {
+              handleOpenOrderDetails(order)
+            })
 
-      const statusTag = isDeviated
-        ? `⚠️ [DESVIO DETECTADO: ${routeInfo?.deviationMeters || 0}m]`
-        : isStoppedOut
-          ? '⛔ [PARADA FORA DO LOCAL]'
-          : '[Em Rota]'
+            newMarkers.push(destMarker)
+          }
+        })
+    } else {
+      // Modo 'in_transit': Entregadores ativos + destinos em trânsito/pendentes
+      // Pins: Entregadores com rota iniciada
+      activeRouteCouriers.forEach((item) => {
+        const position = { lat: item.lat, lng: item.lng }
+        bounds.extend(position)
+        hasCoords = true
 
-      const vehicleLabel = getVehicleLabel(item.vehicle)
-      const vehicleEmoji = getVehicleEmoji(item.vehicle)
+        const routeInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
+        const isDeviated = routeInfo?.isDeviated ?? false
+        const isStoppedOut = routeInfo?.isUnexpectedStop ?? false
 
-      const courierMarker = new win.google.maps.Marker({
-        position,
-        map,
-        title: `${vehicleEmoji} ${statusTag} ${item.courier.name || item.courier.email} (${vehicleLabel})`,
-        icon: makeNativeCourierSvg(item.vehicle, pinColor),
+        // Cor do marcador do entregador: se tiver desvio ou parada indevida, destaque
+        const pinColor =
+          isDeviated || item.statusColor === 'red'
+            ? '#EF4444'
+            : isStoppedOut
+              ? '#F59E0B'
+              : '#0052CC'
+
+        const statusTag = isDeviated
+          ? `⚠️ [DESVIO DETECTADO: ${routeInfo?.deviationMeters || 0}m]`
+          : isStoppedOut
+            ? '⛔ [PARADA FORA DO LOCAL]'
+            : '[Em Rota]'
+
+        const vehicleLabel = getVehicleLabel(item.vehicle)
+        const vehicleEmoji = getVehicleEmoji(item.vehicle)
+
+        const courierMarker = new win.google.maps.Marker({
+          position,
+          map,
+          title: `${vehicleEmoji} ${statusTag} ${item.courier.name || item.courier.email} (${vehicleLabel})`,
+          icon: makeNativeCourierSvg(item.vehicle, pinColor),
+        })
+
+        courierMarker.addListener('click', () => {
+          setSelectedCourier(item.courier)
+        })
+
+        newMarkers.push(courierMarker)
       })
 
-      courierMarker.addListener('click', () => {
-        setSelectedCourier(item.courier)
-      })
+      // Pins: Destinos das entregas em trânsito e pendentes
+      todayOrders
+        .filter((o) => o.status === 'in_transit' || o.status === 'pending')
+        .forEach((order) => {
+          const cust = order.expand?.customer_id
+          if (cust?.lat && cust?.lng) {
+            const destPos = { lat: cust.lat, lng: cust.lng }
+            bounds.extend(destPos)
+            hasCoords = true
 
-      newMarkers.push(courierMarker)
-    })
+            const isTransit = order.status === 'in_transit'
+            const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
+            const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
+            const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
 
-    // Pins: Destinos das entregas em trânsito e pendentes
-    todayOrders
-      .filter((o) => o.status === 'in_transit' || o.status === 'pending')
-      .forEach((order) => {
-        const cust = order.expand?.customer_id
-        if (cust?.lat && cust?.lng) {
-          const destPos = { lat: cust.lat, lng: cust.lng }
-          bounds.extend(destPos)
-          hasCoords = true
+            const destMarker = new win.google.maps.Marker({
+              position: destPos,
+              map,
+              title: `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`,
+              icon: makeNativeCustomerSvg(cust.name, order.sequence, isTransit),
+            })
 
-          const isTransit = order.status === 'in_transit'
-          const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
-          const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
-          const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
+            destMarker.addListener('click', () => {
+              handleOpenOrderDetails(order)
+            })
 
-          const destMarker = new win.google.maps.Marker({
-            position: destPos,
-            map,
-            title: `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`,
-            icon: makeNativeCustomerSvg(cust.name, order.sequence, isTransit),
-          })
-
-          destMarker.addListener('click', () => {
-            handleOpenOrderDetails(order)
-          })
-
-          newMarkers.push(destMarker)
-        }
-      })
+            newMarkers.push(destMarker)
+          }
+        })
+    }
 
     setMarkersRef(newMarkers)
 
@@ -1099,7 +1264,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         win.google.maps.event.removeListener(listener)
       })
     }
-  }, [mapsLoaded, activeRouteCouriers, todayOrders, activeRoutesData])
+  }, [mapsLoaded, activeRouteCouriers, todayOrders, activeRoutesData, mapDisplayMode])
 
   // Open Drawer for Order
   const handleOpenOrderDetails = (order: OrderRecord) => {
@@ -1435,7 +1600,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       const courierPoint: LatLngPoint = { lat: courierData.lat, lng: courierData.lng }
       const nearest = findNearestPointOnRoute(courierPoint, blueLinePoints)
 
-      // Verificar desvio registrado pelo sistema (coleção off_route_events ou distância > 150m)
+      // Verificar desvio registrado pelo sistema (coleção off_route_events ou distância > DEVIATION_THRESHOLD_METERS)
       const hasSystemDeviationEvent = recentDeviations.some(
         (dev) =>
           dev.courier_id === courierData.courier.id &&
@@ -1443,7 +1608,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           dev.resolved !== true,
       )
 
-      const isOffRoute = hasSystemDeviationEvent || nearest.distanceMeters > 150
+      const isOffRoute =
+        hasSystemDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS
       setDrawerDeviationInfo({ isDeviated: isOffRoute, meters: Math.round(nearest.distanceMeters) })
 
       // Detectar parada fora do local
@@ -1452,7 +1618,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           ? distanceMeters(courierPoint, { lat: cust.lat, lng: cust.lng })
           : 999
       const isSpeedZero = typeof courierData.speed === 'number' && courierData.speed <= 2
-      setDrawerUnexpectedStop(isSpeedZero && distToCust > 150)
+      setDrawerUnexpectedStop(isSpeedZero && distToCust > DEVIATION_THRESHOLD_METERS)
 
       if (isOffRoute) {
         // LINHA VERMELHA do desvio: liga a posição atual do entregador ao ponto correspondente na rota azul
@@ -2014,76 +2180,149 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               {mapsLoaded && !mapsError ? (
                 <>
                   <div ref={mapContainerRef} className="w-full h-full" />
+
+                  {/* Abas sobre o mapa no canto superior direito */}
+                  <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-[#0A1128]/90 backdrop-blur-md p-1 rounded-xl border border-[#1E2B58] shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => setMapDisplayMode('in_transit')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        mapDisplayMode === 'in_transit'
+                          ? 'bg-blue-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <span>🛵 Em Rota ({activeRouteCouriers.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMapDisplayMode('delivered')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        mapDisplayMode === 'delivered'
+                          ? 'bg-emerald-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <span>✓ Entregues ({metrics.delivered})</span>
+                    </button>
+                  </div>
+
                   {/* Painel de status no canto superior esquerdo do Google Maps */}
                   <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5">
                     <div className="bg-[#0A1128]/95 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
                       <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
                       <span className="font-semibold text-white">
-                        {activeRouteCouriers.length} entregadores com rota iniciada
+                        {mapDisplayMode === 'delivered'
+                          ? `${metrics.delivered} entregas concluídas`
+                          : `${activeRouteCouriers.length} entregadores com rota iniciada`}
                       </span>
                     </div>
 
-                    {/* Alertas ativos na Torre: Desvios ou Paradas detectadas */}
-                    {activeRoutesData.some((r) => r.isDeviated) && (
-                      <div className="bg-rose-950/90 backdrop-blur-sm px-2.5 py-1 rounded-xl border border-rose-500/60 shadow-md text-[11px] font-bold text-rose-300 flex items-center gap-1.5 animate-pulse">
-                        <AlertOctagon className="h-3.5 w-3.5 text-rose-400" />
-                        <span>
-                          {activeRoutesData.filter((r) => r.isDeviated).length} desvio(s) de rota no
-                          mapa
-                        </span>
-                      </div>
-                    )}
+                    {/* Alertas ativos na Torre: Desvios ou Paradas detectadas (apenas em modo in_transit) */}
+                    {mapDisplayMode === 'in_transit' &&
+                      activeRoutesData.some((r) => r.isDeviated) && (
+                        <div className="bg-rose-950/90 backdrop-blur-sm px-2.5 py-1 rounded-xl border border-rose-500/60 shadow-md text-[11px] font-bold text-rose-300 flex items-center gap-1.5 animate-pulse">
+                          <AlertOctagon className="h-3.5 w-3.5 text-rose-400" />
+                          <span>
+                            {activeRoutesData.filter((r) => r.isDeviated).length} desvio(s) de rota
+                            no mapa
+                          </span>
+                        </div>
+                      )}
 
-                    {activeRoutesData.some((r) => r.isUnexpectedStop) && (
-                      <div className="bg-amber-950/90 backdrop-blur-sm px-2.5 py-1 rounded-xl border border-amber-500/60 shadow-md text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-                        <span>
-                          {activeRoutesData.filter((r) => r.isUnexpectedStop).length} parada(s) fora
-                          do local
-                        </span>
-                      </div>
-                    )}
+                    {mapDisplayMode === 'in_transit' &&
+                      activeRoutesData.some((r) => r.isUnexpectedStop) && (
+                        <div className="bg-amber-950/90 backdrop-blur-sm px-2.5 py-1 rounded-xl border border-amber-500/60 shadow-md text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                          <span>
+                            {activeRoutesData.filter((r) => r.isUnexpectedStop).length} parada(s)
+                            fora do local
+                          </span>
+                        </div>
+                      )}
                   </div>
 
                   {/* Legenda explicativa no rodapé do Google Maps nativo */}
                   <div className="absolute bottom-3 left-3 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-3 py-2 rounded-xl border border-[#1E2B58] shadow-xl text-[11px] text-slate-200 flex flex-wrap items-center gap-3 font-sans">
-                    <span className="flex items-center gap-1.5 font-medium">
-                      <span className="h-2 w-4 rounded-full bg-blue-600 inline-block shadow-sm" />
-                      <span className="text-blue-300 font-bold">Linha Azul:</span> Rota Real
-                      Indicada
-                    </span>
-                    <span className="flex items-center gap-1.5 font-medium">
-                      <span className="h-2 w-4 rounded-full bg-rose-500 inline-block shadow-sm" />
-                      <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio
-                      &gt;150m
-                    </span>
-                    <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
-                      <span className="text-xs">🛵 🚗 🚛 🚲</span>
-                      <span className="font-medium text-slate-300">Veículo (Entregador)</span>
-                    </span>
-                    <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
-                      <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-bold text-white">
-                        1
-                      </span>
-                      <span className="font-medium text-slate-300">
-                        Ordem de Entrega &amp; Nome Visível
-                      </span>
-                    </span>
+                    {mapDisplayMode === 'delivered' ? (
+                      <>
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <span className="h-2.5 w-2.5 rounded-full bg-[#10B981] inline-block shadow-sm" />
+                          <span className="text-emerald-400 font-bold">Ponto Verde:</span> Entrega
+                          Concluída (#10B981)
+                        </span>
+                        <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
+                          <span className="font-mono text-emerald-300 font-bold">
+                            Total: {metrics.delivered} concluídas
+                          </span>
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <span className="h-2 w-4 rounded-full bg-blue-600 inline-block shadow-sm" />
+                          <span className="text-blue-300 font-bold">Linha Azul:</span> Rota Real
+                          Indicada
+                        </span>
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <span className="h-2 w-4 rounded-full bg-rose-500 inline-block shadow-sm" />
+                          <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio
+                          &gt;600m
+                        </span>
+                        <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
+                          <span className="text-xs">🛵 🚗 🚛 🚲</span>
+                          <span className="font-medium text-slate-300">Veículo (Entregador)</span>
+                        </span>
+                        <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
+                          <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-bold text-white">
+                            1
+                          </span>
+                          <span className="font-medium text-slate-300">
+                            Ordem de Entrega &amp; Nome Visível
+                          </span>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </>
               ) : (
                 <div className="relative w-full h-full flex flex-col">
-                  {/* Badge de cabeçalho do mapa de contingência com botão de Retry */}
-                  <div className="absolute top-3 right-3 z-30 flex items-center gap-2">
+                  {/* Abas sobre o mapa e botão Retry no canto superior direito do mapa vetorial */}
+                  <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-[#0A1128]/90 backdrop-blur-md p-1 rounded-xl border border-[#1E2B58] shadow-lg">
+                      <button
+                        type="button"
+                        onClick={() => setMapDisplayMode('in_transit')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                          mapDisplayMode === 'in_transit'
+                            ? 'bg-blue-600 text-white shadow'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <span>🛵 Em Rota ({activeRouteCouriers.length})</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMapDisplayMode('delivered')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                          mapDisplayMode === 'delivered'
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <span>✓ Entregues ({metrics.delivered})</span>
+                      </button>
+                    </div>
+
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={handleRetryMaps}
-                      className="h-7 px-2.5 text-xs bg-slate-900/90 text-slate-200 border-slate-700 hover:bg-slate-800 hover:text-white rounded-lg shadow-md gap-1.5 backdrop-blur"
+                      className="h-8 px-2.5 text-xs bg-slate-900/90 text-slate-200 border-slate-700 hover:bg-slate-800 hover:text-white rounded-lg shadow-md gap-1.5 backdrop-blur"
                       title="Tentar carregar Google Maps novamente"
                     >
                       <RefreshCw className="h-3 w-3" />
-                      <span>Tentar Google Maps</span>
+                      <span className="hidden sm:inline">Tentar Google Maps</span>
                     </Button>
                   </div>
 
@@ -2097,16 +2336,17 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     }
                     zoom={13}
                     height="100%"
-                    routeLines={(() => {
-                      // Construir rotas ativas dos entregadores com as coordenadas viárias já computadas
-                      return activeRoutesData.map((routeData) => ({
-                        origin: routeData.points[0] || routeData.courierPos,
-                        destination: routeData.custPos,
-                        courierPosition: routeData.courierPos,
-                        streetCoordinates: routeData.points,
-                        isDeviated: routeData.isDeviated,
-                      }))
-                    })()}
+                    routeLines={
+                      mapDisplayMode === 'delivered'
+                        ? []
+                        : activeRoutesData.map((routeData) => ({
+                            origin: routeData.points[0] || routeData.courierPos,
+                            destination: routeData.custPos,
+                            courierPosition: routeData.courierPos,
+                            streetCoordinates: routeData.points,
+                            isDeviated: routeData.isDeviated,
+                          }))
+                    }
                     onSelectMarker={(m) => {
                       if (m.type === 'courier') {
                         const courierId = m.id.replace('courier-', '')
@@ -2118,6 +2358,24 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                         if (targetOrder) handleOpenOrderDetails(targetOrder)
                       }
                     }}
+                    customLegend={
+                      mapDisplayMode === 'delivered' ? (
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-200">
+                          <div className="flex items-center gap-1.5">
+                            <span className="h-2.5 w-2.5 rounded-full bg-[#10B981] inline-block shadow-sm"></span>
+                            <span className="font-semibold text-emerald-400">
+                              Ponto Verde: Entrega Concluída (#10B981)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 border-l border-slate-700 pl-2.5 text-slate-400">
+                            <span>Total de entregas finalizadas:</span>
+                            <span className="font-mono text-emerald-300 font-bold">
+                              {metrics.delivered}
+                            </span>
+                          </div>
+                        </div>
+                      ) : undefined
+                    }
                   />
                 </div>
               )}
@@ -2754,7 +3012,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                           })
                           .join(' ')
 
-                        // Identificar se o entregador está em desvio (coleção off_route_events ou distância > 150m)
+                        // Identificar se o entregador está em desvio (coleção off_route_events ou distância > DEVIATION_THRESHOLD_METERS)
                         const courierPoint: LatLngPoint = { lat: courierLat, lng: courierLng }
                         const nearest = findNearestPointOnRoute(courierPoint, routeCoords)
                         const hasDeviationFlag = recentDeviations.some(
@@ -2765,7 +3023,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                         )
                         const isDeviated =
                           orderCourierInfo?.hasRouteStarted &&
-                          (hasDeviationFlag || nearest.distanceMeters > 150)
+                          (hasDeviationFlag || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
 
                         const courierPos = toCanvas(courierLat, courierLng)
                         const nearestPos = toCanvas(
