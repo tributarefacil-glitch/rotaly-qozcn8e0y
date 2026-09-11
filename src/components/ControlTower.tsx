@@ -210,6 +210,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       courierId: string
       orderId: string
       points: LatLngPoint[]
+      forwardPoints?: LatLngPoint[]
+      returnPoints?: LatLngPoint[]
       courierPos: LatLngPoint
       custPos: LatLngPoint
       basePos?: LatLngPoint
@@ -787,10 +789,14 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     const computeActiveRoutes = async () => {
       const activePromises = activeRouteCouriers.map(async (item) => {
         // Obter todos os pedidos ativos da rota iniciada ordenados por sequência
+        // ITEM 1: Manter ativo quando houver pedido com route_started === true e route_finished !== true,
+        // MESMO que todos estejam status === 'delivered' (retornando à base)
         const activeRouteOrders = item.allAssignedOrders
           .filter(
             (o) =>
-              (o.status === 'in_transit' || o.status === 'pending') && o.route_started === true,
+              o.route_started === true &&
+              o.route_finished !== true &&
+              (o.status === 'in_transit' || o.status === 'pending' || o.status === 'delivered'),
           )
           .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
 
@@ -798,7 +804,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
         // O primeiro pedido ativo define a base e o alvo primário de telemetria
         const primaryOrder =
-          activeRouteOrders.find((o) => o.status === 'in_transit') || activeRouteOrders[0]
+          activeRouteOrders.find((o) => o.status === 'in_transit') ||
+          activeRouteOrders.find((o) => o.status === 'pending') ||
+          activeRouteOrders[0]
 
         const baseLat = primaryOrder.start_base_lat ? Number(primaryOrder.start_base_lat) : item.lat
         const baseLng = primaryOrder.start_base_lng ? Number(primaryOrder.start_base_lng) : item.lng
@@ -832,35 +840,52 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         if (stops.length === 0 && !returnBasePos) return null
 
         try {
-          // Traçar trajeto viário completo sequencial:
-          // base → cliente 1 → cliente 2 ... → base de retorno (ciclo fechado)
-          const allWaypoints: LatLngPoint[] = [origin, ...stops, returnBasePos]
-          const routeSegments: LatLngPoint[] = []
+          // Traçar trajeto viário:
+          // Perna de ida + paradas: origin → cliente 1 → cliente 2 ... → último cliente
+          // Perna de retorno (separada): último cliente (ou origin se não houver paradas) → base de retorno
+          const forwardWaypoints: LatLngPoint[] = stops.length > 0 ? [origin, ...stops] : [origin]
+          const forwardSegments: LatLngPoint[] = []
           let prevPoint = origin
 
-          for (let sIdx = 1; sIdx < allWaypoints.length; sIdx++) {
-            const targetPoint = allWaypoints[sIdx]
+          for (let sIdx = 1; sIdx < forwardWaypoints.length; sIdx++) {
+            const targetPoint = forwardWaypoints[sIdx]
             try {
               const segRes = await fetchStreetRoute(prevPoint, targetPoint)
               if (segRes.coordinates.length >= 2) {
-                if (routeSegments.length > 0) {
+                if (forwardSegments.length > 0) {
                   // Evitar duplicar o ponto de junção
-                  routeSegments.push(...segRes.coordinates.slice(1))
+                  forwardSegments.push(...segRes.coordinates.slice(1))
                 } else {
-                  routeSegments.push(...segRes.coordinates)
+                  forwardSegments.push(...segRes.coordinates)
                 }
               } else {
-                if (routeSegments.length === 0) routeSegments.push(prevPoint)
-                routeSegments.push(targetPoint)
+                if (forwardSegments.length === 0) forwardSegments.push(prevPoint)
+                forwardSegments.push(targetPoint)
               }
             } catch {
-              if (routeSegments.length === 0) routeSegments.push(prevPoint)
-              routeSegments.push(targetPoint)
+              if (forwardSegments.length === 0) forwardSegments.push(prevPoint)
+              forwardSegments.push(targetPoint)
             }
             prevPoint = targetPoint
           }
 
-          const points = routeSegments.length >= 2 ? routeSegments : allWaypoints
+          const forwardPoints = forwardSegments.length >= 2 ? forwardSegments : forwardWaypoints
+
+          // Perna de retorno à base dedicada
+          const lastDeliveryPoint = stops.length > 0 ? stops[stops.length - 1] : origin
+          let returnPoints: LatLngPoint[] = [lastDeliveryPoint, returnBasePos]
+          try {
+            const retRes = await fetchStreetRoute(lastDeliveryPoint, returnBasePos)
+            if (retRes.coordinates.length >= 2) {
+              returnPoints = retRes.coordinates
+            }
+          } catch {
+            returnPoints = [lastDeliveryPoint, returnBasePos]
+          }
+
+          // Segway completo para projeção e desvio
+          const allWaypoints: LatLngPoint[] = [origin, ...stops, returnBasePos]
+          const points = [...forwardPoints, ...returnPoints.slice(1)]
 
           // Cálculo da projeção do entregador sobre a linha azul oficial
           const nearest = findNearestPointOnRoute(courierPos, points)
@@ -900,7 +925,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             hasActiveRouteStarted && isStopped && isFarFromClient && isFarFromBase
 
           // 3. PRAZO DE ENTREGA (ETA DO PRÓXIMO CLIENTE) & PREVISÃO DE VOLTA À BASE
-          const speedMps = 25 * (1000 / 3600) // ~6.94 m/s (25 km/h média em trânsito urbano)
+          // Usar velocidade real do GPS (km/h) convertida para m/s; fallback 25 km/h se <= 5 km/h
+          const effectiveSpeedKmh =
+            typeof item.speed === 'number' && item.speed > 5 ? item.speed : 25
+          const speedMps = effectiveSpeedKmh * (1000 / 3600)
           const remainingDistNextClient = distanceMeters(courierPos, nextTargetPos)
           const etaMinutesNextClient = Math.max(
             1,
@@ -938,6 +966,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             courierId: item.courier.id,
             orderId: primaryOrder.id,
             points,
+            forwardPoints,
+            returnPoints,
             courierPos,
             custPos: nextTargetPos,
             basePos: primaryOrder.start_base_lat ? origin : undefined,
@@ -1084,10 +1114,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           ? ' • ⛔ PARADA FORA DO LOCAL'
           : ''
       const emoji = getVehicleEmoji(item.vehicle)
+      const stateSuffix =
+        item.statusLabel === 'Retornando à Base' ? ' (Retornando à Base)' : ' (Em Rota)'
 
       list.push({
         id: `courier-${item.courier.id}`,
-        title: `${emoji} ${courierName} (Em Rota)${warningSuffix}`,
+        title: `${emoji} ${courierName}${stateSuffix}${warningSuffix}`,
         subtitle: `${formatVehicle(item.vehicle)}${plate} • ${item.inTransitCount} em rota`,
         lat: item.lat,
         lng: item.lng,
@@ -1105,8 +1137,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         battery_level: item.battery_level,
         location_timestamp: item.location_timestamp,
       })
-    })
-    // 2. Destinos de entregas em trânsito e pendentes (marcador laranja com nome e número de sequência)
+    }) // 2. Destinos de entregas em trânsito e pendentes (marcador laranja com nome e número de sequência)
     todayOrders
       .filter((o) => o.status === 'in_transit' || o.status === 'pending')
       .forEach((order) => {
@@ -1238,12 +1269,14 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
     // No modo 'delivered', não desenhamos as linhas viárias ativas nem linhas de desvio
     if (mapDisplayMode !== 'delivered') {
-      // 1. DESENHAR ROTAS REAIS VIÁRIAS NO GOOGLE MAPS NATIVO (LINHA AZUL DO SISTEMA)
+      // 1. DESENHAR ROTAS REAIS VIÁRIAS NO GOOGLE MAPS NATIVO:
+      // Perna de ida/entregas em azul (#2563EB) e Perna de retorno à base em azul claro tracejado (#60A5FA)
       activeRoutesData.forEach((routeData) => {
-        if (routeData.points && routeData.points.length >= 2) {
-          // LINHA AZUL VIÁRIA: Trajeto indicado pelo sistema
+        const fPoints = routeData.forwardPoints || routeData.points
+        if (fPoints && fPoints.length >= 2) {
+          // LINHA AZUL VIÁRIA: Trajeto de ida e paradas
           const mainPolyline = new win.google.maps.Polyline({
-            path: routeData.points.map((p) => ({ lat: p.lat, lng: p.lng })),
+            path: fPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })),
             geodesic: true,
             strokeColor: '#2563EB',
             strokeOpacity: 0.95,
@@ -1254,7 +1287,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
           // Traço interno suave para efeito visual e destaque do percurso
           const innerPolyline = new win.google.maps.Polyline({
-            path: routeData.points.map((p) => ({ lat: p.lat, lng: p.lng })),
+            path: fPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })),
             geodesic: true,
             strokeColor: '#93C5FD',
             strokeOpacity: 0.85,
@@ -1263,8 +1296,29 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           })
           googlePolylinesRef.current.push(innerPolyline)
 
-          routeData.points.forEach((p) => bounds.extend(p))
+          fPoints.forEach((p: any) => bounds.extend(p))
           hasCoords = true
+        }
+
+        // Perna de retorno à base (último cliente → base de retorno): #60A5FA tracejado
+        const retPoints = routeData.returnPoints
+        if (retPoints && retPoints.length >= 2) {
+          const returnPolyline = new win.google.maps.Polyline({
+            path: retPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })),
+            geodesic: true,
+            strokeColor: '#60A5FA',
+            strokeOpacity: 0,
+            strokeWeight: 4,
+            icons: [
+              {
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
+                repeat: '8px',
+              },
+            ],
+            map,
+          })
+          googlePolylinesRef.current.push(returnPolyline)
+          retPoints.forEach((p: any) => bounds.extend(p))
         }
 
         // 2. DESVIO DE ROTA NO GOOGLE MAPS NATIVO: LINHA VERMELHA TRACEJADA
@@ -1587,16 +1641,15 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             routeInfo?.etaNextDeliveryTime || routeInfo?.etaReturnBaseTime
               ? `
             <div style="background-color: #f0fdf4; border-radius: 6px; padding: 5px 7px; margin-top: 4px; border: 1px solid #bbf7d0;">
-              ${
-                routeInfo?.etaNextDeliveryTime
-                  ? `<div style="font-size: 10px; color: #15803d; font-weight: 700;">⏱️ Previsão Entrega: ${routeInfo.etaNextDeliveryTime}</div>`
-                  : ''
-              }
-              ${
-                routeInfo?.etaReturnBaseTime
-                  ? `<div style="font-size: 10px; color: #1d4ed8; font-weight: 700; margin-top: 2px;">🏢 Previsão Volta à Base: ${routeInfo.etaReturnBaseTime}</div>`
-                  : ''
-              }
+              <div style="font-size: 10px; color: #15803d; font-weight: 700;">
+                ${
+                  routeInfo?.etaNextDeliveryTime && routeInfo?.etaReturnBaseTime
+                    ? `⏱️ Entrega ~${routeInfo.etaNextDeliveryTime} • Volta à base ~${routeInfo.etaReturnBaseTime}`
+                    : routeInfo?.etaNextDeliveryTime
+                      ? `⏱️ Entrega ~${routeInfo.etaNextDeliveryTime}`
+                      : `🏢 Retornando à base • Chegada ~${routeInfo?.etaReturnBaseTime}`
+                }
+              </div>
             </div>
           `
               : ''
@@ -2216,12 +2269,30 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     return <span className="text-sm select-none leading-none">🛵</span>
   }
 
-  // Calculate ETA display
+  // Calculate ETA display consolidado com duplo ETA quando em rota ativa
   const getEtaDisplay = (order: OrderRecord) => {
+    // Se o pedido tiver entregador associado com rota ativa, buscar informações na activeRoutesData
+    const courierId = order.courier_id || order.expand?.courier_id?.id
+    const routeInfo = courierId
+      ? activeRoutesData.find((r) => r.courierId === courierId)
+      : undefined
+
+    if (routeInfo) {
+      if (routeInfo.etaNextDeliveryTime && routeInfo.etaReturnBaseTime) {
+        return `Entrega ~${routeInfo.etaNextDeliveryTime} • Volta à base ~${routeInfo.etaReturnBaseTime}`
+      }
+      if (routeInfo.etaReturnBaseTime && !routeInfo.etaNextDeliveryTime) {
+        return `Retornando à base • Chegada ~${routeInfo.etaReturnBaseTime}`
+      }
+      if (routeInfo.etaNextDeliveryTime) {
+        return `Entrega ~${routeInfo.etaNextDeliveryTime}`
+      }
+    }
+
     if (order.estimated_arrival) {
       const d = new Date(order.estimated_arrival)
       if (!isNaN(d.getTime())) {
-        return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        return `Entrega ~${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
       }
     }
     if (order.estimated_duration_minutes) {
@@ -2748,6 +2819,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                             <span className="h-1.5 w-3 rounded-full bg-blue-600 inline-block" />
                             Rota
                           </span>
+                          <span className="flex items-center gap-1 font-medium text-sky-400 border-l border-slate-700/80 pl-2">
+                            <span className="h-1.5 w-3 rounded-full bg-[#60A5FA] border border-dashed border-[#2563EB] inline-block" />
+                            Volta à base
+                          </span>
                           <span className="flex items-center gap-1 font-medium text-rose-400 border-l border-slate-700/80 pl-2">
                             <span className="h-1.5 w-3 rounded-full bg-rose-500 inline-block" />
                             Desvio &gt;600m
@@ -2891,15 +2966,33 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                         ? []
                         : activeRoutesData
                             .filter((routeData) => Boolean(routeData.order?.route_started))
-                            .map((routeData) => ({
-                              origin: routeData.points[0] || routeData.courierPos,
-                              destination: routeData.custPos,
-                              courierPosition: routeData.courierPos,
-                              streetCoordinates: routeData.points,
-                              isDeviated: Boolean(
-                                routeData.order?.route_started && routeData.isDeviated,
-                              ),
-                            }))
+                            .flatMap((routeData) => {
+                              const lines: any[] = []
+                              const fPoints = routeData.forwardPoints || routeData.points
+                              if (fPoints && fPoints.length >= 2) {
+                                lines.push({
+                                  origin: fPoints[0] || routeData.courierPos,
+                                  destination: routeData.custPos,
+                                  courierPosition: routeData.courierPos,
+                                  streetCoordinates: fPoints,
+                                  isDeviated: Boolean(
+                                    routeData.order?.route_started && routeData.isDeviated,
+                                  ),
+                                  isReturnLeg: false,
+                                })
+                              }
+                              const retPoints = routeData.returnPoints
+                              if (retPoints && retPoints.length >= 2) {
+                                lines.push({
+                                  origin: retPoints[0],
+                                  destination: retPoints[retPoints.length - 1],
+                                  streetCoordinates: retPoints,
+                                  isDeviated: false,
+                                  isReturnLeg: true,
+                                })
+                              }
+                              return lines
+                            })
                     }
                     onSelectMarker={(m) => {
                       if (m.type === 'courier') {
@@ -3077,18 +3170,25 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                   <div className="rounded-xl border border-blue-500/40 bg-[#0E1F47] p-3.5 space-y-1">
                     <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider flex items-center gap-1">
                       <Clock className="h-3.5 w-3.5 text-blue-400" />
-                      Previsão Entrega
+                      Previsão &amp; Volta à Base
                     </span>
-                    <p className="text-xl font-black text-white font-mono">
+                    <p className="text-base sm:text-lg font-black text-white font-mono leading-tight">
                       {(() => {
                         const rInfo = activeRoutesData.find(
                           (r) =>
                             r.orderId === selectedOrder.id ||
                             r.courierId === selectedOrder.courier_id,
                         )
-                        return rInfo?.etaNextDeliveryTime
-                          ? rInfo.etaNextDeliveryTime
-                          : getEtaDisplay(selectedOrder)
+                        if (rInfo?.etaNextDeliveryTime && rInfo?.etaReturnBaseTime) {
+                          return `Entrega ~${rInfo.etaNextDeliveryTime}`
+                        }
+                        if (rInfo?.etaReturnBaseTime && !rInfo?.etaNextDeliveryTime) {
+                          return `Chegada Base ~${rInfo.etaReturnBaseTime}`
+                        }
+                        if (rInfo?.etaNextDeliveryTime) {
+                          return `Entrega ~${rInfo.etaNextDeliveryTime}`
+                        }
+                        return getEtaDisplay(selectedOrder)
                       })()}
                     </p>
                     <p className="text-[10px] text-slate-300">
@@ -3098,11 +3198,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                             r.orderId === selectedOrder.id ||
                             r.courierId === selectedOrder.courier_id,
                         )
-                        return rInfo?.etaReturnBaseTime
-                          ? `🏢 Volta à Base: ${rInfo.etaReturnBaseTime}`
-                          : selectedOrder.estimated_duration_minutes
-                            ? `Trajeto de aprox. ${selectedOrder.estimated_duration_minutes} min`
-                            : 'Calculada em tempo real'
+                        if (rInfo?.etaReturnBaseTime) {
+                          return `🏢 Volta à base ~${rInfo.etaReturnBaseTime}`
+                        }
+                        return selectedOrder.estimated_duration_minutes
+                          ? `Trajeto de aprox. ${selectedOrder.estimated_duration_minutes} min`
+                          : 'Calculada com velocidade real do GPS'
                       })()}
                     </p>
                   </div>
@@ -4016,15 +4117,15 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                               </p>
                               <div className="flex flex-wrap items-center gap-2 pt-1 font-mono text-[11px]">
                                 <span className="bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 px-2 py-0.5 rounded">
-                                  ⏱️ Previsão Entrega:{' '}
-                                  {courierRouteInfo?.etaNextDeliveryTime ||
-                                    getEtaDisplay(data.nextOrder)}
+                                  {courierRouteInfo?.etaNextDeliveryTime &&
+                                  courierRouteInfo?.etaReturnBaseTime
+                                    ? `⏱️ Entrega ~${courierRouteInfo.etaNextDeliveryTime} • Volta à base ~${courierRouteInfo.etaReturnBaseTime}`
+                                    : courierRouteInfo?.etaNextDeliveryTime
+                                      ? `⏱️ Previsão Entrega: ${courierRouteInfo.etaNextDeliveryTime}`
+                                      : courierRouteInfo?.etaReturnBaseTime
+                                        ? `🏢 Retornando à base • Chegada ~${courierRouteInfo.etaReturnBaseTime}`
+                                        : `Previsão: ${getEtaDisplay(data.nextOrder)}`}
                                 </span>
-                                {courierRouteInfo?.etaReturnBaseTime && (
-                                  <span className="bg-blue-950/70 border border-blue-500/40 text-blue-300 px-2 py-0.5 rounded">
-                                    🏢 Previsão Volta à Base: {courierRouteInfo.etaReturnBaseTime}
-                                  </span>
-                                )}
                               </div>
                             </div>
                           ) : (
@@ -4036,7 +4137,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                               </p>
                               {courierRouteInfo?.etaReturnBaseTime && (
                                 <p className="text-blue-300 font-bold font-mono text-xs">
-                                  🏢 Previsão Volta à Base: {courierRouteInfo.etaReturnBaseTime}
+                                  🏢 Retornando à base • Chegada ~
+                                  {courierRouteInfo.etaReturnBaseTime}
                                 </p>
                               )}
                             </div>

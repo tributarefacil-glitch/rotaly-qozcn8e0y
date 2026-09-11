@@ -46,7 +46,11 @@ import type {
   FuelAdvanceRecord,
 } from '@/types/delivery'
 import { playOffRouteWarningSound, sendBrowserPushNotification } from '@/lib/notificationSound'
-import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
+import {
+  DEVIATION_THRESHOLD_METERS,
+  UNEXPECTED_STOP_THRESHOLD_METERS,
+  haversineDistanceMeters,
+} from '@/lib/geo'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -298,10 +302,18 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     if (!courierLoc) return
 
     const courierOrders = orders.filter((o) => o.courier_id === c.id)
+    const activeRouteOrders = courierOrders.filter(
+      (o) =>
+        o.route_started === true &&
+        o.route_finished !== true &&
+        (o.status === 'in_transit' || o.status === 'pending' || o.status === 'delivered'),
+    )
     const inTransitOrders = courierOrders.filter(
       (o) => o.status === 'in_transit' && o.route_started === true,
     )
-    const hasActiveRoute = inTransitOrders.length > 0
+    const pendingOrdersInRoute = activeRouteOrders.filter((o) => o.status !== 'delivered')
+    const isReturningToBase = activeRouteOrders.length > 0 && pendingOrdersInRoute.length === 0
+    const hasActiveRoute = activeRouteOrders.length > 0
 
     let courierTitle = `🧍 ${c.name} (Disponível)`
     let courierSubtitle = 'Status: Presente • Disponível'
@@ -313,11 +325,16 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     let isUnexpectedStop = false
 
     if (hasActiveRoute) {
-      courierTitle = `🛵 ${c.name} (Em Rota)`
-      courierSubtitle = `Status: Em Rota • ${inTransitOrders.length} em trânsito`
+      if (isReturningToBase) {
+        courierTitle = `🛵 ${c.name} (Retornando à Base)`
+        courierSubtitle = 'Status: Retornando à Base • 0 pendentes'
+      } else {
+        courierTitle = `🛵 ${c.name} (Em Rota)`
+        courierSubtitle = `Status: Em Rota • ${inTransitOrders.length} em trânsito`
+      }
 
       // Verificar se há eventos de desvio/parada para este entregador em ordens ativas
-      const activeOrderIds = new Set(inTransitOrders.map((o) => o.id))
+      const activeOrderIds = new Set(activeRouteOrders.map((o) => o.id))
       const relevantEvents = offRouteEvents.filter(
         (ev) =>
           ev.courier_id === c.id && ev.order_id && activeOrderIds.has(ev.order_id) && !ev.resolved,
@@ -338,6 +355,65 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       courierSubtitle = `Status: Aguardando início • ${inTransitOrders.length} atribuído(s)`
     }
 
+    // Calcular duplo ETA aproximado com velocidade real se houver rota ativa
+    let etaNextDeliveryTime: string | undefined
+    let etaReturnBaseTime: string | undefined
+
+    if (hasActiveRoute && courierLoc.lat && courierLoc.lng) {
+      const effectiveSpeed =
+        typeof courierLoc.speed === 'number' && courierLoc.speed > 5 ? courierLoc.speed : 25
+      const speedMps = effectiveSpeed * (1000 / 3600)
+
+      const pendingStops = activeRouteOrders
+        .filter((o) => o.status !== 'delivered')
+        .map((o) => {
+          const cust = customers.find((cust) => cust.id === o.customer_id)
+          return cust?.lat && cust?.lng ? { lat: Number(cust.lat), lng: Number(cust.lng) } : null
+        })
+        .filter(Boolean) as { lat: number; lng: number }[]
+
+      const courierPos = { lat: courierLoc.lat, lng: courierLoc.lng }
+      const firstPending = pendingStops[0]
+
+      if (firstPending) {
+        const distNext = haversineDistanceMeters(
+          courierPos.lat,
+          courierPos.lng,
+          firstPending.lat,
+          firstPending.lng,
+        )
+        const etaMinsNext = Math.max(1, Math.round(distNext / speedMps / 60))
+        etaNextDeliveryTime = new Date(Date.now() + etaMinsNext * 60 * 1000).toLocaleTimeString(
+          'pt-BR',
+          { hour: '2-digit', minute: '2-digit' },
+        )
+      }
+
+      // Retorno à base
+      const primary = activeRouteOrders[0]
+      const returnBaseLat = primary?.end_address_lat
+        ? Number(primary.end_address_lat)
+        : courierPos.lat
+      const returnBaseLng = primary?.end_address_lng
+        ? Number(primary.end_address_lng)
+        : courierPos.lng
+      const returnBasePos = { lat: returnBaseLat, lng: returnBaseLng }
+
+      let totalDist = 0
+      let cur = courierPos
+      for (const p of pendingStops) {
+        totalDist += haversineDistanceMeters(cur.lat, cur.lng, p.lat, p.lng)
+        cur = p
+      }
+      totalDist += haversineDistanceMeters(cur.lat, cur.lng, returnBasePos.lat, returnBasePos.lng)
+      const serviceMins = pendingStops.length * 5
+      const etaMinsReturn = Math.max(1, Math.round(totalDist / speedMps / 60) + serviceMins)
+      etaReturnBaseTime = new Date(Date.now() + etaMinsReturn * 60 * 1000).toLocaleTimeString(
+        'pt-BR',
+        { hour: '2-digit', minute: '2-digit' },
+      )
+    }
+
     mapMarkers.push({
       id: `courier-${c.id}`,
       title: courierTitle,
@@ -350,6 +426,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       isDeviated,
       deviationMeters,
       isUnexpectedStop,
+      etaNextDeliveryTime,
+      etaReturnBaseTime,
     })
   })
 

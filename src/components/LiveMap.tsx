@@ -168,6 +168,7 @@ export interface RouteGeometryItem {
   streetCoordinates?: { lat: number; lng: number }[]
   courierPosition?: { lat: number; lng: number }
   isDeviated?: boolean
+  isReturnLeg?: boolean
 }
 
 interface LiveMapProps {
@@ -443,16 +444,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             item.etaNextDeliveryTime || item.etaReturnBaseTime
               ? `
             <div style="background-color: #f0fdf4; border-radius: 6px; padding: 5px 7px; margin-top: 4px; border: 1px solid #bbf7d0;">
-              ${
-                item.etaNextDeliveryTime
-                  ? `<div style="font-size: 10px; color: #15803d; font-weight: 700;">⏱️ Previsão Entrega: ${item.etaNextDeliveryTime}</div>`
-                  : ''
-              }
-              ${
-                item.etaReturnBaseTime
-                  ? `<div style="font-size: 10px; color: #1d4ed8; font-weight: 700; margin-top: 2px;">🏢 Previsão Volta à Base: ${item.etaReturnBaseTime}</div>`
-                  : ''
-              }
+              <div style="font-size: 10px; color: #15803d; font-weight: 700;">
+                ${
+                  item.etaNextDeliveryTime && item.etaReturnBaseTime
+                    ? `⏱️ Entrega ~${item.etaNextDeliveryTime} • Volta à base ~${item.etaReturnBaseTime}`
+                    : item.etaNextDeliveryTime
+                      ? `⏱️ Entrega ~${item.etaNextDeliveryTime}`
+                      : `🏢 Retornando à base • Chegada ~${item.etaReturnBaseTime}`
+                }
+              </div>
             </div>
           `
               : ''
@@ -522,27 +522,46 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     routeLines.forEach((r) => {
       const coords = r.streetCoordinates || [r.origin, r.destination]
       if (coords.length >= 2) {
-        // LINHA AZUL: Trajeto de ruas indicado pelo sistema
-        const polyline = new google.maps.Polyline({
-          path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
-          geodesic: true,
-          strokeColor: '#2563EB',
-          strokeOpacity: 0.9,
-          strokeWeight: 5,
-          map: mapInstanceRef.current,
-        })
-        googlePolylinesRef.current.push(polyline)
+        if (r.isReturnLeg) {
+          // LINHA TRACEJADA AZUL CLARO (#60A5FA): Volta à Base
+          const returnPolyline = new google.maps.Polyline({
+            path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
+            geodesic: true,
+            strokeColor: '#60A5FA',
+            strokeOpacity: 0,
+            strokeWeight: 4,
+            icons: [
+              {
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
+                repeat: '8px',
+              },
+            ],
+            map: mapInstanceRef.current,
+          })
+          googlePolylinesRef.current.push(returnPolyline)
+        } else {
+          // LINHA AZUL: Trajeto de ruas indicado pelo sistema
+          const polyline = new google.maps.Polyline({
+            path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
+            geodesic: true,
+            strokeColor: '#2563EB',
+            strokeOpacity: 0.9,
+            strokeWeight: 5,
+            map: mapInstanceRef.current,
+          })
+          googlePolylinesRef.current.push(polyline)
 
-        // Linha interna mais clara para destaque visual
-        const innerPolyline = new google.maps.Polyline({
-          path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
-          geodesic: true,
-          strokeColor: '#93C5FD',
-          strokeOpacity: 0.9,
-          strokeWeight: 2,
-          map: mapInstanceRef.current,
-        })
-        googlePolylinesRef.current.push(innerPolyline)
+          // Linha interna mais clara para destaque visual
+          const innerPolyline = new google.maps.Polyline({
+            path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
+            geodesic: true,
+            strokeColor: '#93C5FD',
+            strokeOpacity: 0.9,
+            strokeWeight: 2,
+            map: mapInstanceRef.current,
+          })
+          googlePolylinesRef.current.push(innerPolyline)
+        }
       }
 
       // LINHA VERMELHA DE DESVIO: do entregador até o ponto de retorno da rota
@@ -842,23 +861,38 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
               return (
                 <React.Fragment key={`route-${i}`}>
-                  {/* LINHA AZUL: Trajeto de ruas indicado pelo sistema */}
-                  <path
-                    d={pathStr}
-                    fill="none"
-                    stroke="#2563EB"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    filter="url(#livemap-blue-glow)"
-                  />
-                  <path
-                    d={pathStr}
-                    fill="none"
-                    stroke="#93C5FD"
-                    strokeWidth="0.8"
-                    strokeLinecap="round"
-                  />
+                  {r.isReturnLeg ? (
+                    /* LINHA AZUL CLARO TRACEJADA: Volta à Base */
+                    <path
+                      d={pathStr}
+                      fill="none"
+                      stroke="#60A5FA"
+                      strokeWidth="2.5"
+                      strokeDasharray="4 4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ) : (
+                    /* LINHA AZUL: Trajeto de ruas indicado pelo sistema */
+                    <>
+                      <path
+                        d={pathStr}
+                        fill="none"
+                        stroke="#2563EB"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        filter="url(#livemap-blue-glow)"
+                      />
+                      <path
+                        d={pathStr}
+                        fill="none"
+                        stroke="#93C5FD"
+                        strokeWidth="0.8"
+                        strokeLinecap="round"
+                      />
+                    </>
+                  )}
                   {/* LINHA VERMELHA: Caso o entregador faça um desvio */}
                   {deviationLine}
                 </React.Fragment>
@@ -1029,17 +1063,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                           </div>
 
                           {(m.etaNextDeliveryTime || m.etaReturnBaseTime) && (
-                            <div className="bg-[#07132b] p-2 rounded-lg border border-blue-500/30 text-[10.5px] space-y-1 mt-1.5">
-                              {m.etaNextDeliveryTime && (
-                                <p className="text-emerald-400 font-bold flex items-center gap-1">
-                                  <span>⏱️</span> Previsão Entrega: {m.etaNextDeliveryTime}
-                                </p>
-                              )}
-                              {m.etaReturnBaseTime && (
-                                <p className="text-blue-300 font-bold flex items-center gap-1">
-                                  <span>🏢</span> Previsão Volta à Base: {m.etaReturnBaseTime}
-                                </p>
-                              )}
+                            <div className="bg-[#07132b] p-2 rounded-lg border border-blue-500/30 text-[10.5px] mt-1.5">
+                              <p className="text-emerald-400 font-bold flex items-center gap-1">
+                                <span>{m.etaNextDeliveryTime ? '⏱️' : '🏢'}</span>
+                                {m.etaNextDeliveryTime && m.etaReturnBaseTime
+                                  ? `Entrega ~${m.etaNextDeliveryTime} • Volta à base ~${m.etaReturnBaseTime}`
+                                  : m.etaNextDeliveryTime
+                                    ? `Entrega ~${m.etaNextDeliveryTime}`
+                                    : `Retornando à base • Chegada ~${m.etaReturnBaseTime}`}
+                              </p>
                             </div>
                           )}
 
@@ -1160,6 +1192,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
               <span className="h-1.5 w-3 rounded-full bg-[#2563EB]"></span>
               <span className="font-semibold text-blue-700">Rota</span>
+            </div>
+            <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
+              <span className="h-1.5 w-3 rounded-full bg-[#60A5FA] border border-dashed border-[#2563EB]"></span>
+              <span className="font-semibold text-sky-600">Volta à base</span>
             </div>
             <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
               <span className="h-1.5 w-3 rounded-full bg-[#EF4444]"></span>
