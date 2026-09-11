@@ -177,7 +177,7 @@ export default function Index() {
       gradient: 'from-purple-600 to-indigo-600',
       badgeBg: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
       btnBg: 'bg-purple-600 hover:bg-purple-500 shadow-purple-600/30',
-      defaultEmail: 'entregador1@logistica.com',
+      defaultEmail: 'pimentaverdecentro@gmail.com',
       canRegister: true,
       registerUrl: '/register?role=courier',
     },
