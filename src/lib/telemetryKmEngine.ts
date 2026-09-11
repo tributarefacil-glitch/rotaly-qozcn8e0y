@@ -22,11 +22,13 @@
 
 import type { LocationRecord, OffRouteEventRecord, OrderRecord } from '@/types/delivery'
 
-/**
- * Limiar de tolerância de afastamento da rota oficial em metros (600 metros).
- * Utilizado para alertas de exceção da Torre de Controle e contagem de km de desvio/combustível.
- */
-export const DEVIATION_THRESHOLD_METERS = 600
+import {
+  DEVIATION_THRESHOLD_METERS,
+  UNEXPECTED_STOP_THRESHOLD_METERS,
+  haversineDistanceMeters,
+} from '@/lib/geo'
+
+export { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS, haversineDistanceMeters }
 
 export interface RealKmCalculationResult {
   /** KM Real rodado dentro da rota oficial (utilizado para reembolso e custo operacional oficial) */
@@ -55,29 +57,6 @@ export interface RealKmCalculationResult {
   samplingCurvatureFactor?: number
   /** Detalhes textuais da auditoria matemática */
   auditNotes?: string
-}
-
-/**
- * Distância Haversine entre duas coordenadas geográficas em metros.
- */
-export function haversineDistanceMeters(
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
-): number {
-  if (lat1 === lat2 && lon1 === lon2) return 0
-  const R = 6371e3 // Raio da Terra em metros
-  const φ1 = (lat1 * Math.PI) / 180
-  const φ2 = (lat2 * Math.PI) / 180
-  const Δφ = ((lat2 - lat1) * Math.PI) / 180
-  const Δλ = ((lon2 - lon1) * Math.PI) / 180
-
-  const a =
-    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  return R * c
 }
 
 /**
