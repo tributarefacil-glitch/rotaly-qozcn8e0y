@@ -110,6 +110,14 @@ class OfflineTelemetryBufferService {
   }
 
   /**
+   * Quantidade total de pontos no buffer (alias de conveniência).
+   */
+  size(userId?: string): number {
+    if (!userId) return 0
+    return this.getPendingCount(userId)
+  }
+
+  /**
    * Limpa todo o buffer de um usuário.
    */
   clear(userId: string): void {
@@ -124,11 +132,22 @@ class OfflineTelemetryBufferService {
 
   /**
    * Inscreve um callback para ser notificado de alterações na contagem de pontos pendentes.
+   * Suporta chamada com userId ou callback direto.
    */
-  subscribe(userId: string, listener: (count: number) => void): () => void {
+  subscribe(
+    userIdOrListener: string | ((count: number) => void),
+    maybeListener?: (count: number) => void,
+  ): () => void {
+    const listener = typeof userIdOrListener === 'function' ? userIdOrListener : maybeListener
+    const userId = typeof userIdOrListener === 'string' ? userIdOrListener : ''
+
+    if (!listener) return () => {}
+
     this.listeners.add(listener)
-    // Dispara contagem atual imediatamente
-    listener(this.getPendingCount(userId))
+    // Dispara contagem atual imediatamente se tiver userId
+    if (userId) {
+      listener(this.getPendingCount(userId))
+    }
     return () => {
       this.listeners.delete(listener)
     }

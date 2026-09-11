@@ -1096,6 +1096,23 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             notifiedEventsRef.current.delete(k)
           }
         })
+
+        // Limpar da lista de alertas dispensados os eventos que já normalizaram
+        // para que, se voltar a falhar no futuro, o banner reapareça corretamente
+        setDismissedGpsAlertIds((prev) => {
+          if (prev.length === 0) return prev
+          return prev.filter((dismissedId) => {
+            if (dismissedId.startsWith('gps-')) {
+              const cId = dismissedId.replace('gps-', '')
+              return currentActiveEventKeys.has(`gps-disabled-${cId}`)
+            }
+            if (dismissedId.startsWith('sig-')) {
+              const cId = dismissedId.replace('sig-', '')
+              return currentActiveEventKeys.has(`signal-lost-${cId}`)
+            }
+            return false
+          })
+        })
       }
     }
 
@@ -1179,7 +1196,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         etaReturnBaseTime: routeInfo?.etaReturnBaseTime,
         battery_level: item.battery_level,
         location_timestamp: item.location_timestamp,
-        gps_status: item.gps_status,
+        gps_status: item.gps_status as 'active' | 'disabled' | 'offline' | undefined,
         offline_buffered: item.offline_buffered,
       })
     }) // 2. Destinos de entregas em trânsito e pendentes (marcador laranja com nome e número de sequência)

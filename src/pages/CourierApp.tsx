@@ -198,210 +198,6 @@ export default function CourierApp() {
     return null
   }
 
-  // Refs de controle para DEDUPE e LOCK contra concorrência no envio de GPS:
-  // Só grava na coleção locations se passaram > 30s OU se moveu > 20 metros.
-  const lastRecordedGpsRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
-  const isSendingLocationRef = useRef<boolean>(false)
-
-  // Assinatura reativa da contagem do buffer offline e listeners de conectividade online/offline
-  useEffect(() => {
-    // Inscrever na contagem de pontos do buffer
-    const unsubscribeBuffer = offlineTelemetryBuffer.subscribe((count) => {
-      setPendingBufferedPoints(count)
-    })
-
-    const handleOnline = async () => {
-      setIsOnline(true)
-      // Ao voltar online, disparar flush idempotente do buffer
-      if (user?.id) {
-        setIsFlushingBuffer(true)
-        try {
-          const flushed = await offlineTelemetryBuffer.flush(user.id)
-          if (flushed > 0) {
-            toast.success(`📶 Conexão restabelecida! ${flushed} pontos sincronizados com a Torre.`)
-          }
-        } catch (e) {
-          console.warn('Falha ao flush do buffer offline:', e)
-        } finally {
-          setIsFlushingBuffer(false)
-        }
-      }
-    }
-
-    const handleOffline = () => {
-      setIsOnline(false)
-      toast.warning('📴 Sem sinal de internet. Os pontos de GPS serão salvos no buffer offline.')
-    }
-
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
-
-    // Se já estiver online e tiver pontos pendentes, tenta flush na montagem
-    if (navigator.onLine && user?.id && offlineTelemetryBuffer.size() > 0) {
-      handleOnline()
-    }
-
-    return () => {
-      unsubscribeBuffer()
-      window.removeEventListener('online', handleOnline)
-      window.removeEventListener('offline', handleOffline)
-    }
-  }, [user?.id])
-
-  // Telemetria GPS com dedupe, lock, buffer offline e detecção de status de GPS
-  useEffect(() => {
-    if (!user || !isGpsActive) return
-
-    const processAndSendGps = async (
-      lat: number,
-      lng: number,
-      speedVal?: number | null,
-      accuracyVal?: number,
-    ) => {
-      setCurrentCourierLocation({ lat, lng })
-      setGpsStatus('active')
-
-      // Se outra gravação já estiver em voo, não enviar simultaneamente
-      if (isSendingLocationRef.current) return
-
-      const now = Date.now()
-      const last = lastRecordedGpsRef.current
-
-      if (last) {
-        const timeDiffSeconds = (now - last.timestamp) / 1000
-        const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
-
-        // Só gravar se passaram > 30s do último envio OU moveu > 20 metros
-        if (timeDiffSeconds < 30 && distanceDiffMeters < 20) {
-          return
-        }
-      }
-
-      isSendingLocationRef.current = true
-      let batteryLevel = 90
-      let speed = 0
-      try {
-        batteryLevel = await getBatteryLevel()
-        if (typeof speedVal === 'number' && !isNaN(speedVal) && speedVal > 0) {
-          speed = Math.round(speedVal * 3.6)
-        } else if (last) {
-          const timeDiffSeconds = (now - last.timestamp) / 1000
-          const dist = haversineDistanceMeters(last.lat, last.lng, lat, lng)
-          if (dist < 2) {
-            speed = 0
-          } else if (timeDiffSeconds > 0 && timeDiffSeconds < 120) {
-            speed = Math.round((dist / timeDiffSeconds) * 3.6)
-          }
-        }
-
-        // Tentar envio normal online
-        await deliveryService.updateCourierLocation(
-          user.id,
-          lat,
-          lng,
-          speed,
-          90,
-          batteryLevel,
-          'active',
-          false,
-          accuracyVal,
-        )
-        lastRecordedGpsRef.current = { lat, lng, timestamp: now }
-
-        // Se houver pontos no buffer que aguardavam sinal, tenta flush agora que a rede respondeu
-        if (offlineTelemetryBuffer.size() > 0 && !isFlushingBuffer) {
-          offlineTelemetryBuffer.flush(user.id).catch(() => {})
-        }
-      } catch (e) {
-        console.error('Failed to post live location (salvando no buffer offline se em rota):', e)
-        // Bloco catch de falha de rede do deliveryService.updateCourierLocation:
-        // Enfileira no offlineTelemetryBuffer com reason 'network_offline'
-        // APENAS se houver rota ativa iniciada e não finalizada na base
-        if (hasActiveStartedRoute) {
-          offlineTelemetryBuffer.enqueuePoint({
-            lat,
-            lng,
-            speed,
-            heading: 90,
-            accuracy: accuracyVal,
-            batteryLevel,
-            timestamp: now,
-            reason: 'network_offline',
-          })
-        }
-      } finally {
-        isSendingLocationRef.current = false
-      }
-    }
-
-    const checkCurrentLocation = () => {
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            processAndSendGps(
-              pos.coords.latitude,
-              pos.coords.longitude,
-              pos.coords.speed,
-              pos.coords.accuracy,
-            )
-          },
-          async (err) => {
-            console.warn('Geolocation getCurrentPosition falhou ou permissão negada:', err)
-            const isGpsDisabled =
-              err.code === err.PERMISSION_DENIED || err.code === err.POSITION_UNAVAILABLE
-            const newStatus: 'disabled' | 'offline' = isGpsDisabled ? 'disabled' : 'offline'
-            setGpsStatus(newStatus)
-
-            // Se o entregador estiver em rota ativa, registramos o status e enfileiramos no buffer
-            if (hasActiveStartedRoute) {
-              const now = Date.now()
-              const last = lastRecordedGpsRef.current
-              const fallbackLat = last ? last.lat : currentCourierLocation?.lat || 0
-              const fallbackLng = last ? last.lng : currentCourierLocation?.lng || 0
-
-              // Notificar a Torre imediatamente sobre o GPS desligado/indisponível se tivermos coordenadas de referência e rede
-              if (fallbackLat && fallbackLng) {
-                try {
-                  const bLevel = await getBatteryLevel().catch(() => 90)
-                  await deliveryService.updateCourierLocation(
-                    user.id,
-                    fallbackLat,
-                    fallbackLng,
-                    0,
-                    0,
-                    bLevel,
-                    newStatus,
-                    false,
-                  )
-                } catch {
-                  // Se falhou rede ao avisar GPS desligado, guarda no buffer
-                  offlineTelemetryBuffer.enqueuePoint({
-                    lat: fallbackLat,
-                    lng: fallbackLng,
-                    speed: 0,
-                    heading: 0,
-                    accuracy: undefined,
-                    batteryLevel: 90,
-                    timestamp: now,
-                    reason: 'gps_disabled',
-                  })
-                }
-              }
-            }
-          },
-          { enableHighAccuracy: true, timeout: 10000 },
-        )
-      } else {
-        setGpsStatus('disabled')
-      }
-    }
-
-    // Disparo imediato e intervalo a cada 30 segundos
-    checkCurrentLocation()
-    const interval = setInterval(checkCurrentLocation, 30000)
-    return () => clearInterval(interval)
-  }, [user, isGpsActive, hasActiveStartedRoute, isFlushingBuffer, currentCourierLocation])
-
   // Pedidos da rota atual que já foram iniciados mas ainda NÃO foram finalizados na base
   // Regra do Usuário: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
   const activeStartedOrders = orders.filter(
@@ -493,6 +289,209 @@ export default function CourierApp() {
 
   // Estado da rota: já foi aceita / iniciada pelo entregador?
   const isRouteStarted = hasActiveStartedRoute
+
+  // Refs de controle para DEDUPE e LOCK contra concorrência no envio de GPS:
+  // Só grava na coleção locations se passaram > 30s OU se moveu > 20 metros.
+  const lastRecordedGpsRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
+  const isSendingLocationRef = useRef<boolean>(false)
+
+  // Assinatura reativa da contagem do buffer offline e listeners de conectividade online/offline
+  useEffect(() => {
+    const courierId = user?.id || ''
+    // Inscrever na contagem de pontos do buffer
+    const unsubscribeBuffer = offlineTelemetryBuffer.subscribe(courierId, (count) => {
+      setPendingBufferedPoints(count)
+    })
+
+    const handleOnline = async () => {
+      setIsOnline(true)
+      // Ao voltar online, disparar flush idempotente do buffer
+      if (user?.id) {
+        setIsFlushingBuffer(true)
+        try {
+          const res = await offlineTelemetryBuffer.flush(user.id)
+          if (res.sent > 0) {
+            toast.success(`📶 Conexão restabelecida! ${res.sent} pontos sincronizados com a Torre.`)
+          }
+        } catch (e) {
+          console.warn('Falha ao flush do buffer offline:', e)
+        } finally {
+          setIsFlushingBuffer(false)
+        }
+      }
+    }
+
+    const handleOffline = () => {
+      setIsOnline(false)
+      toast.warning('📴 Sem sinal de internet. Os pontos de GPS serão salvos no buffer offline.')
+    }
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    // Se já estiver online e tiver pontos pendentes, tenta flush na montagem
+    if (navigator.onLine && user?.id && offlineTelemetryBuffer.size(user.id) > 0) {
+      handleOnline()
+    }
+
+    return () => {
+      unsubscribeBuffer()
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [user?.id])
+
+  // Telemetria GPS com dedupe, lock, buffer offline e detecção de status de GPS
+  useEffect(() => {
+    if (!user || !isGpsActive) return
+
+    const processAndSendGps = async (
+      lat: number,
+      lng: number,
+      speedVal?: number | null,
+      accuracyVal?: number,
+    ) => {
+      setCurrentCourierLocation({ lat, lng })
+      setGpsStatus('active')
+
+      // Se outra gravação já estiver em voo, não enviar simultaneamente
+      if (isSendingLocationRef.current) return
+
+      const now = Date.now()
+      const last = lastRecordedGpsRef.current
+
+      if (last) {
+        const timeDiffSeconds = (now - last.timestamp) / 1000
+        const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+
+        // Só gravar se passaram > 30s do último envio OU moveu > 20 metros
+        if (timeDiffSeconds < 30 && distanceDiffMeters < 20) {
+          return
+        }
+      }
+
+      isSendingLocationRef.current = true
+      let batteryLevel = 90
+      let speed = 0
+      try {
+        batteryLevel = await getBatteryLevel()
+        if (typeof speedVal === 'number' && !isNaN(speedVal) && speedVal > 0) {
+          speed = Math.round(speedVal * 3.6)
+        } else if (last) {
+          const timeDiffSeconds = (now - last.timestamp) / 1000
+          const dist = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+          if (dist < 2) {
+            speed = 0
+          } else if (timeDiffSeconds > 0 && timeDiffSeconds < 120) {
+            speed = Math.round((dist / timeDiffSeconds) * 3.6)
+          }
+        }
+
+        // Tentar envio normal online
+        await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90, batteryLevel, {
+          gps_status: 'active',
+          offline_buffered: false,
+          accuracy: accuracyVal,
+        })
+        lastRecordedGpsRef.current = { lat, lng, timestamp: now }
+
+        // Se houver pontos no buffer que aguardavam sinal, tenta flush agora que a rede respondeu
+        if (offlineTelemetryBuffer.size(user.id) > 0 && !isFlushingBuffer) {
+          offlineTelemetryBuffer.flush(user.id).catch(() => {})
+        }
+      } catch (e) {
+        console.error('Failed to post live location (salvando no buffer offline se em rota):', e)
+        // Bloco catch de falha de rede do deliveryService.updateCourierLocation:
+        // Enfileira no offlineTelemetryBuffer com reason 'network_offline'
+        // APENAS se houver rota ativa iniciada e não finalizada na base
+        if (hasActiveStartedRoute) {
+          offlineTelemetryBuffer.enqueuePoint({
+            userId: user.id,
+            lat,
+            lng,
+            speed,
+            heading: 90,
+            accuracy: accuracyVal,
+            batteryLevel,
+            timestamp: now,
+            reason: 'network_offline',
+          })
+        }
+      } finally {
+        isSendingLocationRef.current = false
+      }
+    }
+
+    const checkCurrentLocation = () => {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            processAndSendGps(
+              pos.coords.latitude,
+              pos.coords.longitude,
+              pos.coords.speed,
+              pos.coords.accuracy,
+            )
+          },
+          async (err) => {
+            console.warn('Geolocation getCurrentPosition falhou ou permissão negada:', err)
+            const isGpsDisabled =
+              err.code === err.PERMISSION_DENIED || err.code === err.POSITION_UNAVAILABLE
+            const newStatus: 'disabled' | 'offline' = isGpsDisabled ? 'disabled' : 'offline'
+            setGpsStatus(newStatus)
+
+            // Se o entregador estiver em rota ativa, registramos o status e enfileiramos no buffer
+            if (hasActiveStartedRoute) {
+              const now = Date.now()
+              const last = lastRecordedGpsRef.current
+              const fallbackLat = last ? last.lat : currentCourierLocation?.lat || 0
+              const fallbackLng = last ? last.lng : currentCourierLocation?.lng || 0
+
+              // Notificar a Torre imediatamente sobre o GPS desligado/indisponível se tivermos coordenadas de referência e rede
+              if (fallbackLat && fallbackLng) {
+                try {
+                  const bLevel = await getBatteryLevel().catch(() => 90)
+                  await deliveryService.updateCourierLocation(
+                    user.id,
+                    fallbackLat,
+                    fallbackLng,
+                    0,
+                    0,
+                    bLevel,
+                    {
+                      gps_status: newStatus,
+                      offline_buffered: false,
+                    },
+                  )
+                } catch {
+                  // Se falhou rede ao avisar GPS desligado, guarda no buffer
+                  offlineTelemetryBuffer.enqueuePoint({
+                    userId: user.id,
+                    lat: fallbackLat,
+                    lng: fallbackLng,
+                    speed: 0,
+                    heading: 0,
+                    accuracy: undefined,
+                    batteryLevel: 90,
+                    timestamp: now,
+                    reason: 'gps_disabled',
+                  })
+                }
+              }
+            }
+          },
+          { enableHighAccuracy: true, timeout: 10000 },
+        )
+      } else {
+        setGpsStatus('disabled')
+      }
+    }
+
+    // Disparo imediato e intervalo a cada 30 segundos
+    checkCurrentLocation()
+    const interval = setInterval(checkCurrentLocation, 30000)
+    return () => clearInterval(interval)
+  }, [user, isGpsActive, hasActiveStartedRoute, isFlushingBuffer, currentCourierLocation])
 
   // Se todas as entregas individuais da rota ativa já foram concluídas (ou não há mais activeDeliveries pendentes)
   // mas a rota ainda não foi finalizada na base, o entregador está na etapa de RETORNO À BASE!
