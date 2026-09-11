@@ -85,6 +85,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [couriers, setCouriers] = useState<UserRecord[]>([])
   const [locations, setLocations] = useState<LocationRecord[]>([])
+  const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
+  const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
@@ -140,18 +142,23 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   const loadData = async () => {
     try {
-      const [ordersData, custData, couriersData, locsData, basesData] = await Promise.all([
-        deliveryService.getOrders(),
-        deliveryService.getCustomers(),
-        deliveryService.getCouriers(),
-        deliveryService.getLatestLocations(),
-        deliveryService.getBaseAddresses(),
-      ])
+      const [ordersData, custData, couriersData, locsData, basesData, settingsData, eventsData] =
+        await Promise.all([
+          deliveryService.getOrders(),
+          deliveryService.getCustomers(),
+          deliveryService.getCouriers(),
+          deliveryService.getLatestLocations(),
+          deliveryService.getBaseAddresses(),
+          deliveryService.getSettings(),
+          deliveryService.getOffRouteEvents(),
+        ])
       setOrders(ordersData)
       setCustomers(custData)
       setCouriers(couriersData)
       setLocations(locsData)
       setBaseAddresses(basesData)
+      setSettings(settingsData)
+      setOffRouteEvents(eventsData)
       const defaultBase = basesData.find((b) => b.is_default) || basesData[0]
       const defaultEnd =
         basesData.find((b) => b.is_end_default || b.type === 'end_point') || defaultBase
@@ -807,7 +814,14 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           )}
 
           {/* TAB 2: RELATÓRIOS (MÓDULO 4) */}
-          {mainViewTab === 'reports' && <ReportsSection orders={orders} couriers={couriers} />}
+          {mainViewTab === 'reports' && (
+            <ReportsSection
+              orders={orders}
+              couriers={couriers}
+              settings={settings}
+              offRouteEvents={offRouteEvents}
+            />
+          )}
 
           {/* TAB 3: VISÃO GERAL & GESTÃO DE PEDIDOS (PRESERVANDO FLUXO ORIGINAL) */}
           {mainViewTab === 'overview' && (

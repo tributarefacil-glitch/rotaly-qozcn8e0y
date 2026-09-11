@@ -31,6 +31,7 @@ import {
   LineChart as LineChartIcon,
   Star,
   MapPin,
+  Fuel,
   Car,
   Truck,
   Bike,
@@ -38,21 +39,30 @@ import {
   Check,
   ExternalLink,
 } from 'lucide-react'
-import { OrderRecord, UserRecord, AppSettingsRecord } from '@/types/delivery'
+import { OrderRecord, UserRecord, AppSettingsRecord, OffRouteEventRecord } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
 import { useToast } from '@/hooks/use-toast'
+import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 
 interface ReportsSectionProps {
   orders: OrderRecord[]
   couriers: UserRecord[]
   settings?: AppSettingsRecord | null
+  offRouteEvents?: OffRouteEventRecord[]
 }
 
-export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers, settings }) => {
+export const ReportsSection: React.FC<ReportsSectionProps> = ({
+  orders,
+  couriers,
+  settings,
+  offRouteEvents = [],
+}) => {
   const { toast } = useToast()
   // SELETOR DE PERÍODO: hoje, semana, mês, personalizado (todos)
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all'>('today')
   const [copiedLink, setCopiedLink] = useState(false)
+  const [selectedCourierForModal, setSelectedCourierForModal] = useState<UserRecord | null>(null)
+  const [isCourierModalOpen, setIsCourierModalOpen] = useState(false)
 
   const fuelPrice = settings?.fuel_price_per_liter || 5.59
   const fuelConsumption = settings?.fuel_consumption_kml || 35.0
@@ -724,14 +734,33 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
                   <th className="py-3 px-4">% do Total</th>
                   <th className="py-3 px-4">Taxa de Sucesso</th>
                   <th className="py-3 px-4">Tempo Médio</th>
-                  <th className="py-3 px-4">Avaliação Média</th>
+                  <th className="py-3 px-4">Avaliação</th>
+                  <th className="py-3 px-4 text-right">Relatório de Combustível</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {courierStats.map((item) => (
-                  <tr key={item.courier.id} className="hover:bg-gray-50">
+                  <tr
+                    key={item.courier.id}
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => {
+                      setSelectedCourierForModal(item.courier)
+                      setIsCourierModalOpen(true)
+                    }}
+                  >
                     <td className="py-3 px-4 font-semibold text-gray-900">
-                      {item.courier.name || item.courier.email}
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-[#0052CC] font-bold text-xs uppercase">
+                          {item.courier.name ? item.courier.name.slice(0, 2) : 'EN'}
+                        </div>
+                        <div>
+                          <span>{item.courier.name || item.courier.email}</span>
+                          <span className="block text-[10px] text-gray-400 font-normal">
+                            {item.courier.vehicle_plate || 'Sem placa'} •{' '}
+                            {item.courier.vehicle_type || 'moto'}
+                          </span>
+                        </div>
+                      </div>
                     </td>
                     <td className="py-3 px-4 font-bold text-gray-800">{item.count}</td>
                     <td className="py-3 px-4 text-gray-600">{item.percentOfTotal}%</td>
@@ -755,6 +784,21 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
                         <Star className="h-3.5 w-3.5 fill-amber-400" />
                         <span>{item.rating.toFixed(1)}</span>
                       </div>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSelectedCourierForModal(item.courier)
+                          setIsCourierModalOpen(true)
+                        }}
+                        className="h-7 text-xs gap-1 border-blue-200 text-[#0052CC] hover:bg-blue-50 font-semibold"
+                      >
+                        <Fuel className="h-3.5 w-3.5 text-[#0052CC]" />
+                        Ver KM & Combustível
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -912,6 +956,19 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({ orders, couriers
           </div>
         </CardContent>
       </Card>
+
+      {/* MODAL DETALHADO DO ENTREGADOR (KM, COMBUSTÍVEL, DESVIOS E PARADAS) */}
+      <CourierDeliveryHistoryModal
+        isOpen={isCourierModalOpen}
+        onClose={() => {
+          setIsCourierModalOpen(false)
+          setSelectedCourierForModal(null)
+        }}
+        courier={selectedCourierForModal}
+        orders={orders}
+        offRouteEvents={offRouteEvents}
+        settings={settings || null}
+      />
     </div>
   )
 }

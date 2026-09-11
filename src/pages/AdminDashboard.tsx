@@ -52,6 +52,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { ControlTower } from '@/components/ControlTower'
 import { ReportsSection } from '@/components/ReportsSection'
+import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { deliveryService } from '@/services/deliveryService'
@@ -115,6 +116,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [selectedCourierId, setSelectedCourierId] = useState<string | null>(null)
+  const [selectedCourierForHistory, setSelectedCourierForHistory] = useState<UserRecord | null>(
+    null,
+  )
+  const [isCourierHistoryModalOpen, setIsCourierHistoryModalOpen] = useState(false)
 
   // Ler query param ?tab=deviations se existir
   const queryParams = new URLSearchParams(location.search)
@@ -872,10 +877,19 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
               {/* CARDS DE CONTA CORRENTE DOS ENTREGADORES */}
               <div className="space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                  <CreditCard className="h-4 w-4 text-emerald-500" />
-                  Conta Corrente dos Entregadores (Saldo em Tempo Real)
-                </h4>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <CreditCard className="h-4 w-4 text-emerald-500" />
+                    Conta Corrente dos Entregadores (Saldo em Tempo Real)
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    💡 Clique em qualquer card para abrir o{' '}
+                    <strong className="text-blue-500">
+                      Histórico Completo de Entregas, KM, Combustível e Telemetria
+                    </strong>
+                    .
+                  </p>
+                </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {fuelAccounts.map((acc) => {
@@ -883,7 +897,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     return (
                       <Card
                         key={acc.courier.id}
-                        className="border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden"
+                        onClick={() => {
+                          setSelectedCourierForHistory(acc.courier)
+                          setIsCourierHistoryModalOpen(true)
+                        }}
+                        className="border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden cursor-pointer hover:border-[#0052CC]/60 hover:shadow-md transition-all group"
                       >
                         <div
                           className={`absolute top-0 left-0 right-0 h-1.5 ${
@@ -984,6 +1002,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 {acc.totalRouteKm.toFixed(1)} km roteirizados
                               </span>
                             </div>
+                          </div>
+
+                          {/* Dica / Botão de clique para histórico */}
+                          <div className="pt-1 flex items-center justify-between text-[11px] text-[#0052CC] dark:text-[#60A5FA] font-medium group-hover:underline">
+                            <span>Ver histórico detalhado de entregas & telemetria</span>
+                            <span>→</span>
                           </div>
                         </CardContent>
                       </Card>
@@ -1292,7 +1316,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
             {/* TAB: RELATÓRIOS COMPLETOS (MÓDULO 4) */}
             <TabsContent value="reports" className="space-y-6">
-              <ReportsSection orders={orders} couriers={couriers} settings={settings} />
+              <ReportsSection
+                orders={orders}
+                couriers={couriers}
+                settings={settings}
+                offRouteEvents={offRouteEvents}
+              />
             </TabsContent>
 
             {/* TAB: CONFIGURAÇÕES DO ADMINISTRADOR (PARÂMETROS DE COMBUSTÍVEL POR TIPO DE VEÍCULO) */}
@@ -2117,15 +2146,30 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 </td>
 
                                 <td className="py-3 px-3">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleOpenDocsModal(c)}
-                                    className="h-7 text-[11px] gap-1 text-blue-600 border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100"
-                                  >
-                                    <Eye className="h-3 w-3" />
-                                    Ver Docs & Selfie
-                                  </Button>
+                                  <div className="flex items-center gap-1.5">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleOpenDocsModal(c)}
+                                      className="h-7 text-[11px] gap-1 text-blue-600 border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100"
+                                    >
+                                      <Eye className="h-3 w-3" />
+                                      Docs
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                        setSelectedCourierForHistory(c)
+                                        setIsCourierHistoryModalOpen(true)
+                                      }}
+                                      className="h-7 text-[11px] gap-1 text-amber-500 border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20 hover:bg-amber-100"
+                                      title="Ver histórico de entregas, km e combustível"
+                                    >
+                                      <Fuel className="h-3 w-3" />
+                                      Histórico
+                                    </Button>
+                                  </div>
                                 </td>
 
                                 <td className="py-3 px-3 text-right">
@@ -2838,6 +2882,24 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* MODAL DETALHADO DE HISTÓRICO DE ENTREGAS, KM, COMBUSTÍVEL E DESVIOS */}
+      <CourierDeliveryHistoryModal
+        isOpen={isCourierHistoryModalOpen}
+        onClose={() => {
+          setIsCourierHistoryModalOpen(false)
+          setSelectedCourierForHistory(null)
+        }}
+        courier={selectedCourierForHistory}
+        fuelAccount={
+          selectedCourierForHistory
+            ? fuelAccounts.find((a) => a.courier.id === selectedCourierForHistory.id) || null
+            : null
+        }
+        orders={orders}
+        offRouteEvents={offRouteEvents}
+        settings={settings}
+      />
     </div>
   )
 }
