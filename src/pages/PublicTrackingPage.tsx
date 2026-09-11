@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   Truck,
@@ -31,7 +31,23 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 
 export default function PublicTrackingPage() {
-  const { tracking_code } = useParams<{ tracking_code: string }>()
+  const { tracking_code: rawTrackingCode } = useParams<{ tracking_code: string }>()
+
+  // Extração resiliente do código de rastreamento (suporta useParams e window.location se montado por fallback)
+  const resolvedTrackingCode = useMemo(() => {
+    if (rawTrackingCode && rawTrackingCode.trim()) {
+      return rawTrackingCode.trim()
+    }
+    if (typeof window !== 'undefined') {
+      const pathname = window.location.pathname
+      const match = pathname.match(/\/track\/([^/?#]+)/i)
+      if (match && match[1]) {
+        return decodeURIComponent(match[1]).trim()
+      }
+    }
+    return ''
+  }, [rawTrackingCode])
+
   const [order, setOrder] = useState<OrderRecord | null>(null)
   const [courierLocation, setCourierLocation] = useState<LocationRecord | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -58,17 +74,23 @@ export default function PublicTrackingPage() {
   const [hasSubmittedReview, setHasSubmittedReview] = useState(false)
 
   const loadOrder = async () => {
-    if (!tracking_code) return
+    if (!resolvedTrackingCode) {
+      setIsLoading(false)
+      setErrorMsg('Código de rastreamento não informado na URL. Verifique o link fornecido.')
+      return
+    }
     setIsLoading(true)
     setErrorMsg(null)
     try {
       const [orderData, routeInfo] = await Promise.all([
-        deliveryService.getOrderByTrackingCode(tracking_code),
-        deliveryService.getPublicTrackingRoute(tracking_code),
+        deliveryService.getOrderByTrackingCode(resolvedTrackingCode),
+        deliveryService.getPublicTrackingRoute(resolvedTrackingCode),
       ])
 
       if (!orderData) {
-        setErrorMsg('Código de rastreio não encontrado. Verifique o código e tente novamente.')
+        setErrorMsg(
+          `Código de rastreio "${resolvedTrackingCode}" não foi localizado em nossa base de dados. Verifique se digitou corretamente ou solicite um novo link ao remetente.`,
+        )
       } else {
         setOrder(orderData)
         if (routeInfo) {
@@ -124,7 +146,7 @@ export default function PublicTrackingPage() {
 
   useEffect(() => {
     loadOrder()
-  }, [tracking_code])
+  }, [resolvedTrackingCode])
 
   // Realtime updates for order status and courier locations
   useRealtime<OrderRecord>('orders', (e) => {
@@ -362,15 +384,40 @@ export default function PublicTrackingPage() {
             <p className="text-sm text-slate-400">Localizando encomenda e telemetria...</p>
           </div>
         ) : errorMsg || !order ? (
-          <div className="rounded-2xl border border-rose-900/50 bg-rose-950/20 p-8 text-center space-y-4 max-w-md mx-auto">
-            <AlertCircle className="h-12 w-12 text-rose-500 mx-auto" />
-            <h2 className="text-lg font-bold text-white">Entrega Não Encontrada</h2>
-            <p className="text-xs text-slate-400">{errorMsg}</p>
-            <Link to="/">
-              <Button className="bg-blue-600 hover:bg-blue-500 text-white text-xs">
-                Digitar outro código
+          <div className="rounded-2xl border border-slate-700/60 bg-[#0E1738] p-8 text-center space-y-5 max-w-md mx-auto shadow-brand-dark">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+              <AlertCircle className="h-8 w-8" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold font-heading text-white">
+                Rastreamento Não Encontrado
+              </h2>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                {errorMsg || 'Não foi possível encontrar as informações deste pedido.'}
+              </p>
+              {resolvedTrackingCode && (
+                <div className="inline-block mt-2 px-3 py-1 rounded-md bg-slate-900/80 border border-slate-700 font-mono text-xs text-blue-400">
+                  Código: {resolvedTrackingCode}
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <Button
+                onClick={loadOrder}
+                className="w-full sm:w-auto bg-[#0052CC] hover:bg-blue-600 text-white text-xs font-bold h-9 px-4 rounded-input flex items-center justify-center gap-1.5"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Tentar novamente
               </Button>
-            </Link>
+              <Link to="/" className="w-full sm:w-auto">
+                <Button
+                  variant="outline"
+                  className="w-full sm:w-auto border-white/20 bg-white/10 text-white hover:bg-white/20 text-xs font-bold h-9 px-4 rounded-input"
+                >
+                  Ir para Início
+                </Button>
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="space-y-6">

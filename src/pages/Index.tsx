@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
   Truck,
@@ -34,6 +34,18 @@ type SelectedProfile = 'admin' | 'seller' | 'courier' | null
 export default function Index() {
   const { login, isAuthenticated, role } = useAuth()
   const navigate = useNavigate()
+
+  // Interceptação de segurança: se a rota no browser contiver /track/...,
+  // redirecionar imediatamente para a página pública de rastreio em vez de renderizar a Index
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname
+      const match = path.match(/^\/track\/([^/?#]+)/i)
+      if (match && match[1]) {
+        navigate(`/track/${match[1]}`, { replace: true })
+      }
+    }
+  }, [navigate])
 
   // Selected Profile for the dedicated login view: null means grid of 3 cards
   const [selectedProfile, setSelectedProfile] = useState<SelectedProfile>(null)

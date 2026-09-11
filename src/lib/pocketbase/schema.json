@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-09-11T21:26:25.176Z",
+  "generatedAt": "2026-09-11T22:53:38.512Z",
   "collections": [
     {
       "name": "users",
       "type": "auth",
       "apiRules": {
         "list": "@request.auth.id != ''",
-        "view": "@request.auth.id != '' || @request.auth.id = ''",
+        "view": "",
         "create": "@request.auth.role = 'admin' || (@request.auth.role = 'seller' && role = 'courier')",
         "update": "@request.auth.id = id || @request.auth.role = 'admin'",
         "delete": "@request.auth.role = 'admin'"
@@ -105,8 +105,8 @@
       "name": "customers",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != ''",
-        "view": "@request.auth.id != ''",
+        "list": "",
+        "view": "",
         "create": "@request.auth.id != ''",
         "update": "@request.auth.id != ''",
         "delete": "@request.auth.role = 'admin' || @request.auth.role = 'seller'"
@@ -229,8 +229,8 @@
       "name": "orders",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != '' || (@request.query.tracking_code != '' && tracking_code = @request.query.tracking_code)",
-        "view": "@request.auth.id != '' || tracking_code != ''",
+        "list": "",
+        "view": "",
         "create": "@request.auth.id != ''",
         "update": "@request.auth.id != ''",
         "delete": "@request.auth.role = 'admin' || @request.auth.role = 'seller'"

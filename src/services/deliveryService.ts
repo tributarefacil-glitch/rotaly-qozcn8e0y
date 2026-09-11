@@ -37,12 +37,34 @@ export const deliveryService = {
   },
 
   async getOrderByTrackingCode(trackingCode: string) {
-    const list = await pb.collection<OrderRecord>('orders').getList(1, 1, {
-      filter: `tracking_code = '${trackingCode.trim().toUpperCase()}'`,
-      expand: 'customer_id,courier_id,seller_id',
-      requestKey: null,
-    })
-    return list.items[0] || null
+    const code = trackingCode.trim().toUpperCase()
+    if (!code) return null
+
+    try {
+      // 1. Busca direta exata na coleção orders
+      const list = await pb.collection<OrderRecord>('orders').getList(1, 1, {
+        filter: `tracking_code = '${code}'`,
+        expand: 'customer_id,courier_id,seller_id',
+        requestKey: null,
+      })
+      if (list.items[0]) return list.items[0]
+    } catch (err) {
+      console.warn('Erro ao buscar pedido por tracking_code na coleção orders:', err)
+    }
+
+    try {
+      // 2. Fallback caso a formatação tenha espaçamento ou case ligeiramente diferente
+      const listFuzzy = await pb.collection<OrderRecord>('orders').getList(1, 1, {
+        filter: `tracking_code ~ '${code}'`,
+        expand: 'customer_id,courier_id,seller_id',
+        requestKey: null,
+      })
+      if (listFuzzy.items[0]) return listFuzzy.items[0]
+    } catch (err) {
+      console.warn('Erro na busca aproximada por tracking_code:', err)
+    }
+
+    return null
   },
 
   /**

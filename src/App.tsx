@@ -60,8 +60,10 @@ const App = () => (
         <Toaster />
         <Sonner richColors position="top-right" />
         <Routes>
-          {/* Public Track Route */}
+          {/* Public Track Routes (com suporte a sufixos e variações de path) */}
           <Route path="/track/:tracking_code" element={<PublicTrackingPage />} />
+          <Route path="/track" element={<PublicTrackingPage />} />
+          <Route path="/track/*" element={<PublicTrackingPage />} />
 
           {/* Authentication & Access Routes */}
           <Route path="/" element={<Index />} />
