@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   BarChart3,
   TrendingUp,
@@ -57,6 +57,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { deliveryService } from '@/services/deliveryService'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
+import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
   OrderRecord,
   UserRecord,
@@ -254,7 +255,32 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setNotifications(notifsData)
       setSettings(appSettings)
       setFuelAdvances(advancesData)
-      setFuelAccounts(accountsData)
+      // Recalcula as contas correntes com base no filtro de período atual e dados completos
+      const couriersList = usersData.filter((u) => u.role === 'courier') as UserRecord[]
+      const calculatedAccounts = couriersList.map((courier) => {
+        const metrics = calculateCourierFuelMetrics({
+          courier,
+          advances: advancesData,
+          orders: ordersData,
+          locations: locationsData,
+          offRouteEvents: eventsData,
+          settings: appSettings,
+          periodFilter: fuelPeriodFilter,
+        })
+        return (
+          metrics.fuelAccount ||
+          deliveryService.getCourierFuelAccount(
+            courier,
+            advancesData,
+            ordersData,
+            appSettings,
+            fuelPeriodFilter,
+            locationsData,
+            eventsData,
+          )
+        )
+      })
+      setFuelAccounts(calculatedAccounts)
       setOffRouteEvents(eventsData)
       setReviews(reviewsData)
       setLocations(locationsData)
@@ -682,6 +708,33 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     }
   })
 
+  // Recalcular fuelAccounts reativamente sempre que mudar o filtro de período, pedidos ou adiantamentos
+  const currentFuelAccounts = useMemo(() => {
+    return couriers.map((courier) => {
+      const metrics = calculateCourierFuelMetrics({
+        courier,
+        advances: fuelAdvances,
+        orders,
+        locations,
+        offRouteEvents,
+        settings,
+        periodFilter: fuelPeriodFilter,
+      })
+      return (
+        metrics.fuelAccount ||
+        deliveryService.getCourierFuelAccount(
+          courier,
+          fuelAdvances,
+          orders,
+          settings,
+          fuelPeriodFilter,
+          locations,
+          offRouteEvents,
+        )
+      )
+    })
+  }, [couriers, fuelAdvances, orders, settings, fuelPeriodFilter, locations, offRouteEvents])
+
   // Filtered Fuel Advances by Courier & Period (REQUISITO 5)
   const filteredFuelAdvances = fuelAdvances.filter((adv) => {
     if (selectedCourierForFuelFilter !== 'all' && adv.courier_id !== selectedCourierForFuelFilter) {
@@ -892,7 +945,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {fuelAccounts.map((acc) => {
+                  {currentFuelAccounts.map((acc) => {
                     const isPositive = acc.balance >= 0
                     return (
                       <Card

@@ -10,45 +10,65 @@ import {
   RefreshCw,
   Info,
   CheckCircle2,
-  ShieldCheck,
   Receipt,
   Route as RouteIcon,
   Zap,
+  CreditCard,
+  FileSpreadsheet,
+  AlertTriangle,
+  ChevronRight,
+  Compass,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { CourierBottomNav } from '@/components/CourierBottomNav'
+import { CourierFuelSummaryCard } from '@/components/CourierFuelSummaryCard'
+import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 import { deliveryService } from '@/services/deliveryService'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { FuelAdvanceRecord, OrderRecord, AppSettingsRecord } from '@/types/delivery'
+import { useCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
+import type {
+  FuelAdvanceRecord,
+  OrderRecord,
+  AppSettingsRecord,
+  LocationRecord,
+  OffRouteEventRecord,
+} from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 
 export default function CourierFuelPage() {
   const { user } = useAuth()
   const [advances, setAdvances] = useState<FuelAdvanceRecord[]>([])
   const [orders, setOrders] = useState<OrderRecord[]>([])
+  const [locations, setLocations] = useState<LocationRecord[]>([])
+  const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [periodFilter, setPeriodFilter] = useState<'all' | 'month' | 'week'>('all')
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
 
   const loadFinancialData = async () => {
     if (!user?.id) return
 
     try {
       // STRICT FILTER: Courier can ONLY access their OWN records
-      const [userAdvances, userOrders, appSettings] = await Promise.all([
+      const [userAdvances, userOrders, appSettings, userLocations, userEvents] = await Promise.all([
         deliveryService.getFuelAdvances(`courier_id = '${user.id}'`, '-date,-created'),
         deliveryService.getOrders(`courier_id = '${user.id}'`, '-created'),
         deliveryService.getSettings(),
+        deliveryService.getLatestLocations(`user_id = '${user.id}'`),
+        deliveryService.getOffRouteEvents(`courier_id = '${user.id}'`),
       ])
 
       setAdvances(userAdvances)
       setOrders(userOrders)
       setSettings(appSettings)
+      setLocations(userLocations)
+      setOffRouteEvents(userEvents)
     } catch (err) {
       console.error('Error loading courier fuel data:', err)
       toast.error('Erro ao carregar dados financeiros de combustível.')
@@ -61,7 +81,7 @@ export default function CourierFuelPage() {
     loadFinancialData()
   }, [user])
 
-  // Realtime updates for fuel advances and orders for this courier
+  // Realtime updates for fuel advances, orders, locations and off_route_events
   useRealtime<FuelAdvanceRecord>('fuel_advances', (e) => {
     if (e.record.courier_id === user?.id) {
       if (e.action === 'create') {
@@ -79,74 +99,36 @@ export default function CourierFuelPage() {
     }
   })
 
-  // Calculation parameters baseados no tipo de veículo do entregador (Moto, Carro ou Caminhão)
-  const vehicleFuelParams = deliveryService.getVehicleFuelParams(settings, user?.vehicle_type)
-  const fuelPrice = vehicleFuelParams.pricePerLiter
-  const fuelConsumption = vehicleFuelParams.consumptionKml
-  const vehicleCategory = vehicleFuelParams.category
-
-  // Filtered advances by period
-  const now = new Date()
-  const filteredAdvances = advances.filter((adv) => {
-    if (!adv.date && !adv.created) return true
-    const advDate = new Date(adv.date || adv.created)
-
-    if (periodFilter === 'month') {
-      return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
+  useRealtime<OffRouteEventRecord>('off_route_events', (e) => {
+    if (e.record.courier_id === user?.id) {
+      loadFinancialData()
     }
-    if (periodFilter === 'week') {
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      return advDate >= sevenDaysAgo
-    }
-    return true
   })
 
-  // Official route orders: Considera rotas com route_started === true OU status in_transit/delivered/address_error/client_absent
-  const officialRouteOrders = orders.filter(
-    (o) =>
-      o.route_started === true ||
-      o.status === 'delivered' ||
-      o.status === 'in_transit' ||
-      o.status === 'address_error' ||
-      o.status === 'client_absent',
-  )
-
-  const filteredOrders = officialRouteOrders.filter((o) => {
-    const oDate = new Date(o.created)
-    if (periodFilter === 'month') {
-      return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear()
-    }
-    if (periodFilter === 'week') {
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      return oDate >= sevenDaysAgo
-    }
-    return true
+  // Hook Compartilhado: mesmo motor de telemetria e regras de consumo do Admin
+  const metrics = useCourierFuelMetrics({
+    courier: user,
+    advances,
+    orders,
+    locations,
+    offRouteEvents,
+    settings,
+    periodFilter,
   })
 
-  // Total Advance Received
-  const totalAdvances = filteredAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+  const {
+    balance,
+    totalAdvances,
+    totalSpent,
+    totalOfficialKm,
+    totalDeviationKm,
+    pricePerLiter,
+    consumptionKml,
+    vehicleCategory,
+    orderCalculations,
+    fuelAccount,
+  } = metrics
 
-  // Total Official Route Km (Ida e Volta considerada, incluindo rotas parciais)
-  const totalRouteKm = filteredOrders.reduce((sum, o) => {
-    let baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-    let returnKm =
-      typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
-
-    if (
-      baseKm === 0 &&
-      (o.status === 'address_error' || o.status === 'client_absent' || o.route_started)
-    ) {
-      baseKm = 4.5
-      if (returnKm === 0) returnKm = 4.5
-    }
-
-    return sum + baseKm + returnKm
-  }, 0)
-  // Total estimated spent in routes
-  const totalSpent = fuelConsumption > 0 ? (totalRouteKm * fuelPrice) / fuelConsumption : 0
-
-  // Real-time Balance
-  const balance = totalAdvances - totalSpent
   const isPositive = balance >= 0
 
   return (
@@ -162,7 +144,7 @@ export default function CourierFuelPage() {
               Minha Conta de Combustível LOGHYPE
             </h1>
             <p className="font-sans text-xs text-slate-400">
-              Acompanhe seus adiantamentos e gastos calculados em tempo real.
+              Telemetria real oficial sincronizada com o administrador.
             </p>
           </div>
           <Button
@@ -206,158 +188,68 @@ export default function CourierFuelPage() {
           </Tabs>
         </div>
 
-        {/* MAIN CURRENT ACCOUNT BALANCE CARD */}
-        <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark relative overflow-hidden rounded-xl">
-          <div
-            className={`absolute top-0 left-0 right-0 h-1.5 ${
-              isPositive ? 'bg-[#22C55E]' : 'bg-[#EF4444]'
-            }`}
-          />
+        {/* COMPONENTE COMPARTILHADO: CARD DE CONTA CORRENTE (IDENTICO AO ADMIN) */}
+        <CourierFuelSummaryCard
+          metrics={metrics}
+          courier={user}
+          onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
+          subtitle="Valores 100% sincronizados com a contabilidade do gestor"
+        />
 
-          <CardHeader className="p-4 pb-2 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-card bg-blue-50 border border-blue-200 text-[#0052CC]">
-                <Wallet className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle className="font-heading text-xs uppercase tracking-wider text-slate-500 font-bold">
-                  Saldo da Minha Conta Corrente
-                </CardTitle>
-                <p className="text-[11px] text-slate-500 font-sans">
-                  Adiantamentos recebidos − Custo de rota realizada
-                </p>
-              </div>
-            </div>
-
-            <Badge
-              className={`text-[10px] font-bold ${
-                isPositive
-                  ? 'bg-emerald-50 text-[#00AA44] border-emerald-200'
-                  : 'bg-red-50 text-[#E74C3C] border-red-200'
-              }`}
-            >
-              {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
-            </Badge>
-          </CardHeader>
-
-          <CardContent className="p-4 pt-1 space-y-4 font-sans">
-            {/* Big Balance Number */}
-            <div className="flex items-baseline justify-between border-b border-slate-100 pb-3">
-              <div>
-                <span
-                  className={`font-heading text-3xl sm:text-4xl font-black font-mono tracking-tight ${
-                    isPositive ? 'text-[#00AA44]' : 'text-[#E74C3C]'
-                  }`}
-                >
-                  R$ {balance.toFixed(2)}
-                </span>
-                <span className="block text-[10px] text-slate-500 mt-0.5">
-                  {isPositive
-                    ? 'Você ainda possui saldo de combustível adiantado pela empresa.'
-                    : 'Gasto em rotas superou os adiantamentos atuais.'}
-                </span>
-              </div>
-            </div>
-
-            {/* Inflow vs Outflow Metrics Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Adiantamentos Recebidos (+) */}
-              <div className="p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58] space-y-1">
-                <div className="flex items-center gap-1.5 text-[#22C55E] text-xs font-semibold font-heading">
-                  <ArrowDownLeft className="h-4 w-4" />
-                  <span>Adiantamentos Recebidos</span>
-                </div>
-                <p className="text-xl font-bold font-mono text-[#22C55E]">
-                  + R$ {totalAdvances.toFixed(2)}
-                </p>
-                <p className="text-[10px] text-slate-400">
-                  {filteredAdvances.length} lançamento(s) efetuados
-                </p>
-              </div>
-
-              {/* Gasto em Rotas (-) */}
-              <div className="p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58] space-y-1">
-                <div className="flex items-center gap-1.5 text-[#FF6B35] text-xs font-semibold font-heading">
-                  <ArrowUpRight className="h-4 w-4" />
-                  <span>Gasto em Rotas Oficiais</span>
-                </div>
-                <p className="text-xl font-bold font-mono text-[#FF6B35]">
-                  - R$ {totalSpent.toFixed(2)}
-                </p>
-                <p className="text-[10px] text-slate-400">
-                  {totalRouteKm.toFixed(1)} km em {filteredOrders.length} entregas
-                </p>
-              </div>
-            </div>
-
-            {/* Current Pricing Rule Summary */}
-            <div className="p-3 rounded-lg bg-[#0A1128] border border-[#1E2B58] text-[11px] text-slate-300 flex items-start gap-2">
-              <Info className="h-4 w-4 text-[#60A5FA] shrink-0 mt-0.5" />
-              <div>
-                <p className="text-white font-semibold font-heading flex items-center gap-1.5">
-                  Regra de Cálculo (
-                  {vehicleCategory === 'carro'
-                    ? '🚗 Carro'
-                    : vehicleCategory === 'caminhao'
-                      ? '🚚 Caminhão'
-                      : '🏍️ Moto'}
-                  ):
-                </p>
-                <p className="mt-0.5 text-slate-300">
-                  R$ {fuelPrice.toFixed(2)} / Litro ÷ {fuelConsumption.toFixed(1)} km/L ={' '}
-                  <strong className="text-[#60A5FA]">
-                    R$ {(fuelPrice / (fuelConsumption || 1)).toFixed(4)} por km percorrido
-                  </strong>
-                  .
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* BOTÃO RÁPIDO PARA ABRIR O HISTÓRICO COMPLETO */}
+        <Button
+          onClick={() => setIsHistoryModalOpen(true)}
+          className="w-full h-11 bg-gradient-to-r from-[#0052CC] to-[#1D4ED8] hover:from-[#0047B3] hover:to-[#1E40AF] text-white font-bold text-xs rounded-xl shadow-brand flex items-center justify-center gap-2 border border-blue-400/30"
+        >
+          <CreditCard className="h-4 w-4" />
+          <span>Abrir Histórico Completo de Entregas &amp; Telemetria</span>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
 
         {/* DETAILED ADVANCES HISTORY (Adiantamentos recebidos) */}
         <div className="space-y-3 pt-2">
           <div className="flex items-center justify-between px-1">
-            <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-[#1a1a1a] flex items-center gap-1.5">
+            <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
               <Receipt className="h-4 w-4 text-[#00AA44]" />
-              Histórico de Adiantamentos Recebidos ({filteredAdvances.length})
+              Histórico de Adiantamentos Recebidos ({metrics.advanceCount})
             </h3>
           </div>
 
-          {filteredAdvances.length === 0 ? (
-            <div className="rounded-card border border-dashed border-slate-200 bg-white p-8 text-center text-slate-400 space-y-2">
-              <Fuel className="h-8 w-8 mx-auto text-slate-400" />
+          {metrics.advanceCount === 0 ? (
+            <div className="rounded-xl border border-dashed border-[#1E2B58] bg-[#0E1738]/60 p-8 text-center text-slate-400 space-y-2">
+              <Fuel className="h-8 w-8 mx-auto text-slate-500" />
               <p className="text-xs font-medium">
                 Nenhum adiantamento registrado para este período.
               </p>
               <p className="text-[11px] text-slate-500">
-                Os valores cadastrados pelo gestor/administrador aparecerão automaticamente aqui.
+                Os adiantamentos cadastrados pelo gestor/administrador aparecerão automaticamente
+                aqui.
               </p>
             </div>
           ) : (
             <div className="space-y-2 font-sans">
-              {filteredAdvances.map((adv) => (
+              {advances.map((adv) => (
                 <div
                   key={adv.id}
-                  className="p-3.5 rounded-card border border-slate-200 bg-white shadow-brand flex items-center justify-between gap-3 hover:border-slate-300 transition"
+                  className="p-3.5 rounded-xl border border-[#1E2B58] bg-[#0E1738] shadow-brand-dark flex items-center justify-between gap-3 hover:border-[#60A5FA]/40 transition"
                 >
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-card bg-emerald-50 border border-emerald-200 text-[#00AA44] shrink-0 mt-0.5">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[#22C55E] shrink-0 mt-0.5">
                       <ArrowDownLeft className="h-5 w-5" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-[#00AA44] font-mono">
+                        <span className="font-bold text-sm text-[#22C55E] font-mono">
                           + R$ {Number(adv.amount || 0).toFixed(2)}
                         </span>
                         <Badge
                           variant="outline"
-                          className="text-[9px] uppercase font-mono bg-slate-100 border-slate-200 text-slate-700"
+                          className="text-[9px] uppercase font-mono bg-[#0A1128] border-[#1E2B58] text-slate-300"
                         >
                           {adv.payment_method || 'PIX'}
                         </Badge>
                       </div>
-                      <p className="text-xs text-slate-600 mt-0.5">
+                      <p className="text-xs text-slate-400 mt-0.5">
                         {adv.notes || 'Adiantamento de combustível para rotas'}
                       </p>
                       <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-1">
@@ -372,7 +264,7 @@ export default function CourierFuelPage() {
                   </div>
 
                   <div className="text-right shrink-0">
-                    <span className="inline-flex items-center gap-1 text-[10px] text-[#00AA44] font-semibold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200">
+                    <span className="inline-flex items-center gap-1 text-[10px] text-[#22C55E] font-semibold bg-emerald-500/10 px-2 py-1 rounded-md border border-emerald-500/30">
                       <CheckCircle2 className="h-3 w-3" />
                       Recebido
                     </span>
@@ -383,43 +275,40 @@ export default function CourierFuelPage() {
           )}
         </div>
 
-        {/* OFFICIAL ROUTE DELIVERIES (Gasto por Rota) */}
+        {/* OFFICIAL ROUTE DELIVERIES (Gasto por Rota com Telemetria Real) */}
         <div className="space-y-3 pt-4">
           <div className="flex items-center justify-between px-1">
-            <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-[#1a1a1a] flex items-center gap-1.5">
-              <RouteIcon className="h-4 w-4 text-[#0052CC]" />
-              Detalhamento de Km & Consumo por Entrega ({filteredOrders.length})
+            <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+              <RouteIcon className="h-4 w-4 text-[#60A5FA]" />
+              Detalhamento de Km &amp; Telemetria por Entrega ({orderCalculations.length})
             </h3>
+            <span className="text-[10px] text-slate-400">
+              Total Real: {totalOfficialKm.toFixed(1)} km
+            </span>
           </div>
 
-          {filteredOrders.length === 0 ? (
-            <div className="rounded-card border border-dashed border-slate-200 bg-white p-6 text-center text-slate-400 text-xs">
+          {orderCalculations.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[#1E2B58] bg-[#0E1738]/60 p-6 text-center text-slate-400 text-xs">
               Nenhuma entrega computada para este período.
             </div>
           ) : (
             <div className="space-y-2 font-sans">
-              {filteredOrders.map((order) => {
-                const baseKm =
-                  typeof order.distance_km === 'number' && order.distance_km > 0
-                    ? order.distance_km
-                    : 0
-                const returnKm =
-                  typeof order.return_trip_km === 'number' && order.return_trip_km > 0
-                    ? order.return_trip_km
-                    : 0
-                const totalOrderKm = baseKm + returnKm
-                const cost = fuelConsumption > 0 ? (totalOrderKm * fuelPrice) / fuelConsumption : 0
+              {orderCalculations.map((calc) => {
+                const { order, officialKm, deviationKm, fuelCost, isRealTelemetry, offRouteCount } =
+                  calc
 
                 return (
                   <div
                     key={order.id}
-                    className="p-3 rounded-card border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark flex items-center justify-between text-xs"
+                    onClick={() => setIsHistoryModalOpen(true)}
+                    className="p-3 rounded-xl border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark flex items-center justify-between text-xs cursor-pointer hover:border-[#60A5FA]/50 transition group"
                   >
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0 pr-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <span className="font-mono font-bold text-[#60A5FA]">
                           {order.tracking_code}
                         </span>
+
                         <Badge
                           variant="outline"
                           className="text-[9px] bg-[#0A1128] border-[#1E2B58] text-slate-300"
@@ -427,25 +316,49 @@ export default function CourierFuelPage() {
                           {order.status === 'delivered'
                             ? '✓ Entregue'
                             : order.status === 'address_error'
-                              ? '⚠️ Erro Endereço (Rota Parcial)'
+                              ? '⚠️ Erro Endereço'
                               : order.status === 'client_absent'
-                                ? '⚠️ Cliente Ausente (Rota Parcial)'
-                                : 'Em Rota Iniciada'}
+                                ? '⚠️ Ausente'
+                                : 'Em Trânsito'}
                         </Badge>
+
+                        {isRealTelemetry ? (
+                          <Badge className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold">
+                            100% Real (GPS)
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-blue-500/15 text-blue-400 border border-blue-500/30 text-[9px]">
+                            ~Estimado
+                          </Badge>
+                        )}
+
+                        {offRouteCount > 0 && (
+                          <Badge className="bg-rose-500/15 text-rose-400 border border-rose-500/30 text-[9px]">
+                            {offRouteCount} desvio(s)
+                          </Badge>
+                        )}
                       </div>
-                      <p className="text-[11px] text-slate-400 truncate max-w-[200px] mt-0.5">
+
+                      <p className="text-[11px] text-slate-300 truncate max-w-[220px] mt-1 font-medium">
                         {order.expand?.customer_id?.name || 'Cliente'}
                       </p>
-                      {order.start_base_name && (
-                        <p className="text-[10px] text-slate-400">Base: {order.start_base_name}</p>
-                      )}
+                      <p className="text-[10px] text-slate-400 truncate max-w-[220px]">
+                        {order.expand?.customer_id?.street || order.expand?.customer_id?.address}
+                      </p>
                     </div>
 
-                    <div className="text-right">
-                      <p className="font-bold text-[#FF6B35] font-mono">- R$ {cost.toFixed(2)}</p>
-                      <p className="text-[10px] text-slate-400">
-                        {totalOrderKm > 0 ? `${totalOrderKm.toFixed(1)} km (c/ volta)` : 'Km N/D'}
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-[#FF6B35] font-mono text-sm">
+                        - R$ {fuelCost.toFixed(2)}
                       </p>
+                      <p className="text-[10px] text-slate-300 font-mono">
+                        {officialKm.toFixed(1)} km oficial
+                      </p>
+                      {deviationKm > 0 && (
+                        <p className="text-[9px] text-rose-400 font-mono">
+                          +{deviationKm.toFixed(1)} km desvios
+                        </p>
+                      )}
                     </div>
                   </div>
                 )
@@ -457,6 +370,18 @@ export default function CourierFuelPage() {
 
       {/* Mobile Bottom Nav */}
       <CourierBottomNav />
+
+      {/* CourierDeliveryHistoryModal (MESMO MODAL DO ADMIN, FILTRADO PARA ESTE ENTREGADOR) */}
+      <CourierDeliveryHistoryModal
+        isOpen={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        courier={user}
+        fuelAccount={fuelAccount}
+        orders={orders}
+        offRouteEvents={offRouteEvents}
+        locations={locations}
+        settings={settings}
+      />
     </div>
   )
 }

@@ -624,6 +624,90 @@ export const deliveryService = {
     return pb.collection<FuelAdvanceRecord>('fuel_advances').delete(id)
   },
 
+  // 6. Obter extrato de conta corrente de combustível de um entregador individual
+  getCourierFuelAccount(
+    courier: UserRecord,
+    advances: FuelAdvanceRecord[],
+    orders: OrderRecord[],
+    settings: Partial<AppSettingsRecord> | null,
+    periodFilter: 'all' | 'month' | 'week' = 'all',
+    locations: LocationRecord[] = [],
+    offRouteEvents: OffRouteEventRecord[] = [],
+  ): CourierFuelAccount {
+    const fuelParams = this.getVehicleFuelParams(settings, courier.vehicle_type)
+    const { pricePerLiter, consumptionKml } = fuelParams
+
+    const now = new Date()
+
+    // Filtrar adiantamentos
+    const courierAdvances = advances.filter((a) => {
+      if (a.courier_id !== courier.id) return false
+      if (periodFilter === 'all') return true
+      const advDate = new Date(a.date || a.created || Date.now())
+      if (periodFilter === 'week') {
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        return advDate >= sevenDaysAgo
+      }
+      if (periodFilter === 'month') {
+        return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
+      }
+      return true
+    })
+
+    const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+
+    // Filtrar ordens concluídas ou com rota iniciada
+    const courierOrders = orders.filter((o) => {
+      if (o.courier_id !== courier.id) return false
+      const isStartedOrDelivered =
+        o.route_started === true ||
+        o.status === 'delivered' ||
+        o.status === 'in_transit' ||
+        o.status === 'address_error' ||
+        o.status === 'client_absent'
+
+      if (!isStartedOrDelivered) return false
+      if (periodFilter === 'all') return true
+
+      const oDate = new Date(o.created || Date.now())
+      if (periodFilter === 'week') {
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        return oDate >= sevenDaysAgo
+      }
+      if (periodFilter === 'month') {
+        return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear()
+      }
+      return true
+    })
+
+    const courierLocations = locations.filter((l) => l.user_id === courier.id)
+    const courierEvents = offRouteEvents.filter((ev) => ev.courier_id === courier.id)
+    const allCourierOrders = orders.filter((o) => o.courier_id === courier.id)
+
+    // Calcular km oficial real de cada ordem usando motor de telemetria se disponível
+    const totalRouteKm = courierOrders.reduce((sum, o) => {
+      return (
+        sum +
+        (typeof o.real_km === 'number' && o.real_km > 0
+          ? o.real_km
+          : (o.distance_km || 0) + (o.return_trip_km || 0))
+      )
+    }, 0)
+
+    const totalSpent = consumptionKml > 0 ? (totalRouteKm * pricePerLiter) / consumptionKml : 0
+    const balance = totalAdvances - totalSpent
+
+    return {
+      courier,
+      totalAdvances: Number(totalAdvances.toFixed(2)),
+      totalRouteKm: Number(totalRouteKm.toFixed(1)),
+      totalSpent: Number(totalSpent.toFixed(2)),
+      balance: Number(balance.toFixed(2)),
+      advanceCount: courierAdvances.length,
+      deliveriesCount: courierOrders.length,
+    }
+  },
+
   // Compute Real-time Courier Current Account
   // Regra: Soma dos Adiantamentos - Gasto em Rotas Oficiais (KM Real de GPS quando disponível, descontados desvios e paradas)
   // Usando parâmetros de consumo e preço específicos do tipo de veículo do entregador (moto, carro ou caminhão)

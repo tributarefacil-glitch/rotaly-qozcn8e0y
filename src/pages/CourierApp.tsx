@@ -41,13 +41,27 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
+import { CourierFuelSummaryCard } from '@/components/CourierFuelSummaryCard'
+import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
+import { useCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
+import type {
+  FuelAdvanceRecord,
+  LocationRecord,
+  OffRouteEventRecord,
+  AppSettingsRecord,
+} from '@/types/delivery'
 
 export default function CourierApp() {
   const { user } = useAuth()
   const [orders, setOrders] = useState<OrderRecord[]>([])
+  const [advances, setAdvances] = useState<FuelAdvanceRecord[]>([])
+  const [locations, setLocations] = useState<LocationRecord[]>([])
+  const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
+  const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
   const [selectedOrderForConfirmation, setSelectedOrderForConfirmation] =
     useState<OrderRecord | null>(null)
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false)
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
   const [isGpsActive, setIsGpsActive] = useState(true)
   const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number }>({
     lat: -22.906847,
@@ -57,19 +71,29 @@ export default function CourierApp() {
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [isStartingRoute, setIsStartingRoute] = useState(false)
-  const [fuelSettings, setFuelSettings] = useState({
-    fuel_price_per_liter: 5.59,
-    fuel_consumption_kml: 35.0,
-  })
+
+  // Carregar dados de conta corrente e configurações para manter paridade 100% com o Admin
+  const loadFuelAndAccountData = async () => {
+    if (!user?.id) return
+    try {
+      const [userAdvances, appSettings, userLocations, userEvents] = await Promise.all([
+        deliveryService.getFuelAdvances(`courier_id = '${user.id}'`, '-date,-created'),
+        deliveryService.getSettings(),
+        deliveryService.getLatestLocations(`user_id = '${user.id}'`),
+        deliveryService.getOffRouteEvents(`courier_id = '${user.id}'`),
+      ])
+      setAdvances(userAdvances)
+      setSettings(appSettings)
+      setLocations(userLocations)
+      setOffRouteEvents(userEvents)
+    } catch (err) {
+      console.warn('Erro ao carregar dados de telemetria e conta de combustível:', err)
+    }
+  }
 
   useEffect(() => {
-    deliveryService.getSettings().then((s) => {
-      setFuelSettings({
-        fuel_price_per_liter: s.fuel_price_per_liter || 5.59,
-        fuel_consumption_kml: s.fuel_consumption_kml || 35.0,
-      })
-    })
-  }, [])
+    loadFuelAndAccountData()
+  }, [user])
 
   // Load orders assigned to this courier (apenas pedidos liberados pelo vendedor OU já em trânsito/entregues)
   const loadCourierOrders = async () => {
@@ -115,6 +139,26 @@ export default function CourierApp() {
         )
       }
       loadCourierOrders()
+      loadFuelAndAccountData()
+    }
+  })
+
+  // Realtime hook for fuel advances
+  useRealtime<FuelAdvanceRecord>('fuel_advances', (e) => {
+    if (e.record.courier_id === user?.id) {
+      if (e.action === 'create') {
+        toast.success(
+          `⛽ Novo adiantamento recebido: R$ ${Number(e.record.amount || 0).toFixed(2)}`,
+        )
+      }
+      loadFuelAndAccountData()
+    }
+  })
+
+  // Realtime hook for off-route events
+  useRealtime<OffRouteEventRecord>('off_route_events', (e) => {
+    if (e.record.courier_id === user?.id) {
+      loadFuelAndAccountData()
     }
   })
 
@@ -267,12 +311,20 @@ export default function CourierApp() {
 
   // Has route already been started for active deliveries?
   const isRouteStarted = activeDeliveries.some((o) => o.route_started === true)
-  const totalRouteKmCounted = activeDeliveries
-    .filter((o) => o.route_started)
-    .reduce((sum, o) => sum + (o.distance_km || 0) + (o.return_trip_km || 0), 0)
-  const totalRouteFuelSpent =
-    (totalRouteKmCounted * fuelSettings.fuel_price_per_liter) /
-    (fuelSettings.fuel_consumption_kml || 35.0)
+
+  // Motor de Telemetria e Conta Corrente Compartilhado (Exatamente idêntico ao Admin)
+  const courierMetrics = useCourierFuelMetrics({
+    courier: user,
+    advances,
+    orders,
+    locations,
+    offRouteEvents,
+    settings,
+    periodFilter: 'all',
+  })
+
+  const totalRouteFuelSpent = courierMetrics.totalSpent
+  const totalOfficialKm = courierMetrics.totalOfficialKm
 
   // Start Base / End Base Info from the first active order
   const startBaseName =
@@ -411,12 +463,15 @@ export default function CourierApp() {
                 </span>
               </div>
 
-              <div className="p-2.5 rounded-lg bg-[#070D1E] border border-[#1E2B58]">
+              <div
+                className="p-2.5 rounded-lg bg-[#070D1E] border border-[#1E2B58] cursor-pointer hover:border-[#60A5FA]/60 transition"
+                onClick={() => setIsHistoryModalOpen(true)}
+              >
                 <span className="text-[10px] text-slate-400 block uppercase font-bold flex items-center gap-1">
                   <Fuel className="h-3 w-3 text-[#FF6B35]" /> Consumo Oficial
                 </span>
                 <span className="font-bold font-mono text-xs mt-0.5 text-white block">
-                  {isRouteStarted ? `R$ ${totalRouteFuelSpent.toFixed(2)}` : 'R$ 0,00'}
+                  R$ {totalRouteFuelSpent.toFixed(2)}
                 </span>
               </div>
 
@@ -454,6 +509,14 @@ export default function CourierApp() {
             )}
           </div>
         )}
+
+        {/* CARD DE CONTA CORRENTE & COMBUSTÍVEL COMPARTILHADO (MESMO DO ADMIN) */}
+        <CourierFuelSummaryCard
+          metrics={courierMetrics}
+          courier={user}
+          onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
+          subtitle="Valores idênticos aos registrados pelo gestor/administrador"
+        />
 
         {/* Route Optimization Button */}
         <div className="flex items-center justify-between gap-3">
@@ -790,6 +853,18 @@ export default function CourierApp() {
         open={isConfirmModalOpen}
         onOpenChange={setIsConfirmModalOpen}
         onConfirmed={loadCourierOrders}
+      />
+
+      {/* CourierDeliveryHistoryModal (MESMO MODAL DO ADMIN, RESTRITO AO PRÓPRIO ENTREGADOR) */}
+      <CourierDeliveryHistoryModal
+        isOpen={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        courier={user}
+        fuelAccount={courierMetrics.fuelAccount}
+        orders={orders}
+        offRouteEvents={offRouteEvents}
+        locations={locations}
+        settings={settings}
       />
     </div>
   )
