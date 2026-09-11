@@ -218,28 +218,38 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   // Map markers computation
   const mapMarkers: MapMarkerItem[] = []
 
-  // REQUISITO 2: Entregadores aparecem no mapa apenas com rota iniciada
+  // REQUISITO: Status do entregador coerente (Em Rota apenas se houver rota iniciada/em curso; Presente/Disponível quando sem rota iniciada)
   couriers.forEach((c) => {
-    // Verificar se tem rota iniciada ou pedidos em trânsito
-    const courierOrders = orders.filter((o) => o.courier_id === c.id)
-    const hasRouteStarted =
-      courierOrders.some((o) => o.route_started === true) ||
-      courierOrders.some((o) => o.status === 'in_transit')
+    const courierLoc = locations.find((l) => l.user_id === c.id)
+    if (!courierLoc) return
 
-    if (hasRouteStarted) {
-      const courierLoc = locations.find((l) => l.user_id === c.id)
-      if (courierLoc) {
-        mapMarkers.push({
-          id: `courier-${c.id}`,
-          title: `🛵 ${c.name} (Em Rota)`,
-          subtitle: `Status: Em Rota • ${courierOrders.filter((o) => o.status === 'in_transit').length} em trânsito`,
-          lat: courierLoc.lat,
-          lng: courierLoc.lng,
-          type: 'courier',
-          speed: courierLoc.speed || 32,
-        })
-      }
+    const courierOrders = orders.filter((o) => o.courier_id === c.id)
+    const inTransitOrders = courierOrders.filter((o) => o.status === 'in_transit')
+    const hasActiveRoute =
+      courierOrders.some((o) => o.route_started === true) && inTransitOrders.length > 0
+
+    let courierTitle = `🧍 ${c.name} (Disponível)`
+    let courierSubtitle = 'Status: Presente • Disponível'
+
+    if (hasActiveRoute) {
+      courierTitle = `🛵 ${c.name} (Em Rota)`
+      courierSubtitle = `Status: Em Rota • ${inTransitOrders.length} em trânsito`
+    } else if (inTransitOrders.length > 0) {
+      // Caso haja pedidos atribuídos aguardando aceite/início
+      courierTitle = `🧍 ${c.name} (Presente)`
+      courierSubtitle = `Status: Aguardando início • ${inTransitOrders.length} atribuído(s)`
     }
+
+    mapMarkers.push({
+      id: `courier-${c.id}`,
+      title: courierTitle,
+      subtitle: courierSubtitle,
+      lat: courierLoc.lat,
+      lng: courierLoc.lng,
+      type: 'courier',
+      speed: courierLoc.speed || 0,
+      courier_name: c.name,
+    })
   })
 
   // Add delivery destination markers for in_transit, pending and delivered orders

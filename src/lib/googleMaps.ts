@@ -515,6 +515,65 @@ export async function fallbackGeocodeAddress(
   }
 }
 
+// In-memory cache for reverse geocoding by rounded coordinates (~10-15 meters)
+const reverseGeocodeCache = new Map<string, ParsedAddress>()
+
+export function getCachedReverseGeocodeKey(lat: number, lng: number): string {
+  // Round to 4 decimal places (~11 meters precision)
+  return `${lat.toFixed(4)},${lng.toFixed(4)}`
+}
+
+/**
+ * Reverse geocoding helper that attempts Google Geocoder first,
+ * with automatic caching and fallback to OpenStreetMap Nominatim.
+ */
+export async function reverseGeocodeCoordinates(
+  lat: number,
+  lng: number,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<ParsedAddress | null> {
+  const cacheKey = getCachedReverseGeocodeKey(lat, lng)
+  if (reverseGeocodeCache.has(cacheKey)) {
+    return reverseGeocodeCache.get(cacheKey)!
+  }
+
+  // 1. Try Google Maps Geocoder if loaded
+  try {
+    const win = typeof window !== 'undefined' ? (window as any) : null
+    if (win?.google?.maps?.Geocoder) {
+      const geocoder = new win.google.maps.Geocoder()
+      const googleResult = await new Promise<ParsedAddress | null>((resolve) => {
+        geocoder.geocode({ location: { lat, lng } }, (results: any[], status: string) => {
+          if (status === 'OK' && results && results[0]) {
+            const parsed = parseGoogleAddressComponents(results[0].address_components || [])
+            const formatted = results[0].formatted_address || parsed.formattedAddress
+            resolve({
+              ...parsed,
+              formattedAddress: formatted,
+            })
+          } else {
+            resolve(null)
+          }
+        })
+      })
+
+      if (googleResult && googleResult.formattedAddress) {
+        reverseGeocodeCache.set(cacheKey, googleResult)
+        return googleResult
+      }
+    }
+  } catch (err) {
+    // Silently fall through to OSM fallback
+  }
+
+  // 2. OpenStreetMap fallback
+  const fallbackResult = await fallbackReverseGeocode(lat, lng, options)
+  if (fallbackResult) {
+    reverseGeocodeCache.set(cacheKey, fallbackResult)
+  }
+  return fallbackResult
+}
+
 /**
  * Fallback Reverse Geocoding with OpenStreetMap Nominatim
  */

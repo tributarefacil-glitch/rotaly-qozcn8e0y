@@ -17,6 +17,7 @@ import {
   loadGoogleMapsScript,
   onGoogleMapsAuthError,
   isGoogleMapsAuthError,
+  reverseGeocodeCoordinates,
 } from '@/lib/googleMaps'
 
 export interface MapMarkerItem {
@@ -67,6 +68,60 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const [authError, setAuthError] = useState(isGoogleMapsAuthError())
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
   const [activePopupMarker, setActivePopupMarker] = useState<MapMarkerItem | null>(null)
+  // State for resolved addresses: key is marker.id or lat,lng key
+  const [resolvedAddresses, setResolvedAddresses] = useState<Record<string, string>>({})
+  const [loadingAddressIds, setLoadingAddressIds] = useState<Record<string, boolean>>({})
+
+  // Hover address resolver with caching and fallback
+  const handleMarkerHover = (item: MapMarkerItem) => {
+    if (!item.lat || !item.lng) return
+
+    // If marker already has customer_address (order markers)
+    if (item.customer_address) {
+      if (!resolvedAddresses[item.id]) {
+        setResolvedAddresses((prev) => ({ ...prev, [item.id]: item.customer_address! }))
+      }
+      return
+    }
+
+    const posKey = `${item.id}-${item.lat.toFixed(4)},${item.lng.toFixed(4)}`
+    if (resolvedAddresses[posKey] || loadingAddressIds[posKey]) return
+
+    setLoadingAddressIds((prev) => ({ ...prev, [posKey]: true }))
+    reverseGeocodeCoordinates(item.lat, item.lng)
+      .then((res) => {
+        const addressText = res?.streetAndNumber
+          ? `${res.streetAndNumber}${res.neighborhood ? ` - ${res.neighborhood}` : ''}${res.city ? `, ${res.city}` : ''}`
+          : res?.formattedAddress || `Lat: ${item.lat.toFixed(5)}, Lng: ${item.lng.toFixed(5)}`
+
+        setResolvedAddresses((prev) => ({
+          ...prev,
+          [posKey]: addressText,
+          [item.id]: addressText,
+        }))
+      })
+      .catch(() => {
+        const fallbackText = `Lat: ${item.lat.toFixed(5)}, Lng: ${item.lng.toFixed(5)}`
+        setResolvedAddresses((prev) => ({
+          ...prev,
+          [posKey]: fallbackText,
+          [item.id]: fallbackText,
+        }))
+      })
+      .finally(() => {
+        setLoadingAddressIds((prev) => ({ ...prev, [posKey]: false }))
+      })
+  }
+
+  // Helper to get displayed address for a marker
+  const getMarkerAddress = (item: MapMarkerItem) => {
+    if (item.customer_address) return item.customer_address
+    const posKey = `${item.id}-${item.lat.toFixed(4)},${item.lng.toFixed(4)}`
+    if (resolvedAddresses[posKey]) return resolvedAddresses[posKey]
+    if (resolvedAddresses[item.id]) return resolvedAddresses[item.id]
+    if (loadingAddressIds[posKey] || loadingAddressIds[item.id]) return 'Localizando endereço...'
+    return null
+  }
 
   const copyTrackingLink = (trackingCode: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
@@ -156,6 +211,45 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     }
   }
 
+  const buildInfoWindowHtml = (item: MapMarkerItem, address?: string | null) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const trackUrl = item.tracking_code ? `${origin}/track/${item.tracking_code}` : ''
+    const addressDisplay = address || getMarkerAddress(item)
+
+    return `
+      <div style="padding: 10px 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 290px; line-height: 1.4;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px;">
+          <strong style="font-size: 13px; color: #0f172a; font-weight: 700;">${item.title}</strong>
+        </div>
+        ${item.subtitle ? `<p style="font-size: 11px; margin: 2px 0 6px; color: #475569;">${item.subtitle}</p>` : ''}
+        
+        <div style="background-color: #f1f5f9; border-radius: 6px; padding: 6px 8px; margin: 6px 0; border: 1px solid #e2e8f0;">
+          <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: #0052cc; display: block; margin-bottom: 2px;">
+            📍 Endereço Atual em Tempo Real:
+          </span>
+          <span style="font-size: 11px; color: #1e293b; font-weight: 500; display: block;">
+            ${addressDisplay || 'Resolvendo endereço...'}
+          </span>
+        </div>
+
+        ${item.speed ? `<p style="font-size: 11px; margin: 4px 0 0; color: #7c3aed; font-weight: 600;">🚀 Velocidade: ${item.speed} km/h</p>` : ''}
+        ${item.estimated_arrival ? `<p style="font-size: 11px; margin: 4px 0 0; color: #0284c7; font-weight: 500;">⏱️ Previsão: ${new Date(item.estimated_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>` : ''}
+        ${
+          item.tracking_code
+            ? `
+          <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 10px; font-family: monospace; color: #64748b; font-weight: bold;">Código: ${item.tracking_code}</span>
+            <a href="${trackUrl}" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #2563eb; font-weight: bold; text-decoration: none;">
+              Abrir Rastreio Público ↗
+            </a>
+          </div>
+        `
+            : ''
+        }
+      </div>
+    `
+  }
+
   const renderGoogleMarkers = () => {
     const google = getGoogle()
     if (!mapInstanceRef.current || !google?.maps) return
@@ -163,6 +257,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     // Clear old markers
     googleMarkersRef.current.forEach((m) => m.setMap(null))
     googleMarkersRef.current = []
+
+    // Single hover infoWindow instance to follow mouse hover smoothly
+    const hoverInfoWindow = new google.maps.InfoWindow({
+      disableAutoPan: true,
+    })
 
     markers.forEach((item) => {
       if (!item.lat || !item.lng) return
@@ -187,36 +286,38 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         animation: item.id === selectedMarkerId ? google.maps.Animation.BOUNCE : undefined,
       })
 
-      const origin = typeof window !== 'undefined' ? window.location.origin : ''
-      const trackUrl = item.tracking_code ? `${origin}/track/${item.tracking_code}` : ''
+      // Click InfoWindow for persistent popup
+      const clickInfoWindow = new google.maps.InfoWindow({
+        content: buildInfoWindowHtml(item),
+      })
 
-      const infoContent = `
-        <div style="padding: 8px; font-family: sans-serif; color: #0f172a; max-width: 260px;">
-          <strong style="font-size: 13px; color: #0f172a; display: block;">${item.title}</strong>
-          ${item.subtitle ? `<p style="font-size: 11px; margin: 4px 0 0; color: #475569;">${item.subtitle}</p>` : ''}
-          ${item.speed ? `<p style="font-size: 11px; margin: 4px 0 0; color: #8b5cf6; font-weight: bold;">🚀 Velocidade: ${item.speed} km/h</p>` : ''}
-          ${item.estimated_arrival ? `<p style="font-size: 11px; margin: 4px 0 0; color: #0284c7;">⏱️ Previsão: ${new Date(item.estimated_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>` : ''}
-          ${
-            item.tracking_code
-              ? `
-            <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 4px;">
-              <span style="font-size: 10px; font-family: monospace; color: #64748b; font-weight: bold;">Código: ${item.tracking_code}</span>
-              <a href="${trackUrl}" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #2563eb; font-weight: bold; text-decoration: none;">
-                Abrir Rastreio Público ↗
-              </a>
-            </div>
-          `
-              : ''
-          }
-        </div>
-      `
+      // Hover handler: resolve real-time reverse geocoded address and update tooltip
+      marker.addListener('mouseover', () => {
+        handleMarkerHover(item)
+        const currentAddr = getMarkerAddress(item)
+        hoverInfoWindow.setContent(buildInfoWindowHtml(item, currentAddr))
+        hoverInfoWindow.open(mapInstanceRef.current, marker)
 
-      const infoWindow = new google.maps.InfoWindow({
-        content: infoContent,
+        // If address is still resolving, poll/update when ready
+        if (!currentAddr || currentAddr === 'Localizando endereço...') {
+          const checkTimer = setTimeout(() => {
+            const updatedAddr = getMarkerAddress(item)
+            hoverInfoWindow.setContent(buildInfoWindowHtml(item, updatedAddr))
+          }, 600)
+          ;(marker as any).__hoverTimer = checkTimer
+        }
+      })
+
+      marker.addListener('mouseout', () => {
+        if ((marker as any).__hoverTimer) clearTimeout((marker as any).__hoverTimer)
+        hoverInfoWindow.close()
       })
 
       marker.addListener('click', () => {
-        infoWindow.open(mapInstanceRef.current, marker)
+        hoverInfoWindow.close()
+        handleMarkerHover(item)
+        clickInfoWindow.setContent(buildInfoWindowHtml(item))
+        clickInfoWindow.open(mapInstanceRef.current, marker)
         setActivePopupMarker(item)
         if (onSelectMarker) onSelectMarker(item)
       })
@@ -230,7 +331,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     if (google?.maps && mapInstanceRef.current) {
       renderGoogleMarkers()
     }
-  }, [markers, selectedMarkerId])
+  }, [markers, selectedMarkerId, resolvedAddresses])
   // Fallback interactive visual mock map if Google Maps key is not provided or offline
   return (
     <div
@@ -296,7 +397,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               return (
                 <div
                   key={m.id}
+                  onMouseEnter={() => handleMarkerHover(m)}
                   onClick={() => {
+                    handleMarkerHover(m)
                     setActivePopupMarker(activePopupMarker?.id === m.id ? null : m)
                     if (onSelectMarker) onSelectMarker(m)
                   }}
@@ -345,7 +448,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                         <div>
                           <p className="font-bold text-white text-xs leading-snug">{m.title}</p>
                           {m.subtitle && (
-                            <p className="text-slate-400 text-[10px] leading-tight mt-0.5 line-clamp-2">
+                            <p className="text-slate-400 text-[10px] leading-tight mt-0.5 line-clamp-2 font-medium">
                               {m.subtitle}
                             </p>
                           )}
@@ -367,6 +470,17 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                                 : 'Pendente'}
                           </span>
                         )}
+                      </div>
+
+                      {/* Endereço em tempo real (Hover/Tooltip) */}
+                      <div className="bg-slate-950/80 p-2 rounded-lg border border-slate-800 text-[11px] space-y-1">
+                        <div className="flex items-center gap-1 text-[10px] font-bold text-[#60A5FA] uppercase tracking-wider">
+                          <MapPin className="h-3 w-3 shrink-0 text-[#60A5FA]" />
+                          <span>Endereço Atual em Tempo Real</span>
+                        </div>
+                        <p className="text-slate-200 text-[11px] leading-relaxed break-words font-sans">
+                          {getMarkerAddress(m) || 'Localizando endereço...'}
+                        </p>
                       </div>
 
                       {m.speed && (

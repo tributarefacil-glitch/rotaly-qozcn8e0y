@@ -381,8 +381,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       )
       const finishedOrders = courierOrders.filter((o) => o.status === 'delivered')
 
+      // REQUISITO: "Em Rota" somente se houver rota iniciada em curso com pedidos em trânsito
       const hasRouteStarted =
-        courierOrders.some((o) => o.route_started === true) || inTransitOrders.length > 0
+        courierOrders.some((o) => o.route_started === true) && inTransitOrders.length > 0
 
       let statusColor: 'green' | 'yellow' | 'red' = 'green'
       let statusLabel = 'Disponível — rota não iniciada'
@@ -396,6 +397,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       } else if (courier.status === 'inactive') {
         statusColor = 'red'
         statusLabel = 'Inativo'
+      } else if (inTransitOrders.length > 0) {
+        statusColor = 'green'
+        statusLabel = 'Aguardando Início da Rota'
       } else {
         statusColor = 'green'
         statusLabel = 'Disponível — rota não iniciada'
