@@ -39,7 +39,13 @@ import {
   Check,
   ExternalLink,
 } from 'lucide-react'
-import { OrderRecord, UserRecord, AppSettingsRecord, OffRouteEventRecord } from '@/types/delivery'
+import {
+  OrderRecord,
+  UserRecord,
+  AppSettingsRecord,
+  OffRouteEventRecord,
+  LocationRecord,
+} from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { useToast } from '@/hooks/use-toast'
@@ -50,6 +56,7 @@ interface ReportsSectionProps {
   couriers: UserRecord[]
   settings?: AppSettingsRecord | null
   offRouteEvents?: OffRouteEventRecord[]
+  locations?: LocationRecord[]
 }
 
 export const ReportsSection: React.FC<ReportsSectionProps> = ({
@@ -57,6 +64,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   couriers,
   settings,
   offRouteEvents = [],
+  locations = [],
 }) => {
   const { toast } = useToast()
   // SELETOR DE PERÍODO: hoje, semana, mês, personalizado (todos)
@@ -232,7 +240,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     activeRouteOrders.forEach((o) => {
       const realTelemetry = calculateRealKmForOrder({
         order: o,
-        allCourierLocations: [],
+        allCourierLocations: locations,
         courierEvents: offRouteEvents,
         allCourierOrders: orders,
       })
@@ -961,6 +969,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         courier={selectedCourierForModal}
         orders={orders}
         offRouteEvents={offRouteEvents}
+        locations={locations}
         settings={settings || null}
       />
     </div>

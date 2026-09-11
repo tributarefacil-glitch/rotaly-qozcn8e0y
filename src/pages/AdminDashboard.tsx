@@ -237,6 +237,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         accountsData,
         eventsData,
         reviewsData,
+        locationsData,
       ] = await Promise.all([
         deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
         deliveryService.getAllUsers(),
@@ -246,6 +247,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         deliveryService.getCourierFuelAccounts(),
         deliveryService.getOffRouteEvents(),
         deliveryService.getReviews(),
+        deliveryService.getLatestLocations(),
       ])
       setOrders(ordersData)
       setUsers(usersData)
@@ -255,6 +257,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setFuelAccounts(accountsData)
       setOffRouteEvents(eventsData)
       setReviews(reviewsData)
+      setLocations(locationsData)
       const fallbackPrice = appSettings.fuel_price_per_liter || 5.59
       setMotoPriceInput(String(appSettings.moto_fuel_price ?? fallbackPrice))
       setMotoConsInput(
@@ -1318,6 +1321,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 couriers={couriers}
                 settings={settings}
                 offRouteEvents={offRouteEvents}
+                locations={locations}
               />
             </TabsContent>
 

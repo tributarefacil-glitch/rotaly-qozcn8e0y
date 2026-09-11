@@ -822,6 +822,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               couriers={couriers}
               settings={settings}
               offRouteEvents={offRouteEvents}
+              locations={locations}
             />
           )}
 
