@@ -52,9 +52,9 @@ const navItems: NavItem[] = [
   },
   {
     title: 'Controle de Combustível',
-    href: '/courier/fuel',
+    href: '/fuel',
     icon: Fuel,
-    roles: ['courier', 'admin'],
+    roles: ['admin', 'seller', 'courier'],
   },
   {
     title: 'Desvios & Paradas',
@@ -88,10 +88,25 @@ export const Sidebar: React.FC = () => {
   const { user } = useAuth()
   const role = user?.role || 'seller'
 
-  const filteredItems = navItems.filter((item) => {
-    if (role === 'admin') return true
-    return item.roles.includes(role)
-  })
+  const filteredItems = navItems
+    .filter((item) => {
+      if (role === 'admin') return true
+      return item.roles.includes(role)
+    })
+    .map((item) => {
+      // Ajustar destino conforme a role do usuário
+      if (item.title === 'Controle de Combustível') {
+        if (role === 'courier') {
+          return { ...item, href: '/courier/fuel' }
+        }
+        if (role === 'seller') {
+          return { ...item, href: '/fuel' }
+        }
+        // Para admin, pode direcionar para a aba de combustível no painel admin ou /fuel
+        return { ...item, href: '/admin?tab=fuel' }
+      }
+      return item
+    })
 
   return (
     <aside className="hidden md:flex h-[calc(100vh-4rem)] w-64 flex-col border-r border-[#1E2B58] bg-[#0A1128] text-slate-200 shadow-xl select-none">

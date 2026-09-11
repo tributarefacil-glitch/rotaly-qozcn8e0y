@@ -18,6 +18,7 @@ import {
   Building,
   RotateCcw,
   Edit3,
+  Fuel,
 } from 'lucide-react'
 import type { BaseAddressRecord } from '@/types/delivery'
 import { Header } from '@/components/Header'
@@ -30,6 +31,7 @@ import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { ControlTower } from '@/components/ControlTower'
 import { ReportsSection } from '@/components/ReportsSection'
+import { SellerFuelSection } from '@/components/SellerFuelSection'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
 import type {
@@ -40,6 +42,7 @@ import type {
   NotificationRecord,
   AppSettingsRecord,
   OffRouteEventRecord,
+  FuelAdvanceRecord,
 } from '@/types/delivery'
 import { playOffRouteWarningSound, sendBrowserPushNotification } from '@/lib/notificationSound'
 import { useAuth } from '@/contexts/AuthContext'
@@ -78,7 +81,7 @@ import {
 import { toast } from 'sonner'
 
 interface SellerDashboardProps {
-  defaultTab?: 'overview' | 'control-tower' | 'reports'
+  defaultTab?: 'overview' | 'control-tower' | 'reports' | 'fuel'
 }
 
 export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashboardProps) {
@@ -86,6 +89,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [couriers, setCouriers] = useState<UserRecord[]>([])
+  const [fuelAdvances, setFuelAdvances] = useState<FuelAdvanceRecord[]>([])
   const [locations, setLocations] = useState<LocationRecord[]>([])
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
   const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
@@ -97,7 +101,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [mainViewTab, setMainViewTab] = useState<'overview' | 'control-tower' | 'reports'>(
+  const [mainViewTab, setMainViewTab] = useState<'overview' | 'control-tower' | 'reports' | 'fuel'>(
     defaultTab,
   )
 
@@ -144,20 +148,30 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   const loadData = async () => {
     try {
-      const [ordersData, custData, couriersData, locsData, basesData, settingsData, eventsData] =
-        await Promise.all([
-          deliveryService.getOrders(),
-          deliveryService.getCustomers(),
-          deliveryService.getCouriers(),
-          deliveryService.getLatestLocations(),
-          deliveryService.getBaseAddresses(),
-          deliveryService.getSettings(),
-          deliveryService.getOffRouteEvents(),
-        ])
+      const [
+        ordersData,
+        custData,
+        couriersData,
+        locsData,
+        basesData,
+        settingsData,
+        eventsData,
+        fuelData,
+      ] = await Promise.all([
+        deliveryService.getOrders(),
+        deliveryService.getCustomers(),
+        deliveryService.getCouriers(),
+        deliveryService.getLatestLocations(),
+        deliveryService.getBaseAddresses(),
+        deliveryService.getSettings(),
+        deliveryService.getOffRouteEvents(),
+        deliveryService.getFuelAdvances(),
+      ])
       setOrders(ordersData)
       setCustomers(custData)
       setCouriers(couriersData)
       setLocations(locsData)
+      setFuelAdvances(fuelData)
       setBaseAddresses(basesData)
       setSettings(settingsData)
       setOffRouteEvents(eventsData)
@@ -538,7 +552,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
               {/* Card 1: Nova Entrega / Venda */}
               <button
                 type="button"
@@ -635,14 +649,40 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                   </p>
                 </div>
               </button>
+
+              {/* Card 5: Controle de Combustível */}
+              <button
+                type="button"
+                onClick={() => setMainViewTab('fuel')}
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#22C55E]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#22C55E]"
+              >
+                <div className="absolute top-0 left-0 right-0 h-1 bg-[#22C55E]" />
+                <div className="h-12 w-12 rounded-xl bg-[#22C55E]/15 border border-[#22C55E]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Fuel className="h-6 w-6 text-[#22C55E]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-heading font-black text-sm text-white group-hover:text-[#22C55E] transition-colors">
+                      Controle de Gasolina
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-[#22C55E] border border-emerald-500/40 text-[10px] font-bold">
+                      GPS
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#22C55E] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                    Saldo da frota, adiantamentos e gasto real por km via telemetria
+                  </p>
+                </div>
+              </button>
             </div>
           </div>
 
-          {/* Navigation Tabs between Overview, Control Tower and Reports */}
-          <div className="flex border-b border-[#1E2B58] gap-2">
+          {/* Navigation Tabs between Overview, Control Tower, Fuel and Reports */}
+          <div className="flex border-b border-[#1E2B58] gap-2 overflow-x-auto scrollbar-thin">
             <button
               onClick={() => setMainViewTab('overview')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
                 mainViewTab === 'overview'
                   ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
                   : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -652,7 +692,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             </button>
             <button
               onClick={() => setMainViewTab('control-tower')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
                 mainViewTab === 'control-tower'
                   ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
                   : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -662,8 +702,22 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               <span className="h-2 w-2 rounded-full bg-[#22C55E] animate-ping inline-block ml-0.5" />
             </button>
             <button
+              onClick={() => setMainViewTab('fuel')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
+                mainViewTab === 'fuel'
+                  ? 'border-[#22C55E] text-[#22C55E] bg-[#0E1738]/50 rounded-t-lg font-black'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Fuel className="h-3.5 w-3.5" />
+              Controle de Combustível
+              <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-[#22C55E] text-[10px] font-mono">
+                GPS
+              </span>
+            </button>
+            <button
               onClick={() => setMainViewTab('reports')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
                 mainViewTab === 'reports'
                   ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
                   : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -829,7 +883,21 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             />
           )}
 
-          {/* TAB 2: RELATÓRIOS (MÓDULO 4) */}
+          {/* TAB 2: CONTROLE DE COMBUSTÍVEL & CONTA CORRENTE */}
+          {mainViewTab === 'fuel' && (
+            <SellerFuelSection
+              couriers={couriers}
+              orders={orders}
+              fuelAdvances={fuelAdvances}
+              locations={locations}
+              offRouteEvents={offRouteEvents}
+              settings={settings}
+              onRefresh={loadData}
+              isReadOnly={true}
+            />
+          )}
+
+          {/* TAB 3: RELATÓRIOS (MÓDULO 4) */}
           {mainViewTab === 'reports' && (
             <ReportsSection
               orders={orders}
@@ -840,7 +908,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             />
           )}
 
-          {/* TAB 3: VISÃO GERAL & GESTÃO DE PEDIDOS (PRESERVANDO FLUXO ORIGINAL) */}
+          {/* TAB 4: VISÃO GERAL & GESTÃO DE PEDIDOS (PRESERVANDO FLUXO ORIGINAL) */}
           {mainViewTab === 'overview' && (
             <div className="space-y-6">
               {/* KPI Summary Cards */}

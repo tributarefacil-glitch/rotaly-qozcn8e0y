@@ -97,6 +97,14 @@ const App = () => (
             }
           />
           <Route
+            path="/fuel"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                <SellerDashboard defaultTab="fuel" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/orders"
             element={
               <ProtectedRoute allowedRoles={['admin', 'seller']}>
