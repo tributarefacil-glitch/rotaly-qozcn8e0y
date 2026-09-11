@@ -6,6 +6,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -18,6 +28,7 @@ import {
   Navigation,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   RefreshCw,
   Users,
   User,
@@ -129,6 +140,9 @@ const COURIER_PALETTE = [
   },
 ]
 
+// Distância máxima permitida em linha reta (Haversine) entre a base de saída e o centróide das entregas
+const MAX_BASE_TO_CENTROID_DISTANCE_KM = 100
+
 // Haversine distance in meters
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3
@@ -219,6 +233,14 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Optimization Result
   const [optimizationResult, setOptimizationResult] =
     useState<MultiCourierOptimizationResult | null>(null)
+
+  // Blindagem / Confirmação de distância excessiva entre a Base de Saída e as entregas (> 100 km)
+  const [distanceAlertOpen, setDistanceAlertOpen] = useState(false)
+  const [distanceAlertInfo, setDistanceAlertInfo] = useState<{
+    distanceKm: number
+    baseName: string
+    baseAddress: string
+  } | null>(null)
 
   // Map state
   const mapContainerRef = useRef<HTMLDivElement>(null)
@@ -478,18 +500,33 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
   // Entidade de partida selecionada
   const resolvedStartEntity = useMemo(() => {
-    return (
-      resolveLocationEntity(selectedStartBaseId) || {
-        id: 'default-base',
+    const found = resolveLocationEntity(selectedStartBaseId)
+    if (found) return found
+
+    // Buscar base padrão nas bases cadastradas antes de qualquer fallback
+    const defaultInBases = baseAddresses.find((b) => b.is_default) || baseAddresses[0]
+    if (defaultInBases) {
+      return {
+        id: defaultInBases.id,
         type: 'base' as const,
-        name: 'Base Central Rotaly (Loja Principal)',
-        address: 'Av. Paulista, 1000 - Bela Vista, São Paulo - SP',
-        lat: -23.565734,
-        lng: -46.651257,
+        name: defaultInBases.name,
+        address: defaultInBases.address,
+        lat: defaultInBases.lat,
+        lng: defaultInBases.lng,
         isDefault: true,
       }
-    )
-  }, [resolveLocationEntity, selectedStartBaseId])
+    }
+
+    return {
+      id: 'default-base',
+      type: 'base' as const,
+      name: 'Mais Saudavel',
+      address: 'Rua da Prosperidade, 13 - Pilar, Duque de Caxias - RJ, 25230-085',
+      lat: -22.7001402,
+      lng: -43.2982834,
+      isDefault: true,
+    }
+  }, [resolveLocationEntity, selectedStartBaseId, baseAddresses])
 
   // Entidade de chegada selecionada
   const resolvedEndEntity = useMemo(() => {
@@ -945,7 +982,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }
 
   // Multi-Courier Geographic K-Means Clustering + Nearest Neighbor Sequencing Algorithm (com IDA E VOLTA)
-  const runRouteOptimization = async () => {
+  const runRouteOptimization = async (skipCentroidCheck = false) => {
     if (selectedCourierIds.length === 0) {
       toast.warning('Selecione pelo menos um entregador disponível na Etapa 1.')
       setWizardStep('couriers')
@@ -961,18 +998,67 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       return
     }
 
+    // 1. Determine Start Base and End Base coordinates (suporta tanto BaseAddressRecord quanto CustomerRecord)
+    const startEntity = resolvedStartEntity
+    const startBase = {
+      name: startEntity.name,
+      address: startEntity.address,
+      lat: startEntity.lat || -22.7001402,
+      lng: startEntity.lng || -43.2982834,
+    }
+
+    // Blindagem de distância excessiva entre a base padrão de partida e as entregas selecionadas
+    if (!skipCentroidCheck) {
+      // Coletar coordenadas válidas dos clientes selecionados para calcular o centróide
+      const validPoints: Array<{ lat: number; lng: number }> = []
+      for (const ord of ordersToOptimize) {
+        const cust = customers.find((c) => c.id === ord.customer_id)
+        if (
+          cust &&
+          typeof cust.lat === 'number' &&
+          typeof cust.lng === 'number' &&
+          !isNaN(cust.lat) &&
+          !isNaN(cust.lng)
+        ) {
+          validPoints.push({ lat: cust.lat, lng: cust.lng })
+        }
+      }
+
+      if (validPoints.length > 0) {
+        const centroidLat = validPoints.reduce((acc, p) => acc + p.lat, 0) / validPoints.length
+        const centroidLng = validPoints.reduce((acc, p) => acc + p.lng, 0) / validPoints.length
+        const distToCentroidMeters = haversineDistance(
+          startBase.lat,
+          startBase.lng,
+          centroidLat,
+          centroidLng,
+        )
+        const distToCentroidKm = distToCentroidMeters / 1000
+
+        if (distToCentroidKm > MAX_BASE_TO_CENTROID_DISTANCE_KM) {
+          const roundedKm = Math.round(distToCentroidKm)
+          toast.error(
+            `A base de partida "${startBase.name}" está a ${roundedKm} km das entregas!`,
+            {
+              description:
+                'Verifique o cadastro da base ou escolha outra base no seletor de partida.',
+              duration: 8000,
+            },
+          )
+          setDistanceAlertInfo({
+            distanceKm: roundedKm,
+            baseName: startBase.name,
+            baseAddress: startBase.address,
+          })
+          setDistanceAlertOpen(true)
+          return
+        }
+      }
+    }
+
     setIsOptimizing(true)
 
     try {
-      // 1. Determine Start Base and End Base coordinates (suporta tanto BaseAddressRecord quanto CustomerRecord)
-      const startEntity = resolvedStartEntity
-      const startBase = {
-        name: startEntity.name,
-        address: startEntity.address,
-        lat: startEntity.lat || -22.906847,
-        lng: startEntity.lng || -43.172896,
-      }
-
       const endEntity = resolvedEndEntity
       const endBase = {
         name: endEntity.name,
@@ -3123,7 +3209,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
                 <Button
                   type="button"
-                  onClick={runRouteOptimization}
+                  onClick={() => runRouteOptimization()}
                   disabled={
                     isOptimizing || selectedCourierIds.length === 0 || selectedOrderIds.length === 0
                   }
@@ -3730,6 +3816,61 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* Alerta de Blindagem: Base de Partida a mais de 100 km do centróide das entregas */}
+      <AlertDialog open={distanceAlertOpen} onOpenChange={setDistanceAlertOpen}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+              <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0" />
+              Atenção: Base de partida muito distante
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 pt-2 text-slate-700 dark:text-slate-300">
+              <p>
+                A base de partida selecionada (
+                <strong className="text-slate-900 dark:text-white">
+                  {distanceAlertInfo?.baseName}
+                </strong>
+                ) está a aproximadamente{' '}
+                <span className="font-bold text-rose-600 dark:text-rose-400 text-base">
+                  {distanceAlertInfo?.distanceKm} km
+                </span>{' '}
+                do grupo de entregas selecionadas.
+              </p>
+              {distanceAlertInfo?.baseAddress && (
+                <p className="text-xs bg-slate-100 dark:bg-slate-800 p-2 rounded text-slate-600 dark:text-slate-400">
+                  📍 {distanceAlertInfo.baseAddress}
+                </p>
+              )}
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                Isso pode gerar quilometragens absurdas e rotas entre estados incorretos.
+                Recomendamos verificar o cadastro da base ou escolher outra base no seletor de
+                partida.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel
+              onClick={() => {
+                setDistanceAlertOpen(false)
+                setIsEditingBases(true)
+              }}
+              className="w-full sm:w-auto"
+            >
+              Trocar ou Corrigir Base
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setDistanceAlertOpen(false)
+                runRouteOptimization(true)
+              }}
+              className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white"
+            >
+              Continuar Mesmo Assim
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }

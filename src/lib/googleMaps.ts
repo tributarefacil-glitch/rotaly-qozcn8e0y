@@ -581,7 +581,10 @@ export async function lookupViaCep(
 /**
  * Fallback Geocoding with OpenStreetMap Nominatim (when Google Maps Geocoder fails or billing disabled)
  */
-export async function fallbackGeocodeAddress(
+/**
+ * Geocodificação de endereços brutos OpenStreetMap Nominatim
+ */
+export async function fallbackNominatimGeocode(
   query: string,
   biasCoords?: { lat: number; lng: number } | null,
   options?: { signal?: AbortSignal; timeoutMs?: number },
@@ -905,3 +908,182 @@ export async function fallbackReverseGeocode(
     clearTimeout(timer)
   }
 }
+
+/**
+ * Geocoding direto usando a REST API do Google Maps (Google Geocoding API).
+ * Retorna lat/lng e os componentes de endereço estruturados (rua, número, bairro, cidade, UF, CEP).
+ */
+export async function geocodeAddressGoogleRest(
+  address: string,
+  apiKey?: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<{ lat: number; lng: number; parsed: ParsedAddress } | null> {
+  const cleanAddr = address.trim()
+  if (!cleanAddr) return null
+
+  const key = (apiKey || getGoogleMapsApiKey()).trim()
+  if (!key) return null
+
+  const timeoutMs = options?.timeoutMs ?? 7000
+  const timeoutController = new AbortController()
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs)
+
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timer)
+      return null
+    }
+    options.signal.addEventListener('abort', () => timeoutController.abort(), { once: true })
+  }
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
+      cleanAddr,
+    )}&language=pt-BR&region=BR&key=${encodeURIComponent(key)}`
+
+    const res = await fetch(url, { signal: timeoutController.signal })
+    if (!res.ok) return null
+    const data = await res.json()
+
+    if (data.status === 'OK' && Array.isArray(data.results) && data.results.length > 0) {
+      // Priorizar resultado mais preciso (street_address, premise, subpremise, route)
+      const bestResult =
+        data.results.find((r: any) =>
+          r.types?.some((t: string) =>
+            ['street_address', 'premise', 'subpremise', 'route'].includes(t),
+          ),
+        ) || data.results[0]
+
+      const loc = bestResult.geometry?.location
+      if (!loc || typeof loc.lat !== 'number' || typeof loc.lng !== 'number') {
+        return null
+      }
+
+      const parsed = parseGoogleAddressComponents(
+        bestResult.address_components || [],
+        bestResult.formatted_address,
+      )
+
+      return {
+        lat: loc.lat,
+        lng: loc.lng,
+        parsed: {
+          ...parsed,
+          formattedAddress: bestResult.formatted_address || parsed.formattedAddress,
+          lat: loc.lat,
+          lng: loc.lng,
+          source: 'google',
+        },
+      }
+    }
+
+    if (data.status === 'REQUEST_DENIED' || data.status === 'OVER_QUERY_LIMIT') {
+      console.warn(
+        `[Google Geocode REST] Status de retorno: ${data.status} - ${data.error_message || ''}`,
+      )
+    }
+
+    return null
+  } catch (err: any) {
+    if (err?.name !== 'AbortError') {
+      console.warn('[Google Geocode REST] Erro ao consultar REST Geocoding direto:', err)
+    }
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Geocoding unificado de endereços com prioridade Google Maps:
+ * 1. Tenta a API REST do Google Geocoding (geocodeAddressGoogleRest) se houver chave configurada
+ * 2. Tenta o SDK JS do Google Geocoder caso esteja carregado na página
+ * 3. Fallback para OpenStreetMap Nominatim (fallbackGeocodeAddress)
+ */
+export async function geocodeAddressUnified(
+  address: string,
+  biasCoords?: { lat: number; lng: number } | null,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<{ lat: number; lng: number; parsed: ParsedAddress } | null> {
+  const cleanAddr = address.trim()
+  if (!cleanAddr) return null
+
+  const hasKey = Boolean(getGoogleMapsApiKey())
+
+  // 1. Prioridade: Google Geocoding API REST direta
+  if (hasKey && !googleMapsAuthError) {
+    try {
+      const googleRestResult = await geocodeAddressGoogleRest(cleanAddr, undefined, options)
+      if (googleRestResult && typeof googleRestResult.lat === 'number') {
+        return googleRestResult
+      }
+    } catch (err) {
+      console.warn('[Unified Geocode] Falha no geocode Google REST:', err)
+    }
+  }
+
+  // 2. Google Maps JS SDK Geocoder (se já estiver carregado e disponível)
+  try {
+    const win = typeof window !== 'undefined' ? (window as any) : null
+    if (win?.google?.maps?.Geocoder && !googleMapsAuthError) {
+      const geocoder = new win.google.maps.Geocoder()
+      const sdkResult = await new Promise<{
+        lat: number
+        lng: number
+        parsed: ParsedAddress
+      } | null>((resolve) => {
+        geocoder.geocode(
+          { address: cleanAddr, language: 'pt-BR', region: 'BR' },
+          (results: any[], status: string) => {
+            if (status === 'OK' && results && results.length > 0) {
+              const best =
+                results.find((r: any) =>
+                  r.types?.some((t: string) =>
+                    ['street_address', 'premise', 'subpremise', 'route'].includes(t),
+                  ),
+                ) || results[0]
+              const loc = best.geometry?.location
+              if (!loc) {
+                resolve(null)
+                return
+              }
+              const lat = typeof loc.lat === 'function' ? loc.lat() : loc.lat
+              const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng
+              const parsed = parseGoogleAddressComponents(
+                best.address_components || [],
+                best.formatted_address,
+              )
+              resolve({
+                lat,
+                lng,
+                parsed: {
+                  ...parsed,
+                  formattedAddress: best.formatted_address || parsed.formattedAddress,
+                  lat,
+                  lng,
+                  source: 'google',
+                },
+              })
+            } else {
+              resolve(null)
+            }
+          },
+        )
+      })
+      if (sdkResult) {
+        return sdkResult
+      }
+    }
+  } catch (err) {
+    console.warn('[Unified Geocode] Falha no Google Maps SDK Geocoder:', err)
+  }
+
+  // 3. Fallback final: OpenStreetMap Nominatim
+  return fallbackNominatimGeocode(cleanAddr, biasCoords, options)
+}
+
+/**
+ * Fallback Geocoding unificado: tenta Google REST API primeiro, depois Nominatim
+ * Mantido como fallbackGeocodeAddress para compatibilidade total com os componentes existentes
+ */
+export const fallbackGeocodeAddress = geocodeAddressUnified
