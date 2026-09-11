@@ -42,6 +42,65 @@ function getCacheKey(origin: LatLngPoint, destination: LatLngPoint): string {
  * Busca a rota com geometria real de ruas entre origem e destino via OSRM público.
  * Fallback para linha direta se falhar.
  */
+/**
+ * Tenta obter a rota via Google DirectionsService quando disponível no navegador.
+ */
+async function fetchGoogleDirectionsRoute(
+  origin: LatLngPoint,
+  destination: LatLngPoint,
+): Promise<OsrmRouteResult | null> {
+  if (typeof window === 'undefined') return null
+  const win = window as any
+  if (!win.google?.maps?.DirectionsService) return null
+
+  try {
+    const directionsService = new win.google.maps.DirectionsService()
+    const result: any = await new Promise((resolve, reject) => {
+      directionsService.route(
+        {
+          origin: { lat: origin.lat, lng: origin.lng },
+          destination: { lat: destination.lat, lng: destination.lng },
+          travelMode: win.google.maps.TravelMode?.DRIVING || 'DRIVING',
+        },
+        (response: any, status: string) => {
+          if (status === 'OK' && response?.routes?.[0]) {
+            resolve(response)
+          } else {
+            reject(new Error(`Directions status: ${status}`))
+          }
+        },
+      )
+    })
+
+    const route = result.routes[0]
+    const leg = route.legs?.[0]
+    const overviewPath = route.overview_path || []
+
+    const coordinates: LatLngPoint[] = overviewPath.map((latLng: any) => ({
+      lat: typeof latLng.lat === 'function' ? latLng.lat() : latLng.lat,
+      lng: typeof latLng.lng === 'function' ? latLng.lng() : latLng.lng,
+    }))
+
+    if (coordinates.length >= 2) {
+      return {
+        coordinates,
+        distanceMeters: leg?.distance?.value ?? 0,
+        durationSeconds: leg?.duration?.value ?? 0,
+        isRealStreetRoute: true,
+      }
+    }
+  } catch (err) {
+    // Silently proceed to OSRM fallback
+  }
+
+  return null
+}
+
+/**
+ * Busca a rota com geometria real de ruas entre origem e destino.
+ * Tenta primeiro Google Directions se ativo e funcional; se falhar ou não estiver disponível,
+ * usa OSRM público com fallback final por interpolação.
+ */
 export async function fetchStreetRoute(
   origin: LatLngPoint,
   destination: LatLngPoint,
@@ -66,8 +125,14 @@ export async function fetchStreetRoute(
     return createDirectFallback(origin, destination)
   }
 
-  // OSRM URL format: /route/v1/driving/{lng1},{lat1};{lng2},{lat2}?overview=full&geometries=geojson
-  // Note: OSRM uses longitude,latitude
+  // 1. Tentar Google Directions API se disponível na janela
+  const googleRoute = await fetchGoogleDirectionsRoute(origin, destination)
+  if (googleRoute) {
+    routeCache.set(cacheKey, { result: googleRoute, timestamp: Date.now() })
+    return googleRoute
+  }
+
+  // 2. OSRM URL format: /route/v1/driving/{lng1},{lat1};{lng2},{lat2}?overview=full&geometries=geojson
   const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson`
 
   try {

@@ -70,6 +70,8 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const mapInstanceRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googleMarkersRef = useRef<any[]>([])
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const googlePolylinesRef = useRef<any[]>([])
   const getGoogle = () =>
     typeof window !== 'undefined' ? (window as unknown as { google?: any }).google : undefined
   const isGoogleLoaded = !!getGoogle()?.maps
@@ -268,6 +270,62 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     googleMarkersRef.current.forEach((m) => m.setMap(null))
     googleMarkersRef.current = []
 
+    // Clear old polylines on native map
+    googlePolylinesRef.current.forEach((p) => p.setMap(null))
+    googlePolylinesRef.current = []
+
+    // Render route polylines on native Google Map
+    routeLines.forEach((r) => {
+      const coords = r.streetCoordinates || [r.origin, r.destination]
+      if (coords.length >= 2) {
+        // LINHA AZUL: Trajeto de ruas indicado pelo sistema
+        const polyline = new google.maps.Polyline({
+          path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
+          geodesic: true,
+          strokeColor: '#2563EB',
+          strokeOpacity: 0.9,
+          strokeWeight: 5,
+          map: mapInstanceRef.current,
+        })
+        googlePolylinesRef.current.push(polyline)
+
+        // Linha interna mais clara para destaque visual
+        const innerPolyline = new google.maps.Polyline({
+          path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
+          geodesic: true,
+          strokeColor: '#93C5FD',
+          strokeOpacity: 0.9,
+          strokeWeight: 2,
+          map: mapInstanceRef.current,
+        })
+        googlePolylinesRef.current.push(innerPolyline)
+      }
+
+      // LINHA VERMELHA DE DESVIO: do entregador até o ponto de retorno da rota
+      if (r.isDeviated && r.courierPosition) {
+        const refPoint = coords[0] || r.origin
+        const devPolyline = new google.maps.Polyline({
+          path: [
+            { lat: r.courierPosition.lat, lng: r.courierPosition.lng },
+            { lat: refPoint.lat, lng: refPoint.lng },
+          ],
+          geodesic: true,
+          strokeColor: '#EF4444',
+          strokeOpacity: 1,
+          strokeWeight: 4,
+          icons: [
+            {
+              icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+              offset: '0',
+              repeat: '10px',
+            },
+          ],
+          map: mapInstanceRef.current,
+        })
+        googlePolylinesRef.current.push(devPolyline)
+      }
+    })
+
     // Single hover infoWindow instance to follow mouse hover smoothly
     const hoverInfoWindow = new google.maps.InfoWindow({
       disableAutoPan: true,
@@ -341,7 +399,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     if (google?.maps && mapInstanceRef.current) {
       renderGoogleMarkers()
     }
-  }, [markers, selectedMarkerId, resolvedAddresses])
+  }, [markers, selectedMarkerId, resolvedAddresses, routeLines])
   // Fallback interactive visual mock map if Google Maps key is not provided or offline
   return (
     <div
