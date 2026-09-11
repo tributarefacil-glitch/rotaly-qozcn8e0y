@@ -41,6 +41,9 @@ export interface MapMarkerItem {
   deviationMeters?: number
   isUnexpectedStop?: boolean
   etaMinutes?: number
+  etaNextDeliveryTime?: string
+  etaReturnBaseMinutes?: number
+  etaReturnBaseTime?: string
   battery_level?: number
   location_timestamp?: string | number | Date
 }
@@ -435,6 +438,25 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               ${addressDisplay || 'Localizando endereço...'}
             </span>
           </div>
+
+          ${
+            item.etaNextDeliveryTime || item.etaReturnBaseTime
+              ? `
+            <div style="background-color: #f0fdf4; border-radius: 6px; padding: 5px 7px; margin-top: 4px; border: 1px solid #bbf7d0;">
+              ${
+                item.etaNextDeliveryTime
+                  ? `<div style="font-size: 10px; color: #15803d; font-weight: 700;">⏱️ Previsão Entrega: ${item.etaNextDeliveryTime}</div>`
+                  : ''
+              }
+              ${
+                item.etaReturnBaseTime
+                  ? `<div style="font-size: 10px; color: #1d4ed8; font-weight: 700; margin-top: 2px;">🏢 Previsão Volta à Base: ${item.etaReturnBaseTime}</div>`
+                  : ''
+              }
+            </div>
+          `
+              : ''
+          }
 
           ${item.speed ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${item.speed} km/h</p>` : ''}
         </div>
@@ -1005,6 +1027,21 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                               {getMarkerAddress(m) || 'Localizando endereço...'}
                             </p>
                           </div>
+
+                          {(m.etaNextDeliveryTime || m.etaReturnBaseTime) && (
+                            <div className="bg-[#07132b] p-2 rounded-lg border border-blue-500/30 text-[10.5px] space-y-1 mt-1.5">
+                              {m.etaNextDeliveryTime && (
+                                <p className="text-emerald-400 font-bold flex items-center gap-1">
+                                  <span>⏱️</span> Previsão Entrega: {m.etaNextDeliveryTime}
+                                </p>
+                              )}
+                              {m.etaReturnBaseTime && (
+                                <p className="text-blue-300 font-bold flex items-center gap-1">
+                                  <span>🏢</span> Previsão Volta à Base: {m.etaReturnBaseTime}
+                                </p>
+                              )}
+                            </div>
+                          )}
 
                           {m.speed && (
                             <p className="text-purple-400 text-[10px] font-semibold flex items-center gap-1 mt-1">

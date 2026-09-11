@@ -213,11 +213,15 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       courierPos: LatLngPoint
       custPos: LatLngPoint
       basePos?: LatLngPoint
+      returnBasePos?: LatLngPoint
       isDeviated: boolean
       deviationMeters: number
       nearestPointOnRoute: LatLngPoint
       isUnexpectedStop: boolean
       etaMinutes: number
+      etaNextDeliveryTime?: string
+      etaReturnBaseMinutes?: number
+      etaReturnBaseTime?: string
       order: OrderRecord
       courier: UserRecord
     }>
@@ -361,8 +365,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
       // Separar em duas buscas:
       // 1. sellerOrders (com filtro seller_id quando logado como vendedor — para pins de clientes, kanban e drawer)
-      // 2. globalInTransitOrders (todos os pedidos do sistema com status='in_transit' && route_started=true, sem seller_id)
-      const globalTransitFilter = `status = 'in_transit' && route_started = true`
+      // 2. globalInTransitOrders (todos os pedidos do sistema em rota ativa não finalizada: route_started=true && (route_finished=false || route_finished=null), sem seller_id)
+      const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
 
       const [
         fetchedOrders,
@@ -451,10 +455,14 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         if (e.action === 'delete') {
           setGlobalInTransitOrders((prev) => prev.filter((o) => o.id !== rec.id))
         } else {
-          const isRecInTransit = rec.status === 'in_transit' && rec.route_started === true
+          const isRecActiveRoute =
+            rec.route_started === true &&
+            (rec.route_finished === false ||
+              rec.route_finished === null ||
+              rec.route_finished === undefined)
           setGlobalInTransitOrders((prev) => {
             const exists = prev.some((o) => o.id === rec.id)
-            if (isRecInTransit) {
+            if (isRecActiveRoute) {
               return exists
                 ? prev.map((o) => (o.id === rec.id ? { ...o, ...rec } : o))
                 : [rec, ...prev]
@@ -690,8 +698,24 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       )
       const finishedOrders = courierLocalOrders.filter((o) => o.status === 'delivered')
 
-      // "Em Rota" se houver pedidos ativos com rota iniciada globalmente
-      const hasRouteStarted = activeInTransitOrders.length > 0
+      // Entregas da rota iniciada atribuídas ao entregador que ainda não foram marcadas como route_finished
+      const activeRouteOrdersForCourier = [
+        ...globalCourierTransit,
+        ...courierLocalOrders.filter(
+          (o) =>
+            o.route_started === true && (o.route_finished === false || o.route_finished == null),
+        ),
+      ]
+      const uniqueCourierRouteOrders = Array.from(
+        new Map(activeRouteOrdersForCourier.map((o) => [o.id, o])).values(),
+      )
+
+      // Rota ativa existe se há rota iniciada e ainda não finalizada
+      const hasRouteStarted = uniqueCourierRouteOrders.length > 0
+
+      // Verifica se todas as entregas já foram entregues (mas rota ainda não foi finalizada na base)
+      const pendingStops = uniqueCourierRouteOrders.filter((o) => o.status !== 'delivered')
+      const isReturningToBase = hasRouteStarted && pendingStops.length === 0
 
       let statusColor: 'green' | 'yellow' | 'red' = 'green'
       let statusLabel = 'Disponível — rota não iniciada'
@@ -699,6 +723,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       if (problemOrders.length > 0) {
         statusColor = 'red'
         statusLabel = 'Ocorrência na Rota'
+      } else if (isReturningToBase) {
+        statusColor = 'yellow'
+        statusLabel = 'Retornando à Base'
       } else if (hasRouteStarted) {
         statusColor = 'yellow'
         statusLabel = 'Em Rota Oficial'
@@ -778,26 +805,43 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         const origin: LatLngPoint = { lat: baseLat, lng: baseLng }
         const courierPos: LatLngPoint = { lat: item.lat, lng: item.lng }
 
+        // Base de retorno: end_address_lat/lng ou fallback start_base_lat/lng
+        const returnBaseLat = primaryOrder.end_address_lat
+          ? Number(primaryOrder.end_address_lat)
+          : baseLat
+        const returnBaseLng = primaryOrder.end_address_lng
+          ? Number(primaryOrder.end_address_lng)
+          : baseLng
+        const returnBasePos: LatLngPoint = { lat: returnBaseLat, lng: returnBaseLng }
+
         // Coletar paradas válidas com lat/lng dos clientes
         const stops: LatLngPoint[] = []
+        const pendingStopsList: LatLngPoint[] = []
         activeRouteOrders.forEach((o) => {
           const c = o.expand?.customer_id
           if (c?.lat && c?.lng) {
-            stops.push({ lat: Number(c.lat), lng: Number(c.lng) })
+            const pt = { lat: Number(c.lat), lng: Number(c.lng) }
+            stops.push(pt)
+            if (o.status !== 'delivered') {
+              pendingStopsList.push(pt)
+            }
           }
         })
 
-        if (stops.length === 0) return null
+        // Mesmo se todas as paradas foram entregues, ainda temos o trecho até a base de retorno
+        if (stops.length === 0 && !returnBasePos) return null
 
         try {
           // Traçar trajeto viário completo sequencial:
-          // base → cliente 1 → cliente 2 ...
+          // base → cliente 1 → cliente 2 ... → base de retorno (ciclo fechado)
+          const allWaypoints: LatLngPoint[] = [origin, ...stops, returnBasePos]
           const routeSegments: LatLngPoint[] = []
           let prevPoint = origin
 
-          for (const stop of stops) {
+          for (let sIdx = 1; sIdx < allWaypoints.length; sIdx++) {
+            const targetPoint = allWaypoints[sIdx]
             try {
-              const segRes = await fetchStreetRoute(prevPoint, stop)
+              const segRes = await fetchStreetRoute(prevPoint, targetPoint)
               if (segRes.coordinates.length >= 2) {
                 if (routeSegments.length > 0) {
                   // Evitar duplicar o ponto de junção
@@ -807,21 +851,21 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                 }
               } else {
                 if (routeSegments.length === 0) routeSegments.push(prevPoint)
-                routeSegments.push(stop)
+                routeSegments.push(targetPoint)
               }
             } catch {
               if (routeSegments.length === 0) routeSegments.push(prevPoint)
-              routeSegments.push(stop)
+              routeSegments.push(targetPoint)
             }
-            prevPoint = stop
+            prevPoint = targetPoint
           }
 
-          const points = routeSegments.length >= 2 ? routeSegments : [origin, stops[0]]
+          const points = routeSegments.length >= 2 ? routeSegments : allWaypoints
 
           // Cálculo da projeção do entregador sobre a linha azul oficial
           const nearest = findNearestPointOnRoute(courierPos, points)
-          const primaryCustPos = stops[0]
-          const distToClientMeters = distanceMeters(courierPos, primaryCustPos)
+          const nextTargetPos = pendingStopsList[0] || returnBasePos
+          const distToClientMeters = distanceMeters(courierPos, nextTargetPos)
 
           // REQUISITO ESTRITO: Desvio e parada fora do local exigem rota iniciada (route_started === true)
           const hasActiveRouteStarted = Boolean(primaryOrder.route_started) && item.hasRouteStarted
@@ -855,23 +899,57 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const isUnexpectedStop =
             hasActiveRouteStarted && isStopped && isFarFromClient && isFarFromBase
 
-          // 3. PRAZO DE ENTREGA / ETA EM TEMPO REAL:
-          const remainingDistMeters = distanceMeters(courierPos, primaryCustPos)
-          const speedMps = 25 * (1000 / 3600) // ~6.94 m/s
-          const estimatedMinutes = Math.max(1, Math.round(remainingDistMeters / speedMps / 60))
+          // 3. PRAZO DE ENTREGA (ETA DO PRÓXIMO CLIENTE) & PREVISÃO DE VOLTA À BASE
+          const speedMps = 25 * (1000 / 3600) // ~6.94 m/s (25 km/h média em trânsito urbano)
+          const remainingDistNextClient = distanceMeters(courierPos, nextTargetPos)
+          const etaMinutesNextClient = Math.max(
+            1,
+            Math.round(remainingDistNextClient / speedMps / 60),
+          )
+
+          // Cálculo da soma viária/distância da posição atual passando pelas pendentes até a base de retorno
+          let totalDistToReturnBase = 0
+          let currentLegPoint = courierPos
+          for (const pStop of pendingStopsList) {
+            totalDistToReturnBase += distanceMeters(currentLegPoint, pStop)
+            currentLegPoint = pStop
+          }
+          totalDistToReturnBase += distanceMeters(currentLegPoint, returnBasePos)
+          // Adiciona 5 min de tempo de atendimento em cada parada pendente
+          const serviceTimeMinutes = pendingStopsList.length * 5
+          const etaMinutesReturnBase = Math.max(
+            etaMinutesNextClient,
+            Math.round(totalDistToReturnBase / speedMps / 60) + serviceTimeMinutes,
+          )
+
+          const nowTime = Date.now()
+          const etaNextDeliveryDate = new Date(nowTime + etaMinutesNextClient * 60 * 1000)
+          const etaReturnBaseDate = new Date(nowTime + etaMinutesReturnBase * 60 * 1000)
+          const etaNextDeliveryTime = etaNextDeliveryDate.toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+          const etaReturnBaseTime = etaReturnBaseDate.toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })
 
           return {
             courierId: item.courier.id,
             orderId: primaryOrder.id,
             points,
             courierPos,
-            custPos: primaryCustPos,
+            custPos: nextTargetPos,
             basePos: primaryOrder.start_base_lat ? origin : undefined,
+            returnBasePos,
             isDeviated,
             deviationMeters: Math.round(nearest.distanceMeters),
             nearestPointOnRoute: nearest.nearestPoint,
             isUnexpectedStop,
-            etaMinutes: estimatedMinutes,
+            etaMinutes: etaMinutesNextClient,
+            etaNextDeliveryTime: pendingStopsList.length > 0 ? etaNextDeliveryTime : undefined,
+            etaReturnBaseMinutes: etaMinutesReturnBase,
+            etaReturnBaseTime,
             order: primaryOrder,
             courier: item.courier,
           }
@@ -1021,6 +1099,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         deviationMeters: routeInfo?.deviationMeters,
         isUnexpectedStop: routeInfo?.isUnexpectedStop,
         etaMinutes: routeInfo?.etaMinutes,
+        etaNextDeliveryTime: routeInfo?.etaNextDeliveryTime,
+        etaReturnBaseMinutes: routeInfo?.etaReturnBaseMinutes,
+        etaReturnBaseTime: routeInfo?.etaReturnBaseTime,
         battery_level: item.battery_level,
         location_timestamp: item.location_timestamp,
       })
@@ -1457,55 +1538,73 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             batteryVal <= 20 ? '#dc2626' : batteryVal <= 50 ? '#d97706' : '#16a34a'
 
           const buildCourierTooltipContent = (addressText: string) => `
-            <div style="padding: 8px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 260px; line-height: 1.35;">
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
-                <div style="display: flex; align-items: center; gap: 5px;">
-                  <span style="font-size: 15px;">${vehicleEmoji}</span>
-                  <strong style="font-size: 12px; color: #0f172a; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;">${courierName}</strong>
-                </div>
-                <span style="font-size: 9px; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 1px 5px; border-radius: 4px;">${vehicleLabel}</span>
-              </div>
+        <div style="padding: 8px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 260px; line-height: 1.35;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <span style="font-size: 15px;">${vehicleEmoji}</span>
+              <strong style="font-size: 12px; color: #0f172a; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;">${courierName}</strong>
+            </div>
+            <span style="font-size: 9px; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 1px 5px; border-radius: 4px;">${vehicleLabel}</span>
+          </div>
 
-              <!-- Badges de Bateria e GPS -->
-              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: 10px; font-weight: 700;">
-                <span style="display: inline-flex; align-items: center; gap: 3px; background: ${isGpsActive ? '#ecfdf5' : '#fef2f2'}; color: ${isGpsActive ? '#047857' : '#b91c1c'}; border: 1px solid ${isGpsActive ? '#a7f3d0' : '#fecaca'}; padding: 2px 5px; border-radius: 4px;">
-                  <span>📡</span> ${isGpsActive ? 'GPS ativo' : 'GPS off'}
-                </span>
-                ${
-                  hasBattery
-                    ? `
-                  <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: ${batteryColor}; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;">
-                    <span>🔋</span> ${batteryVal}%
-                  </span>
-                `
-                    : ''
-                }
-              </div>
+          <!-- Badges de Bateria e GPS -->
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: 10px; font-weight: 700;">
+            <span style="display: inline-flex; align-items: center; gap: 3px; background: ${isGpsActive ? '#ecfdf5' : '#fef2f2'}; color: ${isGpsActive ? '#047857' : '#b91c1c'}; border: 1px solid ${isGpsActive ? '#a7f3d0' : '#fecaca'}; padding: 2px 5px; border-radius: 4px;">
+              <span>📡</span> ${isGpsActive ? 'GPS ativo' : 'GPS off'}
+            </span>
+            ${
+              hasBattery
+                ? `
+              <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: ${batteryColor}; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;">
+                <span>🔋</span> ${batteryVal}%
+              </span>
+            `
+                : ''
+            }
+          </div>
 
-              ${
-                isDeviated && routeInfo?.deviationMeters
-                  ? `
-                <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 4px 6px; margin-bottom: 5px; display: flex; align-items: center; gap: 4px;">
-                  <span style="font-size: 10px;">⚠️</span>
-                  <span style="font-size: 11px; font-weight: 800; color: #dc2626;">Desvio: ${Math.round(routeInfo.deviationMeters)} m</span>
-                </div>
-              `
-                  : ''
-              }
-
-              <div style="background-color: #f8fafc; border-radius: 6px; padding: 5px 7px; margin-top: 3px; border: 1px solid #e2e8f0;">
-                <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; color: #2563eb; display: block; margin-bottom: 2px;">
-                  📍 Endereço Atual em Tempo Real:
-                </span>
-                <span style="font-size: 10.5px; color: #1e293b; font-weight: 500; display: block; line-height: 1.3;">
-                  ${addressText}
-                </span>
-              </div>
-
-              ${item.speed ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${item.speed} km/h</p>` : ''}
+          ${
+            isDeviated && routeInfo?.deviationMeters
+              ? `
+            <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 4px 6px; margin-bottom: 5px; display: flex; align-items: center; gap: 4px;">
+              <span style="font-size: 10px;">⚠️</span>
+              <span style="font-size: 11px; font-weight: 800; color: #dc2626;">Desvio: ${Math.round(routeInfo.deviationMeters)} m</span>
             </div>
           `
+              : ''
+          }
 
+          <div style="background-color: #f8fafc; border-radius: 6px; padding: 5px 7px; margin-top: 3px; border: 1px solid #e2e8f0;">
+            <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; color: #2563eb; display: block; margin-bottom: 2px;">
+              📍 Endereço Atual em Tempo Real:
+            </span>
+            <span style="font-size: 10.5px; color: #1e293b; font-weight: 500; display: block; line-height: 1.3;">
+              ${addressText}
+            </span>
+          </div>
+
+          ${
+            routeInfo?.etaNextDeliveryTime || routeInfo?.etaReturnBaseTime
+              ? `
+            <div style="background-color: #f0fdf4; border-radius: 6px; padding: 5px 7px; margin-top: 4px; border: 1px solid #bbf7d0;">
+              ${
+                routeInfo?.etaNextDeliveryTime
+                  ? `<div style="font-size: 10px; color: #15803d; font-weight: 700;">⏱️ Previsão Entrega: ${routeInfo.etaNextDeliveryTime}</div>`
+                  : ''
+              }
+              ${
+                routeInfo?.etaReturnBaseTime
+                  ? `<div style="font-size: 10px; color: #1d4ed8; font-weight: 700; margin-top: 2px;">🏢 Previsão Volta à Base: ${routeInfo.etaReturnBaseTime}</div>`
+                  : ''
+              }
+            </div>
+          `
+              : ''
+          }
+
+          ${item.speed ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${item.speed} km/h</p>` : ''}
+        </div>
+      `
           // Exibe inicialmente com carregando/fallback se demorar
           hoverInfoWindow.setContent(buildCourierTooltipContent('Localizando endereço...'))
           hoverInfoWindow.open(map, courierMarker)
@@ -2433,14 +2532,18 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                             onClick={() => handleOpenOrderDetails(order)}
                             className={`rounded-xl p-3.5 border border-slate-700/60 ${borderAccent} ${bgTint} cursor-pointer transition-all duration-200 shadow-md hover:shadow-xl hover:-translate-y-0.5 group`}
                           >
-                            {/* Linha superior: Rastreio & ETA */}
+                            {/* Linha superior: Rastreio & ETA / Horário de Entrega */}
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-mono text-xs font-black text-[#60A5FA] group-hover:text-white transition">
                                 {order.tracking_code}
                               </span>
                               <div className="flex items-center gap-1 text-[11px] text-slate-300 font-mono bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-700/50">
                                 <Clock className="h-3 w-3 text-slate-400" />
-                                <span>{etaTime}</span>
+                                <span>
+                                  {order.status === 'delivered' && order.actual_arrival
+                                    ? `Entregue às ${new Date(order.actual_arrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+                                    : etaTime}
+                                </span>
                               </div>
                             </div>
 
@@ -2974,15 +3077,33 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                   <div className="rounded-xl border border-blue-500/40 bg-[#0E1F47] p-3.5 space-y-1">
                     <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider flex items-center gap-1">
                       <Clock className="h-3.5 w-3.5 text-blue-400" />
-                      Previsão (ETA)
+                      Previsão Entrega
                     </span>
                     <p className="text-xl font-black text-white font-mono">
-                      {getEtaDisplay(selectedOrder)}
+                      {(() => {
+                        const rInfo = activeRoutesData.find(
+                          (r) =>
+                            r.orderId === selectedOrder.id ||
+                            r.courierId === selectedOrder.courier_id,
+                        )
+                        return rInfo?.etaNextDeliveryTime
+                          ? rInfo.etaNextDeliveryTime
+                          : getEtaDisplay(selectedOrder)
+                      })()}
                     </p>
                     <p className="text-[10px] text-slate-300">
-                      {selectedOrder.estimated_duration_minutes
-                        ? `Trajeto de aprox. ${selectedOrder.estimated_duration_minutes} min`
-                        : 'Calculada em tempo real'}
+                      {(() => {
+                        const rInfo = activeRoutesData.find(
+                          (r) =>
+                            r.orderId === selectedOrder.id ||
+                            r.courierId === selectedOrder.courier_id,
+                        )
+                        return rInfo?.etaReturnBaseTime
+                          ? `🏢 Volta à Base: ${rInfo.etaReturnBaseTime}`
+                          : selectedOrder.estimated_duration_minutes
+                            ? `Trajeto de aprox. ${selectedOrder.estimated_duration_minutes} min`
+                            : 'Calculada em tempo real'
+                      })()}
                     </p>
                   </div>
 
@@ -3645,7 +3766,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
                             <span className="text-[10px] text-slate-400 font-mono shrink-0 ml-2">
                               {o.status === 'delivered'
-                                ? 'Entregue'
+                                ? o.actual_arrival
+                                  ? `Entregue às ${new Date(o.actual_arrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+                                  : 'Entregue'
                                 : o.estimated_arrival
                                   ? new Date(o.estimated_arrival).toLocaleTimeString([], {
                                       hour: '2-digit',
@@ -3865,35 +3988,62 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                       </div>
                     </div>
 
-                    {/* Próxima Entrega */}
-                    <div className="border border-blue-500/40 rounded-xl p-3 space-y-1.5 bg-[#0d1b3e]/60">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-blue-300 flex items-center gap-1">
-                          <Navigation className="h-3.5 w-3.5 text-blue-400" />
-                          Próxima Entrega na Rota:
-                        </span>
-                        {data?.nextOrder && (
-                          <Badge className="bg-blue-600 text-white font-bold text-[10px]">
-                            {data.nextOrder.tracking_code}
-                          </Badge>
-                        )}
-                      </div>
-                      {data?.nextOrder ? (
-                        <div className="text-slate-300">
-                          <p className="font-bold text-white">
-                            {nextCust?.name || 'Cliente'} ({data.nextOrder.tracking_code})
-                          </p>
-                          <p className="text-slate-400 text-[11px] truncate">
-                            {nextCust?.address || 'Endereço'}
-                          </p>
-                          <p className="text-blue-300 font-medium text-[11px] mt-1">
-                            Tempo estimado: {getEtaDisplay(data.nextOrder)}
-                          </p>
+                    {/* Próxima Entrega e Previsão de Volta à Base */}
+                    {(() => {
+                      const courierRouteInfo = activeRoutesData.find(
+                        (r) => r.courierId === selectedCourier.id,
+                      )
+                      return (
+                        <div className="border border-blue-500/40 rounded-xl p-3 space-y-2 bg-[#0d1b3e]/60">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-blue-300 flex items-center gap-1">
+                              <Navigation className="h-3.5 w-3.5 text-blue-400" />
+                              Próxima Entrega na Rota:
+                            </span>
+                            {data?.nextOrder && (
+                              <Badge className="bg-blue-600 text-white font-bold text-[10px]">
+                                {data.nextOrder.tracking_code}
+                              </Badge>
+                            )}
+                          </div>
+                          {data?.nextOrder ? (
+                            <div className="text-slate-300 space-y-1">
+                              <p className="font-bold text-white">
+                                {nextCust?.name || 'Cliente'} ({data.nextOrder.tracking_code})
+                              </p>
+                              <p className="text-slate-400 text-[11px] truncate">
+                                {nextCust?.address || 'Endereço'}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-2 pt-1 font-mono text-[11px]">
+                                <span className="bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 px-2 py-0.5 rounded">
+                                  ⏱️ Previsão Entrega:{' '}
+                                  {courierRouteInfo?.etaNextDeliveryTime ||
+                                    getEtaDisplay(data.nextOrder)}
+                                </span>
+                                {courierRouteInfo?.etaReturnBaseTime && (
+                                  <span className="bg-blue-950/70 border border-blue-500/40 text-blue-300 px-2 py-0.5 rounded">
+                                    🏢 Previsão Volta à Base: {courierRouteInfo.etaReturnBaseTime}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <p className="text-slate-400 italic text-[11px]">
+                                {data?.statusLabel === 'Retornando à Base'
+                                  ? 'Todas as entregas concluídas — em trânsito de volta à base.'
+                                  : 'Nenhuma entrega na fila atual'}
+                              </p>
+                              {courierRouteInfo?.etaReturnBaseTime && (
+                                <p className="text-blue-300 font-bold font-mono text-xs">
+                                  🏢 Previsão Volta à Base: {courierRouteInfo.etaReturnBaseTime}
+                                </p>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <p className="text-slate-500 italic">Nenhuma entrega na fila atual</p>
-                      )}
-                    </div>
+                      )
+                    })()}
 
                     {/* Contato Direto */}
                     <div className="pt-2 flex gap-2">

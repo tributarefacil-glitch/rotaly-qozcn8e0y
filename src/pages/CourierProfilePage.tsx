@@ -83,9 +83,25 @@ export default function CourierProfilePage() {
             if (isSendingLocationRef.current) return
             isSendingLocationRef.current = true
 
-            const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 28
+            let calculatedSpeed = 0
+            if (
+              typeof pos.coords.speed === 'number' &&
+              !isNaN(pos.coords.speed) &&
+              pos.coords.speed > 0
+            ) {
+              calculatedSpeed = Math.round(pos.coords.speed * 3.6)
+            } else if (last) {
+              const timeDiffSeconds = (now - last.timestamp) / 1000
+              const dist = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+              if (dist < 2) {
+                calculatedSpeed = 0
+              } else if (timeDiffSeconds > 0 && timeDiffSeconds < 120) {
+                calculatedSpeed = Math.round((dist / timeDiffSeconds) * 3.6)
+              }
+            }
+
             try {
-              await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90)
+              await deliveryService.updateCourierLocation(user.id, lat, lng, calculatedSpeed, 90)
               lastRecordedGpsRef.current = { lat, lng, timestamp: now }
             } catch (e) {
               console.error('Failed to post live location in profile page:', e)

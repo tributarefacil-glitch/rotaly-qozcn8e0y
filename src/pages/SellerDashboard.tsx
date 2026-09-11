@@ -1588,12 +1588,26 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                               </td>
                               <td className="py-3 px-3">
                                 {order.status === 'delivered' ? (
-                                  <Badge
-                                    variant="outline"
-                                    className="bg-emerald-950/40 text-emerald-400 border-emerald-500/30 text-[10px] font-bold"
-                                  >
-                                    ✓ Concluída
-                                  </Badge>
+                                  <div>
+                                    <Badge
+                                      variant="outline"
+                                      className="bg-emerald-950/40 text-emerald-400 border-emerald-500/30 text-[10px] font-bold"
+                                    >
+                                      ✓ Concluída
+                                    </Badge>
+                                    {order.actual_arrival && (
+                                      <span className="block text-[10px] text-emerald-400/80 font-mono mt-0.5">
+                                        às{' '}
+                                        {new Date(order.actual_arrival).toLocaleTimeString(
+                                          'pt-BR',
+                                          {
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                          },
+                                        )}
+                                      </span>
+                                    )}
+                                  </div>
                                 ) : order.route_released ? (
                                   <Badge
                                     variant="outline"

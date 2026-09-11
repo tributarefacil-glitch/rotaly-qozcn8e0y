@@ -211,8 +211,18 @@ export default function CourierApp() {
       isSendingLocationRef.current = true
       try {
         const batteryLevel = await getBatteryLevel()
-        const speed =
-          typeof speedVal === 'number' && !isNaN(speedVal) ? Math.round(speedVal * 3.6) : 25
+        let speed = 0
+        if (typeof speedVal === 'number' && !isNaN(speedVal) && speedVal > 0) {
+          speed = Math.round(speedVal * 3.6)
+        } else if (last) {
+          const timeDiffSeconds = (now - last.timestamp) / 1000
+          const dist = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+          if (dist < 2) {
+            speed = 0
+          } else if (timeDiffSeconds > 0 && timeDiffSeconds < 120) {
+            speed = Math.round((dist / timeDiffSeconds) * 3.6)
+          }
+        }
         await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90, batteryLevel)
         lastRecordedGpsRef.current = { lat, lng, timestamp: now }
       } catch (e) {

@@ -280,21 +280,24 @@ export default function PublicTrackingPage() {
   }
 
   if (courierLocation && courierLocation.lat && courierLocation.lng) {
+    const courierSpeed =
+      typeof courierLocation.speed === 'number' && !isNaN(courierLocation.speed)
+        ? Math.max(0, Math.round(courierLocation.speed))
+        : 0
     mapMarkers.push({
       id: `courier-${order?.courier_id || 'live'}`,
       title: `${courier?.name || 'Entregador em Rota'}`,
-      subtitle: `Velocidade: ${courierLocation.speed ? Math.round(courierLocation.speed) : 28} km/h`,
+      subtitle: `Velocidade: ${courierSpeed} km/h`,
       lat: courierLocation.lat,
       lng: courierLocation.lng,
       type: 'courier',
       courier_name: courier?.name,
-      speed: courierLocation.speed ? Math.round(courierLocation.speed) : 28,
+      speed: courierSpeed,
       vehicle_type: courier?.vehicle_type,
       location_timestamp: courierLocation.created,
       battery_level: (courierLocation as any).battery_level,
     })
   }
-
   // Previsão textual formatada
   const getEtaString = () => {
     if (order?.status === 'delivered') return 'Entregue com sucesso'
