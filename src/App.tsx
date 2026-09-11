@@ -12,6 +12,8 @@ import SellerDashboard from './pages/SellerDashboard'
 import CourierApp from './pages/CourierApp'
 import AdminDashboard from './pages/AdminDashboard'
 import CourierFuelPage from './pages/CourierFuelPage'
+import CourierHistoryPage from './pages/CourierHistoryPage'
+import CourierProfilePage from './pages/CourierProfilePage'
 import PublicTrackingPage from './pages/PublicTrackingPage'
 import NotFound from './pages/NotFound'
 
@@ -189,7 +191,7 @@ const App = () => (
             path="/courier/history"
             element={
               <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                <CourierApp />
+                <CourierHistoryPage />
               </ProtectedRoute>
             }
           />
@@ -197,7 +199,7 @@ const App = () => (
             path="/courier/profile"
             element={
               <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                <CourierApp />
+                <CourierProfilePage />
               </ProtectedRoute>
             }
           />

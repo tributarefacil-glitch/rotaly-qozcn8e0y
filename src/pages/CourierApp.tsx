@@ -7,13 +7,9 @@ import {
   RotateCcw,
   CheckCircle2,
   Lock,
-  Building,
   Navigation,
-  Compass,
   XCircle,
-  AlertCircle,
   Clock,
-  Sparkles,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { CourierBottomNav } from '@/components/CourierBottomNav'
@@ -32,9 +28,6 @@ import type { NotificationRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { CourierFuelSummaryCard } from '@/components/CourierFuelSummaryCard'
-import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
-import { useCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
   FuelAdvanceRecord,
   LocationRecord,
@@ -58,7 +51,6 @@ export default function CourierApp() {
   const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<OrderRecord | null>(null)
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
 
-  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
   const [isGpsActive] = useState(true)
 
   const [isLoading, setIsLoading] = useState(true)
@@ -219,24 +211,6 @@ export default function CourierApp() {
   const currentActiveDelivery = activeDeliveries.length > 0 ? activeDeliveries[0] : null
   const subsequentDeliveries = activeDeliveries.slice(1)
 
-  // Entregas finalizadas hoje (delivered, client_absent, address_error, cancelled)
-  const completedToday = orders.filter(
-    (o) =>
-      o.status === 'delivered' ||
-      o.status === 'address_error' ||
-      o.status === 'client_absent' ||
-      o.status === 'cancelled',
-  )
-
-  // Ponto de partida e chegada definidos pelo vendedor
-  const startBaseName =
-    activeDeliveries.find((o) => o.start_base_name)?.start_base_name || 'Base Central LOGHYPE'
-  const startBaseAddress = activeDeliveries.find((o) => o.start_base_address)?.start_base_address
-  const endBaseName =
-    activeDeliveries.find((o) => o.end_address_name)?.end_address_name || startBaseName
-  const endBaseAddress =
-    activeDeliveries.find((o) => o.end_address_text)?.end_address_text || startBaseAddress
-
   // Ação: Aceitar / Iniciar Rota (dispara telemetria, quilometragem e consumo)
   const handleAcceptRoute = async () => {
     if (!user?.id) {
@@ -300,17 +274,6 @@ export default function CourierApp() {
     }
   }
 
-  // Métricas de combustível compartilhadas mantidas intactas
-  const courierMetrics = useCourierFuelMetrics({
-    courier: user,
-    advances,
-    orders,
-    locations,
-    offRouteEvents,
-    settings,
-    periodFilter: 'all',
-  })
-
   return (
     <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col pb-24 md:pb-8 font-sans antialiased selection:bg-[#0052CC]/30">
       <Header />
@@ -334,46 +297,6 @@ export default function CourierApp() {
               <span className="text-xs font-semibold text-emerald-400">GPS Ativo</span>
             </div>
           </div>
-
-          {/* Resumo simples e limpo */}
-          <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-[#1E2B58]/80 text-xs">
-            <div className="p-2.5 rounded-xl bg-[#0A1128] border border-[#1E2B58]">
-              <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                Clientes na Rota
-              </span>
-              <span className="font-heading text-lg font-black text-[#FF6B35]">
-                {activeDeliveries.length}
-              </span>
-            </div>
-            <div className="p-2.5 rounded-xl bg-[#0A1128] border border-[#1E2B58]">
-              <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                Concluídos Hoje
-              </span>
-              <span className="font-heading text-lg font-black text-emerald-400">
-                {completedToday.length}
-              </span>
-            </div>
-          </div>
-
-          {/* Ponto de partida simples */}
-          {activeDeliveries.length > 0 && (
-            <div className="mt-3 pt-2.5 border-t border-[#1E2B58]/60 flex items-center justify-between text-xs text-slate-300">
-              <div className="flex items-center gap-1.5 truncate">
-                <Building className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                <span className="text-slate-400">Partida:</span>
-                <span className="font-semibold text-white truncate">{startBaseName}</span>
-              </div>
-              {isRouteStarted ? (
-                <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[10px] font-bold shrink-0">
-                  Rota em Andamento
-                </Badge>
-              ) : (
-                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[10px] font-bold shrink-0">
-                  Não Iniciada
-                </Badge>
-              )}
-            </div>
-          )}
         </div>
 
         {/* LOADING STATE */}
@@ -644,16 +567,6 @@ export default function CourierApp() {
             )}
           </div>
         )}
-
-        {/* CARD DE COMBUSTÍVEL / HISTÓRICO MANTIDO INTACTO (REQUISITO 5) */}
-        <div className="pt-2">
-          <CourierFuelSummaryCard
-            metrics={courierMetrics}
-            courier={user}
-            onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
-            subtitle="Valores oficiais da rota registrados no sistema"
-          />
-        </div>
       </main>
 
       {/* Navegação Inferior Mobile Mantida Intacta */}
@@ -673,18 +586,6 @@ export default function CourierApp() {
         open={isCancelModalOpen}
         onOpenChange={setIsCancelModalOpen}
         onCancelled={loadCourierOrders}
-      />
-
-      {/* Modal de Histórico e Combustível Mantido */}
-      <CourierDeliveryHistoryModal
-        isOpen={isHistoryModalOpen}
-        onClose={() => setIsHistoryModalOpen(false)}
-        courier={user}
-        fuelAccount={courierMetrics.fuelAccount}
-        orders={orders}
-        offRouteEvents={offRouteEvents}
-        locations={locations}
-        settings={settings}
       />
     </div>
   )

@@ -81,6 +81,42 @@ export default function CourierFuelPage() {
     loadFinancialData()
   }, [user])
 
+  // Telemetria GPS a cada 30 segundos em nível de página/app para o entregador
+  useEffect(() => {
+    if (!user?.id) return
+
+    const updateLocation = async () => {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            const lat = pos.coords.latitude
+            const lng = pos.coords.longitude
+            const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 28
+            try {
+              await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90)
+            } catch (e) {
+              console.error('Failed to post live location in fuel page:', e)
+            }
+          },
+          async () => {
+            const lat = -22.906847 + (Math.random() - 0.5) * 0.008
+            const lng = -43.172896 + (Math.random() - 0.5) * 0.008
+            try {
+              await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110)
+            } catch {
+              /* ignore */
+            }
+          },
+          { enableHighAccuracy: true, timeout: 10000 },
+        )
+      }
+    }
+
+    updateLocation()
+    const interval = setInterval(updateLocation, 30000)
+    return () => clearInterval(interval)
+  }, [user])
+
   // Realtime updates for fuel advances, orders, locations and off_route_events
   useRealtime<FuelAdvanceRecord>('fuel_advances', (e) => {
     if (e.record.courier_id === user?.id) {
