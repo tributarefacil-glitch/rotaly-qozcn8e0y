@@ -79,6 +79,13 @@ class OfflineTelemetryBufferService {
   /**
    * Adiciona um ponto ao buffer offline (se a rota estiver ativa).
    */
+  /**
+   * Adiciona um ponto ao buffer offline (se a rota estiver ativa). Alias enqueuePoint para compatibilidade.
+   */
+  enqueuePoint(point: Omit<OfflineTelemetryPoint, 'id' | 'synced'>): OfflineTelemetryPoint {
+    return this.enqueue(point)
+  }
+
   enqueue(point: Omit<OfflineTelemetryPoint, 'id' | 'synced'>): OfflineTelemetryPoint {
     const id = `pt_${point.timestamp}_${Math.random().toString(36).slice(2, 7)}`
     const fullPoint: OfflineTelemetryPoint = {

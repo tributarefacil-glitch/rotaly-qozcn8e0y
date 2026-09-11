@@ -240,6 +240,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   // Estado para dispensar banners temporários no mapa
   const [isDeviationBannerDismissed, setIsDeviationBannerDismissed] = useState(false)
   const [isStopBannerDismissed, setIsStopBannerDismissed] = useState(false)
+  const [dismissedGpsAlertIds, setDismissedGpsAlertIds] = useState<string[]>([])
   const [isLegendExpanded, setIsLegendExpanded] = useState(false)
 
   // Retry maps loading
@@ -753,6 +754,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         speed,
         battery_level: latestLoc?.battery_level,
         location_timestamp: latestLoc?.updated || latestLoc?.created,
+        gps_status: latestLoc?.gps_status,
+        offline_buffered: latestLoc?.offline_buffered,
+        accuracy: latestLoc?.accuracy,
         hasRouteStarted,
         statusColor,
         statusLabel,
@@ -1047,6 +1051,45 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           }
         })
 
+        // 4. Alerta de GPS desligado ou Perda de sinal para entregadores em rota ativa
+        activeRouteCouriers.forEach((courierItem) => {
+          const courierId = courierItem.courier.id
+          const courierName = courierItem.courier.name || courierItem.courier.email || 'Entregador'
+          const locTime = courierItem.location_timestamp
+            ? new Date(courierItem.location_timestamp).getTime()
+            : 0
+          const isGpsDisabled = courierItem.gps_status === 'disabled'
+          const isSignalLost =
+            courierItem.gps_status === 'offline' ||
+            (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
+
+          if (isGpsDisabled) {
+            const gpsKey = `gps-disabled-${courierId}`
+            currentActiveEventKeys.add(gpsKey)
+            if (!notifiedEventsRef.current.has(gpsKey)) {
+              notifiedEventsRef.current.add(gpsKey)
+              playOffRouteWarningSound()
+              toast({
+                title: '📡 GPS DESLIGADO NA ROTA',
+                description: `${courierName} desligou o GPS ou negou permissão durante a rota!`,
+                variant: 'destructive',
+              })
+            }
+          } else if (isSignalLost) {
+            const signalKey = `signal-lost-${courierId}`
+            currentActiveEventKeys.add(signalKey)
+            if (!notifiedEventsRef.current.has(signalKey)) {
+              notifiedEventsRef.current.add(signalKey)
+              playOffRouteWarningSound()
+              toast({
+                title: '📴 PERDA DE SINAL NA ROTA',
+                description: `${courierName} está sem comunicação GPS há mais de 2 minutos!`,
+                variant: 'destructive',
+              })
+            }
+          }
+        })
+
         // Remover do Set ocorrências que voltaram à rota ou foram concluídas
         notifiedEventsRef.current.forEach((k) => {
           if (!currentActiveEventKeys.has(k)) {
@@ -1136,6 +1179,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         etaReturnBaseTime: routeInfo?.etaReturnBaseTime,
         battery_level: item.battery_level,
         location_timestamp: item.location_timestamp,
+        gps_status: item.gps_status,
+        offline_buffered: item.offline_buffered,
       })
     }) // 2. Destinos de entregas em trânsito e pendentes (marcador laranja com nome e número de sequência)
     todayOrders
@@ -1591,6 +1636,29 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const batteryColor =
             batteryVal <= 20 ? '#dc2626' : batteryVal <= 50 ? '#d97706' : '#16a34a'
 
+          const locTime = item.location_timestamp ? new Date(item.location_timestamp).getTime() : 0
+          const minutesSinceLastPoint = locTime ? Math.floor((Date.now() - locTime) / 60000) : 0
+          const isOutdated = locTime ? Date.now() - locTime > 2 * 60 * 1000 : false
+          const isGpsDisabled = item.gps_status === 'disabled'
+          const isSignalLost = item.gps_status === 'offline' || isOutdated
+
+          let gpsBadgeText = '📡 GPS ativo'
+          let gpsBadgeBg = '#ecfdf5'
+          let gpsBadgeColor = '#047857'
+          let gpsBadgeBorder = '#a7f3d0'
+
+          if (isGpsDisabled) {
+            gpsBadgeText = '📡 GPS off'
+            gpsBadgeBg = '#fef2f2'
+            gpsBadgeColor = '#b91c1c'
+            gpsBadgeBorder = '#fecaca'
+          } else if (isSignalLost) {
+            gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
+            gpsBadgeBg = '#fffbeb'
+            gpsBadgeColor = '#b45309'
+            gpsBadgeBorder = '#fde68a'
+          }
+
           const buildCourierTooltipContent = (addressText: string) => `
         <div style="padding: 8px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 260px; line-height: 1.35;">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
@@ -1602,15 +1670,24 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           </div>
 
           <!-- Badges de Bateria e GPS -->
-          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: 10px; font-weight: 700;">
-            <span style="display: inline-flex; align-items: center; gap: 3px; background: ${isGpsActive ? '#ecfdf5' : '#fef2f2'}; color: ${isGpsActive ? '#047857' : '#b91c1c'}; border: 1px solid ${isGpsActive ? '#a7f3d0' : '#fecaca'}; padding: 2px 5px; border-radius: 4px;">
-              <span>📡</span> ${isGpsActive ? 'GPS ativo' : 'GPS off'}
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: 10px; font-weight: 700; flex-wrap: wrap;">
+            <span style="display: inline-flex; align-items: center; gap: 3px; background: ${gpsBadgeBg}; color: ${gpsBadgeColor}; border: 1px solid ${gpsBadgeBorder}; padding: 2px 5px; border-radius: 4px;">
+              ${gpsBadgeText}
             </span>
             ${
               hasBattery
                 ? `
               <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: ${batteryColor}; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;">
                 <span>🔋</span> ${batteryVal}%
+              </span>
+            `
+                : ''
+            }
+            ${
+              item.offline_buffered
+                ? `
+              <span style="display: inline-flex; align-items: center; gap: 3px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 2px 5px; border-radius: 4px; font-size: 9px;">
+                🔄 Buffer sincronizado
               </span>
             `
                 : ''
@@ -2798,6 +2875,77 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                           </button>
                         </div>
                       )}
+
+                    {/* Alertas de GPS desligado na Torre */}
+                    {mapDisplayMode === 'in_transit' &&
+                      activeRouteCouriers
+                        .filter(
+                          (c) =>
+                            c.gps_status === 'disabled' &&
+                            !dismissedGpsAlertIds.includes(`gps-${c.courier.id}`),
+                        )
+                        .map((c) => (
+                          <div
+                            key={`gps-banner-${c.courier.id}`}
+                            className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/70 shadow-md text-[10.5px] font-bold text-rose-200 flex items-center justify-between gap-2 animate-pulse"
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className="text-sm shrink-0">📡</span>
+                              <span className="truncate">
+                                GPS desligado: {c.courier.name || c.courier.email}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDismissedGpsAlertIds((prev) => [...prev, `gps-${c.courier.id}`])
+                              }
+                              className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
+                              title="Dispensar alerta"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+
+                    {/* Alertas de Perda de sinal (>2 min) na Torre */}
+                    {mapDisplayMode === 'in_transit' &&
+                      activeRouteCouriers
+                        .filter((c) => {
+                          if (c.gps_status === 'disabled') return false
+                          const locTime = c.location_timestamp
+                            ? new Date(c.location_timestamp).getTime()
+                            : 0
+                          const isSignalLost =
+                            c.gps_status === 'offline' ||
+                            (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
+                          return (
+                            isSignalLost && !dismissedGpsAlertIds.includes(`sig-${c.courier.id}`)
+                          )
+                        })
+                        .map((c) => (
+                          <div
+                            key={`sig-banner-${c.courier.id}`}
+                            className="bg-amber-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-amber-500/70 shadow-md text-[10.5px] font-bold text-amber-200 flex items-center justify-between gap-2"
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className="text-sm shrink-0">📴</span>
+                              <span className="truncate">
+                                Perda de sinal: {c.courier.name || c.courier.email}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDismissedGpsAlertIds((prev) => [...prev, `sig-${c.courier.id}`])
+                              }
+                              className="text-amber-400 hover:text-white text-xs px-1 hover:bg-amber-900/60 rounded"
+                              title="Dispensar alerta"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
                   </div>
 
                   {/* Legenda explicativa enxuta e recolhível no rodapé do Google Maps nativo */}
@@ -2949,6 +3097,77 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                           </button>
                         </div>
                       )}
+
+                    {/* Alertas de GPS desligado no canvas */}
+                    {mapDisplayMode === 'in_transit' &&
+                      activeRouteCouriers
+                        .filter(
+                          (c) =>
+                            c.gps_status === 'disabled' &&
+                            !dismissedGpsAlertIds.includes(`gps-${c.courier.id}`),
+                        )
+                        .map((c) => (
+                          <div
+                            key={`canvas-gps-banner-${c.courier.id}`}
+                            className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/70 shadow-md text-[10.5px] font-bold text-rose-200 flex items-center justify-between gap-2 animate-pulse"
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className="text-sm shrink-0">📡</span>
+                              <span className="truncate">
+                                GPS desligado: {c.courier.name || c.courier.email}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDismissedGpsAlertIds((prev) => [...prev, `gps-${c.courier.id}`])
+                              }
+                              className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
+                              title="Dispensar alerta"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+
+                    {/* Alertas de Perda de sinal (>2 min) no canvas */}
+                    {mapDisplayMode === 'in_transit' &&
+                      activeRouteCouriers
+                        .filter((c) => {
+                          if (c.gps_status === 'disabled') return false
+                          const locTime = c.location_timestamp
+                            ? new Date(c.location_timestamp).getTime()
+                            : 0
+                          const isSignalLost =
+                            c.gps_status === 'offline' ||
+                            (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
+                          return (
+                            isSignalLost && !dismissedGpsAlertIds.includes(`sig-${c.courier.id}`)
+                          )
+                        })
+                        .map((c) => (
+                          <div
+                            key={`canvas-sig-banner-${c.courier.id}`}
+                            className="bg-amber-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-amber-500/70 shadow-md text-[10.5px] font-bold text-amber-200 flex items-center justify-between gap-2"
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className="text-sm shrink-0">📴</span>
+                              <span className="truncate">
+                                Perda de sinal: {c.courier.name || c.courier.email}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDismissedGpsAlertIds((prev) => [...prev, `sig-${c.courier.id}`])
+                              }
+                              className="text-amber-400 hover:text-white text-xs px-1 hover:bg-amber-900/60 rounded"
+                              title="Dispensar alerta"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
                   </div>
 
                   {/* Canvas vetorial de contingência idêntico ao LiveMap.tsx com marcadores interativos e rotas viárias */}

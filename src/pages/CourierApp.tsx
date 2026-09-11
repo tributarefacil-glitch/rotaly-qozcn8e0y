@@ -17,6 +17,7 @@ import { CourierBottomNav } from '@/components/CourierBottomNav'
 import { DeliveryConfirmationModal } from '@/components/DeliveryConfirmationModal'
 import { CancelDeliveryModal } from '@/components/CancelDeliveryModal'
 import { deliveryService } from '@/services/deliveryService'
+import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { OrderRecord } from '@/types/delivery'
@@ -51,6 +52,14 @@ export default function CourierApp() {
 
   const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<OrderRecord | null>(null)
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
+
+  // Status de GPS e rede em tempo real
+  const [gpsStatus, setGpsStatus] = useState<'active' | 'disabled' | 'offline'>('active')
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  )
+  const [pendingBufferedPoints, setPendingBufferedPoints] = useState<number>(0)
+  const [isFlushingBuffer, setIsFlushingBuffer] = useState<boolean>(false)
 
   const [isGpsActive] = useState(true)
 
@@ -194,12 +203,63 @@ export default function CourierApp() {
   const lastRecordedGpsRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
   const isSendingLocationRef = useRef<boolean>(false)
 
-  // Telemetria GPS com dedupe e lock
+  // Assinatura reativa da contagem do buffer offline e listeners de conectividade online/offline
+  useEffect(() => {
+    // Inscrever na contagem de pontos do buffer
+    const unsubscribeBuffer = offlineTelemetryBuffer.subscribe((count) => {
+      setPendingBufferedPoints(count)
+    })
+
+    const handleOnline = async () => {
+      setIsOnline(true)
+      // Ao voltar online, disparar flush idempotente do buffer
+      if (user?.id) {
+        setIsFlushingBuffer(true)
+        try {
+          const flushed = await offlineTelemetryBuffer.flush(user.id)
+          if (flushed > 0) {
+            toast.success(`📶 Conexão restabelecida! ${flushed} pontos sincronizados com a Torre.`)
+          }
+        } catch (e) {
+          console.warn('Falha ao flush do buffer offline:', e)
+        } finally {
+          setIsFlushingBuffer(false)
+        }
+      }
+    }
+
+    const handleOffline = () => {
+      setIsOnline(false)
+      toast.warning('📴 Sem sinal de internet. Os pontos de GPS serão salvos no buffer offline.')
+    }
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    // Se já estiver online e tiver pontos pendentes, tenta flush na montagem
+    if (navigator.onLine && user?.id && offlineTelemetryBuffer.size() > 0) {
+      handleOnline()
+    }
+
+    return () => {
+      unsubscribeBuffer()
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [user?.id])
+
+  // Telemetria GPS com dedupe, lock, buffer offline e detecção de status de GPS
   useEffect(() => {
     if (!user || !isGpsActive) return
 
-    const processAndSendGps = async (lat: number, lng: number, speedVal?: number | null) => {
+    const processAndSendGps = async (
+      lat: number,
+      lng: number,
+      speedVal?: number | null,
+      accuracyVal?: number,
+    ) => {
       setCurrentCourierLocation({ lat, lng })
+      setGpsStatus('active')
 
       // Se outra gravação já estiver em voo, não enviar simultaneamente
       if (isSendingLocationRef.current) return
@@ -218,9 +278,10 @@ export default function CourierApp() {
       }
 
       isSendingLocationRef.current = true
+      let batteryLevel = 90
+      let speed = 0
       try {
-        const batteryLevel = await getBatteryLevel()
-        let speed = 0
+        batteryLevel = await getBatteryLevel()
         if (typeof speedVal === 'number' && !isNaN(speedVal) && speedVal > 0) {
           speed = Math.round(speedVal * 3.6)
         } else if (last) {
@@ -232,10 +293,42 @@ export default function CourierApp() {
             speed = Math.round((dist / timeDiffSeconds) * 3.6)
           }
         }
-        await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90, batteryLevel)
+
+        // Tentar envio normal online
+        await deliveryService.updateCourierLocation(
+          user.id,
+          lat,
+          lng,
+          speed,
+          90,
+          batteryLevel,
+          'active',
+          false,
+          accuracyVal,
+        )
         lastRecordedGpsRef.current = { lat, lng, timestamp: now }
+
+        // Se houver pontos no buffer que aguardavam sinal, tenta flush agora que a rede respondeu
+        if (offlineTelemetryBuffer.size() > 0 && !isFlushingBuffer) {
+          offlineTelemetryBuffer.flush(user.id).catch(() => {})
+        }
       } catch (e) {
-        console.error('Failed to post live location:', e)
+        console.error('Failed to post live location (salvando no buffer offline se em rota):', e)
+        // Bloco catch de falha de rede do deliveryService.updateCourierLocation:
+        // Enfileira no offlineTelemetryBuffer com reason 'network_offline'
+        // APENAS se houver rota ativa iniciada e não finalizada na base
+        if (hasActiveStartedRoute) {
+          offlineTelemetryBuffer.enqueuePoint({
+            lat,
+            lng,
+            speed,
+            heading: 90,
+            accuracy: accuracyVal,
+            batteryLevel,
+            timestamp: now,
+            reason: 'network_offline',
+          })
+        }
       } finally {
         isSendingLocationRef.current = false
       }
@@ -245,13 +338,61 @@ export default function CourierApp() {
       if (typeof navigator !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
-            processAndSendGps(pos.coords.latitude, pos.coords.longitude, pos.coords.speed)
+            processAndSendGps(
+              pos.coords.latitude,
+              pos.coords.longitude,
+              pos.coords.speed,
+              pos.coords.accuracy,
+            )
           },
-          (err) => {
+          async (err) => {
             console.warn('Geolocation getCurrentPosition falhou ou permissão negada:', err)
+            const isGpsDisabled =
+              err.code === err.PERMISSION_DENIED || err.code === err.POSITION_UNAVAILABLE
+            const newStatus: 'disabled' | 'offline' = isGpsDisabled ? 'disabled' : 'offline'
+            setGpsStatus(newStatus)
+
+            // Se o entregador estiver em rota ativa, registramos o status e enfileiramos no buffer
+            if (hasActiveStartedRoute) {
+              const now = Date.now()
+              const last = lastRecordedGpsRef.current
+              const fallbackLat = last ? last.lat : currentCourierLocation?.lat || 0
+              const fallbackLng = last ? last.lng : currentCourierLocation?.lng || 0
+
+              // Notificar a Torre imediatamente sobre o GPS desligado/indisponível se tivermos coordenadas de referência e rede
+              if (fallbackLat && fallbackLng) {
+                try {
+                  const bLevel = await getBatteryLevel().catch(() => 90)
+                  await deliveryService.updateCourierLocation(
+                    user.id,
+                    fallbackLat,
+                    fallbackLng,
+                    0,
+                    0,
+                    bLevel,
+                    newStatus,
+                    false,
+                  )
+                } catch {
+                  // Se falhou rede ao avisar GPS desligado, guarda no buffer
+                  offlineTelemetryBuffer.enqueuePoint({
+                    lat: fallbackLat,
+                    lng: fallbackLng,
+                    speed: 0,
+                    heading: 0,
+                    accuracy: undefined,
+                    batteryLevel: 90,
+                    timestamp: now,
+                    reason: 'gps_disabled',
+                  })
+                }
+              }
+            }
           },
           { enableHighAccuracy: true, timeout: 10000 },
         )
+      } else {
+        setGpsStatus('disabled')
       }
     }
 
@@ -259,7 +400,7 @@ export default function CourierApp() {
     checkCurrentLocation()
     const interval = setInterval(checkCurrentLocation, 30000)
     return () => clearInterval(interval)
-  }, [user, isGpsActive])
+  }, [user, isGpsActive, hasActiveStartedRoute, isFlushingBuffer, currentCourierLocation])
 
   // Pedidos da rota atual que já foram iniciados mas ainda NÃO foram finalizados na base
   // Regra do Usuário: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
@@ -505,7 +646,7 @@ export default function CourierApp() {
       <Header />
 
       <main className="flex-1 max-w-xl mx-auto w-full p-4 space-y-4">
-        {/* CABEÇALHO LIMPO DA ROTA */}
+        {/* CABEÇALHO LIMPO DA ROTA COM STATUS DE GPS E CONECTIVIDADE */}
         <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 shadow-xl">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -516,14 +657,80 @@ export default function CourierApp() {
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              </span>
-              <span className="text-xs font-semibold text-emerald-400">GPS Ativo</span>
+              {gpsStatus === 'active' && isOnline ? (
+                <>
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  </span>
+                  <span className="text-xs font-semibold text-emerald-400">GPS Ativo</span>
+                </>
+              ) : gpsStatus === 'disabled' ? (
+                <>
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+                  </span>
+                  <span className="text-xs font-semibold text-rose-400">GPS Desligado</span>
+                </>
+              ) : !isOnline ? (
+                <>
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+                  </span>
+                  <span className="text-xs font-semibold text-amber-400">Sem Internet</span>
+                </>
+              ) : (
+                <>
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+                  </span>
+                  <span className="text-xs font-semibold text-amber-400">Aguardando Sinal</span>
+                </>
+              )}
             </div>
           </div>
         </div>
+
+        {/* INDICADOR VISÍVEL DE BUFFER OFFLINE: aviso persistente quando há pontos aguardando sincronização */}
+        {pendingBufferedPoints > 0 && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-950/40 p-3.5 flex items-center justify-between gap-3 text-xs text-amber-200 shadow-lg animate-pulse">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-lg shrink-0">📴</span>
+              <div className="min-w-0">
+                <p className="font-bold text-white text-xs">
+                  {pendingBufferedPoints}{' '}
+                  {pendingBufferedPoints === 1
+                    ? 'ponto de trajeto salvo offline'
+                    : 'pontos de trajeto salvos offline'}
+                </p>
+                <p className="text-[11px] text-amber-300/80 mt-0.5">
+                  {!isOnline
+                    ? 'Sem internet no momento. Sincronização automática assim que o sinal voltar.'
+                    : 'Sincronizando pontos com a Torre de Controle...'}
+                </p>
+              </div>
+            </div>
+            {isFlushingBuffer && (
+              <div className="h-5 w-5 border-2 border-amber-400 border-t-transparent animate-spin rounded-full shrink-0" />
+            )}
+          </div>
+        )}
+
+        {/* ALERTA SE GPS ESTIVER DESLIGADO EM ROTA ATIVA */}
+        {hasActiveStartedRoute && gpsStatus === 'disabled' && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-950/50 p-3.5 flex items-center gap-3 text-xs text-rose-200 shadow-lg">
+            <span className="text-lg shrink-0">📡</span>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-white text-xs">
+                Atenção: GPS Desligado ou Sem Permissão
+              </p>
+              <p className="text-[11px] text-rose-300/90 mt-0.5">
+                Por favor, ative a localização do seu dispositivo para continuar registrando o km
+                rodado e a rota na Torre de Controle.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* AVISO DISCRETO DE FILA: quando há rota aguardando na fila */}
         {queuedOrders.length > 0 && (

@@ -46,6 +46,8 @@ export interface MapMarkerItem {
   etaReturnBaseTime?: string
   battery_level?: number
   location_timestamp?: string | number | Date
+  gps_status?: 'active' | 'disabled' | 'offline'
+  offline_buffered?: boolean
 }
 
 export function getVehicleEmoji(type?: string): string {
@@ -373,14 +375,27 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       const courierDisplayName = item.courier_name || item.title
       const hasDeviation = item.isDeviated && typeof item.deviationMeters === 'number'
 
-      let isGpsActive = false
-      if (item.location_timestamp) {
-        const locTime = new Date(item.location_timestamp).getTime()
-        if (!isNaN(locTime)) {
-          isGpsActive = Date.now() - locTime <= 2 * 60 * 1000
-        }
-      } else {
-        isGpsActive = true
+      const locTime = item.location_timestamp ? new Date(item.location_timestamp).getTime() : 0
+      const minutesSinceLastPoint = locTime ? Math.floor((Date.now() - locTime) / 60000) : 0
+      const isOutdated = locTime ? Date.now() - locTime > 2 * 60 * 1000 : false
+      const isGpsDisabled = item.gps_status === 'disabled'
+      const isSignalLost = item.gps_status === 'offline' || isOutdated
+
+      let gpsBadgeText = '📡 GPS ativo'
+      let gpsBadgeBg = '#ecfdf5'
+      let gpsBadgeColor = '#047857'
+      let gpsBadgeBorder = '#a7f3d0'
+
+      if (isGpsDisabled) {
+        gpsBadgeText = '📡 GPS off'
+        gpsBadgeBg = '#fef2f2'
+        gpsBadgeColor = '#b91c1c'
+        gpsBadgeBorder = '#fecaca'
+      } else if (isSignalLost) {
+        gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
+        gpsBadgeBg = '#fffbeb'
+        gpsBadgeColor = '#b45309'
+        gpsBadgeBorder = '#fde68a'
       }
 
       const hasBattery = typeof item.battery_level === 'number' && !isNaN(item.battery_level)
@@ -398,15 +413,24 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           </div>
 
           <!-- Badges de Bateria e GPS -->
-          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: 10px; font-weight: 700;">
-            <span style="display: inline-flex; align-items: center; gap: 3px; background: ${isGpsActive ? '#ecfdf5' : '#fef2f2'}; color: ${isGpsActive ? '#047857' : '#b91c1c'}; border: 1px solid ${isGpsActive ? '#a7f3d0' : '#fecaca'}; padding: 2px 5px; border-radius: 4px;">
-              <span>📡</span> ${isGpsActive ? 'GPS ativo' : 'GPS off'}
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: 10px; font-weight: 700; flex-wrap: wrap;">
+            <span style="display: inline-flex; align-items: center; gap: 3px; background: ${gpsBadgeBg}; color: ${gpsBadgeColor}; border: 1px solid ${gpsBadgeBorder}; padding: 2px 5px; border-radius: 4px;">
+              ${gpsBadgeText}
             </span>
             ${
               hasBattery
                 ? `
               <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: ${batteryColor}; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;">
                 <span>🔋</span> ${batteryVal}%
+              </span>
+            `
+                : ''
+            }
+            ${
+              item.offline_buffered
+                ? `
+              <span style="display: inline-flex; align-items: center; gap: 3px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 2px 5px; border-radius: 4px; font-size: 9px;">
+                🔄 Buffer sincronizado
               </span>
             `
                 : ''
@@ -1013,27 +1037,52 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                           </div>
 
                           {/* Badges de Bateria e GPS no popup do canvas */}
-                          <div className="flex items-center gap-2 pt-1 font-bold text-[10px]">
+                          <div className="flex items-center gap-2 pt-1 font-bold text-[10px] flex-wrap">
                             {(() => {
-                              const isGpsActive = m.location_timestamp
-                                ? Date.now() - new Date(m.location_timestamp).getTime() <=
-                                  2 * 60 * 1000
-                                : true
+                              const locTime = m.location_timestamp
+                                ? new Date(m.location_timestamp).getTime()
+                                : 0
+                              const minutesSinceLastPoint = locTime
+                                ? Math.floor((Date.now() - locTime) / 60000)
+                                : 0
+                              const isOutdated = locTime
+                                ? Date.now() - locTime > 2 * 60 * 1000
+                                : false
+                              const isGpsDisabled = m.gps_status === 'disabled'
+                              const isSignalLost = m.gps_status === 'offline' || isOutdated
+
+                              if (isGpsDisabled) {
+                                return (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-rose-950/80 text-rose-400 border-rose-500/40">
+                                    <span>📡</span> GPS off
+                                  </span>
+                                )
+                              }
+                              if (isSignalLost) {
+                                return (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-amber-950/80 text-amber-400 border-amber-500/40">
+                                    <span>📴</span> Sem sinal (
+                                    {minutesSinceLastPoint > 0
+                                      ? `${minutesSinceLastPoint} min`
+                                      : '<2 min'}
+                                    )
+                                  </span>
+                                )
+                              }
                               return (
-                                <span
-                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
-                                    isGpsActive
-                                      ? 'bg-emerald-950/80 text-emerald-400 border-emerald-500/40'
-                                      : 'bg-rose-950/80 text-rose-400 border-rose-500/40'
-                                  }`}
-                                >
-                                  <span>📡</span> {isGpsActive ? 'GPS ativo' : 'GPS off'}
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-emerald-950/80 text-emerald-400 border-emerald-500/40">
+                                  <span>📡</span> GPS ativo
                                 </span>
                               )
                             })()}
                             {typeof m.battery_level === 'number' && !isNaN(m.battery_level) && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-200 border-slate-700">
                                 <span>🔋</span> {Math.round(m.battery_level)}%
+                              </span>
+                            )}
+                            {m.offline_buffered && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-blue-950/80 text-blue-300 border-blue-500/40 text-[9px]">
+                                🔄 Buffer sincronizado
                               </span>
                             )}
                           </div>
