@@ -41,31 +41,60 @@ export default function CourierProfilePage() {
     }
   }, [user?.phone])
 
-  // Telemetria GPS a cada 30 segundos em nível de app/página
+  // Dedupe e lock de GPS na página de perfil
+  const lastRecordedGpsRef = React.useRef<{ lat: number; lng: number; timestamp: number } | null>(
+    null,
+  )
+  const isSendingLocationRef = React.useRef<boolean>(false)
+
+  // Telemetria GPS com dedupe e lock
   React.useEffect(() => {
     if (!user?.id) return
 
     const updateLocation = async () => {
-      if (navigator.geolocation) {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        if (isSendingLocationRef.current) return
+
         navigator.geolocation.getCurrentPosition(
           async (pos) => {
             const lat = pos.coords.latitude
             const lng = pos.coords.longitude
+            const now = Date.now()
+            const last = lastRecordedGpsRef.current
+
+            if (last) {
+              const timeDiff = (now - last.timestamp) / 1000
+              // Haversine simples aproximado
+              const R = 6371000
+              const dLat = ((lat - last.lat) * Math.PI) / 180
+              const dLon = ((lng - last.lng) * Math.PI) / 180
+              const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos((last.lat * Math.PI) / 180) *
+                  Math.cos((lat * Math.PI) / 180) *
+                  Math.sin(dLon / 2) *
+                  Math.sin(dLon / 2)
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+              const dist = R * c
+
+              if (timeDiff < 30 && dist < 20) return
+            }
+
+            if (isSendingLocationRef.current) return
+            isSendingLocationRef.current = true
+
             const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 28
             try {
               await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90)
+              lastRecordedGpsRef.current = { lat, lng, timestamp: now }
             } catch (e) {
               console.error('Failed to post live location in profile page:', e)
+            } finally {
+              isSendingLocationRef.current = false
             }
           },
-          async () => {
-            const lat = -22.906847 + (Math.random() - 0.5) * 0.008
-            const lng = -43.172896 + (Math.random() - 0.5) * 0.008
-            try {
-              await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110)
-            } catch {
-              /* ignore */
-            }
+          () => {
+            /* sem mock arbitrário */
           },
           { enableHighAccuracy: true, timeout: 10000 },
         )

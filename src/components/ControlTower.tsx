@@ -185,6 +185,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const [isRemovingOrderFromRoute, setIsRemovingOrderFromRoute] = useState(false)
   const [orderToRemoveFromRoute, setOrderToRemoveFromRoute] = useState<OrderRecord | null>(null)
 
+  // Global in-transit orders (para mapear todos os entregadores em rota do sistema)
+  const [globalInTransitOrders, setGlobalInTransitOrders] = useState<OrderRecord[]>([])
+
   // Google Maps state
   const [mapsLoaded, setMapsLoaded] = useState(false)
   const [mapsError, setMapsError] = useState(false)
@@ -354,16 +357,36 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const fetchData = async () => {
     try {
       const isSeller = user?.role === 'seller'
-      const ordersFilter = isSeller && user?.id ? `seller_id = '${user.id}'` : ''
+      const sellerOrdersFilter = isSeller && user?.id ? `seller_id = '${user.id}'` : ''
 
-      const [fetchedOrders, fetchedCouriers, fetchedLocations, fetchedDeviations] =
-        await Promise.all([
-          deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
-          deliveryService.getCouriers(),
-          deliveryService.getLatestLocations(),
-          deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
-        ])
+      // Separar em duas buscas:
+      // 1. sellerOrders (com filtro seller_id quando logado como vendedor — para pins de clientes, kanban e drawer)
+      // 2. globalInTransitOrders (todos os pedidos do sistema com status='in_transit' && route_started=true, sem seller_id)
+      const globalTransitFilter = `status = 'in_transit' && route_started = true`
+
+      const [
+        fetchedOrders,
+        fetchedGlobalTransitOrders,
+        fetchedCouriers,
+        fetchedLocations,
+        fetchedDeviations,
+      ] = await Promise.all([
+        deliveryService.getOrders(
+          sellerOrdersFilter,
+          '-created',
+          'customer_id,courier_id,seller_id',
+        ),
+        deliveryService.getOrders(
+          globalTransitFilter,
+          '-created',
+          'customer_id,courier_id,seller_id',
+        ),
+        deliveryService.getCouriers(),
+        deliveryService.getLatestLocations(),
+        deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
+      ])
       setOrders(fetchedOrders)
+      setGlobalInTransitOrders(fetchedGlobalTransitOrders || [])
       setCouriers(fetchedCouriers)
       setLocations(fetchedLocations)
       setRecentDeviations(fetchedDeviations || [])
@@ -424,7 +447,24 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         if (!isSubscribed) return
         const rec = e.record as unknown as OrderRecord
 
-        // Filtro seller_id: descartar eventos de outros lojistas se o usuário for seller
+        // Manter lista global de pedidos em trânsito sempre sincronizada (para todos os lojistas)
+        if (e.action === 'delete') {
+          setGlobalInTransitOrders((prev) => prev.filter((o) => o.id !== rec.id))
+        } else {
+          const isRecInTransit = rec.status === 'in_transit' && rec.route_started === true
+          setGlobalInTransitOrders((prev) => {
+            const exists = prev.some((o) => o.id === rec.id)
+            if (isRecInTransit) {
+              return exists
+                ? prev.map((o) => (o.id === rec.id ? { ...o, ...rec } : o))
+                : [rec, ...prev]
+            } else {
+              return prev.filter((o) => o.id !== rec.id)
+            }
+          })
+        }
+
+        // Filtro seller_id: eventos de pedidos locais da loja (para pins de pedidos, kanban e drawer)
         const isSeller = user?.role === 'seller'
         if (isSeller && user?.id && rec?.seller_id && rec.seller_id !== user.id) {
           return
@@ -591,42 +631,66 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   }, [todayOrders])
 
   // Map couriers data with latest GPS coordinates & active route status
+  // CORREÇÃO A & B:
+  // 1. Sem coordenadas inventadas: usar estritamente latestLoc.lat/lng ou start_base_lat/lng do pedido ativo
+  // 2. hasRouteStarted / activeInTransitOrders verificados contra a lista GLOBAL de pedidos em trânsito
   const allCourierData = useMemo(() => {
     return couriers.map((courier) => {
       const courierLocs = locations.filter((l) => l.user_id === courier.id)
       const latestLoc = courierLocs[0]
 
-      const defaultLat =
-        -22.906847 + (((parseInt(courier.id.slice(-2), 16) || 0) % 20) - 10) * 0.005
-      const defaultLng =
-        -43.172896 + (((parseInt(courier.id.slice(-3), 16) || 0) % 20) - 10) * 0.005
+      // Pedidos atribuídos ao entregador na visão global (todos os pedidos do sistema)
+      const globalCourierTransit = globalInTransitOrders.filter((o) => o.courier_id === courier.id)
+      // Pedidos locais da loja (para métricas e kanban da loja)
+      const courierLocalOrders = todayOrders.filter((o) => o.courier_id === courier.id)
 
-      const lat = typeof latestLoc?.lat === 'number' ? latestLoc.lat : defaultLat
-      const lng = typeof latestLoc?.lng === 'number' ? latestLoc.lng : defaultLng
+      // Rota ativa do entregador considerada tanto globalmente quanto localmente
+      const allTransitOrders = [
+        ...globalCourierTransit,
+        ...courierLocalOrders.filter((o) => o.status === 'in_transit' && o.route_started === true),
+      ]
+      const uniqueActiveTransitOrders = Array.from(
+        new Map(allTransitOrders.map((o) => [o.id, o])).values(),
+      )
+
+      // Coordenadas válidas: estritamente telemetria real do entregador.
+      // Se ainda não houver telemetria, fallback para a base de partida do pedido ativo.
+      // Se nenhum existir, lat/lng ficam undefined (não renderiza marcador com coordenada inventada).
+      const firstActiveOrder = uniqueActiveTransitOrders[0]
+      let lat: number | undefined =
+        typeof latestLoc?.lat === 'number' && !isNaN(latestLoc.lat)
+          ? latestLoc.lat
+          : firstActiveOrder?.start_base_lat
+            ? Number(firstActiveOrder.start_base_lat)
+            : undefined
+
+      let lng: number | undefined =
+        typeof latestLoc?.lng === 'number' && !isNaN(latestLoc.lng)
+          ? latestLoc.lng
+          : firstActiveOrder?.start_base_lng
+            ? Number(firstActiveOrder.start_base_lng)
+            : undefined
+
       const speed = latestLoc?.speed ?? 0
 
-      const courierOrders = todayOrders.filter((o) => o.courier_id === courier.id)
-      // Pedidos em rota ativa estritamente in_transit com route_started === true (exclui delivered, cancelled, pending)
-      const activeInTransitOrders = courierOrders.filter(
-        (o) => o.status === 'in_transit' && o.route_started === true,
-      )
+      const activeInTransitOrders = uniqueActiveTransitOrders
       const inTransitOrders = activeInTransitOrders
-      const pendingOrders = courierOrders.filter(
+      const pendingOrders = courierLocalOrders.filter(
         (o) =>
           o.status === 'pending' ||
           o.status === 'assigned' ||
           (o.status === 'in_transit' && !o.route_started),
       )
-      const problemOrders = courierOrders.filter(
+      const problemOrders = courierLocalOrders.filter(
         (o) =>
           o.status === 'address_error' ||
           o.status === 'client_absent' ||
           o.completion_reason === 'address_error' ||
           o.completion_reason === 'client_absent',
       )
-      const finishedOrders = courierOrders.filter((o) => o.status === 'delivered')
+      const finishedOrders = courierLocalOrders.filter((o) => o.status === 'delivered')
 
-      // REQUISITO: "Em Rota" somente se houver pedidos estritamente status === 'in_transit' && route_started === true
+      // "Em Rota" se houver pedidos ativos com rota iniciada globalmente
       const hasRouteStarted = activeInTransitOrders.length > 0
 
       let statusColor: 'green' | 'yellow' | 'red' = 'green'
@@ -654,8 +718,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
       return {
         courier,
-        lat,
-        lng,
+        lat: lat as number,
+        lng: lng as number,
+        hasValidCoords: typeof lat === 'number' && typeof lng === 'number',
         speed,
         battery_level: latestLoc?.battery_level,
         location_timestamp: latestLoc?.updated || latestLoc?.created,
@@ -670,14 +735,15 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         nextOrder,
         lastDelivered,
         vehicle: courier.vehicle_type || 'moto',
-        allAssignedOrders: courierOrders,
+        allAssignedOrders:
+          uniqueActiveTransitOrders.length > 0 ? uniqueActiveTransitOrders : courierLocalOrders,
       }
     })
-  }, [couriers, locations, todayOrders])
+  }, [couriers, locations, todayOrders, globalInTransitOrders])
 
-  // REQUISITO: No mapa aparecem APENAS entregadores com rota iniciada
+  // REQUISITO: No mapa aparecem APENAS entregadores com rota iniciada (e com coordenadas válidas)
   const activeRouteCouriers = useMemo(() => {
-    return allCourierData.filter((c) => c.hasRouteStarted)
+    return allCourierData.filter((c) => c.hasRouteStarted && c.hasValidCoords)
   }, [allCourierData])
 
   // Entregadores disponíveis (mantido para cálculos internos se necessário)
@@ -1590,9 +1656,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     const cust = selectedOrder.expand?.customer_id
     if (!cust?.lat || !cust?.lng) return
 
-    // Ponto de origem: base de partida ou localização atual do entregador ou ponto inicial padrão
-    const originLat = selectedOrder.start_base_lat || orderCourierInfo?.lat || -22.906847
-    const originLng = selectedOrder.start_base_lng || orderCourierInfo?.lng || -43.172896
+    // Ponto de origem: base de partida ou localização atual do entregador ou ponto do cliente como fallback
+    const originLat = selectedOrder.start_base_lat || orderCourierInfo?.lat || cust.lat
+    const originLng = selectedOrder.start_base_lng || orderCourierInfo?.lng || cust.lng
 
     const origin: LatLngPoint = { lat: Number(originLat), lng: Number(originLng) }
     const destination: LatLngPoint = { lat: Number(cust.lat), lng: Number(cust.lng) }
@@ -1660,8 +1726,14 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     const courierData = orderCourierInfo
 
     // Coordinates for center: courier lat/lng or customer lat/lng
-    const centerLat = courierData?.lat || cust?.lat || -22.906847
-    const centerLng = courierData?.lng || cust?.lng || -43.172896
+    const centerLat =
+      courierData?.lat ||
+      cust?.lat ||
+      (selectedOrder.start_base_lat ? Number(selectedOrder.start_base_lat) : -22.906847)
+    const centerLng =
+      courierData?.lng ||
+      cust?.lng ||
+      (selectedOrder.start_base_lng ? Number(selectedOrder.start_base_lng) : -43.172896)
     drawerCenterRef.current = { lat: centerLat, lng: centerLng }
 
     let miniMap = drawerMapInstance
@@ -3144,16 +3216,28 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     {(!mapsLoaded || mapsError || drawerMapFailed || !drawerTilesLoaded) &&
                       (() => {
                         const cust = selectedOrder.expand?.customer_id
-                        const baseLat = selectedOrder.start_base_lat || -22.906847
-                        const baseLng = selectedOrder.start_base_lng || -43.172896
-                        const clientLat = cust?.lat || baseLat + 0.035
-                        const clientLng = cust?.lng || baseLng + 0.04
+                        const baseLat = selectedOrder.start_base_lat
+                          ? Number(selectedOrder.start_base_lat)
+                          : cust?.lat
+                            ? Number(cust.lat)
+                            : -22.906847
+                        const baseLng = selectedOrder.start_base_lng
+                          ? Number(selectedOrder.start_base_lng)
+                          : cust?.lng
+                            ? Number(cust.lng)
+                            : -43.172896
+                        const clientLat = cust?.lat ? Number(cust.lat) : baseLat
+                        const clientLng = cust?.lng ? Number(cust.lng) : baseLng
 
-                        // Posição do entregador se houver
+                        // Posição do entregador se houver telemetria válida
                         const courierLat =
-                          orderCourierInfo?.lat ?? (baseLat + clientLat) / 2 + 0.008
+                          typeof orderCourierInfo?.lat === 'number'
+                            ? orderCourierInfo.lat
+                            : (baseLat + clientLat) / 2
                         const courierLng =
-                          orderCourierInfo?.lng ?? (baseLng + clientLng) / 2 + 0.009
+                          typeof orderCourierInfo?.lng === 'number'
+                            ? orderCourierInfo.lng
+                            : (baseLng + clientLng) / 2
 
                         // Coordenadas da rota real (ou pontos interpolados de rua)
                         const routeCoords: LatLngPoint[] =

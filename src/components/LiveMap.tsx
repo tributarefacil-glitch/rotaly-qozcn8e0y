@@ -213,19 +213,31 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const [loadingAddressIds, setLoadingAddressIds] = useState<Record<string, boolean>>({})
 
   // Hover address resolver with caching and fallback
-  const handleMarkerHover = (item: MapMarkerItem) => {
-    if (!item.lat || !item.lng) return
+  // Usa estritamente a coordenada exata passada por item.lat e item.lng
+  const handleMarkerHover = (item: MapMarkerItem, onResolved?: (addr: string) => void) => {
+    if (
+      typeof item.lat !== 'number' ||
+      typeof item.lng !== 'number' ||
+      isNaN(item.lat) ||
+      isNaN(item.lng)
+    )
+      return
 
     // If marker already has customer_address (order markers)
-    if (item.customer_address) {
+    if (item.type !== 'courier' && item.customer_address) {
       if (!resolvedAddresses[item.id]) {
         setResolvedAddresses((prev) => ({ ...prev, [item.id]: item.customer_address! }))
       }
+      if (onResolved) onResolved(item.customer_address)
       return
     }
 
-    const posKey = `${item.id}-${item.lat.toFixed(4)},${item.lng.toFixed(4)}`
-    if (resolvedAddresses[posKey] || loadingAddressIds[posKey]) return
+    const posKey = `${item.lat.toFixed(4)},${item.lng.toFixed(4)}`
+    if (resolvedAddresses[posKey]) {
+      if (onResolved) onResolved(resolvedAddresses[posKey])
+      return
+    }
+    if (loadingAddressIds[posKey]) return
 
     setLoadingAddressIds((prev) => ({ ...prev, [posKey]: true }))
     reverseGeocodeCoordinates(item.lat, item.lng)
@@ -239,6 +251,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           [posKey]: addressText,
           [item.id]: addressText,
         }))
+        if (onResolved) onResolved(addressText)
       })
       .catch(() => {
         const fallbackText = `Lat: ${item.lat.toFixed(5)}, Lng: ${item.lng.toFixed(5)}`
@@ -247,6 +260,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           [posKey]: fallbackText,
           [item.id]: fallbackText,
         }))
+        if (onResolved) onResolved(fallbackText)
       })
       .finally(() => {
         setLoadingAddressIds((prev) => ({ ...prev, [posKey]: false }))
@@ -256,9 +270,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   // Helper to get displayed address for a marker
   const getMarkerAddress = (item: MapMarkerItem) => {
     if (item.type !== 'courier' && item.customer_address) return item.customer_address
-    const posKey = `${item.id}-${item.lat.toFixed(4)},${item.lng.toFixed(4)}`
+    const posKey = `${item.lat.toFixed(4)},${item.lng.toFixed(4)}`
     if (resolvedAddresses[posKey]) return resolvedAddresses[posKey]
-    if (resolvedAddresses[item.id]) return resolvedAddresses[item.id]
+    if (item.type !== 'courier' && resolvedAddresses[item.id]) return resolvedAddresses[item.id]
     if (item.customer_address) return item.customer_address
     if (loadingAddressIds[posKey] || loadingAddressIds[item.id]) return 'Localizando endereço...'
     return null
@@ -674,21 +688,27 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
       marker.addListener('click', () => {
         hoverInfoWindow.close()
-        handleMarkerHover(item)
-        const currentAddr = getMarkerAddress(item)
-        clickInfoWindow.setContent(buildInfoWindowHtml(item, currentAddr))
-        clickInfoWindow.open(mapInstanceRef.current, marker)
-        setActivePopupMarker(item)
-        if (onSelectMarker) onSelectMarker(item)
+        // Obter posição exata atual do marcador na hora do clique para evitar estado defasado
+        const markerPos = marker.getPosition ? marker.getPosition() : null
+        const currentLat = markerPos ? markerPos.lat() : item.lat
+        const currentLng = markerPos ? markerPos.lng() : item.lng
 
-        // Se o endereço ainda estiver sendo resolvido, atualizar quando concluir
-        if (!currentAddr || currentAddr === 'Localizando endereço...') {
-          const checkTimer = setTimeout(() => {
-            const updatedAddr = getMarkerAddress(item)
-            clickInfoWindow.setContent(buildInfoWindowHtml(item, updatedAddr))
-          }, 600)
-          ;(marker as any).__clickTimer = checkTimer
+        const currentExactItem: MapMarkerItem = {
+          ...item,
+          lat: currentLat,
+          lng: currentLng,
         }
+
+        const currentAddr = getMarkerAddress(currentExactItem)
+        clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, currentAddr))
+        clickInfoWindow.open(mapInstanceRef.current, marker)
+        setActivePopupMarker(currentExactItem)
+        if (onSelectMarker) onSelectMarker(currentExactItem)
+
+        // Forçar resolução com callback imediato para atualizar o HTML da infoWindow
+        handleMarkerHover(currentExactItem, (freshAddr) => {
+          clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, freshAddr))
+        })
       })
 
       googleMarkersRef.current.push(marker)

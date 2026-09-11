@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { haversineDistanceMeters } from '@/lib/geo'
 import {
   MapPin,
   CheckCircle,
@@ -179,50 +180,65 @@ export default function CourierApp() {
     return null
   }
 
-  // Telemetria GPS ativa a cada 30 segundos
+  // Refs de controle para DEDUPE e LOCK contra concorrência no envio de GPS:
+  // Só grava na coleção locations se passaram > 30s OU se moveu > 20 metros.
+  const lastRecordedGpsRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
+  const isSendingLocationRef = useRef<boolean>(false)
+
+  // Telemetria GPS com dedupe e lock
   useEffect(() => {
     if (!user || !isGpsActive) return
 
-    const updateLocation = async () => {
-      if (navigator.geolocation) {
+    const processAndSendGps = async (lat: number, lng: number, speedVal?: number | null) => {
+      setCurrentCourierLocation({ lat, lng })
+
+      // Se outra gravação já estiver em voo, não enviar simultaneamente
+      if (isSendingLocationRef.current) return
+
+      const now = Date.now()
+      const last = lastRecordedGpsRef.current
+
+      if (last) {
+        const timeDiffSeconds = (now - last.timestamp) / 1000
+        const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+
+        // Só gravar se passaram > 30s do último envio OU moveu > 20 metros
+        if (timeDiffSeconds < 30 && distanceDiffMeters < 20) {
+          return
+        }
+      }
+
+      isSendingLocationRef.current = true
+      try {
         const batteryLevel = await getBatteryLevel()
+        const speed =
+          typeof speedVal === 'number' && !isNaN(speedVal) ? Math.round(speedVal * 3.6) : 25
+        await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90, batteryLevel)
+        lastRecordedGpsRef.current = { lat, lng, timestamp: now }
+      } catch (e) {
+        console.error('Failed to post live location:', e)
+      } finally {
+        isSendingLocationRef.current = false
+      }
+    }
+
+    const checkCurrentLocation = () => {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
-          async (pos) => {
-            const lat = pos.coords.latitude
-            const lng = pos.coords.longitude
-            setCurrentCourierLocation({ lat, lng })
-            const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 28
-            try {
-              await deliveryService.updateCourierLocation(
-                user.id,
-                lat,
-                lng,
-                speed,
-                90,
-                batteryLevel,
-              )
-            } catch (e) {
-              console.error('Failed to post live location:', e)
-            }
+          (pos) => {
+            processAndSendGps(pos.coords.latitude, pos.coords.longitude, pos.coords.speed)
           },
-          async () => {
-            // Fallback suave
-            const lat = -22.906847 + (Math.random() - 0.5) * 0.008
-            const lng = -43.172896 + (Math.random() - 0.5) * 0.008
-            setCurrentCourierLocation({ lat, lng })
-            try {
-              await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110, batteryLevel)
-            } catch {
-              /* ignore */
-            }
+          (err) => {
+            console.warn('Geolocation getCurrentPosition falhou ou permissão negada:', err)
           },
           { enableHighAccuracy: true, timeout: 10000 },
         )
       }
     }
 
-    updateLocation()
-    const interval = setInterval(updateLocation, 30000)
+    // Disparo imediato e intervalo a cada 30 segundos
+    checkCurrentLocation()
+    const interval = setInterval(checkCurrentLocation, 30000)
     return () => clearInterval(interval)
   }, [user, isGpsActive])
 

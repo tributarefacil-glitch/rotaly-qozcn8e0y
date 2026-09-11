@@ -672,21 +672,15 @@ export async function fallbackNominatimGeocode(
   }
 }
 
-// In-memory cache for reverse geocoding by rounded coordinates (~10-15 meters)
-const reverseGeocodeCache = new Map<string, ParsedAddress>()
-
-/**
- * Cache com raio de tolerância de ~100m para evitar chamadas redundantes
- * à API de Geocoding quando a posição oscila levemente ou altera menos de 100 metros.
- */
-interface GeocodeCacheItem {
+// In-memory cache for reverse geocoding by rounded coordinates (~11 meters precision)
+interface CacheEntry {
   lat: number
   lng: number
   result: ParsedAddress
   timestamp: number
 }
 
-const geoDistanceToleranceCache: GeocodeCacheItem[] = []
+const reverseGeocodeCache = new Map<string, CacheEntry>()
 
 /**
  * Distância Haversine simplificada em metros entre duas coordenadas
@@ -705,14 +699,56 @@ function distanceMetersCoords(lat1: number, lon1: number, lat2: number, lon2: nu
   return R * c
 }
 
+export function getCachedReverseGeocodeKey(lat: number, lng: number): string {
+  // Chave com 4 casas decimais (~11 metros de tolerância)
+  return `${lat.toFixed(4)},${lng.toFixed(4)}`
+}
+
+/**
+ * Sanitiza e valida entrada de cache: se o resultado tiver lat/lng divergente
+ * da coordenada consultada em mais de 5 km (ex: centróide genérico da capital),
+ * a entrada é purgada do cache e descartada.
+ */
+function isAddressGeographicallyValid(
+  queryLat: number,
+  queryLng: number,
+  result: ParsedAddress | null,
+): boolean {
+  if (!result) return false
+  if (typeof result.lat === 'number' && typeof result.lng === 'number') {
+    const dist = distanceMetersCoords(queryLat, queryLng, result.lat, result.lng)
+    if (dist > 5000) {
+      console.warn(
+        `[ReverseGeocode] Endereço descartado: fica a ${(dist / 1000).toFixed(1)}km da coordenada GPS (${queryLat}, ${queryLng})`,
+      )
+      return false
+    }
+  }
+  return true
+}
+
 export function findCachedReverseGeocodeWithinMeters(
   lat: number,
   lng: number,
-  maxDistanceMeters = 100,
+  maxDistanceMeters = 50,
 ): ParsedAddress | null {
-  for (const item of geoDistanceToleranceCache) {
-    if (distanceMetersCoords(lat, lng, item.lat, item.lng) <= maxDistanceMeters) {
-      return item.result
+  const cacheKey = getCachedReverseGeocodeKey(lat, lng)
+  const exact = reverseGeocodeCache.get(cacheKey)
+  if (exact) {
+    if (isAddressGeographicallyValid(lat, lng, exact.result)) {
+      return exact.result
+    }
+    reverseGeocodeCache.delete(cacheKey)
+  }
+
+  // Busca entradas próximas dentro do raio especificado (máx 50m)
+  for (const [key, entry] of reverseGeocodeCache.entries()) {
+    const dist = distanceMetersCoords(lat, lng, entry.lat, entry.lng)
+    if (dist <= maxDistanceMeters) {
+      if (isAddressGeographicallyValid(lat, lng, entry.result)) {
+        return entry.result
+      }
+      reverseGeocodeCache.delete(key)
     }
   }
   return null
@@ -723,16 +759,16 @@ export function setCachedReverseGeocodeWithTolerance(
   lng: number,
   result: ParsedAddress,
 ) {
-  // Manter cache bounded
-  if (geoDistanceToleranceCache.length > 250) {
-    geoDistanceToleranceCache.shift()
+  if (!isAddressGeographicallyValid(lat, lng, result)) {
+    return
   }
-  geoDistanceToleranceCache.push({ lat, lng, result, timestamp: Date.now() })
-}
-
-export function getCachedReverseGeocodeKey(lat: number, lng: number): string {
-  // Round to 4 decimal places (~11 meters precision)
-  return `${lat.toFixed(4)},${lng.toFixed(4)}`
+  // Manter cache bounded em até 300 itens
+  if (reverseGeocodeCache.size > 300) {
+    const oldestKey = reverseGeocodeCache.keys().next().value
+    if (oldestKey) reverseGeocodeCache.delete(oldestKey)
+  }
+  const key = getCachedReverseGeocodeKey(lat, lng)
+  reverseGeocodeCache.set(key, { lat, lng, result, timestamp: Date.now() })
 }
 
 /**
@@ -821,16 +857,11 @@ export async function reverseGeocodeCoordinates(
   lng: number,
   options?: { signal?: AbortSignal; timeoutMs?: number; toleranceMeters?: number },
 ): Promise<ParsedAddress | null> {
-  // 0. Tolerância de distância (~100m conforme especificação para entregador em tempo real)
-  const tolerance = options?.toleranceMeters ?? 100
-  if (tolerance > 0) {
-    const nearby = findCachedReverseGeocodeWithinMeters(lat, lng, tolerance)
-    if (nearby) return nearby
-  }
-
-  const cacheKey = getCachedReverseGeocodeKey(lat, lng)
-  if (reverseGeocodeCache.has(cacheKey)) {
-    return reverseGeocodeCache.get(cacheKey)!
+  // 0. Cache com chave de coordenada a 4 casas decimais (~11 m de tolerância)
+  const tolerance = Math.min(options?.toleranceMeters ?? 25, 50)
+  const cached = findCachedReverseGeocodeWithinMeters(lat, lng, tolerance)
+  if (cached) {
+    return cached
   }
 
   // 1. Tentar garantir carregamento do Google Maps SDK se houver chave
@@ -843,7 +874,7 @@ export async function reverseGeocodeCoordinates(
     }
   }
 
-  // 2. Try Google Maps JS Geocoder SDK
+  // 2. Try Google Maps JS Geocoder SDK (FONTE PRIMÁRIA)
   try {
     const win = typeof window !== 'undefined' ? (window as any) : null
     if (win?.google?.maps?.Geocoder && !googleMapsAuthError) {
@@ -856,18 +887,29 @@ export async function reverseGeocodeCoordinates(
               const best =
                 results.find((r: any) =>
                   r.types?.some((t: string) =>
-                    ['street_address', 'premise', 'subpremise', 'route'].includes(t),
+                    ['street_address', 'premise', 'subpremise', 'route', 'intersection'].includes(
+                      t,
+                    ),
                   ),
                 ) || results[0]
               const parsed = parseGoogleAddressComponents(
                 best.address_components || [],
                 best.formatted_address,
               )
+              const bestLat =
+                typeof best.geometry?.location?.lat === 'function'
+                  ? best.geometry.location.lat()
+                  : (best.geometry?.location?.lat ?? lat)
+              const bestLng =
+                typeof best.geometry?.location?.lng === 'function'
+                  ? best.geometry.location.lng()
+                  : (best.geometry?.location?.lng ?? lng)
+
               resolve({
                 ...parsed,
                 formattedAddress: best.formatted_address || parsed.formattedAddress,
-                lat,
-                lng,
+                lat: bestLat,
+                lng: bestLng,
                 source: 'google',
               })
             } else {
@@ -877,8 +919,11 @@ export async function reverseGeocodeCoordinates(
         )
       })
 
-      if (googleResult && (googleResult.street || googleResult.formattedAddress)) {
-        reverseGeocodeCache.set(cacheKey, googleResult)
+      if (
+        googleResult &&
+        (googleResult.street || googleResult.formattedAddress) &&
+        isAddressGeographicallyValid(lat, lng, googleResult)
+      ) {
         setCachedReverseGeocodeWithTolerance(lat, lng, googleResult)
         return googleResult
       }
@@ -891,8 +936,11 @@ export async function reverseGeocodeCoordinates(
   if (hasKey) {
     try {
       const restResult = await reverseGeocodeGoogleRestApi(lat, lng, undefined, options)
-      if (restResult && (restResult.street || restResult.formattedAddress)) {
-        reverseGeocodeCache.set(cacheKey, restResult)
+      if (
+        restResult &&
+        (restResult.street || restResult.formattedAddress) &&
+        isAddressGeographicallyValid(lat, lng, restResult)
+      ) {
         setCachedReverseGeocodeWithTolerance(lat, lng, restResult)
         return restResult
       }
@@ -901,11 +949,11 @@ export async function reverseGeocodeCoordinates(
     }
   }
 
-  // 4. OpenStreetMap Nominatim fallback
+  // 4. OpenStreetMap Nominatim fallback consultando a MESMA coordenada exata, nunca centróide
   const fallbackResult = await fallbackReverseGeocode(lat, lng, options)
-  if (fallbackResult) {
-    reverseGeocodeCache.set(cacheKey, fallbackResult)
+  if (fallbackResult && isAddressGeographicallyValid(lat, lng, fallbackResult)) {
     setCachedReverseGeocodeWithTolerance(lat, lng, fallbackResult)
+    return fallbackResult
   }
   return fallbackResult
 }
@@ -931,7 +979,8 @@ export async function fallbackReverseGeocode(
   }
 
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&lat=${lat}&lon=${lng}`
+    // Consulta estritamente a MESMA coordenada exata (zoom=18 para nível de rua/lote, sem generalizar para centróide da cidade)
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&zoom=18&lat=${lat}&lon=${lng}`
     const res = await fetch(url, {
       signal: timeoutController.signal,
       headers: {
@@ -954,6 +1003,9 @@ export async function fallbackReverseGeocode(
     )
     const postalCode = addr.postcode || ''
 
+    const resultLat = typeof data.lat === 'string' ? parseFloat(data.lat) : (data.lat ?? lat)
+    const resultLng = typeof data.lon === 'string' ? parseFloat(data.lon) : (data.lon ?? lng)
+
     return {
       street,
       number: num,
@@ -962,6 +1014,8 @@ export async function fallbackReverseGeocode(
       city,
       state,
       postalCode,
+      lat: resultLat,
+      lng: resultLng,
       formattedAddress: data.display_name,
     }
   } catch (e: any) {

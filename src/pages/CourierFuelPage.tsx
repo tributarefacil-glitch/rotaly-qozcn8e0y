@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import { haversineDistanceMeters } from '@/lib/geo'
 import {
   Fuel,
   Wallet,
@@ -81,12 +82,18 @@ export default function CourierFuelPage() {
     loadFinancialData()
   }, [user])
 
-  // Telemetria GPS a cada 30 segundos em nível de página/app para o entregador
+  // Dedupe e lock de GPS na página de combustível
+  const lastRecordedGpsRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
+  const isSendingLocationRef = useRef<boolean>(false)
+
+  // Telemetria GPS com dedupe e lock
   useEffect(() => {
     if (!user?.id) return
 
     const updateLocation = async () => {
-      if (navigator.geolocation) {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        if (isSendingLocationRef.current) return
+
         let batteryLevel: number | null = null
         try {
           const nav = typeof navigator !== 'undefined' ? (navigator as any) : null
@@ -102,6 +109,18 @@ export default function CourierFuelPage() {
           async (pos) => {
             const lat = pos.coords.latitude
             const lng = pos.coords.longitude
+            const now = Date.now()
+            const last = lastRecordedGpsRef.current
+
+            if (last) {
+              const timeDiff = (now - last.timestamp) / 1000
+              const dist = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+              if (timeDiff < 30 && dist < 20) return
+            }
+
+            if (isSendingLocationRef.current) return
+            isSendingLocationRef.current = true
+
             const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 28
             try {
               await deliveryService.updateCourierLocation(
@@ -112,18 +131,15 @@ export default function CourierFuelPage() {
                 90,
                 batteryLevel,
               )
+              lastRecordedGpsRef.current = { lat, lng, timestamp: now }
             } catch (e) {
               console.error('Failed to post live location in fuel page:', e)
+            } finally {
+              isSendingLocationRef.current = false
             }
           },
-          async () => {
-            const lat = -22.906847 + (Math.random() - 0.5) * 0.008
-            const lng = -43.172896 + (Math.random() - 0.5) * 0.008
-            try {
-              await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110, batteryLevel)
-            } catch {
-              /* ignore */
-            }
+          () => {
+            /* sem mock arbitrário */
           },
           { enableHighAccuracy: true, timeout: 10000 },
         )
