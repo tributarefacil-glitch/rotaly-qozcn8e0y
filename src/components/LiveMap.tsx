@@ -377,7 +377,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               <span style="font-size: 11px; font-weight: 800; color: #dc2626;">Desvio: ${Math.round(item.deviationMeters || 0)} m</span>
             </div>
           `
-              : ''
+              : item.isUnexpectedStop
+                ? `
+            <div style="background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 4px 6px; margin-bottom: 5px; display: flex; align-items: center; gap: 4px;">
+              <span style="font-size: 10px;">⛔</span>
+              <span style="font-size: 11px; font-weight: 800; color: #d97706;">Parada fora do local (>600m)</span>
+            </div>
+          `
+                : ''
           }
 
           <div style="background-color: #f8fafc; border-radius: 6px; padding: 5px 7px; margin-top: 3px; border: 1px solid #e2e8f0;">
@@ -812,6 +819,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                             <div className="mt-1.5 bg-rose-950/80 border border-rose-500/60 rounded-lg px-2 py-1 flex items-center gap-1.5 text-rose-300 font-bold text-[10.5px]">
                               <span>⚠️</span>
                               <span>Desvio: {Math.round(m.deviationMeters)} m</span>
+                            </div>
+                          )}
+
+                          {!m.isDeviated && m.isUnexpectedStop && (
+                            <div className="mt-1.5 bg-amber-950/80 border border-amber-500/60 rounded-lg px-2 py-1 flex items-center gap-1.5 text-amber-300 font-bold text-[10.5px]">
+                              <span>⛔</span>
+                              <span>Parada fora do local (&gt;600m)</span>
                             </div>
                           )}
 

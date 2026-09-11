@@ -46,6 +46,7 @@ import type {
   FuelAdvanceRecord,
 } from '@/types/delivery'
 import { playOffRouteWarningSound, sendBrowserPushNotification } from '@/lib/notificationSound'
+import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -305,9 +306,32 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     let courierTitle = `🧍 ${c.name} (Disponível)`
     let courierSubtitle = 'Status: Presente • Disponível'
 
+    // REQUISITO: Indicadores de desvio e parada fora do local exigem rota iniciada (in_transit && route_started)
+    // e limiares de 600m conforme @/lib/geo
+    let isDeviated = false
+    let deviationMeters: number | undefined
+    let isUnexpectedStop = false
+
     if (hasActiveRoute) {
       courierTitle = `🛵 ${c.name} (Em Rota)`
       courierSubtitle = `Status: Em Rota • ${inTransitOrders.length} em trânsito`
+
+      // Verificar se há eventos de desvio/parada para este entregador em ordens ativas
+      const activeOrderIds = new Set(inTransitOrders.map((o) => o.id))
+      const relevantEvents = offRouteEvents.filter(
+        (ev) =>
+          ev.courier_id === c.id && ev.order_id && activeOrderIds.has(ev.order_id) && !ev.resolved,
+      )
+
+      const devEvent = relevantEvents.find((ev) => ev.event_type === 'route_deviation')
+      const stopEvent = relevantEvents.find((ev) => ev.event_type === 'unexpected_stop')
+
+      if (devEvent) {
+        isDeviated = true
+        deviationMeters = devEvent.distance_deviation_meters || DEVIATION_THRESHOLD_METERS
+      } else if (stopEvent) {
+        isUnexpectedStop = true
+      }
     } else if (inTransitOrders.length > 0) {
       // Caso haja pedidos atribuídos aguardando aceite/início
       courierTitle = `🧍 ${c.name} (Presente)`
@@ -323,6 +347,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       type: 'courier',
       speed: courierLoc.speed || 0,
       courier_name: c.name,
+      isDeviated,
+      deviationMeters,
+      isUnexpectedStop,
     })
   })
 

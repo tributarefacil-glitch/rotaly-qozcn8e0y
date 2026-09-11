@@ -85,7 +85,7 @@ import {
   type OsrmRouteResult,
 } from '@/services/osrmRoutingService'
 import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificationSound'
-import { DEVIATION_THRESHOLD_METERS } from '@/lib/telemetryKmEngine'
+import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
 import { useAuth } from '@/contexts/AuthContext'
 
 interface ControlTowerProps {
@@ -718,31 +718,39 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const nearest = findNearestPointOnRoute(courierPos, points)
           const distToClientMeters = distanceMeters(courierPos, destination)
 
+          // REQUISITO ESTRITO: Desvio e parada fora do local exigem status === 'in_transit' && route_started === true
+          const hasActiveRouteStarted =
+            primaryOrder.status === 'in_transit' && primaryOrder.route_started === true
+
           // 1. DESVIO DE ROTA:
           // Se o entregador está a mais de DEVIATION_THRESHOLD_METERS (600m) da rota azul indicada pelo sistema, OU há evento off_route_events não resolvido para esta entrega
           const routeStartTime = primaryOrder.route_started_at
             ? new Date(primaryOrder.route_started_at).getTime()
             : 0
-          const hasDeviationEvent = recentDeviations.some((dev) => {
-            if (dev.courier_id !== item.courier.id) return false
-            if (dev.order_id !== primaryOrder.id) return false
-            if (dev.resolved === true) return false
-            if (routeStartTime && dev.created) {
-              const devTime = new Date(dev.created).getTime()
-              if (!isNaN(devTime) && devTime < routeStartTime) return false
-            }
-            return true
-          })
+          const hasDeviationEvent =
+            hasActiveRouteStarted &&
+            recentDeviations.some((dev) => {
+              if (dev.courier_id !== item.courier.id) return false
+              if (dev.order_id !== primaryOrder.id) return false
+              if (dev.resolved === true) return false
+              if (routeStartTime && dev.created) {
+                const devTime = new Date(dev.created).getTime()
+                if (!isNaN(devTime) && devTime < routeStartTime) return false
+              }
+              return true
+            })
           const isDeviated =
-            hasDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS
+            hasActiveRouteStarted &&
+            (hasDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
 
           // 2. PARADA FORA DO LOCAL:
-          // Velocidade baixa ou nula (<= 2 km/h) estando longe do cliente (> DEVIATION_THRESHOLD_METERS) e longe da base (> DEVIATION_THRESHOLD_METERS)
+          // Velocidade baixa ou nula (<= 2 km/h) estando longe do cliente (> UNEXPECTED_STOP_THRESHOLD_METERS = 600m) e longe da base (> UNEXPECTED_STOP_THRESHOLD_METERS = 600m)
           const distToBaseMeters = distanceMeters(courierPos, origin)
           const isStopped = typeof item.speed === 'number' && item.speed <= 2
-          const isFarFromClient = distToClientMeters > DEVIATION_THRESHOLD_METERS
-          const isFarFromBase = distToBaseMeters > DEVIATION_THRESHOLD_METERS
-          const isUnexpectedStop = isStopped && isFarFromClient && isFarFromBase
+          const isFarFromClient = distToClientMeters > UNEXPECTED_STOP_THRESHOLD_METERS
+          const isFarFromBase = distToBaseMeters > UNEXPECTED_STOP_THRESHOLD_METERS
+          const isUnexpectedStop =
+            hasActiveRouteStarted && isStopped && isFarFromClient && isFarFromBase
 
           // 3. PRAZO DE ENTREGA / ETA EM TEMPO REAL:
           // Distância restante em linha viária estimada a ~25 km/h média em perímetro urbano (ou estimativa da rota)
@@ -1257,12 +1265,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         const isDeviated = routeInfo?.isDeviated ?? false
         const isStoppedOut = routeInfo?.isUnexpectedStop ?? false
 
-        // Cor do marcador do entregador: se tiver desvio ou parada indevida, destaque
-        const pinColor =
-          isDeviated || item.statusColor === 'red'
-            ? '#EF4444'
-            : isStoppedOut
-              ? '#F59E0B'
+        // Cor do marcador do entregador: destaque vermelho para desvio, âmbar para parada fora do local
+        const pinColor = isDeviated
+          ? '#EF4444'
+          : isStoppedOut
+            ? '#F59E0B'
+            : item.statusColor === 'red'
+              ? '#EF4444'
               : '#0052CC'
 
         const statusTag = isDeviated
@@ -1774,16 +1783,28 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       })
 
       const isOffRoute =
-        hasSystemDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS
+        isSelectedOrderInActiveRoute &&
+        (hasSystemDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
       setDrawerDeviationInfo({ isDeviated: isOffRoute, meters: Math.round(nearest.distanceMeters) })
 
-      // Detectar parada fora do local
+      // Detectar parada fora do local: >600m do cliente e >600m da base com velocidade <= 2 km/h
       const distToCust =
         cust?.lat && cust?.lng
           ? distanceMeters(courierPoint, { lat: cust.lat, lng: cust.lng })
           : 999
+      const basePoint: LatLngPoint = {
+        lat: selectedOrder.start_base_lat ? Number(selectedOrder.start_base_lat) : courierPoint.lat,
+        lng: selectedOrder.start_base_lng ? Number(selectedOrder.start_base_lng) : courierPoint.lng,
+      }
+      const distToDrawerBase = distanceMeters(courierPoint, basePoint)
       const isSpeedZero = typeof courierData.speed === 'number' && courierData.speed <= 2
-      setDrawerUnexpectedStop(isSpeedZero && distToCust > DEVIATION_THRESHOLD_METERS)
+      const isFarFromCust = distToCust > UNEXPECTED_STOP_THRESHOLD_METERS
+      const isFarFromDrawerBase =
+        !selectedOrder.start_base_lat || distToDrawerBase > UNEXPECTED_STOP_THRESHOLD_METERS
+
+      setDrawerUnexpectedStop(
+        isSelectedOrderInActiveRoute && isSpeedZero && isFarFromCust && isFarFromDrawerBase,
+      )
 
       if (isOffRoute) {
         // LINHA VERMELHA do desvio: liga a posição atual do entregador ao ponto correspondente na rota azul
