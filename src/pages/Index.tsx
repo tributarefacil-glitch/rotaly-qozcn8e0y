@@ -17,7 +17,6 @@ import {
   EyeOff,
   UserCheck,
   Building2,
-  UserPlus,
   KeyRound,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -145,8 +144,7 @@ export default function Index() {
       badgeBg: string
       btnBg: string
       defaultEmail: string
-      canRegister: boolean
-      registerUrl?: string
+      accessInfo: string
     }
   > = {
     admin: {
@@ -157,7 +155,7 @@ export default function Index() {
       badgeBg: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
       btnBg: 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/30',
       defaultEmail: 'tributarefacil@gmail.com',
-      canRegister: false,
+      accessInfo: 'Conta administrativa master pré-configurada.',
     },
     seller: {
       title: 'Lojista & Embarcador',
@@ -167,8 +165,7 @@ export default function Index() {
       badgeBg: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
       btnBg: 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/30',
       defaultEmail: 'vendedor@logistica.com',
-      canRegister: true,
-      registerUrl: '/register?role=seller',
+      accessInfo: 'Cadastro de lojista realizado pelo administrador da plataforma.',
     },
     courier: {
       title: 'Entregador & Motorista',
@@ -178,8 +175,7 @@ export default function Index() {
       badgeBg: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
       btnBg: 'bg-purple-600 hover:bg-purple-500 shadow-purple-600/30',
       defaultEmail: 'pimentaverdecentro@gmail.com',
-      canRegister: true,
-      registerUrl: '/register?role=courier',
+      accessInfo: 'Cadastro de entregador realizado pelo administrador ou lojista.',
     },
   }
 
@@ -211,17 +207,8 @@ export default function Index() {
               </Button>
             ) : (
               <div className="flex items-center gap-2">
-                <Link to="/register?role=courier">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 text-xs hidden sm:flex"
-                  >
-                    Cadastre-se como Entregador
-                  </Button>
-                </Link>
                 <Badge variant="outline" className="text-xs border-slate-700 text-slate-300">
-                  🔒 PocketBase Auth
+                  🔒 Acesso Restrito por Convite
                 </Badge>
               </div>
             )}
@@ -362,23 +349,12 @@ export default function Index() {
                       </button>
                     </div>
 
-                    {/* Links to Register or Forgot Password */}
-                    <div className="pt-2 text-center text-xs text-slate-500 space-y-2">
-                      {cfg.canRegister ? (
-                        <p>
-                          Ainda não tem conta?{' '}
-                          <Link
-                            to={cfg.registerUrl!}
-                            className="text-[#0052CC] font-bold hover:underline"
-                          >
-                            Cadastre-se aqui
-                          </Link>
-                        </p>
-                      ) : (
-                        <p className="text-[11px] text-slate-400">
-                          Conta administrativa criada previamente.
-                        </p>
-                      )}
+                    {/* Access Notice and Forgot Password */}
+                    <div className="pt-2 text-center text-xs text-slate-400 space-y-1.5">
+                      <p className="text-[11px] text-slate-400">{cfg.accessInfo}</p>
+                      <p className="text-[10px] text-slate-500">
+                        Não tem conta? Solicite seu acesso ao administrador.
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
@@ -570,7 +546,7 @@ export default function Index() {
               </div>
             </div>
 
-            {/* Quick Registration Bar & Public Tracking */}
+            {/* Public Tracking Box & Access Policy Info */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-5xl mx-auto w-full pt-4">
               {/* Public Tracking Box */}
               <div className="lg:col-span-7 rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-5 shadow-brand-dark space-y-3">
@@ -599,35 +575,22 @@ export default function Index() {
                 </form>
               </div>
 
-              {/* Register Callout */}
+              {/* Invitation Policy Box */}
               <div className="lg:col-span-5 rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-5 shadow-brand-dark flex flex-col justify-between space-y-3">
                 <div>
                   <div className="flex items-center gap-2 text-[#60A5FA] font-bold text-xs uppercase tracking-wider font-heading">
-                    <UserPlus className="h-4 w-4 text-[#FF6B35]" />
-                    <span>Novo na Plataforma?</span>
+                    <Lock className="h-4 w-4 text-[#FF6B35]" />
+                    <span>Cadastro Somente por Convite</span>
                   </div>
                   <p className="font-sans text-xs text-slate-300 mt-1 leading-relaxed">
-                    Cadastre-se como entregador ou lojista em menos de 2 minutos.
+                    O acesso à plataforma é exclusivo para vendedores e entregadores cadastrados
+                    internamente por usuários autorizados do sistema.
                   </p>
                 </div>
 
-                <div className="flex gap-2">
-                  <Link to="/register?role=courier" className="flex-1">
-                    <Button
-                      variant="outline"
-                      className="w-full h-9 border-[#60A5FA] text-[#60A5FA] hover:bg-[#0052CC]/20 text-xs font-bold rounded-xl"
-                    >
-                      Entregador
-                    </Button>
-                  </Link>
-                  <Link to="/register?role=seller" className="flex-1">
-                    <Button
-                      variant="outline"
-                      className="w-full h-9 border-[#FF6B35] text-[#FF6B35] hover:bg-[#FF6B35]/20 text-xs font-bold rounded-xl"
-                    >
-                      Lojista
-                    </Button>
-                  </Link>
+                <div className="rounded-lg bg-[#0A1128] p-2.5 border border-[#1E2B58] text-[11px] text-slate-400">
+                  <span className="text-[#60A5FA] font-semibold">Precisa de acesso?</span> Entre em
+                  contato com a equipe de administração ou seu gestor de logística.
                 </div>
               </div>
             </div>

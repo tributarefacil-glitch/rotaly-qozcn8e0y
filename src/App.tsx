@@ -66,6 +66,7 @@ const App = () => (
           {/* Authentication & Access Routes */}
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Index />} />
+          {/* Rota pública de registro desabilitada - exibe aviso claro e redireciona */}
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/pending-approval" element={<PendingApprovalPage />} />
