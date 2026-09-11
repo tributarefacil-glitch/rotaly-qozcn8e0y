@@ -255,10 +255,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
   // Helper to get displayed address for a marker
   const getMarkerAddress = (item: MapMarkerItem) => {
-    if (item.customer_address) return item.customer_address
+    if (item.type !== 'courier' && item.customer_address) return item.customer_address
     const posKey = `${item.id}-${item.lat.toFixed(4)},${item.lng.toFixed(4)}`
     if (resolvedAddresses[posKey]) return resolvedAddresses[posKey]
     if (resolvedAddresses[item.id]) return resolvedAddresses[item.id]
+    if (item.customer_address) return item.customer_address
     if (loadingAddressIds[posKey] || loadingAddressIds[item.id]) return 'Localizando endereço...'
     return null
   }
@@ -674,10 +675,20 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       marker.addListener('click', () => {
         hoverInfoWindow.close()
         handleMarkerHover(item)
-        clickInfoWindow.setContent(buildInfoWindowHtml(item))
+        const currentAddr = getMarkerAddress(item)
+        clickInfoWindow.setContent(buildInfoWindowHtml(item, currentAddr))
         clickInfoWindow.open(mapInstanceRef.current, marker)
         setActivePopupMarker(item)
         if (onSelectMarker) onSelectMarker(item)
+
+        // Se o endereço ainda estiver sendo resolvido, atualizar quando concluir
+        if (!currentAddr || currentAddr === 'Localizando endereço...') {
+          const checkTimer = setTimeout(() => {
+            const updatedAddr = getMarkerAddress(item)
+            clickInfoWindow.setContent(buildInfoWindowHtml(item, updatedAddr))
+          }, 600)
+          ;(marker as any).__clickTimer = checkTimer
+        }
       })
 
       googleMarkersRef.current.push(marker)

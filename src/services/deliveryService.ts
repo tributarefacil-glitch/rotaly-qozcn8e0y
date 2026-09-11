@@ -45,6 +45,33 @@ export const deliveryService = {
     return list.items[0] || null
   },
 
+  /**
+   * Obtém detalhes da rota pública (paradas anteriores da ordem de otimização)
+   * para cálculo real viário de ETA (+3 min por parada)
+   */
+  async getPublicTrackingRoute(trackingCode: string) {
+    try {
+      return await pb.send<{
+        tracking_code: string
+        status: string
+        sequence: number
+        courier_id: string
+        destination: { name: string; lat: number; lng: number; address: string } | null
+        stops_before: { sequence: number; lat: number; lng: number }[]
+        total_stops_before: number
+      }>(
+        `/backend/v1/public-track/${encodeURIComponent(trackingCode.trim().toUpperCase())}/route`,
+        {
+          method: 'GET',
+          requestKey: null,
+        },
+      )
+    } catch (err) {
+      console.warn('Erro ao carregar rota pública:', err)
+      return null
+    }
+  },
+
   async createOrder(data: Partial<OrderRecord>) {
     return pb.collection<OrderRecord>('orders').create(data)
   },

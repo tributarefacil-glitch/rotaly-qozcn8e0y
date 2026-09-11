@@ -18,9 +18,10 @@ import {
   Check,
   HeartHandshake,
 } from 'lucide-react'
-import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
+import { LiveMap, type MapMarkerItem, type RouteGeometryItem } from '@/components/LiveMap'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
+import { fetchStreetRoute, distanceMeters, type LatLngPoint } from '@/services/osrmRoutingService'
 import type { OrderRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
 import { RotalyLogo } from '@/components/RotalyLogo'
 import { Button } from '@/components/ui/button'
@@ -36,6 +37,18 @@ export default function PublicTrackingPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
+  // Rota pública otimizada e cálculo de ETA viária sequencial (+3 min por parada)
+  const [publicRouteData, setPublicRouteData] = useState<{
+    stops_before: { sequence: number; lat: number; lng: number }[]
+    total_stops_before: number
+    destination: { name: string; lat: number; lng: number; address: string } | null
+  } | null>(null)
+
+  const [realEtaMinutes, setRealEtaMinutes] = useState<number | null>(null)
+  const [realDistanceKm, setRealDistanceKm] = useState<number | null>(null)
+  const [estimatedArrivalDate, setEstimatedArrivalDate] = useState<Date | null>(null)
+  const [calculatedRouteLines, setCalculatedRouteLines] = useState<RouteGeometryItem[]>([])
+
   // Review states (REQUISITO 4: Avaliação do entregador e vendedor)
   const [existingReview, setExistingReview] = useState<ReviewRecord | null>(null)
   const [courierRating, setCourierRating] = useState<number>(5)
@@ -49,11 +62,19 @@ export default function PublicTrackingPage() {
     setIsLoading(true)
     setErrorMsg(null)
     try {
-      const orderData = await deliveryService.getOrderByTrackingCode(tracking_code)
+      const [orderData, routeInfo] = await Promise.all([
+        deliveryService.getOrderByTrackingCode(tracking_code),
+        deliveryService.getPublicTrackingRoute(tracking_code),
+      ])
+
       if (!orderData) {
         setErrorMsg('Código de rastreio não encontrado. Verifique o código e tente novamente.')
       } else {
         setOrder(orderData)
+        if (routeInfo) {
+          setPublicRouteData(routeInfo)
+        }
+
         if (orderData.courier_id) {
           const loc = await deliveryService.getLatestLocationForCourier(orderData.courier_id)
           setCourierLocation(loc)
@@ -118,10 +139,127 @@ export default function PublicTrackingPage() {
     }
   })
 
-  // Map markers: destination + courier current location
-  const mapMarkers: MapMarkerItem[] = []
   const customer = order?.expand?.customer_id
   const courier = order?.expand?.courier_id
+
+  // Recalcular ETA viária real sequencial (+ 3 min por parada anterior)
+  useEffect(() => {
+    let isCancelled = false
+
+    const calculateRealSequentialEta = async () => {
+      if (!order) return
+
+      // Se a entrega já foi finalizada ou cancelada
+      if (order.status === 'delivered') {
+        setRealEtaMinutes(0)
+        setRealDistanceKm(0)
+        setCalculatedRouteLines([])
+        return
+      }
+
+      const destLat = customer?.lat || publicRouteData?.destination?.lat
+      const destLng = customer?.lng || publicRouteData?.destination?.lng
+
+      if (!destLat || !destLng) return
+
+      const destinationPoint: LatLngPoint = { lat: destLat, lng: destLng }
+
+      // Se não houver entregador ou localização GPS ainda
+      if (!courierLocation?.lat || !courierLocation?.lng) {
+        if (order.estimated_arrival) {
+          const diffMs = new Date(order.estimated_arrival).getTime() - Date.now()
+          const diffMins = Math.max(5, Math.round(diffMs / 60000))
+          setRealEtaMinutes(diffMins)
+          setEstimatedArrivalDate(new Date(order.estimated_arrival))
+        }
+        return
+      }
+
+      const courierPos: LatLngPoint = {
+        lat: courierLocation.lat,
+        lng: courierLocation.lng,
+      }
+
+      // Paradas anteriores da ordem de otimização
+      const stopsBefore = publicRouteData?.stops_before || []
+      const stopsCount = stopsBefore.length
+      const EXTRA_WAIT_PER_STOP_MINUTES = 3 // 3 minutos de espera em cada entrega da rota
+
+      // Sequência de waypoints: Courier -> Stop 1 -> Stop 2 -> ... -> Destino Final
+      const waypoints: LatLngPoint[] = [
+        courierPos,
+        ...stopsBefore.map((s) => ({ lat: s.lat, lng: s.lng })),
+        destinationPoint,
+      ]
+
+      let totalDurationSeconds = 0
+      let totalDistanceMeters = 0
+      const routeLineSegments: RouteGeometryItem[] = []
+
+      for (let i = 0; i < waypoints.length - 1; i++) {
+        const fromPoint = waypoints[i]
+        const toPoint = waypoints[i + 1]
+
+        try {
+          const leg = await fetchStreetRoute(fromPoint, toPoint)
+          if (isCancelled) return
+
+          totalDurationSeconds += leg.durationSeconds || 0
+          totalDistanceMeters += leg.distanceMeters || distanceMeters(fromPoint, toPoint)
+
+          routeLineSegments.push({
+            origin: fromPoint,
+            destination: toPoint,
+            streetCoordinates: leg.coordinates,
+          })
+        } catch (err) {
+          // Fallback por distância em linha reta caso serviço viário falhe
+          const dMeters = distanceMeters(fromPoint, toPoint)
+          totalDistanceMeters += dMeters
+          // Velocidade média urbana de ~25 km/h (~6.94 m/s)
+          totalDurationSeconds += dMeters / 6.94
+
+          routeLineSegments.push({
+            origin: fromPoint,
+            destination: toPoint,
+            streetCoordinates: [fromPoint, toPoint],
+          })
+        }
+      }
+
+      if (isCancelled) return
+
+      // Tempo de trânsito em minutos
+      const travelMinutes = Math.round(totalDurationSeconds / 60)
+      // Acréscimo estrito de 3 minutos de espera/parada por cada entrega anterior da rota
+      const stopsWaitingMinutes = stopsCount * EXTRA_WAIT_PER_STOP_MINUTES
+      const finalEtaMinutes = Math.max(1, travelMinutes + stopsWaitingMinutes)
+
+      const arrivalTime = new Date(Date.now() + finalEtaMinutes * 60000)
+
+      setRealEtaMinutes(finalEtaMinutes)
+      setRealDistanceKm(Number((totalDistanceMeters / 1000).toFixed(1)))
+      setEstimatedArrivalDate(arrivalTime)
+      setCalculatedRouteLines(routeLineSegments)
+    }
+
+    calculateRealSequentialEta()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [
+    order?.status,
+    order?.sequence,
+    customer?.lat,
+    customer?.lng,
+    courierLocation?.lat,
+    courierLocation?.lng,
+    publicRouteData,
+  ])
+
+  // Map markers: destination + courier current location
+  const mapMarkers: MapMarkerItem[] = []
 
   if (customer && customer.lat && customer.lng) {
     mapMarkers.push({
@@ -132,29 +270,54 @@ export default function PublicTrackingPage() {
       lng: customer.lng,
       type: 'order_transit',
       customer_name: customer.name,
+      customer_address: customer.address,
       delivery_sequence: order?.sequence,
+      estimated_arrival: estimatedArrivalDate
+        ? estimatedArrivalDate.toISOString()
+        : order?.estimated_arrival,
+      tracking_code: order?.tracking_code,
     })
   }
 
   if (courierLocation && courierLocation.lat && courierLocation.lng) {
     mapMarkers.push({
-      id: 'courier-live',
+      id: `courier-${order?.courier_id || 'live'}`,
       title: `${courier?.name || 'Entregador em Rota'}`,
-      subtitle: `Velocidade: ${courierLocation.speed || 30} km/h`,
+      subtitle: `Velocidade: ${courierLocation.speed ? Math.round(courierLocation.speed) : 28} km/h`,
       lat: courierLocation.lat,
       lng: courierLocation.lng,
       type: 'courier',
-      speed: courierLocation.speed || 30,
+      courier_name: courier?.name,
+      speed: courierLocation.speed ? Math.round(courierLocation.speed) : 28,
       vehicle_type: courier?.vehicle_type,
+      location_timestamp: courierLocation.created,
+      battery_level: (courierLocation as any).battery_level,
     })
   }
 
-  // Calculate simulated remaining ETA
+  // Previsão textual formatada
   const getEtaString = () => {
     if (order?.status === 'delivered') return 'Entregue com sucesso'
     if (order?.status === 'cancelled') return 'Pedido Cancelado'
-    if (order?.status === 'pending') return 'Aguardando despacho (~45 min)'
-    return '15 - 25 minutos'
+
+    if (realEtaMinutes !== null) {
+      const stopsCount = publicRouteData?.total_stops_before || 0
+      const stopsText =
+        stopsCount > 0
+          ? ` (${stopsCount} ${stopsCount === 1 ? 'parada antes' : 'paradas antes'})`
+          : ''
+      const timeStr = estimatedArrivalDate
+        ? estimatedArrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : null
+
+      if (timeStr) {
+        return `~${timeStr} (faltam ~${realEtaMinutes} min${stopsText})`
+      }
+      return `~${realEtaMinutes} minutos${stopsText}`
+    }
+
+    if (order?.status === 'pending') return 'Aguardando despacho'
+    return 'Calculando previsão viária...'
   }
 
   return (
@@ -239,10 +402,23 @@ export default function PublicTrackingPage() {
                         ? 'O entregador está a caminho do seu endereço.'
                         : 'Seu pedido está sendo preparado para envio.'}
                   </h1>
-                  <p className="font-sans text-xs text-slate-400 mt-1">
-                    Previsão de Chegada (ETA):{' '}
-                    <span className="font-bold text-[#60A5FA]">{getEtaString()}</span>
-                  </p>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-sans text-xs text-slate-300 mt-2">
+                    <div className="flex items-center gap-1.5 bg-blue-950/60 border border-blue-500/30 px-2.5 py-1 rounded-lg">
+                      <Clock className="h-3.5 w-3.5 text-blue-400" />
+                      <span>Previsão de Chegada:</span>
+                      <span className="font-bold text-[#60A5FA]">{getEtaString()}</span>
+                    </div>
+
+                    {realDistanceKm !== null &&
+                      realDistanceKm > 0 &&
+                      order.status !== 'delivered' && (
+                        <div className="flex items-center gap-1.5 bg-slate-900/80 border border-slate-700/60 px-2.5 py-1 rounded-lg text-slate-300">
+                          <Navigation className="h-3.5 w-3.5 text-[#FF6B35]" />
+                          <span>Distância viária:</span>
+                          <strong className="text-white">{realDistanceKm} km</strong>
+                        </div>
+                      )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-3 self-start sm:self-center p-3 rounded-xl bg-[#0A1128] border border-[#1E2B58] shadow-sm">
@@ -254,6 +430,11 @@ export default function PublicTrackingPage() {
                     <p className="text-xs font-bold text-white font-heading">
                       {courier?.name || 'Equipe de Logística Rotaly'}
                     </p>
+                    {courierLocation?.speed && (
+                      <p className="text-[10px] text-purple-400 font-semibold flex items-center gap-1 mt-0.5">
+                        <span>🚀</span> {Math.round(courierLocation.speed)} km/h em trânsito
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -324,6 +505,7 @@ export default function PublicTrackingPage() {
 
               <LiveMap
                 markers={mapMarkers}
+                routeLines={calculatedRouteLines}
                 center={
                   courierLocation?.lat && courierLocation?.lng
                     ? { lat: courierLocation.lat, lng: courierLocation.lng }
@@ -332,21 +514,45 @@ export default function PublicTrackingPage() {
                       : { lat: -22.906847, lng: -43.172896 }
                 }
                 zoom={14}
-                height="400px"
+                height="420px"
               />
             </div>
 
             {/* Delivery Destination & Package Details */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 space-y-2 text-xs shadow-brand-dark">
-                <span className="font-heading font-bold text-slate-400 uppercase tracking-wider text-[10px]">
-                  Local de Entrega
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="font-heading font-bold text-slate-400 uppercase tracking-wider text-[10px]">
+                    Local de Entrega
+                  </span>
+                  {typeof order.sequence === 'number' && order.sequence > 0 && (
+                    <Badge className="bg-orange-500/20 text-[#FF6B35] border border-orange-500/30 text-[10px] font-bold">
+                      Parada #{order.sequence} da Rota
+                    </Badge>
+                  )}
+                </div>
                 <p className="text-sm font-semibold text-white">{customer?.name || 'Cliente'}</p>
                 <p className="text-slate-300">{customer?.address}</p>
                 {order.notes && (
                   <p className="text-[#FF6B35] text-[11px] pt-1">Nota: {order.notes}</p>
                 )}
+                {publicRouteData &&
+                  publicRouteData.total_stops_before > 0 &&
+                  order.status !== 'delivered' && (
+                    <div className="mt-2 pt-2 border-t border-[#1E2B58] text-[11px] text-amber-300/90 flex items-center gap-1.5">
+                      <span>ℹ️</span>
+                      <span>
+                        Há{' '}
+                        <strong>
+                          {publicRouteData.total_stops_before}{' '}
+                          {publicRouteData.total_stops_before === 1
+                            ? 'entrega anterior'
+                            : 'entregas anteriores'}
+                        </strong>{' '}
+                        nesta rota (+3 min por parada já inclusos na previsão).
+                      </span>
+                    </div>
+                  )}
               </div>
 
               <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 space-y-2 text-xs shadow-brand-dark">
@@ -363,9 +569,13 @@ export default function PublicTrackingPage() {
                 <p className="text-sm font-bold text-[#22C55E] font-heading">
                   Valor Total: R$ {Number(order.total_price || 0).toFixed(2)}
                 </p>
+                {realEtaMinutes !== null && order.status !== 'delivered' && (
+                  <p className="text-xs text-sky-400 pt-1 font-sans">
+                    ⏱️ Estimativa viária real: <strong>~{realEtaMinutes} min</strong> para chegada
+                  </p>
+                )}
               </div>
             </div>
-
             {/* REQUISITO 4: SEÇÃO DE AVALIAÇÃO DO CLIENTE (Entregador & Vendedor) */}
             {order.status === 'delivered' && (
               <div className="rounded-card border border-orange-200 bg-orange-50/40 p-6 shadow-brand space-y-5">
