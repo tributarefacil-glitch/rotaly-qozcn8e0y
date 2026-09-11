@@ -130,6 +130,159 @@ export interface ParsedAddress {
   formattedAddress?: string
   lat?: number
   lng?: number
+  source?: 'google' | 'osm' | 'viacep'
+}
+
+/**
+ * Converte coordenadas em graus, minutos e segundos (DMS) para graus decimais (DD).
+ * Ex: 23°01'21.6"S -> -23.0226667
+ */
+export function dmsToDecimal(
+  degrees: number,
+  minutes: number,
+  seconds: number,
+  direction: string,
+): number {
+  let dd = degrees + minutes / 60 + seconds / 3600
+  const dir = direction.toUpperCase()
+  if (dir === 'S' || dir === 'W' || dir === 'O') {
+    dd = -dd
+  }
+  return dd
+}
+
+/**
+ * Extrai coordenadas geográficas de texto ou URLs (Google Maps, Waze, WhatsApp, DMS, coordenadas brutas).
+ * Prioridade ABSOLUTA:
+ * 1. Parâmetros !3d (lat) e !4d (lng) que marcam o PINO exato do Google Maps.
+ * 2. Formato DMS (Graus/Minutos/Segundos) no path ou query (ex: 23°01'21.6"S 43°27'25.4"W).
+ * 3. Parâmetros explícitos de busca/ponto: q=lat,lng, ll=lat,lng, loc:lat,lng, destination=lat,lng.
+ * 4. URLs geo:lat,lng.
+ * 5. URLs Waze (ll=lat,lng).
+ * 6. Centro da visualização de tela do mapa (@lat,lng) — apenas quando não há pino fixado.
+ * 7. Par lat/lng puro (ex: -23.0226746, -43.4570618).
+ */
+export function parseCoordinatesFromGoogleLink(
+  rawText: string,
+): { lat: number; lng: number; source?: string } | null {
+  if (!rawText) return null
+  let text = rawText.trim()
+  if (!text) return null
+
+  // Tenta decodificar URL caso contenha escapes (ex: %20, %22, %C2%B0)
+  let decoded = text
+  try {
+    decoded = decodeURIComponent(text)
+  } catch {
+    decoded = text
+  }
+
+  // 1. Prioridade máxima: parâmetros exatos do PINO no Google Maps (!3d<lat>!4d<lng>)
+  // Exemplo: data=!3m1!1e3!4m4!3m3!8m2!3d-23.0226746!4d-43.4570618
+  const pinMatch =
+    decoded.match(/!3d\s*([+-]?\d+(?:\.\d+)?)\s*!4d\s*([+-]?\d+(?:\.\d+)?)/) ||
+    text.match(/!3d\s*([+-]?\d+(?:\.\d+)?)\s*!4d\s*([+-]?\d+(?:\.\d+)?)/)
+  if (pinMatch) {
+    const lat = parseFloat(pinMatch[1])
+    const lng = parseFloat(pinMatch[2])
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat, lng, source: 'google_pin_data' }
+    }
+  }
+
+  // 2. Parâmetro invertido !4d... !3d... caso ocorra em alguma versão
+  const pinInvertedMatch = decoded.match(/!4d\s*([+-]?\d+(?:\.\d+)?)\s*!3d\s*([+-]?\d+(?:\.\d+)?)/)
+  if (pinInvertedMatch) {
+    const lng = parseFloat(pinInvertedMatch[1])
+    const lat = parseFloat(pinInvertedMatch[2])
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat, lng, source: 'google_pin_data' }
+    }
+  }
+
+  // 3. Formato DMS (Graus, Minutos e Segundos) comumente presente em URLs do Google Maps Place
+  // Ex: 23°01'21.6"S+43°27'25.4"W ou 23°01'21.6"S 43°27'25.4"W
+  const dmsRegex =
+    /(\d{1,2})[°º\s]+(\d{1,2})['′\s]+(\d+(?:\.\d+)?)["″\s]*([NSEWOnsewo])[,\s+/]+(\d{1,3})[°º\s]+(\d{1,2})['′\s]+(\d+(?:\.\d+)?)["″\s]*([NSEWOnsewo])/
+  const dmsMatch = decoded.match(dmsRegex)
+  if (dmsMatch) {
+    const lat = dmsToDecimal(
+      parseFloat(dmsMatch[1]),
+      parseFloat(dmsMatch[2]),
+      parseFloat(dmsMatch[3]),
+      dmsMatch[4],
+    )
+    const lng = dmsToDecimal(
+      parseFloat(dmsMatch[5]),
+      parseFloat(dmsMatch[6]),
+      parseFloat(dmsMatch[7]),
+      dmsMatch[8],
+    )
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat, lng, source: 'dms_place' }
+    }
+  }
+
+  // 4. Parâmetros explícitos de consulta / ponto de destino / pino:
+  // q=-23.022,-43.457 ou query= ou ll= ou destination= ou loc:lat,lng
+  const queryParamRegex =
+    /(?:[?&]|\b)(?:q|query|ll|loc|destination|daddr)=([+-]?\d+(?:\.\d+)?)[,\s%20]+([+-]?\d+(?:\.\d+)?)/i
+  const qMatch = decoded.match(queryParamRegex) || text.match(queryParamRegex)
+  if (qMatch) {
+    const lat = parseFloat(qMatch[1])
+    const lng = parseFloat(qMatch[2])
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat, lng, source: 'query_param' }
+    }
+  }
+
+  // 5. Geo URI: geo:-23.022,-43.457
+  const geoMatch = decoded.match(/geo:\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)/i)
+  if (geoMatch) {
+    const lat = parseFloat(geoMatch[1])
+    const lng = parseFloat(geoMatch[2])
+    if (!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+      return { lat, lng, source: 'geo_uri' }
+    }
+  }
+
+  // 6. Waze URL: waze.com/ul?ll=-23.022,-43.457
+  const wazeMatch = decoded.match(
+    /waze\.com\/.*ll=([+-]?\d+(?:\.\d+)?)[,\s%20]+([+-]?\d+(?:\.\d+)?)/i,
+  )
+  if (wazeMatch) {
+    const lat = parseFloat(wazeMatch[1])
+    const lng = parseFloat(wazeMatch[2])
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat, lng, source: 'waze' }
+    }
+  }
+
+  // 7. Centro de visão do mapa (@lat,lng) — apenas quando o link não tem pino !3d/!4d
+  // Ex: /@-23.0227634,-43.4595938,763m
+  const centerMatch =
+    decoded.match(/@\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)/) ||
+    text.match(/@\s*([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)/)
+  if (centerMatch) {
+    const lat = parseFloat(centerMatch[1])
+    const lng = parseFloat(centerMatch[2])
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat, lng, source: 'map_center' }
+    }
+  }
+
+  // 8. Coordenadas brutas no formato decimal separado por vírgula ou espaço
+  // Ex: "-23.0226746, -43.4570618" ou "-23.0226746 -43.4570618"
+  const rawPairMatch = decoded.match(/([+-]?\d{1,2}\.\d+)[,\s]+([+-]?\d{1,3}\.\d+)/)
+  if (rawPairMatch) {
+    const lat = parseFloat(rawPairMatch[1])
+    const lng = parseFloat(rawPairMatch[2])
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      return { lat, lng, source: 'raw_coords' }
+    }
+  }
+
+  return null
 }
 
 /**
@@ -228,6 +381,7 @@ export function parseGoogleAddressComponents(
     state: normalizedState,
     postalCode: postal,
     formattedAddress: fallbackFormatted,
+    source: 'google',
   }
 }
 
@@ -524,8 +678,85 @@ export function getCachedReverseGeocodeKey(lat: number, lng: number): string {
 }
 
 /**
- * Reverse geocoding helper that attempts Google Geocoder first,
- * with automatic caching and fallback to OpenStreetMap Nominatim.
+ * Retorna a chave de API do Google Maps configurada no ambiente
+ */
+export function getGoogleMapsApiKey(): string {
+  return (
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) ||
+    (typeof window !== 'undefined' && (window as any).__VITE_GOOGLE_MAPS_API_KEY) ||
+    ''
+  ).trim()
+}
+
+/**
+ * Reverse Geocoding usando a REST API do Google Maps (fallback direto caso o SDK JS não esteja pronto)
+ */
+export async function reverseGeocodeGoogleRestApi(
+  lat: number,
+  lng: number,
+  apiKey?: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<ParsedAddress | null> {
+  const key = (apiKey || getGoogleMapsApiKey()).trim()
+  if (!key) return null
+
+  const timeoutMs = options?.timeoutMs ?? 6000
+  const timeoutController = new AbortController()
+  const timer = setTimeout(() => timeoutController.abort(), timeoutMs)
+
+  if (options?.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timer)
+      return null
+    }
+    options.signal.addEventListener('abort', () => timeoutController.abort(), { once: true })
+  }
+
+  try {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=pt-BR&region=BR&key=${encodeURIComponent(
+      key,
+    )}`
+    const res = await fetch(url, { signal: timeoutController.signal })
+    if (!res.ok) return null
+    const data = await res.json()
+
+    if (data.status === 'OK' && Array.isArray(data.results) && data.results.length > 0) {
+      // Priorizar resultado com street_address ou premise ou subpremise ou route
+      const bestResult =
+        data.results.find((r: any) =>
+          r.types?.some((t: string) =>
+            ['street_address', 'premise', 'subpremise', 'route'].includes(t),
+          ),
+        ) || data.results[0]
+
+      const parsed = parseGoogleAddressComponents(
+        bestResult.address_components || [],
+        bestResult.formatted_address,
+      )
+      return {
+        ...parsed,
+        formattedAddress: bestResult.formatted_address || parsed.formattedAddress,
+        lat,
+        lng,
+        source: 'google',
+      }
+    }
+    return null
+  } catch (err: any) {
+    if (err?.name !== 'AbortError') {
+      console.warn('[Google Geocode REST] Erro ao consultar REST Geocoding:', err)
+    }
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Reverse geocoding helper prioritário:
+ * 1. Tenta carregar e usar o SDK do Google Maps (google.maps.Geocoder)
+ * 2. Se falhar ou indisponível, tenta a REST API do Google Geocoding
+ * 3. Se nenhuma chave responder com sucesso, usa OpenStreetMap Nominatim como fallback
  */
 export async function reverseGeocodeCoordinates(
   lat: number,
@@ -537,36 +768,73 @@ export async function reverseGeocodeCoordinates(
     return reverseGeocodeCache.get(cacheKey)!
   }
 
-  // 1. Try Google Maps Geocoder if loaded
+  // 1. Tentar garantir carregamento do Google Maps SDK se houver chave
+  const hasKey = Boolean(getGoogleMapsApiKey())
+  if (hasKey && !googleMapsAuthError) {
+    try {
+      await loadGoogleMapsScript()
+    } catch {
+      // continua para os passos seguintes
+    }
+  }
+
+  // 2. Try Google Maps JS Geocoder SDK
   try {
     const win = typeof window !== 'undefined' ? (window as any) : null
-    if (win?.google?.maps?.Geocoder) {
+    if (win?.google?.maps?.Geocoder && !googleMapsAuthError) {
       const geocoder = new win.google.maps.Geocoder()
       const googleResult = await new Promise<ParsedAddress | null>((resolve) => {
-        geocoder.geocode({ location: { lat, lng } }, (results: any[], status: string) => {
-          if (status === 'OK' && results && results[0]) {
-            const parsed = parseGoogleAddressComponents(results[0].address_components || [])
-            const formatted = results[0].formatted_address || parsed.formattedAddress
-            resolve({
-              ...parsed,
-              formattedAddress: formatted,
-            })
-          } else {
-            resolve(null)
-          }
-        })
+        geocoder.geocode(
+          { location: { lat, lng }, language: 'pt-BR', region: 'BR' },
+          (results: any[], status: string) => {
+            if (status === 'OK' && results && results.length > 0) {
+              const best =
+                results.find((r: any) =>
+                  r.types?.some((t: string) =>
+                    ['street_address', 'premise', 'subpremise', 'route'].includes(t),
+                  ),
+                ) || results[0]
+              const parsed = parseGoogleAddressComponents(
+                best.address_components || [],
+                best.formatted_address,
+              )
+              resolve({
+                ...parsed,
+                formattedAddress: best.formatted_address || parsed.formattedAddress,
+                lat,
+                lng,
+                source: 'google',
+              })
+            } else {
+              resolve(null)
+            }
+          },
+        )
       })
 
-      if (googleResult && googleResult.formattedAddress) {
+      if (googleResult && (googleResult.street || googleResult.formattedAddress)) {
         reverseGeocodeCache.set(cacheKey, googleResult)
         return googleResult
       }
     }
   } catch (err) {
-    // Silently fall through to OSM fallback
+    console.warn('[Google Maps Geocoder] Exceção no Geocoder JS:', err)
   }
 
-  // 2. OpenStreetMap fallback
+  // 3. Try Google Maps Geocoding REST API (caso JS SDK falhe ou esteja bloqueado por CORS/referrer)
+  if (hasKey) {
+    try {
+      const restResult = await reverseGeocodeGoogleRestApi(lat, lng, undefined, options)
+      if (restResult && (restResult.street || restResult.formattedAddress)) {
+        reverseGeocodeCache.set(cacheKey, restResult)
+        return restResult
+      }
+    } catch (err) {
+      console.warn('[Google Geocode REST] Falha na chamada REST:', err)
+    }
+  }
+
+  // 4. OpenStreetMap Nominatim fallback
   const fallbackResult = await fallbackReverseGeocode(lat, lng, options)
   if (fallbackResult) {
     reverseGeocodeCache.set(cacheKey, fallbackResult)

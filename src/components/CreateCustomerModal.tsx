@@ -23,7 +23,8 @@ import {
   normalizeBrazilianUF,
   lookupViaCep,
   fallbackGeocodeAddress,
-  fallbackReverseGeocode,
+  parseCoordinatesFromGoogleLink,
+  reverseGeocodeCoordinates,
 } from '@/lib/googleMaps'
 import {
   BaseAddressAutocomplete,
@@ -77,6 +78,7 @@ export function CreateCustomerModal({
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
   const [isLoadingViaCep, setIsLoadingViaCep] = useState(false)
   const [isSearchingPhone, setIsSearchingPhone] = useState(false)
+  const [isLoadingLocationLink, setIsLoadingLocationLink] = useState(false)
   const [matchedExistingCustomer, setMatchedExistingCustomer] = useState<CustomerRecord | null>(
     null,
   )
@@ -278,40 +280,77 @@ export function CreateCustomerModal({
     }
   }
 
-  // Parse link de GPS / WhatsApp
-  const handleParseLink = () => {
+  // Parse link de GPS / WhatsApp com prioridade absoluta para o pino exato e Google Geocoding
+  const handleParseLink = async () => {
     const raw = locationLinkInput.trim()
     if (!raw) return
 
-    // Coordenadas @lat,lng ou q=lat,lng ou -22.90,-43.17
-    const match =
-      raw.match(/@\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)/) ||
-      raw.match(/(?:q|ll|loc|destination)=([+-]?\d+\.\d+)[,\s%20]+([+-]?\d+\.\d+)/i) ||
-      raw.match(/([+-]?\d{1,2}\.\d+)[,\s]+([+-]?\d{1,3}\.\d+)/)
+    const parsed = parseCoordinatesFromGoogleLink(raw)
+    if (parsed) {
+      const parsedLat = parsed.lat
+      const parsedLng = parsed.lng
+      setLat(parsedLat)
+      setLng(parsedLng)
+      setIsLoadingLocationLink(true)
 
-    if (match) {
-      const parsedLat = parseFloat(match[1])
-      const parsedLng = parseFloat(match[2])
-      if (!isNaN(parsedLat) && !isNaN(parsedLng)) {
-        setLat(parsedLat)
-        setLng(parsedLng)
-        toast.success(`Coordenadas fixadas: ${parsedLat.toFixed(4)}, ${parsedLng.toFixed(4)}`)
-        fallbackReverseGeocode(parsedLat, parsedLng).then((res) => {
-          if (res) {
-            if (res.streetAndNumber) setStreetAndNumber(res.streetAndNumber)
-            if (res.neighborhood) setNeighborhood(res.neighborhood)
-            if (res.city) setCity(res.city)
-            if (res.state) {
-              const uf = normalizeBrazilianUF(res.state)
-              if (uf && BRAZILIAN_STATES.includes(uf)) setUfState(uf)
-            }
-            if (res.postalCode) setPostalCode(res.postalCode)
+      const toastId = toast.loading(
+        `Pino identificado (${parsedLat.toFixed(6)}, ${parsedLng.toFixed(6)}). Obtendo endereço real no Google Maps...`,
+      )
+
+      try {
+        const geoRes = await reverseGeocodeCoordinates(parsedLat, parsedLng)
+        if (geoRes) {
+          if (geoRes.streetAndNumber) {
+            setStreetAndNumber(geoRes.streetAndNumber)
+          } else if (geoRes.street) {
+            setStreetAndNumber(geoRes.number ? `${geoRes.street}, ${geoRes.number}` : geoRes.street)
+          } else if (geoRes.formattedAddress) {
+            setStreetAndNumber(geoRes.formattedAddress.split(',')[0] || geoRes.formattedAddress)
           }
+
+          if (geoRes.neighborhood) {
+            setNeighborhood(geoRes.neighborhood)
+          }
+          if (geoRes.city) {
+            setCity(geoRes.city)
+          }
+          if (geoRes.state) {
+            const uf = normalizeBrazilianUF(geoRes.state)
+            if (uf && BRAZILIAN_STATES.includes(uf)) {
+              setUfState(uf)
+            }
+          }
+          if (geoRes.postalCode) {
+            setPostalCode(geoRes.postalCode)
+          }
+          if (geoRes.formattedAddress) {
+            setAddressSearchQuery(geoRes.formattedAddress)
+          }
+
+          toast.success(
+            `Endereço real preenchido com sucesso pelo ${geoRes.source === 'google' ? 'Google Maps' : 'mapa'}!`,
+            { id: toastId },
+          )
+        } else {
+          toast.warning(
+            `Coordenadas fixadas (${parsedLat.toFixed(5)}, ${parsedLng.toFixed(5)}). Preencha o nome da rua se necessário.`,
+            { id: toastId },
+          )
+        }
+      } catch (err) {
+        console.error('Erro no reverse geocode:', err)
+        toast.error('Coordenadas fixadas, mas houve falha ao obter endereço textual.', {
+          id: toastId,
         })
-        return
+      } finally {
+        setIsLoadingLocationLink(false)
       }
+      return
     }
-    toast.error('Não foi possível identificar coordenadas no link colado.')
+
+    toast.error(
+      'Não foi possível identificar coordenadas no link colado. Cole o link do Google Maps.',
+    )
   }
 
   const getFullFormattedAddress = () => {
@@ -628,10 +667,18 @@ export function CreateCustomerModal({
                 variant="secondary"
                 size="sm"
                 onClick={handleParseLink}
-                disabled={!locationLinkInput.trim()}
-                className="h-8 text-xs bg-[#1E2B58] text-[#60A5FA] hover:bg-[#2A3B7A] hover:text-white font-medium"
+                disabled={!locationLinkInput.trim() || isLoadingLocationLink}
+                className="h-8 text-xs bg-[#1E2B58] text-[#60A5FA] hover:bg-[#2A3B7A] hover:text-white font-medium min-w-[105px]"
               >
-                <Crosshair className="h-3 w-3 mr-1" /> Carregar Pin
+                {isLoadingLocationLink ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" /> Carregando...
+                  </>
+                ) : (
+                  <>
+                    <Crosshair className="h-3 w-3 mr-1" /> Carregar Pin
+                  </>
+                )}
               </Button>
             </div>
           </div>

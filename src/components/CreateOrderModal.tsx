@@ -54,6 +54,8 @@ import {
   onGoogleMapsAuthError,
   isGoogleMapsAuthError,
   parseGoogleAddressComponents,
+  parseCoordinatesFromGoogleLink,
+  reverseGeocodeCoordinates,
   lookupViaCep,
   fallbackGeocodeAddress,
   fallbackReverseGeocode,
@@ -311,78 +313,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
   }
 
-  // Parse Google Maps / Waze / WhatsApp coordinates link
+  // Parse Google Maps / Waze / WhatsApp coordinates link (usa utilitário centralizado)
   const parseCoordinatesFromText = (text: string): { lat: number; lng: number } | null => {
-    let raw = text.trim()
-    if (!raw) return null
-
-    try {
-      raw = decodeURIComponent(raw)
-    } catch {
-      // keep raw
-    }
-
-    // Pattern 1: @-23.55052,-46.633308 or @-23.55052,-46.633308,17z
-    const atMatch = raw.match(/@\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)/)
-    if (atMatch) {
-      const lat = parseFloat(atMatch[1])
-      const lng = parseFloat(atMatch[2])
-      if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-        return { lat, lng }
-      }
-    }
-
-    // Pattern 2: !3d-23.55052!4d-46.633308 (Google Maps place URLs)
-    const data3dMatch = raw.match(/!3d\s*([+-]?\d+\.\d+)\s*!4d\s*([+-]?\d+\.\d+)/)
-    if (data3dMatch) {
-      const lat = parseFloat(data3dMatch[1])
-      const lng = parseFloat(data3dMatch[2])
-      if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-        return { lat, lng }
-      }
-    }
-
-    // Pattern 3: q=-23.55052,-46.633308 or ll=-23.55052,-46.633308 or destination=... or loc:...
-    const queryMatch = raw.match(
-      /(?:q|ll|query|destination|loc|center|daddr|saddr)=([+-]?\d+\.\d+)[,\s%20]+([+-]?\d+\.\d+)/i,
-    )
-    if (queryMatch) {
-      const lat = parseFloat(queryMatch[1])
-      const lng = parseFloat(queryMatch[2])
-      if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-        return { lat, lng }
-      }
-    }
-
-    // Pattern 4: geo:-23.55052,-46.633308 or geo:0,0?q=-23.55052,-46.633308
-    const geoMatch = raw.match(/geo:\s*([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)/i)
-    if (geoMatch) {
-      const lat = parseFloat(geoMatch[1])
-      const lng = parseFloat(geoMatch[2])
-      if (!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
-        return { lat, lng }
-      }
-    }
-
-    // Pattern 5: Waze link https://waze.com/ul?ll=-23.55052,-46.633308 or /ul?q=...
-    const wazeMatch = raw.match(/waze\.com\/.*ll=([+-]?\d+\.\d+)[,\s%20]+([+-]?\d+\.\d+)/i)
-    if (wazeMatch) {
-      const lat = parseFloat(wazeMatch[1])
-      const lng = parseFloat(wazeMatch[2])
-      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng }
-    }
-
-    // Pattern 6: Bare lat, lng pair (e.g. "-23.55052, -46.633308" or "-23.550520 -46.633308")
-    const bareMatch = raw.match(/([+-]?\d{1,2}\.\d+)[,\s]+([+-]?\d{1,3}\.\d+)/)
-    if (bareMatch) {
-      const lat = parseFloat(bareMatch[1])
-      const lng = parseFloat(bareMatch[2])
-      if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
-        return { lat, lng }
-      }
-    }
-
-    return null
+    return parseCoordinatesFromGoogleLink(text)
   }
 
   // Populate address fields robustly
@@ -429,52 +362,22 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     [],
   )
 
-  // Reverse geocode to fill separate address fields (Google Maps Geocoder with Nominatim fallback)
+  // Reverse geocode to fill separate address fields (Google Maps Geocoder prioritário com Nominatim fallback)
   const reverseGeocode = useCallback(
     async (lat: number, lng: number) => {
       if (isReverseGeocodingRef.current) return
       isReverseGeocodingRef.current = true
 
-      const google = getGoogle()
-      let handled = false
-
-      if (google?.maps?.Geocoder) {
-        try {
-          const geocoder = new google.maps.Geocoder()
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await new Promise<void>((resolve) => {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            geocoder.geocode({ location: { lat, lng } }, (results: any[], status: string) => {
-              if (status === 'OK' && results?.[0]) {
-                const parsed = parseGoogleAddressComponents(
-                  results[0].address_components || [],
-                  results[0].formatted_address,
-                )
-                applyAddressData(parsed)
-                handled = true
-              }
-              resolve()
-            })
-          })
-        } catch (err) {
-          console.warn('[Google Geocoder] Geocoding exception:', err)
+      try {
+        const geoRes = await reverseGeocodeCoordinates(lat, lng)
+        if (geoRes) {
+          applyAddressData(geoRes)
         }
+      } catch (err) {
+        console.warn('Erro ao geocodificar coordenadas:', err)
+      } finally {
+        isReverseGeocodingRef.current = false
       }
-
-      // If Google geocoder was not available or failed, use OpenStreetMap Nominatim fallback
-      if (!handled) {
-        try {
-          const fallbackData = await fallbackReverseGeocode(lat, lng)
-          if (fallbackData) {
-            applyAddressData(fallbackData)
-            handled = true
-          }
-        } catch (err) {
-          console.warn('Fallback reverse geocode error:', err)
-        }
-      }
-
-      isReverseGeocodingRef.current = false
     },
     [applyAddressData],
   )
