@@ -61,6 +61,10 @@ export interface CourierDeliveryHistoryItem {
   kmRodado: number
   isRealTelemetry: boolean
   deviationKm: number
+  totalGpsKm: number
+  discardedNoiseKm: number
+  samplingCurvatureFactor?: number
+  auditNotes?: string
   plannedKm: number
   gpsPointsCount: number
   filteredNoisePointsCount: number
@@ -238,6 +242,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         kmRodado: kmOficial,
         isRealTelemetry: realTelemetry.isRealTelemetry,
         deviationKm: realTelemetry.deviationKm,
+        totalGpsKm: realTelemetry.totalGpsKm,
+        discardedNoiseKm: realTelemetry.discardedNoiseKm,
+        samplingCurvatureFactor: realTelemetry.samplingCurvatureFactor,
+        auditNotes: realTelemetry.auditNotes,
         plannedKm: realTelemetry.plannedKm,
         gpsPointsCount: realTelemetry.gpsPointsCount,
         filteredNoisePointsCount: realTelemetry.filteredNoisePointsCount,
@@ -332,6 +340,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       'Status',
       'KM Real Oficial (Reembolsável)',
       'KM em Desvios e Paradas (Não Reembolsável)',
+      'KM Total Rodado (Odômetro Real)',
+      'KM Descartado por Ruído',
       'Origem Telemetria (GPS Real vs Estimado)',
       'Pontos GPS Válidos',
       'Combustível Oficial (R$)',
@@ -348,6 +358,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       `"${item.statusLabel}"`,
       item.kmRodado.toFixed(1),
       item.deviationKm.toFixed(1),
+      item.totalGpsKm.toFixed(1),
+      item.discardedNoiseKm.toFixed(2),
       item.isRealTelemetry ? '100% Real (GPS)' : 'Estimado (Planejado)',
       item.gpsPointsCount,
       item.fuelCost.toFixed(2),
@@ -871,6 +883,74 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                       </span>
                       <span className="text-[9px] text-slate-400">Descontado da rota</span>
                     </div>
+                  </div>
+                </div>
+
+                {/* Auditoria Matemática e Fechamento de Telemetria */}
+                <div className="p-3 rounded-lg bg-[#0E1738] border border-blue-500/30 text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-[#60A5FA] block">
+                      Auditoria de Telemetria & Odômetro
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className="text-[9px] bg-[#0A1128] text-slate-300 border-[#1E2B58]"
+                    >
+                      Fechamento 100% Auditável
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 font-mono text-center pt-1 border-t border-[#1E2B58]">
+                    <div className="bg-[#0A1128] p-1.5 rounded">
+                      <span className="text-[9px] text-slate-400 block font-sans">Oficial</span>
+                      <span className="text-xs font-bold text-white">
+                        {selectedItemForDetails.kmRodado.toFixed(1)} km
+                      </span>
+                    </div>
+                    <div className="bg-[#0A1128] p-1.5 rounded">
+                      <span className="text-[9px] text-slate-400 block font-sans">Desvios</span>
+                      <span className="text-xs font-bold text-rose-400">
+                        {selectedItemForDetails.deviationKm.toFixed(1)} km
+                      </span>
+                    </div>
+                    <div className="bg-[#0A1128] p-1.5 rounded">
+                      <span className="text-[9px] text-slate-400 block font-sans">
+                        Total Rodado
+                      </span>
+                      <span className="text-xs font-bold text-[#22C55E]">
+                        {selectedItemForDetails.totalGpsKm.toFixed(1)} km
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-400 space-y-0.5 pt-1">
+                    <div className="flex justify-between">
+                      <span>Pontos GPS Válidos:</span>
+                      <span className="text-slate-200 font-mono">
+                        {selectedItemForDetails.gpsPointsCount} pontos
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Pontos Descartados (Filtro Ruído):</span>
+                      <span className="text-slate-200 font-mono">
+                        {selectedItemForDetails.filteredNoisePointsCount} pontos (
+                        {selectedItemForDetails.discardedNoiseKm.toFixed(2)} km)
+                      </span>
+                    </div>
+                    {selectedItemForDetails.samplingCurvatureFactor &&
+                      selectedItemForDetails.samplingCurvatureFactor > 1 && (
+                        <div className="flex justify-between">
+                          <span>Compensação Sinuosidade (Amostragem):</span>
+                          <span className="text-[#60A5FA] font-mono">
+                            +
+                            {Math.round((selectedItemForDetails.samplingCurvatureFactor - 1) * 100)}
+                            % (alinhado a odômetro)
+                          </span>
+                        </div>
+                      )}
+                    {selectedItemForDetails.auditNotes && (
+                      <p className="text-[10px] text-slate-400 italic pt-1 border-t border-[#1E2B58]/60 mt-1">
+                        ℹ️ {selectedItemForDetails.auditNotes}
+                      </p>
+                    )}
                   </div>
                 </div>
 
