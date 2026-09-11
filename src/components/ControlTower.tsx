@@ -933,10 +933,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     }
 
     const makeNativeCustomerSvg = (customerName?: string, seq?: number, isTransit = false) => {
-      const generated = makeCustomerSvgIcon(customerName, seq, isTransit, 220, 66)
+      const generated = makeCustomerSvgIcon(customerName, seq, isTransit, 110, 48)
       return {
         url: generated.url,
-        scaledSize: new win.google.maps.Size(220, 66),
+        scaledSize: new win.google.maps.Size(110, 48),
         anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
       }
     }
@@ -1283,10 +1283,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     }
 
     const makeMiniCustomerSvg = (customerName?: string, seq?: number) => {
-      const generated = makeCustomerSvgIcon(customerName, seq, true, 200, 60)
+      const generated = makeCustomerSvgIcon(customerName, seq, true, 110, 48)
       return {
         url: generated.url,
-        scaledSize: new win.google.maps.Size(200, 60),
+        scaledSize: new win.google.maps.Size(110, 48),
         anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
       }
     }

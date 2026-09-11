@@ -86,52 +86,56 @@ export function makeCustomerSvgIcon(
   customerName?: string,
   seq?: number,
   isTransit = false,
-  width = 220,
-  height = 66,
+  width = 110,
+  height = 48,
+  pinColorOverride?: string,
 ) {
-  const pinColor = isTransit ? '#FF6B35' : '#475569'
+  const pinColor = pinColorOverride || (isTransit ? '#FF6B35' : '#475569')
   const cleanName = (customerName || '').trim()
   const hasName = cleanName.length > 0
   const hasSeq = typeof seq === 'number' && seq > 0
   const centerX = Math.round(width / 2)
-  const pinLeft = centerX - 14
+  const pinLeft = centerX - 11 // pin is 22px wide
 
+  // Truncar nome com no máximo 14 caracteres para não poluir nem sobrepor outros pins
+  const displayName = cleanName.length > 14 ? cleanName.slice(0, 13) + '…' : cleanName
+
+  // SVG compacto com tipografia reduzida (8px) e caixa de texto de apenas 13px de altura
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
       <defs>
         <filter id="pin-shadow-${width}" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
+          <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.6"/>
         </filter>
       </defs>
 
-      <!-- Label de Nome do Cliente no topo se presente -->
+      <!-- Label de Nome do Cliente no topo compacta -->
       ${
         hasName
           ? `
         <g filter="url(#pin-shadow-${width})">
-          <rect x="2" y="2" width="${width - 4}" height="20" rx="5" fill="#0A1128" fill-opacity="0.95" stroke="#1E2B58" stroke-width="1.2"/>
-          <text x="${centerX}" y="16" font-size="10" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
-            ${cleanName.length > 26 ? cleanName.slice(0, 25) + '…' : cleanName}
+          <rect x="4" y="1" width="${width - 8}" height="13" rx="3" fill="#0A1128" fill-opacity="0.94" stroke="#1E2B58" stroke-width="0.8"/>
+          <text x="${centerX}" y="10.5" font-size="8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
+            ${displayName}
           </text>
         </g>
       `
           : ''
       }
 
-      <!-- Pin corpo centralizado em X=${centerX} -->
-      <g transform="translate(${pinLeft}, ${hasName ? 26 : 8})" filter="url(#pin-shadow-${width})">
-        <!-- Formato clássico de pin 28x36 -->
-        <path d="M14 0 C6.27 0 0 6.27 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.27 21.73 0 14 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="2"/>
+      <!-- Pin corpo centralizado em X=${centerX} (escala 22x28) -->
+      <g transform="translate(${pinLeft}, ${hasName ? 16 : 4})" filter="url(#pin-shadow-${width})">
+        <path d="M11 0 C4.92 0 0 4.92 0 11 C0 19.25 11 28 11 28 C11 28 22 19.25 22 11 C22 4.92 17.08 0 11 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="1.5"/>
         
         <!-- Círculo interno ou número da sequência -->
         ${
           hasSeq
             ? `
-          <circle cx="14" cy="13" r="9" fill="#FFFFFF"/>
-          <text x="14" y="17" font-size="11" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="${pinColor}" text-anchor="middle">${seq}</text>
+          <circle cx="11" cy="10" r="7" fill="#FFFFFF"/>
+          <text x="11" y="13.5" font-size="9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="${pinColor}" text-anchor="middle">${seq}</text>
         `
             : `
-          <circle cx="14" cy="13" r="5" fill="#FFFFFF"/>
+          <circle cx="11" cy="10" r="4" fill="#FFFFFF"/>
         `
         }
       </g>
@@ -141,7 +145,7 @@ export function makeCustomerSvgIcon(
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: { width, height },
-    anchor: { x: centerX, y: hasName ? height - 3 : height - 20 },
+    anchor: { x: centerX, y: hasName ? height - 4 : height - 16 },
   }
 }
 
@@ -448,6 +452,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       let markerIcon: any = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
       if (item.type === 'courier') {
         markerIcon = makeCourierSvgIcon(item.vehicle_type)
+      } else if (item.type === 'order_delivered') {
+        markerIcon = makeCustomerSvgIcon(
+          item.customer_name,
+          item.delivery_sequence,
+          false,
+          110,
+          48,
+          '#10B981',
+        )
       } else {
         const isTransit = item.type === 'order_transit'
         markerIcon = makeCustomerSvgIcon(item.customer_name, item.delivery_sequence, isTransit)
@@ -660,9 +673,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                     <span className="absolute -inset-2 rounded-full animate-ping bg-[#FF6B35]/30 opacity-75 pointer-events-none" />
                   )}
 
-                  {/* Nome do cliente visível acima do pin (Requisito 2) */}
+                  {/* Nome do cliente visível acima do pin compacto */}
                   {m.type !== 'courier' && m.customer_name && (
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 rounded-md bg-[#0A1128]/95 border border-[#1E2B58] text-[9px] font-bold text-white whitespace-nowrap shadow-md pointer-events-none max-w-[150px] truncate">
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-0.5 px-1.5 py-0.5 rounded bg-[#0A1128]/95 border border-[#1E2B58] text-[8px] font-bold text-white whitespace-nowrap shadow-sm pointer-events-none max-w-[90px] truncate">
                       {m.customer_name}
                     </div>
                   )}
