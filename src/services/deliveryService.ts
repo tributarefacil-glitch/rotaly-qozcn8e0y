@@ -220,16 +220,11 @@ export const deliveryService = {
         requestKey: null,
       })
 
-      // Verificar se algum está ativo em trânsito
-      const activeInTransit = linkedOrders.filter(
-        (o) =>
-          o.status === 'in_transit' ||
-          (o.route_started && !o.route_finished) ||
-          (o.route_released && o.status === 'assigned'),
-      )
-      if (activeInTransit.length > 0) {
+      // Regra: Bloquear apenas se houver entregas já entregues (histórico preservado)
+      const deliveredOrders = linkedOrders.filter((o) => o.status === 'delivered')
+      if (deliveredOrders.length > 0) {
         throw new Error(
-          'Não é possível excluir o cliente pois ele possui entregas em trânsito ou em rota já liberada.',
+          'Não é possível excluir o cliente pois ele possui entrega(s) já entregue(s) com comprovante preservado.',
         )
       }
 
@@ -681,27 +676,10 @@ export const deliveryService = {
         ),
       )
 
-      const blockedCourierIds = new Set<string>()
-      for (const cId of targetCourierIds) {
-        const activeRouteOrders = await pb.collection<OrderRecord>('orders').getList(1, 1, {
-          filter: `courier_id='${cId}' && route_started=true && (route_finished=false || route_finished=null)`,
-          requestKey: null,
-        })
-        if (activeRouteOrders.totalItems > 0) {
-          blockedCourierIds.add(cId)
-        }
-      }
-
       let updatedCount = 0
       for (const order of ordersToUpdate) {
-        // Se o entregador do pedido tem uma rota ativa não finalizada E o pedido atual ainda não tem rota iniciada, bloqueia liberação
-        if (order.courier_id && blockedCourierIds.has(order.courier_id) && !order.route_started) {
-          console.warn(
-            `[releaseRouteForOrders] Bloqueado para entregador ${order.courier_id}: rota anterior em andamento não finalizada na base.`,
-          )
-          continue
-        }
-
+        // Regra do Usuário: "não precisa bloquear o entregador para vendedor. apenas não deixar a rota entrar no app do entregador enquanto ele estiver na rota atual"
+        // O vendedor pode liberar e organizar rotas a qualquer momento. No app do entregador, entra em fila de espera.
         await pb.collection('orders').update(order.id, {
           route_released: true,
           route_released_at: order.route_released_at || now,

@@ -46,22 +46,19 @@ routerAdd(
         console.log('Erro ao buscar pedidos do cliente:', err)
       }
 
-      // Verificar se há pedidos ativos em trânsito ou com rota iniciada
-      const activeInTransit = linkedOrders.filter((ord) => {
+      // Regra: Bloquear apenas se houver entregas já entregues/finalizadas (histórico fiscal e operacional preservado).
+      // Entregas em rota em andamento (in_transit, assigned, route_started) podem ser canceladas/removidas pelo vendedor.
+      const deliveredOrders = linkedOrders.filter((ord) => {
         const status = ord.getString('status')
-        const routeStarted = ord.getBool('route_started')
-        const routeReleased = ord.getBool('route_released')
-        return (
-          status === 'in_transit' ||
-          (routeStarted && !ord.getBool('route_finished')) ||
-          (routeReleased && status === 'assigned')
-        )
+        return status === 'delivered'
       })
 
-      if (activeInTransit.length > 0) {
+      if (deliveredOrders.length > 0) {
         return e.json(400, {
           message:
-            'Não é possível excluir o cliente pois ele possui entregas em trânsito ou em rota já liberada.',
+            'Não é possível excluir o cliente pois ele possui ' +
+            deliveredOrders.length +
+            ' entrega(s) já entregue(s) (histórico de comprovantes e fiscal preservado).',
         })
       }
 

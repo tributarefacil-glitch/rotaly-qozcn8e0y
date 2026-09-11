@@ -202,28 +202,99 @@ export default function CourierApp() {
     return () => clearInterval(interval)
   }, [user, isGpsActive])
 
-  // Entregas ativas em ordem otimizada pelo vendedor (sequence)
-  const activeDeliveries = [
-    ...orders.filter((o) => o.status === 'in_transit' || o.status === 'assigned'),
-  ].sort((a, b) => {
-    const seqA = a.sequence ?? 9999
-    const seqB = b.sequence ?? 9999
-    return seqA - seqB
-  })
-
   // Pedidos da rota atual que já foram iniciados mas ainda NÃO foram finalizados na base
   // Regra do Usuário: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
-  const currentRouteOrders = orders.filter(
+  const activeStartedOrders = orders.filter(
     (o) =>
       o.route_started === true &&
       (o.route_finished === false || o.route_finished === null || o.route_finished === undefined),
   )
 
-  // Estado da rota: já foi aceita / iniciada pelo entregador?
-  const isRouteStarted =
-    activeDeliveries.some((o) => o.route_started === true) || currentRouteOrders.length > 0
+  const hasActiveStartedRoute = activeStartedOrders.length > 0
 
-  // Se todas as entregas individuais já foram concluídas (ou não há mais activeDeliveries pendentes)
+  // FILA DE ROTAS:
+  // Se houver uma rota em andamento (route_started=true e route_finished!=true):
+  // 1. A rota visível e executável no app é EXCLUSIVAMENTE composta pelos pedidos dessa rota ativa.
+  // 2. Pedidos liberados depois (route_released=true mas com route_started!=true) NÃO entram nas paradas executáveis; ficam na fila de espera.
+  // Se NÃO houver rota em andamento ativa:
+  // Todas as entregas atribuídas/liberadas formam a próxima rota pronta para ser aceita/iniciada.
+  const { currentRouteOrders, queuedOrders, activeDeliveries } = useMemo(() => {
+    if (hasActiveStartedRoute) {
+      // Pedidos da rota ativa em andamento
+      const current = activeStartedOrders
+      // Pedidos liberados pelo vendedor que aguardam a conclusão da rota atual
+      const queued = orders.filter(
+        (o) =>
+          o.route_released === true &&
+          !o.route_started &&
+          o.status !== 'delivered' &&
+          o.status !== 'cancelled',
+      )
+      // As entregas executáveis no app são apenas as da rota ativa que ainda não foram finalizadas
+      const executables = current
+        .filter((o) => o.status === 'in_transit' || o.status === 'assigned')
+        .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
+
+      return {
+        currentRouteOrders: current,
+        queuedOrders: queued,
+        activeDeliveries: executables,
+      }
+    }
+
+    // Não há rota ativa iniciada: agrupar por lote de liberação/criação
+    // Se há múltiplos lotes de rotas liberadas, a primeira rota (mais antiga) é a apresentada; as seguintes aguardam na fila
+    const unstartedReleased = orders.filter(
+      (o) =>
+        (o.route_released === true || o.status === 'assigned') &&
+        !o.route_started &&
+        (o.status === 'assigned' || o.status === 'in_transit'),
+    )
+
+    if (unstartedReleased.length === 0) {
+      return {
+        currentRouteOrders: [],
+        queuedOrders: [],
+        activeDeliveries: [],
+      }
+    }
+
+    // Agrupamento de rotas por data/horário aproximado de liberação ou sequência
+    // Se todas têm a mesma liberação ou sem marcação, compõem a rota atual
+    // Ordenar por data de liberação / criação
+    const sorted = [...unstartedReleased].sort((a, b) => {
+      const timeA = new Date(a.route_released_at || a.created || 0).getTime()
+      const timeB = new Date(b.route_released_at || b.created || 0).getTime()
+      return timeA - timeB
+    })
+
+    // Agrupamos na primeira rota os pedidos que pertencem ao mesmo lote (criados/liberados em janela próxima de 15 min)
+    const firstTimestamp = new Date(sorted[0].route_released_at || sorted[0].created || 0).getTime()
+    const currentBatch: OrderRecord[] = []
+    const queuedBatch: OrderRecord[] = []
+
+    for (const ord of sorted) {
+      const ordTime = new Date(ord.route_released_at || ord.created || 0).getTime()
+      if (Math.abs(ordTime - firstTimestamp) <= 15 * 60 * 1000) {
+        currentBatch.push(ord)
+      } else {
+        queuedBatch.push(ord)
+      }
+    }
+
+    const currentSorted = currentBatch.sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
+
+    return {
+      currentRouteOrders: currentSorted,
+      queuedOrders: queuedBatch,
+      activeDeliveries: currentSorted,
+    }
+  }, [hasActiveStartedRoute, activeStartedOrders, orders])
+
+  // Estado da rota: já foi aceita / iniciada pelo entregador?
+  const isRouteStarted = hasActiveStartedRoute
+
+  // Se todas as entregas individuais da rota ativa já foram concluídas (ou não há mais activeDeliveries pendentes)
   // mas a rota ainda não foi finalizada na base, o entregador está na etapa de RETORNO À BASE!
   const isReturningToBase =
     isRouteStarted &&
@@ -394,6 +465,26 @@ export default function CourierApp() {
             </div>
           </div>
         </div>
+
+        {/* AVISO DISCRETO DE FILA: quando há rota aguardando na fila */}
+        {queuedOrders.length > 0 && (
+          <div className="rounded-xl border border-blue-500/30 bg-blue-950/40 p-3 flex items-center gap-3 text-xs text-blue-200">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-500/20 text-[#60A5FA] shrink-0 font-bold">
+              ℹ️
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-white">
+                Você tem {queuedOrders.length}{' '}
+                {queuedOrders.length === 1
+                  ? 'entrega/rota aguardando na fila'
+                  : 'entregas/rotas aguardando na fila'}
+              </p>
+              <p className="text-[11px] text-blue-300/80 mt-0.5">
+                Será liberada automaticamente ao finalizar a rota atual na base.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* LOADING STATE */}
         {isLoading && (

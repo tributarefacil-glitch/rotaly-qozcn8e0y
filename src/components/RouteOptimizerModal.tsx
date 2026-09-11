@@ -295,18 +295,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Initialize selected couriers and load app settings when opened
   useEffect(() => {
     if (open) {
-      // Filtrar entregadores que NÃO estão com rota em andamento
-      const availableIds = couriers
-        .filter((c) => c.status !== 'inactive' && !isCourierWithActiveRoute(c.id))
-        .map((c) => c.id)
+      // Regra: "não precisa bloquear o entregador para vendedor. apenas não deixar a rota entrar no app do entregador enquanto ele estiver na rota atual"
+      const availableIds = couriers.filter((c) => c.status !== 'inactive').map((c) => c.id)
 
       setSelectedCourierIds(
-        availableIds.length > 0
-          ? availableIds
-          : couriers
-              .filter((c) => !isCourierWithActiveRoute(c.id))
-              .slice(0, 3)
-              .map((c) => c.id),
+        availableIds.length > 0 ? availableIds : couriers.slice(0, 3).map((c) => c.id),
       )
       // ETAPA 2: Abre vazia sem clientes pré-marcados; vendedor busca e marca os pedidos
       setSelectedOrderIds([])
@@ -357,23 +350,13 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }, [])
 
   const toggleCourierSelection = (id: string) => {
-    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
-    if (isCourierWithActiveRoute(id)) {
-      toast.error('Entregador com rota em andamento!', {
-        description: 'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
-      })
-      return
-    }
     setSelectedCourierIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     )
   }
 
   const selectAllCouriers = () => {
-    // Apenas entregadores sem rota ativa
-    const eligible = filteredCouriers
-      .filter((c) => !isCourierWithActiveRoute(c.id))
-      .map((c) => c.id)
+    const eligible = filteredCouriers.map((c) => c.id)
     setSelectedCourierIds(eligible)
   }
 
@@ -383,12 +366,6 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
   const selectOnlyCourier = (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (isCourierWithActiveRoute(id)) {
-      toast.error('Entregador com rota em andamento!', {
-        description: 'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
-      })
-      return
-    }
     setSelectedCourierIds([id])
   }
 
@@ -2027,16 +2004,19 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     const startBase = resolvedStartEntity
     const endBase = resolvedEndEntity
 
-    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
-    // Validação de segurança final antes de salvar/liberar
-    for (const plan of optimizationResult.courierPlans) {
-      if (plan.stops.length > 0 && isCourierWithActiveRoute(plan.courier.id)) {
-        toast.error(`Entregador "${plan.courier.name}" está com rota em andamento!`, {
-          description:
-            'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
-        })
-        return
-      }
+    // Regra: "não precisa bloquear o entregador para vendedor. apenas não deixar a rota entrar no app do entregador enquanto ele estiver na rota atual"
+    // Avisamos de forma discreta se algum entregador selecionado já possui rota ativa: a nova rota entrará na fila
+    const couriersWithActiveRoute = optimizationResult.courierPlans.filter(
+      (p) => p.stops.length > 0 && isCourierWithActiveRoute(p.courier.id),
+    )
+    if (couriersWithActiveRoute.length > 0) {
+      const names = couriersWithActiveRoute.map((p) => p.courier.name).join(', ')
+      toast.info(
+        `Rotas atribuídas para ${names} entrarão na fila até finalizarem a rota atual na base.`,
+        {
+          duration: 4500,
+        },
+      )
     }
 
     setIsApplying(true)
@@ -2303,14 +2283,6 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     stopIndex: number,
   ) => {
     if (!optimizationResult || fromCourierId === toCourierId) return
-
-    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
-    if (isCourierWithActiveRoute(toCourierId)) {
-      toast.error('Entregador de destino possui rota em andamento!', {
-        description: 'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
-      })
-      return
-    }
 
     setOptimizationResult((prev) => {
       if (!prev) return prev
@@ -3110,18 +3082,15 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   return (
                     <label
                       key={courier.id}
-                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border transition select-none group relative ${
-                        hasActiveRoute
-                          ? 'border-amber-300/60 bg-amber-50/40 dark:border-amber-900/50 dark:bg-amber-950/20 opacity-70 cursor-not-allowed'
-                          : isSelected
-                            ? 'border-indigo-500 bg-indigo-50/80 shadow-sm dark:bg-indigo-950/50 dark:border-indigo-500 ring-2 ring-indigo-500/30 cursor-pointer'
-                            : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-80 hover:opacity-100 cursor-pointer'
+                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border transition select-none group relative cursor-pointer ${
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-50/80 shadow-sm dark:bg-indigo-950/50 dark:border-indigo-500 ring-2 ring-indigo-500/30'
+                          : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-90 hover:opacity-100'
                       }`}
                     >
                       <Checkbox
                         id={`courier-chk-${courier.id}`}
                         checked={isSelected}
-                        disabled={hasActiveRoute}
                         onCheckedChange={() => toggleCourierSelection(courier.id)}
                         className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4"
                       />
@@ -3150,27 +3119,27 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                         <div className="flex items-center justify-between text-[10px] text-slate-500 mt-0.5">
                           <span className="truncate">
                             {hasActiveRoute
-                              ? '🚫 Rota em andamento'
+                              ? '🔄 Em rota — entrará na fila'
                               : isBusy
                                 ? '⚠️ Ocupado'
                                 : '🟢 Disponível'}{' '}
                             • {courier.vehicle_model || courier.vehicle_type || 'Moto'}
                           </span>
-                          {!hasActiveRoute && (
-                            <button
-                              type="button"
-                              onClick={(e) => selectOnlyCourier(courier.id, e)}
-                              className="text-[9px] text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline font-semibold ml-1 shrink-0"
-                              title="Marcar somente este entregador"
-                            >
-                              Só este
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => selectOnlyCourier(courier.id, e)}
+                            className="text-[9px] text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline font-semibold ml-1 shrink-0"
+                            title="Marcar somente este entregador"
+                          >
+                            Só este
+                          </button>
                         </div>
                         {hasActiveRoute && (
-                          <p className="text-[9px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
-                            Bloqueado: finalize a rota atual na base
-                          </p>
+                          <div className="mt-1">
+                            <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-medium">
+                              Em rota — entrará na fila
+                            </span>
+                          </div>
                         )}
                       </div>
                     </label>

@@ -350,21 +350,66 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   }
 
-  // 2. Retirar da rota / Desfazer rota de uma entrega (volta para status "pending" e desfaz liberação/atribuição)
+  // 2. Retirar da rota / Excluir cliente da rota em andamento (volta para status "pending" e notifica o entregador)
   const handleRemoveFromRoute = async (orderId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
 
+    const order = orders.find((o) => o.id === orderId)
+    const custName = customers.find((c) => c.id === order?.customer_id)?.name || 'o cliente'
+    const isStarted = order?.route_started || order?.status === 'in_transit'
+
+    const confirmMsg = isStarted
+      ? `Tem certeza que deseja remover ${custName} da rota em andamento? O cliente sairá do app do entregador imediatamente.`
+      : `Deseja desfazer a rota da entrega para ${custName}? Ela voltará para o status "Pendente".`
+
+    if (!window.confirm(confirmMsg)) return
+
     try {
+      const courierId = order?.courier_id
       await deliveryService.updateOrder(orderId, {
         status: 'pending',
         courier_id: '',
         sequence: undefined,
         route_released: false,
         route_started: false,
+        route_started_at: undefined,
       })
-      toast.info(
-        'Entrega retirada da rota e retornada para o status "Pendente" (disponível para nova otimização).',
-      )
+
+      // Se havia entregador, reordenar as sequências restantes e notificar
+      if (courierId) {
+        try {
+          const remainingOrders = orders
+            .filter(
+              (o) =>
+                o.courier_id === courierId &&
+                o.id !== orderId &&
+                o.status !== 'delivered' &&
+                o.status !== 'cancelled',
+            )
+            .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
+
+          for (let i = 0; i < remainingOrders.length; i++) {
+            const nextSeq = i + 1
+            if (remainingOrders[i].sequence !== nextSeq) {
+              await deliveryService.updateOrder(remainingOrders[i].id, {
+                sequence: nextSeq,
+              })
+            }
+          }
+
+          await deliveryService.createNotification({
+            user_id: courierId,
+            title: '⚠️ Rota Atualizada: Parada Removida',
+            message: `A entrega para ${custName} foi removida da sua rota pela central.`,
+            type: 'order',
+            read: false,
+          })
+        } catch (reorderErr) {
+          console.warn('Erro ao reordenar entregas restantes:', reorderErr)
+        }
+      }
+
+      toast.info(`Cliente ${custName} removido da rota e retornado para "Pendente" com sucesso.`)
       loadData()
     } catch (err) {
       console.error('Error removing order from route:', err)
@@ -443,33 +488,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   ) => {
     if (e) e.stopPropagation()
 
-    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
-    if (courierId && isCourierBlockedByActiveRoute(courierId)) {
-      const activeOrder = orders.find(
-        (o) =>
-          o.courier_id === courierId &&
-          o.route_started === true &&
-          (o.route_finished === false ||
-            o.route_finished === null ||
-            o.route_finished === undefined),
-      )
-      // Se o pedido que se tenta liberar não faz parte da rota em andamento, bloquear
-      if (activeOrder && activeOrder.id !== orderId) {
-        toast.error('Entregador com rota em andamento!', {
-          description:
-            'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
-          duration: 5000,
-        })
-        return
-      }
-    }
-
     setReleasingOrderId(orderId)
     try {
-      const res = await deliveryService.releaseRouteForOrders([orderId], courierId)
-      if (res.updatedCount === 0) {
-        toast.warning(
-          'A rota não pôde ser liberada porque o entregador possui uma rota anterior não finalizada na base.',
+      await deliveryService.releaseRouteForOrders([orderId], courierId)
+      if (courierId && isCourierBlockedByActiveRoute(courierId)) {
+        toast.success(
+          '🚀 Rota liberada! O entregador está em rota e este pedido entrará na fila do app dele.',
         )
       } else {
         toast.success(
@@ -486,15 +510,6 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   }
 
   const handleReleaseAllForCourier = async (courierId: string) => {
-    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
-    if (isCourierBlockedByActiveRoute(courierId)) {
-      toast.error('Entregador com rota em andamento!', {
-        description: 'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
-        duration: 5000,
-      })
-      return
-    }
-
     setIsReleasingAllForCourier(courierId)
     try {
       const courierOrders = orders.filter(
@@ -510,7 +525,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         return
       }
       await deliveryService.releaseRouteForOrders(ids, courierId)
-      toast.success(`🚀 Todas as ${ids.length} entregas foram liberadas para o entregador!`)
+      if (isCourierBlockedByActiveRoute(courierId)) {
+        toast.success(
+          `🚀 Todas as ${ids.length} entregas foram liberadas! O entregador está em rota e elas ficarão na fila até o término na base.`,
+        )
+      } else {
+        toast.success(`🚀 Todas as ${ids.length} entregas foram liberadas para o entregador!`)
+      }
       loadData()
     } catch (err) {
       console.error('Error releasing all orders for courier:', err)
@@ -1648,21 +1669,28 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                     </Button>
                                   )}
 
-                                  {/* Retirar da Rota / Desfazer Rota */}
+                                  {/* Retirar da Rota / Remover Cliente da Rota em Andamento */}
                                   {(order.status === 'in_transit' ||
                                     order.status === 'assigned' ||
-                                    order.route_released) &&
+                                    order.route_released ||
+                                    order.route_started) &&
                                     order.status !== 'delivered' &&
                                     order.status !== 'cancelled' && (
                                       <Button
                                         variant="outline"
                                         size="sm"
                                         onClick={(e) => handleRemoveFromRoute(order.id, e)}
-                                        className="h-7 px-2 text-[11px] text-[#FF6B35] border-[#FF6B35]/30 hover:bg-orange-50 gap-1 rounded-input font-medium"
-                                        title="Desfazer rota desta entrega e retornar para Pendente"
+                                        className="h-7 px-2 text-[11px] text-[#FF6B35] border-[#FF6B35]/30 hover:bg-orange-500/10 gap-1 rounded-input font-medium"
+                                        title={
+                                          order.route_started || order.status === 'in_transit'
+                                            ? 'Remover cliente da rota em andamento (sai do app do entregador)'
+                                            : 'Desfazer rota desta entrega e retornar para Pendente'
+                                        }
                                       >
                                         <Undo2 className="h-3 w-3" />
-                                        Desfazer Rota
+                                        {order.route_started || order.status === 'in_transit'
+                                          ? 'Remover da Rota'
+                                          : 'Desfazer Rota'}
                                       </Button>
                                     )}
 

@@ -177,6 +177,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
+  const [isRemovingOrderFromRoute, setIsRemovingOrderFromRoute] = useState(false)
+  const [orderToRemoveFromRoute, setOrderToRemoveFromRoute] = useState<OrderRecord | null>(null)
 
   // Google Maps state
   const [mapsLoaded, setMapsLoaded] = useState(false)
@@ -249,6 +251,86 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const [streetRoute, setStreetRoute] = useState<OsrmRouteResult | null>(null)
   const [isLoadingStreetRoute, setIsLoadingStreetRoute] = useState(false)
   const [recentDeviations, setRecentDeviations] = useState<any[]>([])
+
+  // Remover cliente/pedido da rota em andamento (Realtime, recalcula paradas e ETA)
+  const handleConfirmRemoveOrderFromRoute = async () => {
+    if (!orderToRemoveFromRoute) return
+    const orderId = orderToRemoveFromRoute.id
+    const courierId = orderToRemoveFromRoute.courier_id
+    const customerName = orderToRemoveFromRoute.expand?.customer_id?.name || 'Cliente'
+
+    setIsRemovingOrderFromRoute(true)
+    try {
+      // 1. Atualizar o pedido para status "pending", desvinculando da rota ativa
+      await deliveryService.updateOrder(orderId, {
+        status: 'pending',
+        courier_id: '',
+        sequence: undefined,
+        route_released: false,
+        route_started: false,
+        route_started_at: undefined,
+      })
+
+      // 2. Se houver entregador vinculado, reordenar a sequência das paradas restantes dele
+      if (courierId) {
+        try {
+          const remainingOrders = orders
+            .filter(
+              (o) =>
+                o.courier_id === courierId &&
+                o.id !== orderId &&
+                o.status !== 'delivered' &&
+                o.status !== 'cancelled',
+            )
+            .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
+
+          for (let i = 0; i < remainingOrders.length; i++) {
+            const nextSeq = i + 1
+            if (remainingOrders[i].sequence !== nextSeq) {
+              await deliveryService.updateOrder(remainingOrders[i].id, {
+                sequence: nextSeq,
+              })
+            }
+          }
+
+          // Notificar o entregador via push/notificação em tempo real
+          await deliveryService.createNotification({
+            user_id: courierId,
+            title: '⚠️ Rota Atualizada: Parada Removida',
+            message: `A entrega para ${customerName} foi removida da sua rota pela central.`,
+            type: 'order',
+            read: false,
+          })
+        } catch (reorderErr) {
+          console.warn('Erro ao reordenar sequência do entregador:', reorderErr)
+        }
+      }
+
+      toast({
+        title: '✓ Cliente removido da rota',
+        description: `O pedido de ${customerName} foi retirado da rota e retornou para "Pendente".`,
+      })
+
+      // Fechar modal de confirmação e drawer se era esse pedido
+      setOrderToRemoveFromRoute(null)
+      setIsDrawerOpen(false)
+      setSelectedOrder(null)
+
+      // Atualizar dados locais imediatamente
+      fetchData()
+      if (onRefresh) onRefresh()
+    } catch (err: unknown) {
+      console.error('Erro ao remover pedido da rota:', err)
+      const msg = err instanceof Error ? err.message : 'Falha ao remover cliente da rota.'
+      toast({
+        title: 'Erro ao remover cliente',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsRemovingOrderFromRoute(false)
+    }
+  }
 
   // Fetch initial/refreshed data
   const fetchData = async () => {
@@ -3062,15 +3144,37 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               </div>
 
               {/* Drawer Footer Actions */}
-              <div className="p-4 border-t border-[#1E2B58] bg-[#070D1E] flex items-center justify-between gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsDrawerOpen(false)}
-                  className="border-[#1E2B58] text-slate-300 hover:text-white hover:bg-slate-800"
-                >
-                  Fechar
-                </Button>
+              <div className="p-4 border-t border-[#1E2B58] bg-[#070D1E] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsDrawerOpen(false)}
+                    className="border-[#1E2B58] text-slate-300 hover:text-white hover:bg-slate-800"
+                  >
+                    Fechar
+                  </Button>
+
+                  {/* REQUISITO: "o vendedor pode excluir o cliente da rota em andamento" */}
+                  {selectedOrder.status !== 'delivered' &&
+                    selectedOrder.status !== 'cancelled' &&
+                    (selectedOrder.route_started ||
+                      selectedOrder.status === 'in_transit' ||
+                      selectedOrder.status === 'assigned' ||
+                      selectedOrder.route_released) && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderToRemoveFromRoute(selectedOrder)}
+                        className="border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-bold text-xs gap-1.5 rounded-xl transition"
+                        title="Remover cliente desta rota e retornar para status Pendente"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 text-rose-400" />
+                        Remover da Rota
+                      </Button>
+                    )}
+                </div>
 
                 <div className="flex items-center gap-2">
                   <Button
@@ -3090,6 +3194,69 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           )}
         </SheetContent>
       </Sheet>
+
+      {/* MODAL DE CONFIRMAÇÃO: REMOVER CLIENTE DA ROTA EM ANDAMENTO */}
+      <Dialog
+        open={Boolean(orderToRemoveFromRoute)}
+        onOpenChange={(open) =>
+          !open && !isRemovingOrderFromRoute && setOrderToRemoveFromRoute(null)
+        }
+      >
+        <DialogContent className="sm:max-w-md bg-[#0A1128] border border-rose-500/30 text-slate-100">
+          <DialogHeader>
+            <div className="flex items-center gap-2.5 text-rose-400">
+              <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/30">
+                <AlertTriangle className="h-5 w-5 text-rose-400" />
+              </div>
+              <DialogTitle className="text-base font-bold text-white font-heading">
+                Remover Cliente da Rota em Andamento?
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs text-slate-300 pt-2 space-y-2">
+              <p>
+                Você está prestes a remover o cliente{' '}
+                <strong className="text-white">
+                  {orderToRemoveFromRoute?.expand?.customer_id?.name || 'Cliente'}
+                </strong>{' '}
+                (pedido{' '}
+                <span className="font-mono text-[#60A5FA]">
+                  {orderToRemoveFromRoute?.tracking_code}
+                </span>
+                ) da rota do entregador.
+              </p>
+              <div className="p-3 rounded-xl bg-[#070D1E] border border-slate-800 space-y-1 text-[11px] text-slate-400">
+                <p>• O pedido sairá imediatamente do app do entregador em tempo real.</p>
+                <p>• A sequência e quilometragem da rota serão recalculadas automaticamente.</p>
+                <p>
+                  • O pedido retornará para o status <strong>Pendente</strong> no painel de vendas.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#1E2B58]">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isRemovingOrderFromRoute}
+              onClick={() => setOrderToRemoveFromRoute(null)}
+              className="border-[#1E2B58] text-slate-300 hover:text-white hover:bg-slate-800"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={isRemovingOrderFromRoute}
+              onClick={handleConfirmRemoveOrderFromRoute}
+              className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-rose-950/40"
+            >
+              {isRemovingOrderFromRoute ? 'Removendo...' : 'Sim, Remover da Rota'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* 6. MODAL DO ENTREGADOR (Ao clicar no entregador na lista lateral ou mapa) */}
       <Dialog open={!!selectedCourier} onOpenChange={(open) => !open && setSelectedCourier(null)}>
