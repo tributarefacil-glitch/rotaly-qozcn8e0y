@@ -41,6 +41,8 @@ export interface MapMarkerItem {
   deviationMeters?: number
   isUnexpectedStop?: boolean
   etaMinutes?: number
+  battery_level?: number
+  location_timestamp?: string | number | Date
 }
 
 export function getVehicleEmoji(type?: string): string {
@@ -192,6 +194,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapInstanceRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const liveCourierMarkersRef = useRef<Map<string, any>>(new Map())
+  const liveCourierAnimFramesRef = useRef<Map<string, number>>(new Map())
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googleMarkersRef = useRef<any[]>([])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googlePolylinesRef = useRef<any[]>([])
@@ -324,17 +329,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           streetViewControl: false,
           mapTypeControl: false,
           fullscreenControl: true,
-          styles: [
-            {
-              featureType: 'administrative',
-              elementType: 'geometry',
-              stylers: [{ visibility: 'simplified' }],
-            },
-            {
-              featureType: 'poi',
-              stylers: [{ visibility: 'off' }],
-            },
-          ],
+          styles: [],
         })
       } else {
         google.maps.event?.trigger(mapInstanceRef.current, 'resize')
@@ -354,19 +349,49 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     const vehicleEmoji = getVehicleEmoji(item.vehicle_type)
     const vehicleLabel = getVehicleLabel(item.vehicle_type)
 
-    // Se for entregador, formatar tooltip compacto com nome, veículo, endereço atual e alerta de desvio
+    // Se for entregador, formatar tooltip com nome, veículo, bateria, status GPS, endereço atual e alerta de desvio
     if (isCourier) {
       const courierDisplayName = item.courier_name || item.title
       const hasDeviation = item.isDeviated && typeof item.deviationMeters === 'number'
 
+      let isGpsActive = false
+      if (item.location_timestamp) {
+        const locTime = new Date(item.location_timestamp).getTime()
+        if (!isNaN(locTime)) {
+          isGpsActive = Date.now() - locTime <= 2 * 60 * 1000
+        }
+      } else {
+        isGpsActive = true
+      }
+
+      const hasBattery = typeof item.battery_level === 'number' && !isNaN(item.battery_level)
+      const batteryVal = Math.round(item.battery_level || 0)
+      const batteryColor = batteryVal <= 20 ? '#dc2626' : batteryVal <= 50 ? '#d97706' : '#16a34a'
+
       return `
-        <div style="padding: 8px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 250px; line-height: 1.35;">
-          <div style="display: flex; items-center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
+        <div style="padding: 8px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 260px; line-height: 1.35;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
             <div style="display: flex; align-items: center; gap: 5px;">
-              <span style="font-size: 14px;">${vehicleEmoji}</span>
+              <span style="font-size: 15px;">${vehicleEmoji}</span>
               <strong style="font-size: 12px; color: #0f172a; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;">${courierDisplayName}</strong>
             </div>
             <span style="font-size: 9px; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 1px 5px; border-radius: 4px;">${vehicleLabel}</span>
+          </div>
+
+          <!-- Badges de Bateria e GPS -->
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: 10px; font-weight: 700;">
+            <span style="display: inline-flex; align-items: center; gap: 3px; background: ${isGpsActive ? '#ecfdf5' : '#fef2f2'}; color: ${isGpsActive ? '#047857' : '#b91c1c'}; border: 1px solid ${isGpsActive ? '#a7f3d0' : '#fecaca'}; padding: 2px 5px; border-radius: 4px;">
+              <span>📡</span> ${isGpsActive ? 'GPS ativo' : 'GPS off'}
+            </span>
+            ${
+              hasBattery
+                ? `
+              <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: ${batteryColor}; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;">
+                <span>🔋</span> ${batteryVal}%
+              </span>
+            `
+                : ''
+            }
           </div>
 
           ${
@@ -443,8 +468,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     const google = getGoogle()
     if (!mapInstanceRef.current || !google?.maps) return
 
-    // Clear old markers
-    googleMarkersRef.current.forEach((m) => m.setMap(null))
+    // Clear old non-courier markers
+    googleMarkersRef.current.forEach((m) => {
+      const isManagedCourier = Array.from(liveCourierMarkersRef.current.values()).includes(m)
+      if (!isManagedCourier) {
+        m.setMap(null)
+      }
+    })
     googleMarkersRef.current = []
 
     // Clear old polylines on native map
@@ -540,13 +570,79 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         )
       }
 
-      const marker = new google.maps.Marker({
-        position: { lat: item.lat, lng: item.lng },
-        map: mapInstanceRef.current,
-        title: item.title,
-        icon: markerIcon,
-        animation: item.id === selectedMarkerId ? google.maps.Animation.BOUNCE : undefined,
-      })
+      let marker: any
+
+      if (item.type === 'courier') {
+        const courierId = item.id
+        const targetPos = { lat: item.lat, lng: item.lng }
+        const existing = liveCourierMarkersRef.current.get(courierId)
+
+        if (existing) {
+          marker = existing
+          marker.setMap(mapInstanceRef.current)
+          marker.setTitle(item.title)
+          marker.setIcon(markerIcon)
+
+          // Interpolação e transição suave (~2.5s)
+          const prevPos = marker.getPosition()
+          if (prevPos) {
+            const startLat = prevPos.lat()
+            const startLng = prevPos.lng()
+            const deltaLat = targetPos.lat - startLat
+            const deltaLng = targetPos.lng - startLng
+
+            if (Math.abs(deltaLat) > 0.00001 || Math.abs(deltaLng) > 0.00001) {
+              const prevAnim = liveCourierAnimFramesRef.current.get(courierId)
+              if (prevAnim) cancelAnimationFrame(prevAnim)
+
+              const animStartTime = performance.now()
+              const duration = 2500
+
+              const step = (now: number) => {
+                const elapsed = now - animStartTime
+                const progress = Math.min(1, elapsed / duration)
+                const ease =
+                  progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress
+
+                const curLat = startLat + deltaLat * ease
+                const curLng = startLng + deltaLng * ease
+                marker.setPosition({ lat: curLat, lng: curLng })
+
+                if (progress < 1) {
+                  const reqId = requestAnimationFrame(step)
+                  liveCourierAnimFramesRef.current.set(courierId, reqId)
+                } else {
+                  marker.setPosition(targetPos)
+                  liveCourierAnimFramesRef.current.delete(courierId)
+                }
+              }
+
+              const reqId = requestAnimationFrame(step)
+              liveCourierAnimFramesRef.current.set(courierId, reqId)
+            } else {
+              marker.setPosition(targetPos)
+            }
+          } else {
+            marker.setPosition(targetPos)
+          }
+        } else {
+          marker = new google.maps.Marker({
+            position: targetPos,
+            map: mapInstanceRef.current,
+            title: item.title,
+            icon: markerIcon,
+          })
+          liveCourierMarkersRef.current.set(courierId, marker)
+        }
+      } else {
+        marker = new google.maps.Marker({
+          position: { lat: item.lat, lng: item.lng },
+          map: mapInstanceRef.current,
+          title: item.title,
+          icon: markerIcon,
+          animation: item.id === selectedMarkerId ? google.maps.Animation.BOUNCE : undefined,
+        })
+      }
 
       // Click InfoWindow for persistent popup
       const clickInfoWindow = new google.maps.InfoWindow({
@@ -597,7 +693,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   // Fallback interactive visual mock map if Google Maps key is not provided or offline
   return (
     <div
-      className="relative w-full rounded-2xl overflow-hidden border border-slate-200 shadow-md bg-slate-950 dark:border-slate-800"
+      className="relative w-full rounded-2xl overflow-hidden border border-slate-200 shadow-md bg-[#e5e3df] text-slate-800"
       style={{ height }}
     >
       {/* Google map container */}
@@ -608,9 +704,17 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
       {/* Fallback interactive stylish vector map canvas if Google maps is unavailable or auth failed */}
       {(!mapsLoaded || authError) && (
-        <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white z-10 select-none overflow-hidden">
-          {/* Subtle grid lines background */}
-          <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:24px_24px]" />
+        <div className="absolute inset-0 flex flex-col justify-between p-4 bg-[#e5e3df] text-slate-800 z-10 select-none overflow-hidden">
+          {/* Subtle grid lines background em tons claros */}
+          <div className="absolute inset-0 opacity-25 bg-[radial-gradient(#dcdad6_1.5px,transparent_1.5px)] [background-size:24px_24px]" />
+          {/* Vias e rodovias simuladas no fundo do canvas vetorial */}
+          <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-40">
+            <line x1="0%" y1="35%" x2="100%" y2="40%" stroke="#fcd6a4" strokeWidth="8" />
+            <line x1="45%" y1="0%" x2="52%" y2="100%" stroke="#fcd6a4" strokeWidth="7" />
+            <line x1="0%" y1="70%" x2="100%" y2="65%" stroke="#ffffff" strokeWidth="5" />
+            <line x1="20%" y1="0%" x2="25%" y2="100%" stroke="#ffffff" strokeWidth="4" />
+            <line x1="75%" y1="0%" x2="80%" y2="100%" stroke="#ffffff" strokeWidth="4" />
+          </svg>
 
           {/* Street overlay paths & Real routes (Linha Azul das ruas e Linha Vermelha de desvio) */}
           <svg
@@ -735,8 +839,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                     setActivePopupMarker(activePopupMarker?.id === m.id ? null : m)
                     if (onSelectMarker) onSelectMarker(m)
                   }}
-                  style={{ left: `${clampedX}%`, top: `${clampedY}%` }}
-                  className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-300 ease-out group ${
+                  style={{
+                    left: `${clampedX}%`,
+                    top: `${clampedY}%`,
+                    transitionProperty: 'left, top, transform',
+                    transitionDuration: m.type === 'courier' ? '2500ms' : '300ms',
+                    transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+                  }}
+                  className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group ${
                     isSelected || activePopupMarker?.id === m.id
                       ? 'z-40 scale-110'
                       : 'z-20 hover:scale-110 hover:z-30'
@@ -813,6 +923,32 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                             <span className="text-[9px] font-bold bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">
                               {getVehicleLabel(m.vehicle_type)}
                             </span>
+                          </div>
+
+                          {/* Badges de Bateria e GPS no popup do canvas */}
+                          <div className="flex items-center gap-2 pt-1 font-bold text-[10px]">
+                            {(() => {
+                              const isGpsActive = m.location_timestamp
+                                ? Date.now() - new Date(m.location_timestamp).getTime() <=
+                                  2 * 60 * 1000
+                                : true
+                              return (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
+                                    isGpsActive
+                                      ? 'bg-emerald-950/80 text-emerald-400 border-emerald-500/40'
+                                      : 'bg-rose-950/80 text-rose-400 border-rose-500/40'
+                                  }`}
+                                >
+                                  <span>📡</span> {isGpsActive ? 'GPS ativo' : 'GPS off'}
+                                </span>
+                              )
+                            })()}
+                            {typeof m.battery_level === 'number' && !isNaN(m.battery_level) && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-200 border-slate-700">
+                                <span>🔋</span> {Math.round(m.battery_level)}%
+                              </span>
+                            )}
                           </div>
 
                           {m.isDeviated && typeof m.deviationMeters === 'number' && (
@@ -933,33 +1069,33 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           </div>
 
           {/* Map Overlay Badge */}
-          <div className="absolute top-3 left-3 z-30 flex items-center gap-2 rounded-lg bg-slate-900/90 px-3 py-1.5 backdrop-blur border border-slate-700 text-xs text-slate-200 shadow-lg">
+          <div className="absolute top-3 left-3 z-30 flex items-center gap-2 rounded-lg bg-white/95 px-3 py-1.5 backdrop-blur border border-[#dcdad6] text-xs text-slate-800 shadow-md">
             <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75"></span>
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600"></span>
             </span>
-            <span>Rastreamento em Tempo Real (SP Hub)</span>
+            <span className="font-semibold">Rastreamento em Tempo Real (SP Hub)</span>
           </div>
 
           {/* Legend (compacta de 1 linha) */}
-          <div className="absolute bottom-2.5 left-2.5 z-30 flex items-center gap-2.5 rounded-lg bg-slate-900/95 px-2.5 py-1.5 backdrop-blur border border-slate-700 text-[10px] text-slate-200 shadow-xl font-sans">
+          <div className="absolute bottom-2.5 left-2.5 z-30 flex items-center gap-2.5 rounded-lg bg-white/95 px-2.5 py-1.5 backdrop-blur border border-[#dcdad6] text-[10px] text-slate-800 shadow-lg font-sans">
             <div className="flex items-center gap-1">
               <span className="text-xs">🛵/🚗/🚛</span>
-              <span className="font-medium text-slate-300">Entregador</span>
+              <span className="font-semibold text-slate-700">Entregador</span>
             </div>
-            <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+            <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
               <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-black text-white">
                 1
               </span>
-              <span className="font-medium text-slate-300">Parada</span>
+              <span className="font-semibold text-slate-700">Parada</span>
             </div>
-            <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+            <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
               <span className="h-1.5 w-3 rounded-full bg-[#2563EB]"></span>
-              <span className="font-medium text-blue-300">Rota</span>
+              <span className="font-semibold text-blue-700">Rota</span>
             </div>
-            <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+            <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
               <span className="h-1.5 w-3 rounded-full bg-[#EF4444]"></span>
-              <span className="font-medium text-rose-400">Desvio &gt;600m</span>
+              <span className="font-semibold text-rose-600">Desvio &gt;600m</span>
             </div>
           </div>
         </div>
