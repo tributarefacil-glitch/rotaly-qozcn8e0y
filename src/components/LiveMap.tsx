@@ -55,6 +55,96 @@ export function getVehicleLabel(type?: string): string {
   return 'Moto'
 }
 
+// Geradores exportados de SVG Data-URI para Google Maps nativo
+export function makeCourierSvgIcon(vehicle?: string, pinColor = '#0052CC', size = 44) {
+  const emoji = getVehicleEmoji(vehicle)
+  const half = Math.round(size / 2)
+  const radius = half - 4
+  const fontSize = Math.round(size * 0.41)
+  const yPos = Math.round(half + fontSize * 0.3)
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      <defs>
+        <filter id="c-shadow-${size}" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.45"/>
+        </filter>
+      </defs>
+      <circle cx="${half}" cy="${half}" r="${radius}" fill="${pinColor}" stroke="#FFFFFF" stroke-width="3" filter="url(#c-shadow-${size})"/>
+      <text x="${half}" y="${yPos}" font-size="${fontSize}" text-anchor="middle" dominant-baseline="middle">${emoji}</text>
+    </svg>
+  `.trim()
+
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: { width: size, height: size },
+    anchor: { x: half, y: half },
+  }
+}
+
+export function makeCustomerSvgIcon(
+  customerName?: string,
+  seq?: number,
+  isTransit = false,
+  width = 220,
+  height = 66,
+) {
+  const pinColor = isTransit ? '#FF6B35' : '#475569'
+  const cleanName = (customerName || '').trim()
+  const hasName = cleanName.length > 0
+  const hasSeq = typeof seq === 'number' && seq > 0
+  const centerX = Math.round(width / 2)
+  const pinLeft = centerX - 14
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <defs>
+        <filter id="pin-shadow-${width}" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
+        </filter>
+      </defs>
+
+      <!-- Label de Nome do Cliente no topo se presente -->
+      ${
+        hasName
+          ? `
+        <g filter="url(#pin-shadow-${width})">
+          <rect x="2" y="2" width="${width - 4}" height="20" rx="5" fill="#0A1128" fill-opacity="0.95" stroke="#1E2B58" stroke-width="1.2"/>
+          <text x="${centerX}" y="16" font-size="10" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
+            ${cleanName.length > 26 ? cleanName.slice(0, 25) + '…' : cleanName}
+          </text>
+        </g>
+      `
+          : ''
+      }
+
+      <!-- Pin corpo centralizado em X=${centerX} -->
+      <g transform="translate(${pinLeft}, ${hasName ? 26 : 8})" filter="url(#pin-shadow-${width})">
+        <!-- Formato clássico de pin 28x36 -->
+        <path d="M14 0 C6.27 0 0 6.27 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.27 21.73 0 14 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="2"/>
+        
+        <!-- Círculo interno ou número da sequência -->
+        ${
+          hasSeq
+            ? `
+          <circle cx="14" cy="13" r="9" fill="#FFFFFF"/>
+          <text x="14" y="17" font-size="11" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="${pinColor}" text-anchor="middle">${seq}</text>
+        `
+            : `
+          <circle cx="14" cy="13" r="5" fill="#FFFFFF"/>
+        `
+        }
+      </g>
+    </svg>
+  `.trim()
+
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: { width, height },
+    anchor: { x: centerX, y: hasName ? height - 3 : height - 20 },
+  }
+}
+
 export interface RouteGeometryItem {
   origin: { lat: number; lng: number }
   destination: { lat: number; lng: number }
@@ -350,84 +440,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       disableAutoPan: true,
     })
 
-    // Helper para gerar SVG Data-URI com ícone do veículo e cor adequada
-    const makeCourierSvgIcon = (vehicle?: string) => {
-      const emoji = getVehicleEmoji(vehicle)
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
-          <defs>
-            <filter id="c-shadow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.45"/>
-            </filter>
-          </defs>
-          <circle cx="22" cy="22" r="18" fill="#0052CC" stroke="#FFFFFF" stroke-width="3" filter="url(#c-shadow)"/>
-          <text x="22" y="27" font-size="18" text-anchor="middle" dominant-baseline="middle">${emoji}</text>
-        </svg>
-      `.trim()
-      return {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-        scaledSize: new google.maps.Size(44, 44),
-        anchor: new google.maps.Point(22, 22),
-      }
-    }
-
-    // Helper para gerar SVG Data-URI de pin de cliente com badge de sequência e nome visível
-    const makeCustomerSvgIcon = (customerName?: string, seq?: number, isTransit = false) => {
-      const pinColor = isTransit ? '#FF6B35' : '#475569'
-      const cleanName = (customerName || '').trim()
-      const hasName = cleanName.length > 0
-      const hasSeq = typeof seq === 'number' && seq > 0
-
-      // SVG com pin + badge numerado + etiqueta com nome legível
-      // Largura suficiente para etiqueta (até ~180px)
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="220" height="64" viewBox="0 0 220 64">
-          <defs>
-            <filter id="pin-shadow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
-            </filter>
-          </defs>
-
-          <!-- Label de Nome do Cliente no topo se presente -->
-          ${
-            hasName
-              ? `
-            <g filter="url(#pin-shadow)">
-              <rect x="2" y="2" width="216" height="20" rx="5" fill="#0A1128" fill-opacity="0.94" stroke="#1E2B58" stroke-width="1.2"/>
-              <text x="110" y="16" font-size="10" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
-                ${cleanName.length > 26 ? cleanName.slice(0, 25) + '…' : cleanName}
-              </text>
-            </g>
-          `
-              : ''
-          }
-
-          <!-- Pin corpo centralizado em X=110 -->
-          <g transform="translate(96, ${hasName ? 26 : 8})" filter="url(#pin-shadow)">
-            <!-- Formato clássico de pin 28x36 -->
-            <path d="M14 0 C6.27 0 0 6.27 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.27 21.73 0 14 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="2"/>
-            
-            <!-- Círculo interno ou número da sequência -->
-            ${
-              hasSeq
-                ? `
-              <circle cx="14" cy="13" r="9" fill="#FFFFFF"/>
-              <text x="14" y="17" font-size="11" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="${pinColor}" text-anchor="middle">${seq}</text>
-            `
-                : `
-              <circle cx="14" cy="13" r="5" fill="#FFFFFF"/>
-            `
-            }
-          </g>
-        </svg>
-      `.trim()
-
-      return {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-        scaledSize: new google.maps.Size(220, 64),
-        anchor: new google.maps.Point(110, hasName ? 62 : 44),
-      }
-    }
+    // Usar os geradores unificados makeCourierSvgIcon e makeCustomerSvgIcon
 
     markers.forEach((item) => {
       if (!item.lat || !item.lng) return

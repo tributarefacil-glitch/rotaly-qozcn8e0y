@@ -60,7 +60,14 @@ import {
   Share2,
 } from 'lucide-react'
 import { OrderRecord, UserRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
-import { LiveMap, type MapMarkerItem, getVehicleEmoji, getVehicleLabel } from '@/components/LiveMap'
+import {
+  LiveMap,
+  type MapMarkerItem,
+  getVehicleEmoji,
+  getVehicleLabel,
+  makeCourierSvgIcon,
+  makeCustomerSvgIcon,
+} from '@/components/LiveMap'
 import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
 import {
@@ -915,79 +922,22 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       }
     })
 
-    // Helpers de ícones SVG para o Google Maps nativo
-    const makeNativeCourierSvg = (vehicle?: string, pinColor = '#3B82F6') => {
-      const emoji = getVehicleEmoji(vehicle)
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="46" height="46" viewBox="0 0 46 46">
-          <defs>
-            <filter id="courier-glow" x="-30%" y="-30%" width="160%" height="160%">
-              <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.5"/>
-            </filter>
-          </defs>
-          <circle cx="23" cy="23" r="20" fill="${pinColor}" stroke="#FFFFFF" stroke-width="3" filter="url(#courier-glow)"/>
-          <text x="23" y="29" font-size="19" text-anchor="middle" dominant-baseline="middle">${emoji}</text>
-        </svg>
-      `.trim()
-
+    // Helpers de ícones SVG reaproveitados de LiveMap.tsx com adaptação para win.google.maps
+    const makeNativeCourierSvg = (vehicle?: string, pinColor = '#0052CC') => {
+      const generated = makeCourierSvgIcon(vehicle, pinColor, 46)
       return {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        url: generated.url,
         scaledSize: new win.google.maps.Size(46, 46),
         anchor: new win.google.maps.Point(23, 23),
       }
     }
 
     const makeNativeCustomerSvg = (customerName?: string, seq?: number, isTransit = false) => {
-      const pinColor = isTransit ? '#FF6B35' : '#64748B'
-      const cleanName = (customerName || '').trim()
-      const hasName = cleanName.length > 0
-      const hasSeq = typeof seq === 'number' && seq > 0
-
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="220" height="66" viewBox="0 0 220 66">
-          <defs>
-            <filter id="pin-native-shadow" x="-20%" y="-20%" width="140%" height="140%">
-              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.55"/>
-            </filter>
-          </defs>
-
-          <!-- Label de Nome do Cliente Visível no Pin -->
-          ${
-            hasName
-              ? `
-            <g filter="url(#pin-native-shadow)">
-              <rect x="2" y="2" width="216" height="20" rx="5" fill="#0A1128" fill-opacity="0.95" stroke="#1E2B58" stroke-width="1.2"/>
-              <text x="110" y="16" font-size="10" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
-                ${cleanName.length > 26 ? cleanName.slice(0, 25) + '…' : cleanName}
-              </text>
-            </g>
-          `
-              : ''
-          }
-
-          <!-- Pin corpo centralizado em X=110 -->
-          <g transform="translate(96, ${hasName ? 26 : 8})" filter="url(#pin-native-shadow)">
-            <path d="M14 0 C6.27 0 0 6.27 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.27 21.73 0 14 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="2"/>
-            
-            <!-- Círculo interno ou número da sequência da rota -->
-            ${
-              hasSeq
-                ? `
-              <circle cx="14" cy="13" r="9" fill="#FFFFFF"/>
-              <text x="14" y="17" font-size="11" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="${pinColor}" text-anchor="middle">${seq}</text>
-            `
-                : `
-              <circle cx="14" cy="13" r="5" fill="#FFFFFF"/>
-            `
-            }
-          </g>
-        </svg>
-      `.trim()
-
+      const generated = makeCustomerSvgIcon(customerName, seq, isTransit, 220, 66)
       return {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        url: generated.url,
         scaledSize: new win.google.maps.Size(220, 66),
-        anchor: new win.google.maps.Point(110, hasName ? 64 : 44),
+        anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
       }
     }
 
@@ -1322,59 +1272,22 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       drawerMarkersRef.current.push(baseMarker)
     }
 
-    // Helpers de SVG para o mini mapa do Drawer
+    // Helpers de SVG para o mini mapa do Drawer (reaproveita os geradores de LiveMap)
     const makeMiniCourierSvg = (vehicle?: string) => {
-      const emoji = getVehicleEmoji(vehicle)
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-          <circle cx="20" cy="20" r="18" fill="#0052CC" stroke="#FFFFFF" stroke-width="2.5"/>
-          <text x="20" y="25" font-size="16" text-anchor="middle" dominant-baseline="middle">${emoji}</text>
-        </svg>
-      `.trim()
+      const generated = makeCourierSvgIcon(vehicle, '#0052CC', 40)
       return {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        url: generated.url,
         scaledSize: new win.google.maps.Size(40, 40),
         anchor: new win.google.maps.Point(20, 20),
       }
     }
 
     const makeMiniCustomerSvg = (customerName?: string, seq?: number) => {
-      const cleanName = (customerName || '').trim()
-      const hasName = cleanName.length > 0
-      const hasSeq = typeof seq === 'number' && seq > 0
-
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="200" height="60" viewBox="0 0 200 60">
-          ${
-            hasName
-              ? `
-            <rect x="2" y="2" width="196" height="18" rx="4" fill="#0A1128" fill-opacity="0.95" stroke="#1E2B58" stroke-width="1"/>
-            <text x="100" y="15" font-size="9.5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
-              ${cleanName.length > 24 ? cleanName.slice(0, 23) + '…' : cleanName}
-            </text>
-          `
-              : ''
-          }
-          <g transform="translate(86, ${hasName ? 24 : 8})">
-            <path d="M14 0 C6.27 0 0 6.27 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.27 21.73 0 14 0 Z" fill="#FF6B35" stroke="#FFFFFF" stroke-width="2"/>
-            ${
-              hasSeq
-                ? `
-              <circle cx="14" cy="13" r="8.5" fill="#FFFFFF"/>
-              <text x="14" y="17" font-size="10" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="#FF6B35" text-anchor="middle">${seq}</text>
-            `
-                : `
-              <circle cx="14" cy="13" r="4.5" fill="#FFFFFF"/>
-            `
-            }
-          </g>
-        </svg>
-      `.trim()
-
+      const generated = makeCustomerSvgIcon(customerName, seq, true, 200, 60)
       return {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        url: generated.url,
         scaledSize: new win.google.maps.Size(200, 60),
-        anchor: new win.google.maps.Point(100, hasName ? 58 : 42),
+        anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
       }
     }
 
@@ -2051,7 +1964,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                   </div>
 
                   {/* Legenda explicativa no rodapé do Google Maps nativo */}
-                  <div className="absolute bottom-3 left-3 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-[#1E2B58] shadow-md text-[11px] text-slate-300 flex flex-wrap items-center gap-3">
+                  <div className="absolute bottom-3 left-3 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-3 py-2 rounded-xl border border-[#1E2B58] shadow-xl text-[11px] text-slate-200 flex flex-wrap items-center gap-3 font-sans">
                     <span className="flex items-center gap-1.5 font-medium">
                       <span className="h-2 w-4 rounded-full bg-blue-600 inline-block shadow-sm" />
                       <span className="text-blue-300 font-bold">Linha Azul:</span> Rota Real
@@ -2062,15 +1975,17 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                       <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio
                       &gt;150m
                     </span>
-                    <span className="hidden sm:flex items-center gap-1 text-slate-400">
-                      <span>🛵 🚗 🚛 🚲</span>
-                      <span>Veículo</span>
+                    <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
+                      <span className="text-xs">🛵 🚗 🚛 🚲</span>
+                      <span className="font-medium text-slate-300">Veículo (Entregador)</span>
                     </span>
-                    <span className="hidden sm:flex items-center gap-1 text-slate-400">
+                    <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
                       <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-bold text-white">
                         1
                       </span>
-                      <span>Ordem &amp; Nome</span>
+                      <span className="font-medium text-slate-300">
+                        Ordem de Entrega &amp; Nome Visível
+                      </span>
                     </span>
                   </div>
                 </>
@@ -3010,17 +2925,26 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                       })()}
                   </div>
 
-                  {/* Legenda explicativa com as linhas AZUL e VERMELHA exigidas pelo usuário */}
-                  <div className="flex flex-wrap items-center justify-between text-[10px] text-slate-300 pt-1.5 border-t border-[#1E2B58] gap-2">
+                  {/* Legenda explicativa com as linhas AZUL e VERMELHA e símbolos no drawer */}
+                  <div className="flex flex-wrap items-center justify-between text-[10px] text-slate-300 pt-2 border-t border-[#1E2B58] gap-2 font-sans">
                     <span className="flex items-center gap-1.5 font-medium">
                       <span className="h-1.5 w-4 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6] inline-block" />
                       <span className="text-blue-300 font-bold">Linha Azul:</span> Rota Indicada
-                      (Ruas Reais)
+                      (Ruas)
                     </span>
                     <span className="flex items-center gap-1.5 font-medium">
                       <span className="h-1.5 w-4 rounded-full bg-rose-500 shadow-[0_0_8px_#ef4444] inline-block" />
-                      <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio do
-                      Entregador
+                      <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio
+                    </span>
+                    <span className="flex items-center gap-1 text-slate-300">
+                      <span>🛵 🚗 🚛 🚲</span>
+                      <span>Veículo</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-slate-300">
+                      <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[8px] font-bold text-white">
+                        1
+                      </span>
+                      <span>Ordem &amp; Nome</span>
                     </span>
                   </div>
                 </div>
