@@ -2947,7 +2947,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         courier={selectedCourierForHistory}
         fuelAccount={
           selectedCourierForHistory
-            ? fuelAccounts.find((a) => a.courier.id === selectedCourierForHistory.id) || null
+            ? currentFuelAccounts.find((a) => a.courier.id === selectedCourierForHistory.id) || null
             : null
         }
         orders={orders}

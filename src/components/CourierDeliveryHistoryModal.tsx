@@ -113,7 +113,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     let isMounted = true
     setIsLoadingLocations(true)
     deliveryService
-      .getLatestLocations()
+      .getLatestLocations(`user_id = '${courier.id}'`)
       .then((locs) => {
         if (isMounted) {
           setFetchedLocations(locs)

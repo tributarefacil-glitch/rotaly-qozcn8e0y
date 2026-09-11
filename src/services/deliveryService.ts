@@ -273,9 +273,10 @@ export const deliveryService = {
   },
 
   // Locations
-  async getLatestLocations() {
+  async getLatestLocations(filter = '', sort = '-created') {
     return pb.collection<LocationRecord>('locations').getFullList({
-      sort: '-created',
+      filter,
+      sort,
       expand: 'user_id',
       requestKey: null,
     })

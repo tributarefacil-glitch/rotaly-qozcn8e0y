@@ -8,6 +8,7 @@ import type {
   AppSettingsRecord,
   CourierFuelAccount,
 } from '@/types/delivery'
+// Telemetry engine and delivery service for courier fuel calculation
 import { deliveryService } from '@/services/deliveryService'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 
