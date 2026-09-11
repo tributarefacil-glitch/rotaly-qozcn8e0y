@@ -41,7 +41,7 @@ export interface CourierFuelCalculationResult {
   // Regras de consumo vigentes
   pricePerLiter: number
   consumptionKml: number
-  vehicleCategory: 'moto' | 'carro' | 'caminhao'
+  vehicleCategory: 'moto' | 'carro' | 'caminhao' | 'bicicleta'
   // Detalhamento por entrega elegível
   orderCalculations: CourierOrderTelemetryCalculation[]
   // Objeto compatível com CourierFuelAccount
@@ -183,8 +183,9 @@ export function calculateCourierFuelMetrics(params: {
     const deviationKm = realTelemetry.deviationKm
     const totalGpsKm = realTelemetry.totalGpsKm
 
-    const litersSpent = consumptionKml > 0 ? officialKm / consumptionKml : 0
-    const fuelCost = litersSpent * pricePerLiter
+    const isBicycle = category === 'bicicleta'
+    const litersSpent = !isBicycle && consumptionKml > 0 ? officialKm / consumptionKml : 0
+    const fuelCost = !isBicycle ? litersSpent * pricePerLiter : 0
 
     totalOfficialKm += officialKm
     totalDeviationKm += deviationKm

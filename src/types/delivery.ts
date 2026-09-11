@@ -11,6 +11,7 @@ export type VehicleType =
   | 'car'
   | 'truck'
   | 'bicycle'
+  | 'bicicleta'
 
 export interface UserRecord extends RecordModel {
   email: string

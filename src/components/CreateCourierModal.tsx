@@ -257,6 +257,12 @@ export function CreateCourierModal({
                       <span>🚚 Caminhão / VUC (Média 7 km/L)</span>
                     </div>
                   </SelectItem>
+                  <SelectItem value="bicicleta" className="focus:bg-[#0052CC] focus:text-white">
+                    <div className="flex items-center gap-2">
+                      <Bike className="h-3.5 w-3.5 text-emerald-400" />
+                      <span>🚲 Bicicleta</span>
+                    </div>
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>

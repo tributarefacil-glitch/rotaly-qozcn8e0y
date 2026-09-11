@@ -484,7 +484,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   // Change user vehicle type (Admin quick edit)
   const handleUpdateCourierVehicleType = async (
     courier: UserRecord,
-    newVehicleType: 'moto' | 'carro' | 'caminhao',
+    newVehicleType: 'moto' | 'carro' | 'caminhao' | 'bicicleta',
   ) => {
     try {
       await deliveryService.updateUser(courier.id, {
@@ -493,9 +493,15 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setUsers((prev) =>
         prev.map((u) => (u.id === courier.id ? { ...u, vehicle_type: newVehicleType } : u)),
       )
-      toast.success(
-        `Tipo de veículo de ${courier.name || 'Entregador'} alterado para ${newVehicleType.toUpperCase()}!`,
-      )
+      const label =
+        newVehicleType === 'bicicleta'
+          ? 'BICICLETA'
+          : newVehicleType === 'carro'
+            ? 'CARRO'
+            : newVehicleType === 'caminhao'
+              ? 'CAMINHÃO'
+              : 'MOTO'
+      toast.success(`Tipo de veículo de ${courier.name || 'Entregador'} alterado para ${label}!`)
       loadData()
     } catch (err) {
       console.error('Error updating courier vehicle type:', err)
@@ -989,7 +995,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                         ? 'Carro'
                                         : acc.courier.vehicle_type === 'caminhao'
                                           ? 'Caminhão'
-                                          : 'Moto')}
+                                          : acc.courier.vehicle_type === 'bicycle' ||
+                                              acc.courier.vehicle_type === 'bicicleta'
+                                            ? 'Bicicleta'
+                                            : 'Moto')}
                                   </span>
                                   <Badge
                                     variant="outline"
@@ -997,7 +1006,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   >
                                     {deliveryService.normalizeVehicleCategory(
                                       acc.courier.vehicle_type,
-                                    )}
+                                    ) === 'bicicleta'
+                                      ? '🚲 Bicicleta'
+                                      : deliveryService.normalizeVehicleCategory(
+                                          acc.courier.vehicle_type,
+                                        )}
                                   </Badge>
                                 </p>
                               </div>
@@ -1054,13 +1067,25 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
                             <div className="p-2 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
                               <span className="text-amber-700 dark:text-amber-400 block font-medium">
-                                (-) Gasto Rota Oficial
+                                {deliveryService.normalizeVehicleCategory(
+                                  acc.courier.vehicle_type,
+                                ) === 'bicicleta'
+                                  ? 'Km Rodado (Sem Combustível)'
+                                  : '(-) Gasto Rota Oficial'}
                               </span>
                               <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm">
-                                R$ {acc.totalSpent.toFixed(2)}
+                                {deliveryService.normalizeVehicleCategory(
+                                  acc.courier.vehicle_type,
+                                ) === 'bicicleta'
+                                  ? `${acc.totalRouteKm.toFixed(1)} km`
+                                  : `R$ ${acc.totalSpent.toFixed(2)}`}
                               </span>
                               <span className="text-[9px] text-slate-400 block mt-0.5">
-                                {acc.totalRouteKm.toFixed(1)} km roteirizados
+                                {deliveryService.normalizeVehicleCategory(
+                                  acc.courier.vehicle_type,
+                                ) === 'bicicleta'
+                                  ? 'Telemetria GPS apurada'
+                                  : `${acc.totalRouteKm.toFixed(1)} km roteirizados`}
                               </span>
                             </div>
                           </div>
@@ -2166,11 +2191,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                         value={deliveryService.normalizeVehicleCategory(
                                           c.vehicle_type,
                                         )}
-                                        onValueChange={(val: 'moto' | 'carro' | 'caminhao') =>
-                                          handleUpdateCourierVehicleType(c, val)
-                                        }
+                                        onValueChange={(
+                                          val: 'moto' | 'carro' | 'caminhao' | 'bicicleta',
+                                        ) => handleUpdateCourierVehicleType(c, val)}
                                       >
-                                        <SelectTrigger className="h-6 w-28 text-[11px] font-bold px-2 py-0 border-slate-300">
+                                        <SelectTrigger className="h-6 w-32 text-[11px] font-bold px-2 py-0 border-slate-300">
                                           <SelectValue />
                                         </SelectTrigger>
                                         <SelectContent>
@@ -2182,6 +2207,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                           </SelectItem>
                                           <SelectItem value="caminhao" className="text-xs">
                                             🚚 Caminhão
+                                          </SelectItem>
+                                          <SelectItem value="bicicleta" className="text-xs">
+                                            🚲 Bicicleta
                                           </SelectItem>
                                         </SelectContent>
                                       </Select>
@@ -2910,6 +2938,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       <SelectItem value="moto">🏍️ Moto (35 km/L)</SelectItem>
                       <SelectItem value="carro">🚗 Carro (12 km/L)</SelectItem>
                       <SelectItem value="caminhao">🚚 Caminhão (7 km/L)</SelectItem>
+                      <SelectItem value="bicicleta">🚲 Bicicleta</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

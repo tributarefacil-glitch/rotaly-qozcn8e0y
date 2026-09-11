@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T01:58:03.075Z",
+  "generatedAt": "2026-09-11T02:05:46.153Z",
   "collections": [
     {
       "name": "users",
@@ -63,7 +63,7 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["moto", "carro", "van", "caminhao"]
+          "selectValues": ["moto", "carro", "van", "caminhao", "bicycle", "bicicleta"]
         },
         {
           "name": "vehicle_model",

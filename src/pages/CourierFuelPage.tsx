@@ -384,12 +384,23 @@ export default function CourierFuelPage() {
                     </div>
 
                     <div className="text-right shrink-0">
-                      <p className="font-bold text-[#FF6B35] font-mono text-sm">
-                        - R$ {fuelCost.toFixed(2)}
-                      </p>
-                      <p className="text-[10px] text-slate-300 font-mono">
-                        {officialKm.toFixed(1)} km oficial
-                      </p>
+                      {vehicleCategory === 'bicicleta' ? (
+                        <>
+                          <p className="font-bold text-emerald-400 font-mono text-sm">
+                            {officialKm.toFixed(1)} km
+                          </p>
+                          <p className="text-[10px] text-slate-400">Sem combustível</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="font-bold text-[#FF6B35] font-mono text-sm">
+                            - R$ {fuelCost.toFixed(2)}
+                          </p>
+                          <p className="text-[10px] text-slate-300 font-mono">
+                            {officialKm.toFixed(1)} km oficial
+                          </p>
+                        </>
+                      )}
                       {deviationKm > 0 && (
                         <p className="text-[9px] text-rose-400 font-mono">
                           +{deviationKm.toFixed(1)} km desvios

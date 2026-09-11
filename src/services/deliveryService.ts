@@ -393,10 +393,11 @@ export const deliveryService = {
     } as AppSettingsRecord
   },
 
-  // Helper para normalizar qualquer veículo para a categoria oficial ('moto' | 'carro' | 'caminhao')
-  normalizeVehicleCategory(vehicleType?: string): 'moto' | 'carro' | 'caminhao' {
+  // Helper para normalizar qualquer veículo para a categoria oficial ('moto' | 'carro' | 'caminhao' | 'bicicleta')
+  normalizeVehicleCategory(vehicleType?: string): 'moto' | 'carro' | 'caminhao' | 'bicicleta' {
     if (!vehicleType) return 'moto'
     const lower = vehicleType.toLowerCase().trim()
+    if (lower === 'bicycle' || lower === 'bicicleta' || lower === 'bike') return 'bicicleta'
     if (lower === 'carro' || lower === 'car' || lower === 'van') return 'carro'
     if (lower === 'caminhao' || lower === 'caminhão' || lower === 'truck') return 'caminhao'
     return 'moto'
@@ -406,9 +407,21 @@ export const deliveryService = {
   getVehicleFuelParams(
     settings?: Partial<AppSettingsRecord> | null,
     vehicleType?: string,
-  ): { pricePerLiter: number; consumptionKml: number; category: 'moto' | 'carro' | 'caminhao' } {
+  ): {
+    pricePerLiter: number
+    consumptionKml: number
+    category: 'moto' | 'carro' | 'caminhao' | 'bicicleta'
+  } {
     const category = this.normalizeVehicleCategory(vehicleType)
     const baseFallbackPrice = settings?.fuel_price_per_liter || 5.59
+
+    if (category === 'bicicleta') {
+      return {
+        category: 'bicicleta',
+        pricePerLiter: 0,
+        consumptionKml: 0,
+      }
+    }
 
     if (category === 'carro') {
       return {
@@ -632,7 +645,11 @@ export const deliveryService = {
     settings?: Partial<AppSettingsRecord> | null,
     vehicleType?: string,
   ): number {
-    const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(settings, vehicleType)
+    const { pricePerLiter, consumptionKml, category } = this.getVehicleFuelParams(
+      settings,
+      vehicleType,
+    )
+    if (category === 'bicicleta' || consumptionKml <= 0) return 0
     return this.calculateFuelCost(distanceKm, pricePerLiter, consumptionKml)
   },
 

@@ -100,15 +100,17 @@ export default function CourierProfilePage() {
     navigate('/login')
   }
 
+  const vehicleCategory = deliveryService.normalizeVehicleCategory(user?.vehicle_type)
+
   const vehicleLabel =
     user?.vehicle_model ||
-    (user?.vehicle_type === 'carro' || user?.vehicle_type === 'car'
-      ? 'Carro'
-      : user?.vehicle_type === 'caminhao' || user?.vehicle_type === 'truck'
-        ? 'Caminhão'
-        : 'Moto')
-
-  const vehicleCategory = deliveryService.normalizeVehicleCategory(user?.vehicle_type)
+    (vehicleCategory === 'bicicleta'
+      ? 'Bicicleta'
+      : vehicleCategory === 'carro'
+        ? 'Carro'
+        : vehicleCategory === 'caminhao'
+          ? 'Caminhão'
+          : 'Moto')
 
   const statusMap = {
     active: {
@@ -167,7 +169,7 @@ export default function CourierProfilePage() {
                     variant="outline"
                     className="text-[9px] px-1.5 py-0 uppercase font-mono font-bold bg-[#0A1128] border-[#1E2B58] text-slate-300"
                   >
-                    {vehicleCategory}
+                    {vehicleCategory === 'bicicleta' ? '🚲 Bicicleta' : vehicleCategory}
                   </Badge>
                 </div>
               </div>
@@ -277,7 +279,7 @@ export default function CourierProfilePage() {
                 Tipo / Categoria
               </span>
               <p className="font-heading text-sm font-bold text-white capitalize mt-0.5">
-                {vehicleCategory}
+                {vehicleCategory === 'bicicleta' ? '🚲 Bicicleta' : vehicleCategory}
               </p>
             </div>
 

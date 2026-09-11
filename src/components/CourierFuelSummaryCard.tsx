@@ -38,13 +38,18 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
 }) => {
   const isPositive = metrics.balance >= 0
   const activeCourier = courier || metrics.courier
+  const isBicycle =
+    metrics.vehicleCategory === 'bicicleta' ||
+    deliveryService.normalizeVehicleCategory(activeCourier?.vehicle_type) === 'bicicleta'
   const vehicleLabel =
     activeCourier?.vehicle_model ||
-    (metrics.vehicleCategory === 'carro'
-      ? 'Carro'
-      : metrics.vehicleCategory === 'caminhao'
-        ? 'Caminhão'
-        : 'Moto')
+    (isBicycle
+      ? 'Bicicleta'
+      : metrics.vehicleCategory === 'carro'
+        ? 'Carro'
+        : metrics.vehicleCategory === 'caminhao'
+          ? 'Caminhão'
+          : 'Moto')
 
   return (
     <Card
@@ -77,7 +82,9 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
                   variant="outline"
                   className="text-[9px] px-1 py-0 uppercase font-mono font-bold shrink-0 ml-0.5"
                 >
-                  {deliveryService.normalizeVehicleCategory(activeCourier?.vehicle_type)}
+                  {isBicycle
+                    ? '🚲 Bicicleta'
+                    : deliveryService.normalizeVehicleCategory(activeCourier?.vehicle_type)}
                 </Badge>
               </p>
             </div>
@@ -141,13 +148,17 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           <div className="p-2.5 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
             <div className="flex items-center gap-1 text-amber-700 dark:text-amber-400 font-medium">
               <ArrowUpRight className="h-3.5 w-3.5 text-[#FF6B35]" />
-              <span>(-) Gasto Rota Oficial</span>
+              <span>{isBicycle ? 'Km Rodado (Sem Combustível)' : '(-) Gasto Rota Oficial'}</span>
             </div>
             <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm block mt-0.5">
-              R$ {metrics.totalSpent.toFixed(2)}
+              {isBicycle
+                ? `${metrics.totalOfficialKm.toFixed(1)} km`
+                : `R$ ${metrics.totalSpent.toFixed(2)}`}
             </span>
             <span className="text-[9px] text-slate-400 block mt-0.5">
-              {metrics.totalOfficialKm.toFixed(1)} km reais oficiais
+              {isBicycle
+                ? 'Telemetria GPS apurada'
+                : `${metrics.totalOfficialKm.toFixed(1)} km reais oficiais`}
             </span>
           </div>
         </div>
@@ -177,12 +188,19 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-200/60 dark:border-slate-800 text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-2">
             <Fuel className="h-3.5 w-3.5 text-[#FF6B35] shrink-0" />
             <div className="truncate">
-              <span>
-                R$ {metrics.pricePerLiter.toFixed(2)}/L • {metrics.consumptionKml.toFixed(1)} km/L ={' '}
-                <strong className="text-slate-700 dark:text-slate-300 font-mono">
-                  R$ {(metrics.pricePerLiter / (metrics.consumptionKml || 1)).toFixed(4)}/km
-                </strong>
-              </span>
+              {isBicycle ? (
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                  🚲 Bicicleta: sem custo de combustível. Telemetria GPS apura KM real rodado.
+                </span>
+              ) : (
+                <span>
+                  R$ {metrics.pricePerLiter.toFixed(2)}/L • {metrics.consumptionKml.toFixed(1)} km/L
+                  ={' '}
+                  <strong className="text-slate-700 dark:text-slate-300 font-mono">
+                    R$ {(metrics.pricePerLiter / (metrics.consumptionKml || 1)).toFixed(4)}/km
+                  </strong>
+                </span>
+              )}
             </div>
           </div>
         )}
