@@ -43,6 +43,7 @@ export default function Index() {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [loginError, setLoginError] = useState<string | null>(null)
 
   // Public Tracking Search state
   const [trackingCode, setTrackingCode] = useState('')
@@ -52,6 +53,7 @@ export default function Index() {
     setSelectedProfile(p)
     setEmail('')
     setPassword('')
+    setLoginError(null)
   }
 
   // Quick preset logins for easy demoing
@@ -63,6 +65,7 @@ export default function Index() {
     setEmail(cleanEmail)
     setPassword('Skip@Pass')
     setSelectedProfile(forcedRole)
+    setLoginError(null)
     try {
       setIsLoading(true)
       const loggedUser = await login(cleanEmail, 'Skip@Pass')
@@ -74,6 +77,7 @@ export default function Index() {
         err,
         'Falha ao autenticar com as credenciais rápidas. Verifique se o usuário e senha (Skip@Pass) estão corretos.',
       )
+      setLoginError(msg)
       toast.error(msg)
     } finally {
       setIsLoading(false)
@@ -82,28 +86,35 @@ export default function Index() {
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setLoginError(null)
     const trimmedEmail = email.trim().toLowerCase()
     if (!trimmedEmail || !password) {
-      toast.error('Preencha e-mail e senha para acessar.')
+      const msg = 'Preencha e-mail e senha para acessar.'
+      setLoginError(msg)
+      toast.error(msg)
       return
     }
 
     if (password.length < 8) {
-      toast.error('A senha deve ter pelo menos 8 caracteres.')
+      const msg = 'A senha deve ter pelo menos 8 caracteres.'
+      setLoginError(msg)
+      toast.error(msg)
       return
     }
 
     setIsLoading(true)
     try {
       const loggedUser = await login(trimmedEmail, password)
+      setLoginError(null)
       toast.success(`Bem-vindo, ${loggedUser.name || 'Usuário'}!`)
       redirectByRoleAndStatus(loggedUser.role || selectedProfile || 'seller', loggedUser.status)
     } catch (err: unknown) {
       console.error('Login error:', err)
       const msg = getErrorMessage(
         err,
-        'Credenciais inválidas. Verifique seu e-mail e senha cadastrados (mínimo 8 caracteres, padrão: Skip@Pass).',
+        'E-mail ou senha inválidos. Verifique suas credenciais de acesso.',
       )
+      setLoginError(msg)
       toast.error(msg)
     } finally {
       setIsLoading(false)
@@ -264,6 +275,18 @@ export default function Index() {
                   </CardHeader>
 
                   <CardContent className="space-y-4">
+                    {loginError && (
+                      <div className="p-3 rounded-xl border border-red-500/40 bg-red-500/10 text-red-200 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-500 text-white font-bold text-[11px] mt-0.5">
+                          !
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-semibold text-red-300">Falha ao entrar</p>
+                          <p className="text-slate-200 mt-0.5 leading-relaxed">{loginError}</p>
+                        </div>
+                      </div>
+                    )}
+
                     <form onSubmit={handleLoginSubmit} className="space-y-3.5">
                       <div className="space-y-1.5">
                         <Label className="text-xs font-bold text-[#1a1a1a]">E-mail</Label>
