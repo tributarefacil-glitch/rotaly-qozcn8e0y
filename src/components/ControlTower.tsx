@@ -74,6 +74,7 @@ import {
   loadGoogleMapsScript,
   isGoogleMapsAuthError,
   onGoogleMapsAuthError,
+  reverseGeocodeCoordinates,
 } from '@/lib/googleMaps'
 import { useToast } from '@/hooks/use-toast'
 import {
@@ -224,6 +225,11 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     courierName: string
     timestamp: Date
   } | null>(null)
+
+  // Estado para dispensar banners temporários no mapa
+  const [isDeviationBannerDismissed, setIsDeviationBannerDismissed] = useState(false)
+  const [isStopBannerDismissed, setIsStopBannerDismissed] = useState(false)
+  const [isLegendExpanded, setIsLegendExpanded] = useState(false)
 
   // Retry maps loading
   const handleRetryMaps = () => {
@@ -901,9 +907,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         speed: item.speed,
         courier_name: courierName,
         vehicle_type: item.vehicle,
+        isDeviated: routeInfo?.isDeviated,
+        deviationMeters: routeInfo?.deviationMeters,
+        isUnexpectedStop: routeInfo?.isUnexpectedStop,
+        etaMinutes: routeInfo?.etaMinutes,
       })
     })
-
     // 2. Destinos de entregas em trânsito e pendentes (marcador laranja com nome e número de sequência)
     todayOrders
       .filter((o) => o.status === 'in_transit' || o.status === 'pending')
@@ -1151,13 +1160,22 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     }
 
     const makeNativeCustomerSvg = (customerName?: string, seq?: number, isTransit = false) => {
-      const generated = makeCustomerSvgIcon(customerName, seq, isTransit, 110, 48)
+      // Pin compacto sem texto aberto para evitar sobreposição caótica de etiquetas
+      const generated = makeCustomerSvgIcon(customerName, seq, isTransit, 72, 42, undefined, false)
       return {
         url: generated.url,
-        scaledSize: new win.google.maps.Size(110, 48),
+        scaledSize: new win.google.maps.Size(
+          generated.scaledSize.width,
+          generated.scaledSize.height,
+        ),
         anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
       }
     }
+
+    // InfoWindow reutilizável para hover nos marcadores do Google Maps nativo
+    const hoverInfoWindow = new win.google.maps.InfoWindow({
+      disableAutoPan: true,
+    })
 
     if (mapDisplayMode === 'delivered') {
       // Pins: Apenas entregas concluídas ('order_delivered') com pin verde
@@ -1175,25 +1193,52 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               position: destPos,
               map,
               title: `✓ ${seqText}Entregue: ${cust.name || 'Cliente'} (${order.tracking_code})`,
-              // pin verde #10B981 gerado via makeCustomerSvgIcon com deliveryStatus === 'delivered'
+              // pin verde #10B981 gerado via makeCustomerSvgIcon compacto
               icon: (() => {
                 const generated = makeCustomerSvgIcon(
                   cust.name,
                   order.sequence,
                   false,
-                  110,
-                  48,
-                  'delivered',
+                  72,
+                  42,
+                  '#10B981',
+                  false,
                 )
                 return {
                   url: generated.url,
-                  scaledSize: new win.google.maps.Size(110, 48),
+                  scaledSize: new win.google.maps.Size(
+                    generated.scaledSize.width,
+                    generated.scaledSize.height,
+                  ),
                   anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
                 }
               })(),
             })
 
+            // Hover: exibir tooltip compacto com endereço de entrega e status
+            destMarker.addListener('mouseover', () => {
+              const html = `
+                <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
+                    <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
+                    ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #dcfce7; color: #15803d; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+                  </div>
+                  <div style="font-size: 10px; color: #15803d; font-weight: 700; margin-bottom: 3px;">✓ Entregue (${order.tracking_code})</div>
+                  <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                    📍 ${cust.address || cust.street || `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}`}
+                  </div>
+                </div>
+              `
+              hoverInfoWindow.setContent(html)
+              hoverInfoWindow.open(map, destMarker)
+            })
+
+            destMarker.addListener('mouseout', () => {
+              hoverInfoWindow.close()
+            })
+
             destMarker.addListener('click', () => {
+              hoverInfoWindow.close()
               handleOpenOrderDetails(order)
             })
 
@@ -1228,15 +1273,74 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
         const vehicleLabel = getVehicleLabel(item.vehicle)
         const vehicleEmoji = getVehicleEmoji(item.vehicle)
+        const courierName = item.courier.name || item.courier.email
 
         const courierMarker = new win.google.maps.Marker({
           position,
           map,
-          title: `${vehicleEmoji} ${statusTag} ${item.courier.name || item.courier.email} (${vehicleLabel})`,
+          title: `${vehicleEmoji} ${statusTag} ${courierName} (${vehicleLabel})`,
           icon: makeNativeCourierSvg(item.vehicle, pinColor),
         })
 
+        // Tooltip de endereço em tempo real ao passar o mouse no entregador (Requisito 1)
+        courierMarker.addListener('mouseover', async () => {
+          const fallbackCoords = `${item.lat.toFixed(4)}, ${item.lng.toFixed(4)}`
+
+          const buildCourierTooltipContent = (addressText: string) => `
+            <div style="padding: 7px 9px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 250px; line-height: 1.35;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
+                <div style="display: flex; align-items: center; gap: 5px;">
+                  <span style="font-size: 14px;">${vehicleEmoji}</span>
+                  <strong style="font-size: 12px; color: #0f172a; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;">${courierName}</strong>
+                </div>
+                <span style="font-size: 9px; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 1px 5px; border-radius: 4px;">${vehicleLabel}</span>
+              </div>
+
+              ${
+                isDeviated && routeInfo?.deviationMeters
+                  ? `
+                <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 4px 6px; margin-bottom: 5px; display: flex; align-items: center; gap: 4px;">
+                  <span style="font-size: 10px;">⚠️</span>
+                  <span style="font-size: 11px; font-weight: 800; color: #dc2626;">Desvio: ${Math.round(routeInfo.deviationMeters)} m</span>
+                </div>
+              `
+                  : ''
+              }
+
+              <div style="background-color: #f8fafc; border-radius: 6px; padding: 5px 7px; margin-top: 3px; border: 1px solid #e2e8f0;">
+                <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; color: #2563eb; display: block; margin-bottom: 2px;">
+                  📍 Endereço Atual em Tempo Real:
+                </span>
+                <span style="font-size: 10.5px; color: #1e293b; font-weight: 500; display: block; line-height: 1.3;">
+                  ${addressText}
+                </span>
+              </div>
+
+              ${item.speed ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${item.speed} km/h</p>` : ''}
+            </div>
+          `
+
+          // Exibe inicialmente com carregando/fallback se demorar
+          hoverInfoWindow.setContent(buildCourierTooltipContent('Localizando endereço...'))
+          hoverInfoWindow.open(map, courierMarker)
+
+          try {
+            const parsed = await reverseGeocodeCoordinates(item.lat, item.lng, {
+              toleranceMeters: 100,
+            })
+            const fullAddress = parsed?.formattedAddress || parsed?.street || fallbackCoords
+            hoverInfoWindow.setContent(buildCourierTooltipContent(fullAddress))
+          } catch (e) {
+            hoverInfoWindow.setContent(buildCourierTooltipContent(fallbackCoords))
+          }
+        })
+
+        courierMarker.addListener('mouseout', () => {
+          hoverInfoWindow.close()
+        })
+
         courierMarker.addListener('click', () => {
+          hoverInfoWindow.close()
           setSelectedCourier(item.courier)
         })
 
@@ -1265,7 +1369,33 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               icon: makeNativeCustomerSvg(cust.name, order.sequence, isTransit),
             })
 
+            // Hover: tooltip compacto de cliente
+            destMarker.addListener('mouseover', () => {
+              const html = `
+                <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
+                    <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
+                    ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #ffedd5; color: #c2410c; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+                  </div>
+                  <div style="font-size: 10px; color: ${isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
+                    ${isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
+                  </div>
+                  <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                    📍 ${cust.address || cust.street || `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}`}
+                  </div>
+                  ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
+                </div>
+              `
+              hoverInfoWindow.setContent(html)
+              hoverInfoWindow.open(map, destMarker)
+            })
+
+            destMarker.addListener('mouseout', () => {
+              hoverInfoWindow.close()
+            })
+
             destMarker.addListener('click', () => {
+              hoverInfoWindow.close()
               handleOpenOrderDetails(order)
             })
 
@@ -2243,79 +2373,108 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                   </div>
 
                   {/* Painel de status no canto superior esquerdo do Google Maps */}
-                  <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5">
-                    <div className="bg-[#0A1128]/95 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
+                  <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5 max-w-[280px]">
+                    <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
                       <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
-                      <span className="font-semibold text-white">
+                      <span className="font-semibold text-white truncate text-[11px]">
                         {mapDisplayMode === 'delivered'
                           ? `${metrics.delivered} entregas concluídas`
-                          : `${activeRouteCouriers.length} entregadores com rota iniciada`}
+                          : `${activeRouteCouriers.length} entregadores em rota`}
                       </span>
                     </div>
 
-                    {/* Alertas ativos na Torre: Desvios ou Paradas detectadas (apenas em modo in_transit) */}
+                    {/* Alertas ativos na Torre: Desvios ou Paradas detectadas (dispensáveis) */}
                     {mapDisplayMode === 'in_transit' &&
+                      !isDeviationBannerDismissed &&
                       activeRoutesData.some((r) => r.isDeviated) && (
-                        <div className="bg-rose-950/90 backdrop-blur-sm px-2.5 py-1 rounded-xl border border-rose-500/60 shadow-md text-[11px] font-bold text-rose-300 flex items-center gap-1.5 animate-pulse">
-                          <AlertOctagon className="h-3.5 w-3.5 text-rose-400" />
-                          <span>
-                            {activeRoutesData.filter((r) => r.isDeviated).length} desvio(s) de rota
-                            no mapa
-                          </span>
+                        <div className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/60 shadow-md text-[10.5px] font-bold text-rose-300 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <AlertOctagon className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                            <span className="truncate">
+                              {activeRoutesData.filter((r) => r.isDeviated).length} desvio(s) de
+                              rota
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsDeviationBannerDismissed(true)}
+                            className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
+                            title="Dispensar alerta"
+                          >
+                            ✕
+                          </button>
                         </div>
                       )}
 
                     {mapDisplayMode === 'in_transit' &&
+                      !isStopBannerDismissed &&
                       activeRoutesData.some((r) => r.isUnexpectedStop) && (
-                        <div className="bg-amber-950/90 backdrop-blur-sm px-2.5 py-1 rounded-xl border border-amber-500/60 shadow-md text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                          <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-                          <span>
-                            {activeRoutesData.filter((r) => r.isUnexpectedStop).length} parada(s)
-                            fora do local
-                          </span>
+                        <div className="bg-amber-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-amber-500/60 shadow-md text-[10.5px] font-bold text-amber-300 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                            <span className="truncate">
+                              {activeRoutesData.filter((r) => r.isUnexpectedStop).length} parada(s)
+                              fora
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsStopBannerDismissed(true)}
+                            className="text-amber-400 hover:text-white text-xs px-1 hover:bg-amber-900/60 rounded"
+                            title="Dispensar alerta"
+                          >
+                            ✕
+                          </button>
                         </div>
                       )}
                   </div>
 
-                  {/* Legenda explicativa no rodapé do Google Maps nativo */}
-                  <div className="absolute bottom-3 left-3 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-3 py-2 rounded-xl border border-[#1E2B58] shadow-xl text-[11px] text-slate-200 flex flex-wrap items-center gap-3 font-sans">
+                  {/* Legenda explicativa enxuta e recolhível no rodapé do Google Maps nativo */}
+                  <div className="absolute bottom-2.5 left-2.5 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-xl text-[10px] text-slate-200 flex items-center gap-2 font-sans">
                     {mapDisplayMode === 'delivered' ? (
                       <>
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <span className="h-2.5 w-2.5 rounded-full bg-[#10B981] inline-block shadow-sm" />
-                          <span className="text-emerald-400 font-bold">Ponto Verde:</span> Entrega
-                          Concluída (#10B981)
+                        <span className="flex items-center gap-1 font-medium">
+                          <span className="h-2 w-2 rounded-full bg-[#10B981] inline-block shadow-sm" />
+                          <span className="text-emerald-400 font-bold">Entregue</span>
                         </span>
-                        <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
-                          <span className="font-mono text-emerald-300 font-bold">
-                            Total: {metrics.delivered} concluídas
-                          </span>
+                        <span className="border-l border-slate-700/80 pl-2 text-slate-400 font-mono text-[9.5px]">
+                          Total: {metrics.delivered}
                         </span>
                       </>
                     ) : (
                       <>
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <span className="h-2 w-4 rounded-full bg-blue-600 inline-block shadow-sm" />
-                          <span className="text-blue-300 font-bold">Linha Azul:</span> Rota Real
-                          Indicada
-                        </span>
-                        <span className="flex items-center gap-1.5 font-medium">
-                          <span className="h-2 w-4 rounded-full bg-rose-500 inline-block shadow-sm" />
-                          <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio
-                          &gt;600m
-                        </span>
-                        <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
-                          <span className="text-xs">🛵 🚗 🚛 🚲</span>
-                          <span className="font-medium text-slate-300">Veículo (Entregador)</span>
-                        </span>
-                        <span className="flex items-center gap-1.5 border-l border-slate-700/80 pl-2.5">
-                          <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-bold text-white">
-                            1
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center gap-1 font-medium text-blue-300">
+                            <span className="h-1.5 w-3 rounded-full bg-blue-600 inline-block" />
+                            Rota
                           </span>
-                          <span className="font-medium text-slate-300">
-                            Ordem de Entrega &amp; Nome Visível
+                          <span className="flex items-center gap-1 font-medium text-rose-400 border-l border-slate-700/80 pl-2">
+                            <span className="h-1.5 w-3 rounded-full bg-rose-500 inline-block" />
+                            Desvio &gt;600m
                           </span>
-                        </span>
+                          <span className="border-l border-slate-700/80 pl-2 text-slate-300 flex items-center gap-1">
+                            <span>🛵/🚗</span>
+                            <span>Entregador</span>
+                          </span>
+                        </div>
+
+                        {/* Botão de expansão para ver detalhes da legenda se desejado */}
+                        <button
+                          type="button"
+                          onClick={() => setIsLegendExpanded(!isLegendExpanded)}
+                          className="ml-1 text-slate-400 hover:text-white text-[9px] underline focus:outline-none"
+                        >
+                          {isLegendExpanded ? 'Menos' : 'Mais'}
+                        </button>
+
+                        {isLegendExpanded && (
+                          <span className="border-l border-slate-700/80 pl-2 text-slate-400 flex items-center gap-1">
+                            <span className="flex h-3 w-3 items-center justify-center rounded-full bg-[#FF6B35] text-[8px] font-bold text-white">
+                              1
+                            </span>
+                            <span>Parada</span>
+                          </span>
+                        )}
                       </>
                     )}
                   </div>
@@ -2361,6 +2520,62 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     </Button>
                   </div>
 
+                  {/* Status e avisos no canto superior esquerdo também no Canvas vetorial */}
+                  <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-[280px] pointer-events-auto">
+                    <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
+                      <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
+                      <span className="font-semibold text-white truncate text-[11px]">
+                        {mapDisplayMode === 'delivered'
+                          ? `${metrics.delivered} entregas concluídas`
+                          : `${activeRouteCouriers.length} entregadores em rota`}
+                      </span>
+                    </div>
+
+                    {mapDisplayMode === 'in_transit' &&
+                      !isDeviationBannerDismissed &&
+                      activeRoutesData.some((r) => r.isDeviated) && (
+                        <div className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/60 shadow-md text-[10.5px] font-bold text-rose-300 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <AlertOctagon className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                            <span className="truncate">
+                              {activeRoutesData.filter((r) => r.isDeviated).length} desvio(s) de
+                              rota
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsDeviationBannerDismissed(true)}
+                            className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
+                            title="Dispensar alerta"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
+
+                    {mapDisplayMode === 'in_transit' &&
+                      !isStopBannerDismissed &&
+                      activeRoutesData.some((r) => r.isUnexpectedStop) && (
+                        <div className="bg-amber-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-amber-500/60 shadow-md text-[10.5px] font-bold text-amber-300 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                            <span className="truncate">
+                              {activeRoutesData.filter((r) => r.isUnexpectedStop).length} parada(s)
+                              fora
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setIsStopBannerDismissed(true)}
+                            className="text-amber-400 hover:text-white text-xs px-1 hover:bg-amber-900/60 rounded"
+                            title="Dispensar alerta"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
+                  </div>
+
                   {/* Canvas vetorial de contingência idêntico ao LiveMap.tsx com marcadores interativos e rotas viárias */}
                   <LiveMap
                     markers={controlTowerMapMarkers}
@@ -2395,18 +2610,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     }}
                     customLegend={
                       mapDisplayMode === 'delivered' ? (
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-200">
-                          <div className="flex items-center gap-1.5">
-                            <span className="h-2.5 w-2.5 rounded-full bg-[#10B981] inline-block shadow-sm"></span>
-                            <span className="font-semibold text-emerald-400">
-                              Ponto Verde: Entrega Concluída (#10B981)
-                            </span>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-200">
+                          <div className="flex items-center gap-1">
+                            <span className="h-2 w-2 rounded-full bg-[#10B981] inline-block shadow-sm"></span>
+                            <span className="font-semibold text-emerald-400">Entregue</span>
                           </div>
-                          <div className="flex items-center gap-1.5 border-l border-slate-700 pl-2.5 text-slate-400">
-                            <span>Total de entregas finalizadas:</span>
-                            <span className="font-mono text-emerald-300 font-bold">
-                              {metrics.delivered}
-                            </span>
+                          <div className="border-l border-slate-700 pl-2 text-slate-400 font-mono text-[9.5px]">
+                            Total: {metrics.delivered}
                           </div>
                         </div>
                       ) : undefined

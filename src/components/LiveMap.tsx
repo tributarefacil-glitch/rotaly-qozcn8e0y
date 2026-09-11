@@ -36,6 +36,11 @@ export interface MapMarkerItem {
   courier_name?: string
   vehicle_type?: string
   delivery_sequence?: number
+  // Campos enriquecidos para exibição em hover / telemetria de entregador
+  isDeviated?: boolean
+  deviationMeters?: number
+  isUnexpectedStop?: boolean
+  etaMinutes?: number
 }
 
 export function getVehicleEmoji(type?: string): string {
@@ -86,36 +91,39 @@ export function makeCustomerSvgIcon(
   customerName?: string,
   seq?: number,
   isTransit = false,
-  width = 110,
-  height = 48,
+  width = 72,
+  height = 42,
   pinColorOverride?: string,
+  showNameLabel = false,
 ) {
   const pinColor = pinColorOverride || (isTransit ? '#FF6B35' : '#475569')
   const cleanName = (customerName || '').trim()
-  const hasName = cleanName.length > 0
+  const hasName = showNameLabel && cleanName.length > 0
   const hasSeq = typeof seq === 'number' && seq > 0
-  const centerX = Math.round(width / 2)
+  const effectiveWidth = hasName ? Math.max(width, 96) : 34
+  const effectiveHeight = hasName ? height : 34
+  const centerX = Math.round(effectiveWidth / 2)
   const pinLeft = centerX - 11 // pin is 22px wide
 
-  // Truncar nome com no máximo 14 caracteres para não poluir nem sobrepor outros pins
-  const displayName = cleanName.length > 14 ? cleanName.slice(0, 13) + '…' : cleanName
+  // Truncar nome com no máximo 12 caracteres para não poluir nem sobrepor outros pins
+  const displayName = cleanName.length > 12 ? cleanName.slice(0, 11) + '…' : cleanName
 
-  // SVG compacto com tipografia reduzida (8px) e caixa de texto de apenas 13px de altura
+  // SVG compacto com tipografia reduzida e pin focado no badge numérico da sequência
   const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <svg xmlns="http://www.w3.org/2000/svg" width="${effectiveWidth}" height="${effectiveHeight}" viewBox="0 0 ${effectiveWidth} ${effectiveHeight}">
       <defs>
-        <filter id="pin-shadow-${width}" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.6"/>
+        <filter id="pin-shadow-${effectiveWidth}" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-color="#000" flood-opacity="0.6"/>
         </filter>
       </defs>
 
-      <!-- Label de Nome do Cliente no topo compacta -->
+      <!-- Label de Nome do Cliente no topo compacta (apenas quando solicitado/hover) -->
       ${
         hasName
           ? `
-        <g filter="url(#pin-shadow-${width})">
-          <rect x="4" y="1" width="${width - 8}" height="13" rx="3" fill="#0A1128" fill-opacity="0.94" stroke="#1E2B58" stroke-width="0.8"/>
-          <text x="${centerX}" y="10.5" font-size="8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
+        <g filter="url(#pin-shadow-${effectiveWidth})">
+          <rect x="2" y="1" width="${effectiveWidth - 4}" height="12" rx="3" fill="#0A1128" fill-opacity="0.95" stroke="#1E2B58" stroke-width="0.8"/>
+          <text x="${centerX}" y="9.5" font-size="7.5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
             ${displayName}
           </text>
         </g>
@@ -124,10 +132,10 @@ export function makeCustomerSvgIcon(
       }
 
       <!-- Pin corpo centralizado em X=${centerX} (escala 22x28) -->
-      <g transform="translate(${pinLeft}, ${hasName ? 16 : 4})" filter="url(#pin-shadow-${width})">
+      <g transform="translate(${pinLeft}, ${hasName ? 14 : 2})" filter="url(#pin-shadow-${effectiveWidth})">
         <path d="M11 0 C4.92 0 0 4.92 0 11 C0 19.25 11 28 11 28 C11 28 22 19.25 22 11 C22 4.92 17.08 0 11 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="1.5"/>
         
-        <!-- Círculo interno ou número da sequência -->
+        <!-- Círculo interno com número da sequência sempre em destaque -->
         ${
           hasSeq
             ? `
@@ -144,8 +152,8 @@ export function makeCustomerSvgIcon(
 
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-    scaledSize: { width, height },
-    anchor: { x: centerX, y: hasName ? height - 4 : height - 16 },
+    scaledSize: { width: effectiveWidth, height: effectiveHeight },
+    anchor: { x: centerX, y: hasName ? effectiveHeight - 2 : effectiveHeight - 4 },
   }
 }
 
@@ -342,32 +350,79 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const trackUrl = item.tracking_code ? `${origin}/track/${item.tracking_code}` : ''
     const addressDisplay = address || getMarkerAddress(item)
+    const isCourier = item.type === 'courier'
+    const vehicleEmoji = getVehicleEmoji(item.vehicle_type)
+    const vehicleLabel = getVehicleLabel(item.vehicle_type)
+
+    // Se for entregador, formatar tooltip compacto com nome, veículo, endereço atual e alerta de desvio
+    if (isCourier) {
+      const courierDisplayName = item.courier_name || item.title
+      const hasDeviation = item.isDeviated && typeof item.deviationMeters === 'number'
+
+      return `
+        <div style="padding: 8px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 250px; line-height: 1.35;">
+          <div style="display: flex; items-center; justify-content: space-between; gap: 6px; margin-bottom: 4px;">
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <span style="font-size: 14px;">${vehicleEmoji}</span>
+              <strong style="font-size: 12px; color: #0f172a; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;">${courierDisplayName}</strong>
+            </div>
+            <span style="font-size: 9px; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 1px 5px; border-radius: 4px;">${vehicleLabel}</span>
+          </div>
+
+          ${
+            hasDeviation
+              ? `
+            <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 4px 6px; margin-bottom: 5px; display: flex; align-items: center; gap: 4px;">
+              <span style="font-size: 10px;">⚠️</span>
+              <span style="font-size: 11px; font-weight: 800; color: #dc2626;">Desvio: ${Math.round(item.deviationMeters || 0)} m</span>
+            </div>
+          `
+              : ''
+          }
+
+          <div style="background-color: #f8fafc; border-radius: 6px; padding: 5px 7px; margin-top: 3px; border: 1px solid #e2e8f0;">
+            <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; color: #2563eb; display: block; margin-bottom: 2px;">
+              📍 Endereço Atual em Tempo Real:
+            </span>
+            <span style="font-size: 10.5px; color: #1e293b; font-weight: 500; display: block; line-height: 1.3;">
+              ${addressDisplay || 'Localizando endereço...'}
+            </span>
+          </div>
+
+          ${item.speed ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${item.speed} km/h</p>` : ''}
+        </div>
+      `
+    }
 
     return `
-      <div style="padding: 10px 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 290px; line-height: 1.4;">
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px;">
-          <strong style="font-size: 13px; color: #0f172a; font-weight: 700;">${item.title}</strong>
+      <div style="padding: 8px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 250px; line-height: 1.35;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 3px;">
+          <strong style="font-size: 12px; color: #0f172a; font-weight: 700; line-height: 1.2;">${item.customer_name || item.title}</strong>
+          ${
+            item.delivery_sequence
+              ? `<span style="font-size: 9px; font-weight: 800; background: #ffedd5; color: #c2410c; padding: 1px 5px; border-radius: 4px;">#${item.delivery_sequence}</span>`
+              : ''
+          }
         </div>
-        ${item.subtitle ? `<p style="font-size: 11px; margin: 2px 0 6px; color: #475569;">${item.subtitle}</p>` : ''}
+        ${item.subtitle ? `<p style="font-size: 10px; margin: 1px 0 4px; color: #64748b; line-height: 1.25;">${item.subtitle}</p>` : ''}
         
-        <div style="background-color: #f1f5f9; border-radius: 6px; padding: 6px 8px; margin: 6px 0; border: 1px solid #e2e8f0;">
-          <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: #0052cc; display: block; margin-bottom: 2px;">
-            📍 Endereço Atual em Tempo Real:
+        <div style="background-color: #f8fafc; border-radius: 6px; padding: 5px 7px; margin: 4px 0; border: 1px solid #e2e8f0;">
+          <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; color: #2563eb; display: block; margin-bottom: 2px;">
+            📍 Endereço de Entrega:
           </span>
-          <span style="font-size: 11px; color: #1e293b; font-weight: 500; display: block;">
+          <span style="font-size: 10.5px; color: #1e293b; font-weight: 500; display: block; line-height: 1.3;">
             ${addressDisplay || 'Resolvendo endereço...'}
           </span>
         </div>
 
-        ${item.speed ? `<p style="font-size: 11px; margin: 4px 0 0; color: #7c3aed; font-weight: 600;">🚀 Velocidade: ${item.speed} km/h</p>` : ''}
-        ${item.estimated_arrival ? `<p style="font-size: 11px; margin: 4px 0 0; color: #0284c7; font-weight: 500;">⏱️ Previsão: ${new Date(item.estimated_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>` : ''}
+        ${item.estimated_arrival ? `<p style="font-size: 10px; margin: 3px 0 0; color: #0284c7; font-weight: 500;">⏱️ Previsão: ${new Date(item.estimated_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>` : ''}
         ${
           item.tracking_code
             ? `
-          <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 4px;">
-            <span style="font-size: 10px; font-family: monospace; color: #64748b; font-weight: bold;">Código: ${item.tracking_code}</span>
-            <a href="${trackUrl}" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #2563eb; font-weight: bold; text-decoration: none;">
-              Abrir Rastreio Público ↗
+          <div style="margin-top: 6px; padding-top: 4px; border-top: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 9.5px; font-family: monospace; color: #64748b; font-weight: bold;">${item.tracking_code}</span>
+            <a href="${trackUrl}" target="_blank" rel="noopener noreferrer" style="font-size: 10px; color: #2563eb; font-weight: bold; text-decoration: none;">
+              Rastreio ↗
             </a>
           </div>
         `
@@ -453,19 +508,29 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
       let markerIcon: any = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
       if (item.type === 'courier') {
-        markerIcon = makeCourierSvgIcon(item.vehicle_type)
+        const pinColor = item.isDeviated ? '#EF4444' : item.isUnexpectedStop ? '#F59E0B' : '#0052CC'
+        markerIcon = makeCourierSvgIcon(item.vehicle_type, pinColor)
       } else if (item.type === 'order_delivered') {
         markerIcon = makeCustomerSvgIcon(
           item.customer_name,
           item.delivery_sequence,
           false,
-          110,
-          48,
+          72,
+          42,
           '#10B981',
+          false,
         )
       } else {
         const isTransit = item.type === 'order_transit'
-        markerIcon = makeCustomerSvgIcon(item.customer_name, item.delivery_sequence, isTransit)
+        markerIcon = makeCustomerSvgIcon(
+          item.customer_name,
+          item.delivery_sequence,
+          isTransit,
+          72,
+          42,
+          undefined,
+          false,
+        )
       }
 
       const marker = new google.maps.Marker({
@@ -675,28 +740,32 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                     <span className="absolute -inset-2 rounded-full animate-ping bg-[#FF6B35]/30 opacity-75 pointer-events-none" />
                   )}
 
-                  {/* Nome do cliente visível acima do pin compacto */}
+                  {/* Nome do cliente visível apenas no hover/seleção para não poluir o mapa */}
                   {m.type !== 'courier' && m.customer_name && (
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-0.5 px-1.5 py-0.5 rounded bg-[#0A1128]/95 border border-[#1E2B58] text-[8px] font-bold text-white whitespace-nowrap shadow-sm pointer-events-none max-w-[90px] truncate">
+                    <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-1.5 py-0.5 rounded bg-[#0A1128]/95 border border-[#1E2B58] text-[8px] font-bold text-white whitespace-nowrap shadow-md pointer-events-none max-w-[120px] truncate z-30">
                       {m.customer_name}
                     </div>
                   )}
 
                   {/* Marker Pin Icon: com veículo para entregador e badge de ordem para cliente */}
                   <div className="relative">
-                    {/* Badge numérico de ordem de entrega (Requisito 3) */}
+                    {/* Badge numérico de ordem de entrega sempre visível e limpo */}
                     {m.type !== 'courier' &&
                       typeof m.delivery_sequence === 'number' &&
                       m.delivery_sequence > 0 && (
-                        <span className="absolute -top-2 -right-2 z-10 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-white text-[#FF6B35] text-[10px] font-black shadow border border-[#FF6B35]">
+                        <span className="absolute -top-1.5 -right-1.5 z-10 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-white text-[#FF6B35] text-[9.5px] font-black shadow border border-[#FF6B35]">
                           {m.delivery_sequence}
                         </span>
                       )}
 
                     <div
-                      className={`flex items-center justify-center p-2 rounded-full shadow-brand border-2 transition-all ${
+                      className={`flex items-center justify-center p-1.5 rounded-full shadow-brand border-2 transition-all ${
                         m.type === 'courier'
-                          ? 'bg-[#0052CC] border-blue-200 text-white shadow-brand-hover ring-2 ring-[#0052CC]/50 text-sm'
+                          ? m.isDeviated
+                            ? 'bg-[#EF4444] border-red-200 text-white ring-2 ring-red-500/50 text-sm'
+                            : m.isUnexpectedStop
+                              ? 'bg-[#F59E0B] border-amber-200 text-white ring-2 ring-amber-500/50 text-sm'
+                              : 'bg-[#0052CC] border-blue-200 text-white ring-2 ring-[#0052CC]/50 text-sm'
                           : m.type === 'order_transit'
                             ? 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
                             : m.type === 'order_delivered'
@@ -709,119 +778,136 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                           {getVehicleEmoji(m.vehicle_type)}
                         </span>
                       ) : (
-                        <MapPin className="h-4 w-4" />
+                        <MapPin className="h-3.5 w-3.5" />
                       )}
                     </div>
                   </div>
 
-                  {/* Tooltip & Interactive Popover for Customer / Order Marker (Hover & Click) */}
+                  {/* Tooltip & Interactive Popover for Customer / Courier Marker (Hover & Click) */}
                   <div
                     onClick={(e) => e.stopPropagation()}
-                    className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex-col items-center min-w-[220px] max-w-[280px] z-50 transition-all ${
+                    className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex-col items-center min-w-[210px] max-w-[260px] z-50 transition-all ${
                       activePopupMarker?.id === m.id
                         ? 'flex pointer-events-auto opacity-100 scale-100'
                         : 'hidden group-hover:flex pointer-events-auto opacity-100'
                     }`}
                   >
-                    <div className="bg-slate-900/98 text-white text-xs rounded-xl p-3 shadow-2xl border border-slate-700 w-full space-y-2 backdrop-blur-md">
-                      <div className="flex items-start justify-between gap-1.5 border-b border-slate-800 pb-1.5">
+                    <div className="bg-slate-900/98 text-white text-xs rounded-xl p-2.5 shadow-2xl border border-slate-700 w-full space-y-1.5 backdrop-blur-md">
+                      {m.type === 'courier' ? (
+                        /* Tooltip de Entregador: Nome, Veículo, Alerta de Desvio e Endereço Atual */
                         <div>
-                          <p className="font-bold text-white text-xs leading-snug">{m.title}</p>
-                          {m.subtitle && (
-                            <p className="text-slate-400 text-[10px] leading-tight mt-0.5 line-clamp-2 font-medium">
-                              {m.subtitle}
-                            </p>
-                          )}
-                        </div>
-                        {m.type !== 'courier' && (
-                          <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
-                              m.type === 'order_transit'
-                                ? 'bg-amber-500/20 text-amber-300'
-                                : m.type === 'order_delivered'
-                                  ? 'bg-emerald-500/20 text-emerald-300'
-                                  : 'bg-blue-500/20 text-blue-300'
-                            }`}
-                          >
-                            {m.type === 'order_transit'
-                              ? 'Em Rota'
-                              : m.type === 'order_delivered'
-                                ? 'Entregue'
-                                : 'Pendente'}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Endereço em tempo real (Hover/Tooltip) */}
-                      <div className="bg-slate-950/80 p-2 rounded-lg border border-slate-800 text-[11px] space-y-1">
-                        <div className="flex items-center gap-1 text-[10px] font-bold text-[#60A5FA] uppercase tracking-wider">
-                          <MapPin className="h-3 w-3 shrink-0 text-[#60A5FA]" />
-                          <span>Endereço Atual em Tempo Real</span>
-                        </div>
-                        <p className="text-slate-200 text-[11px] leading-relaxed break-words font-sans">
-                          {getMarkerAddress(m) || 'Localizando endereço...'}
-                        </p>
-                      </div>
-
-                      {m.speed && (
-                        <p className="text-purple-400 text-[11px] font-semibold flex items-center gap-1">
-                          🚀 {m.speed} km/h
-                        </p>
-                      )}
-
-                      {/* ETA Time if available */}
-                      {m.estimated_arrival && (
-                        <div className="flex items-center gap-1 text-[11px] text-sky-300 bg-sky-950/50 p-1.5 rounded-lg border border-sky-800/60">
-                          <Clock className="h-3.5 w-3.5 shrink-0 text-sky-400" />
-                          <span>
-                            Previsão:{' '}
-                            {new Date(m.estimated_arrival).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Public Tracking Link & Copy Action */}
-                      {m.tracking_code && (
-                        <div className="pt-1 space-y-1.5">
-                          <div className="flex items-center justify-between text-[10px] text-slate-400">
-                            <span className="font-mono font-bold text-slate-300">
-                              {m.tracking_code}
+                          <div className="flex items-center justify-between gap-1.5 border-b border-slate-800 pb-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm">{getVehicleEmoji(m.vehicle_type)}</span>
+                              <span className="font-bold text-white text-xs truncate max-w-[130px]">
+                                {m.courier_name || m.title}
+                              </span>
+                            </div>
+                            <span className="text-[9px] font-bold bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">
+                              {getVehicleLabel(m.vehicle_type)}
                             </span>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              type="button"
-                              onClick={(e) => copyTrackingLink(m.tracking_code!, e)}
-                              className="flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shadow transition active:scale-95"
-                              title="Copiar link de rastreamento para enviar ao cliente"
-                            >
-                              {copiedCode === m.tracking_code ? (
-                                <>
-                                  <Check className="h-3 w-3 text-emerald-300" />
-                                  <span>Copiado!</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="h-3 w-3" />
-                                  <span>Copiar Link</span>
-                                </>
-                              )}
-                            </button>
+                          {m.isDeviated && typeof m.deviationMeters === 'number' && (
+                            <div className="mt-1.5 bg-rose-950/80 border border-rose-500/60 rounded-lg px-2 py-1 flex items-center gap-1.5 text-rose-300 font-bold text-[10.5px]">
+                              <span>⚠️</span>
+                              <span>Desvio: {Math.round(m.deviationMeters)} m</span>
+                            </div>
+                          )}
 
-                            <a
-                              href={`/track/${m.tracking_code}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[10px] border border-slate-700 transition"
-                            >
-                              <span>Ver</span>
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
+                          <div className="bg-slate-950/80 p-2 rounded-lg border border-slate-800 text-[10.5px] space-y-0.5 mt-1.5">
+                            <div className="flex items-center gap-1 text-[9px] font-bold text-[#60A5FA] uppercase tracking-wider">
+                              <MapPin className="h-3 w-3 shrink-0 text-[#60A5FA]" />
+                              <span>Endereço Atual em Tempo Real</span>
+                            </div>
+                            <p className="text-slate-200 text-[10.5px] leading-snug break-words font-sans">
+                              {getMarkerAddress(m) || 'Localizando endereço...'}
+                            </p>
                           </div>
+
+                          {m.speed && (
+                            <p className="text-purple-400 text-[10px] font-semibold flex items-center gap-1 mt-1">
+                              🚀 {m.speed} km/h
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        /* Tooltip de Pedido / Cliente */
+                        <div>
+                          <div className="flex items-start justify-between gap-1.5 border-b border-slate-800 pb-1">
+                            <div>
+                              <p className="font-bold text-white text-xs leading-snug">{m.title}</p>
+                              {m.subtitle && (
+                                <p className="text-slate-400 text-[9.5px] leading-tight mt-0.5 line-clamp-2 font-medium">
+                                  {m.subtitle}
+                                </p>
+                              )}
+                            </div>
+                            <span
+                              className={`text-[8.5px] px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0 ${
+                                m.type === 'order_transit'
+                                  ? 'bg-amber-500/20 text-amber-300'
+                                  : m.type === 'order_delivered'
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : 'bg-blue-500/20 text-blue-300'
+                              }`}
+                            >
+                              {m.type === 'order_transit'
+                                ? 'Em Rota'
+                                : m.type === 'order_delivered'
+                                  ? 'Entregue'
+                                  : 'Pendente'}
+                            </span>
+                          </div>
+
+                          <div className="bg-slate-950/80 p-1.5 rounded-lg border border-slate-800 text-[10.5px] space-y-0.5 mt-1.5">
+                            <div className="flex items-center gap-1 text-[9px] font-bold text-[#60A5FA] uppercase tracking-wider">
+                              <MapPin className="h-3 w-3 shrink-0 text-[#60A5FA]" />
+                              <span>Endereço de Entrega</span>
+                            </div>
+                            <p className="text-slate-200 text-[10.5px] leading-snug break-words font-sans">
+                              {getMarkerAddress(m) || 'Resolvendo endereço...'}
+                            </p>
+                          </div>
+
+                          {m.estimated_arrival && (
+                            <div className="flex items-center gap-1 text-[10px] text-sky-300 bg-sky-950/50 p-1 rounded-lg border border-sky-800/60 mt-1">
+                              <Clock className="h-3 w-3 shrink-0 text-sky-400" />
+                              <span>
+                                Previsão:{' '}
+                                {new Date(m.estimated_arrival).toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                          )}
+
+                          {m.tracking_code && (
+                            <div className="pt-1 mt-1 border-t border-slate-800 flex items-center justify-between gap-1.5">
+                              <span className="font-mono font-bold text-[9px] text-slate-300">
+                                {m.tracking_code}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={(e) => copyTrackingLink(m.tracking_code!, e)}
+                                  className="py-1 px-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[9px] shadow transition"
+                                  title="Copiar link"
+                                >
+                                  {copiedCode === m.tracking_code ? 'Copiado' : 'Copiar'}
+                                </button>
+                                <a
+                                  href={`/track/${m.tracking_code}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="py-1 px-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[9px] border border-slate-700"
+                                >
+                                  Ver ↗
+                                </a>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -841,25 +927,25 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             <span>Rastreamento em Tempo Real (SP Hub)</span>
           </div>
 
-          {/* Legend */}
-          <div className="absolute bottom-3 left-3 z-30 flex flex-wrap gap-3 rounded-card bg-slate-900/95 p-2.5 backdrop-blur border border-slate-700 text-[11px] text-slate-200 shadow-xl font-sans">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs">🛵 🚗 🚛 🚲</span>
-              <span className="font-medium">Entregador (Veículo)</span>
+          {/* Legend (compacta de 1 linha) */}
+          <div className="absolute bottom-2.5 left-2.5 z-30 flex items-center gap-2.5 rounded-lg bg-slate-900/95 px-2.5 py-1.5 backdrop-blur border border-slate-700 text-[10px] text-slate-200 shadow-xl font-sans">
+            <div className="flex items-center gap-1">
+              <span className="text-xs">🛵/🚗/🚛</span>
+              <span className="font-medium text-slate-300">Entregador</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-bold text-white">
+            <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+              <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-black text-white">
                 1
               </span>
-              <span className="font-medium">Ordem &amp; Nome</span>
+              <span className="font-medium text-slate-300">Parada</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-[#2563EB]"></span>
-              <span className="font-medium text-blue-300">Linha Azul: Rota Real</span>
+            <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+              <span className="h-1.5 w-3 rounded-full bg-[#2563EB]"></span>
+              <span className="font-medium text-blue-300">Rota</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-1.5 w-4 rounded-full bg-[#EF4444]"></span>
-              <span className="font-medium text-rose-400">Linha Vermelha: Desvio &gt;600m</span>
+            <div className="flex items-center gap-1 border-l border-slate-700 pl-2">
+              <span className="h-1.5 w-3 rounded-full bg-[#EF4444]"></span>
+              <span className="font-medium text-rose-400">Desvio &gt;600m</span>
             </div>
           </div>
         </div>
