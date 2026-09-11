@@ -598,11 +598,16 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       const speed = latestLoc?.speed ?? 0
 
       const courierOrders = todayOrders.filter((o) => o.courier_id === courier.id)
-      const inTransitOrders = courierOrders.filter(
-        (o) => o.status === 'in_transit' || o.route_started === true,
+      // Pedidos em rota ativa estritamente in_transit com route_started === true (exclui delivered, cancelled, pending)
+      const activeInTransitOrders = courierOrders.filter(
+        (o) => o.status === 'in_transit' && o.route_started === true,
       )
+      const inTransitOrders = activeInTransitOrders
       const pendingOrders = courierOrders.filter(
-        (o) => (o.status === 'pending' || o.status === 'assigned') && !o.route_started,
+        (o) =>
+          o.status === 'pending' ||
+          o.status === 'assigned' ||
+          (o.status === 'in_transit' && !o.route_started),
       )
       const problemOrders = courierOrders.filter(
         (o) =>
@@ -613,9 +618,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       )
       const finishedOrders = courierOrders.filter((o) => o.status === 'delivered')
 
-      // REQUISITO: "Em Rota" somente se houver rota iniciada em curso com pedidos em trânsito
-      const hasRouteStarted =
-        courierOrders.some((o) => o.route_started === true) && inTransitOrders.length > 0
+      // REQUISITO: "Em Rota" somente se houver pedidos estritamente status === 'in_transit' && route_started === true
+      const hasRouteStarted = activeInTransitOrders.length > 0
 
       let statusColor: 'green' | 'yellow' | 'red' = 'green'
       let statusLabel = 'Disponível — rota não iniciada'
@@ -637,7 +641,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         statusLabel = 'Disponível — rota não iniciada'
       }
 
-      const nextOrder = inTransitOrders[0] || pendingOrders[0] || null
+      const nextOrder = activeInTransitOrders[0] || null
       const lastDelivered = finishedOrders[finishedOrders.length - 1] || null
 
       return {
@@ -678,8 +682,16 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     // Para cada entregador com rota iniciada, buscar/atualizar os dados do trajeto real
     const computeActiveRoutes = async () => {
       const activePromises = activeRouteCouriers.map(async (item) => {
+        // CORREÇÃO: primaryOrder só pode ser um pedido com route_started === true && status === 'in_transit'
         const primaryOrder =
-          item.nextOrder || item.allAssignedOrders.find((o) => o.status === 'in_transit')
+          item.allAssignedOrders.find(
+            (o) => o.status === 'in_transit' && o.route_started === true,
+          ) ||
+          (item.nextOrder &&
+          item.nextOrder.status === 'in_transit' &&
+          item.nextOrder.route_started === true
+            ? item.nextOrder
+            : null)
         if (!primaryOrder) return null
 
         const cust = primaryOrder.expand?.customer_id
@@ -701,13 +713,20 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const distToClientMeters = distanceMeters(courierPos, destination)
 
           // 1. DESVIO DE ROTA:
-          // Se o entregador está a mais de DEVIATION_THRESHOLD_METERS (600m) da rota azul indicada pelo sistema, OU há evento off_route_events
-          const hasDeviationEvent = recentDeviations.some(
-            (dev) =>
-              dev.courier_id === item.courier.id &&
-              (dev.order_id === primaryOrder.id || !dev.order_id) &&
-              dev.resolved !== true,
-          )
+          // Se o entregador está a mais de DEVIATION_THRESHOLD_METERS (600m) da rota azul indicada pelo sistema, OU há evento off_route_events não resolvido para esta entrega
+          const routeStartTime = primaryOrder.route_started_at
+            ? new Date(primaryOrder.route_started_at).getTime()
+            : 0
+          const hasDeviationEvent = recentDeviations.some((dev) => {
+            if (dev.courier_id !== item.courier.id) return false
+            if (dev.order_id !== primaryOrder.id) return false
+            if (dev.resolved === true) return false
+            if (routeStartTime && dev.created) {
+              const devTime = new Date(dev.created).getTime()
+              if (!isNaN(devTime) && devTime < routeStartTime) return false
+            }
+            return true
+          })
           const isDeviated =
             hasDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS
 
@@ -1596,17 +1615,33 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     }
 
     // Verificar se o entregador está em desvio de rota e desenhar LINHA VERMELHA
-    if (courierData && courierData.hasRouteStarted && blueLinePoints.length >= 2) {
+    // REQUISITO: Linha vermelha e badge apenas se selectedOrder.status === 'in_transit' && selectedOrder.route_started === true
+    const isSelectedOrderInActiveRoute =
+      selectedOrder.status === 'in_transit' && selectedOrder.route_started === true
+
+    if (
+      isSelectedOrderInActiveRoute &&
+      courierData &&
+      courierData.hasRouteStarted &&
+      blueLinePoints.length >= 2
+    ) {
       const courierPoint: LatLngPoint = { lat: courierData.lat, lng: courierData.lng }
       const nearest = findNearestPointOnRoute(courierPoint, blueLinePoints)
 
       // Verificar desvio registrado pelo sistema (coleção off_route_events ou distância > DEVIATION_THRESHOLD_METERS)
-      const hasSystemDeviationEvent = recentDeviations.some(
-        (dev) =>
-          dev.courier_id === courierData.courier.id &&
-          (dev.order_id === selectedOrder.id || !dev.order_id) &&
-          dev.resolved !== true,
-      )
+      const selectedRouteStartTime = selectedOrder.route_started_at
+        ? new Date(selectedOrder.route_started_at).getTime()
+        : 0
+      const hasSystemDeviationEvent = recentDeviations.some((dev) => {
+        if (dev.courier_id !== courierData.courier.id) return false
+        if (dev.order_id !== selectedOrder.id) return false
+        if (dev.resolved === true) return false
+        if (selectedRouteStartTime && dev.created) {
+          const devTime = new Date(dev.created).getTime()
+          if (!isNaN(devTime) && devTime < selectedRouteStartTime) return false
+        }
+        return true
+      })
 
       const isOffRoute =
         hasSystemDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS
@@ -3013,15 +3048,30 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                           .join(' ')
 
                         // Identificar se o entregador está em desvio (coleção off_route_events ou distância > DEVIATION_THRESHOLD_METERS)
+                        // REQUISITO: Apenas se selectedOrder.status === 'in_transit' && selectedOrder.route_started === true
+                        const isSelectedOrderInActiveRoute =
+                          selectedOrder.status === 'in_transit' &&
+                          selectedOrder.route_started === true
+
                         const courierPoint: LatLngPoint = { lat: courierLat, lng: courierLng }
                         const nearest = findNearestPointOnRoute(courierPoint, routeCoords)
-                        const hasDeviationFlag = recentDeviations.some(
-                          (dev) =>
-                            dev.courier_id === orderCourierInfo?.courier?.id &&
-                            (dev.order_id === selectedOrder.id || !dev.order_id) &&
-                            dev.resolved !== true,
-                        )
+                        const selectedRouteStartTime = selectedOrder.route_started_at
+                          ? new Date(selectedOrder.route_started_at).getTime()
+                          : 0
+                        const hasDeviationFlag =
+                          isSelectedOrderInActiveRoute &&
+                          recentDeviations.some((dev) => {
+                            if (dev.courier_id !== orderCourierInfo?.courier?.id) return false
+                            if (dev.order_id !== selectedOrder.id) return false
+                            if (dev.resolved === true) return false
+                            if (selectedRouteStartTime && dev.created) {
+                              const devTime = new Date(dev.created).getTime()
+                              if (!isNaN(devTime) && devTime < selectedRouteStartTime) return false
+                            }
+                            return true
+                          })
                         const isDeviated =
+                          isSelectedOrderInActiveRoute &&
                           orderCourierInfo?.hasRouteStarted &&
                           (hasDeviationFlag || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
 

@@ -166,6 +166,7 @@ interface LiveMapProps {
   onSelectMarker?: (marker: MapMarkerItem) => void
   showTraffic?: boolean
   routeLines?: RouteGeometryItem[]
+  customLegend?: React.ReactNode
 }
 
 export const LiveMap: React.FC<LiveMapProps> = ({
@@ -177,6 +178,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   onSelectMarker,
   showTraffic = false,
   routeLines = [],
+  customLegend,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

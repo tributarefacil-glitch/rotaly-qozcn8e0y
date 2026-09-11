@@ -247,7 +247,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   })
 
   // Realtime hook for seller notifications (off-route alerts with audible warning for seller)
-  useRealtime<NotificationRecord>('notifications', (e) => {
+  useRealtime<NotificationRecord>('notifications', async (e) => {
     if (
       e.action === 'create' &&
       (!e.record.user_id ||
@@ -256,12 +256,34 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         user?.role === 'seller')
     ) {
       if (e.record.type === 'off_route') {
-        playOffRouteWarningSound()
-        sendBrowserPushNotification(e.record.title, e.record.message)
-        toast.error(e.record.title, {
-          description: e.record.message,
-          duration: 9000,
-        })
+        // CORREÇÃO: só tocar o som e alertar se o pedido associado ainda estiver in_transit com route_started === true
+        let isOrderInActiveRoute = false
+        const orderId = e.record.order_id
+
+        if (orderId) {
+          const matchedOrder = orders.find((o) => o.id === orderId)
+          if (matchedOrder) {
+            isOrderInActiveRoute =
+              matchedOrder.status === 'in_transit' && matchedOrder.route_started === true
+          } else {
+            try {
+              const fetchedOrder = await deliveryService.getOrderById(orderId)
+              isOrderInActiveRoute =
+                fetchedOrder.status === 'in_transit' && fetchedOrder.route_started === true
+            } catch {
+              isOrderInActiveRoute = false
+            }
+          }
+        }
+
+        if (isOrderInActiveRoute) {
+          playOffRouteWarningSound()
+          sendBrowserPushNotification(e.record.title, e.record.message)
+          toast.error(e.record.title, {
+            description: e.record.message,
+            duration: 9000,
+          })
+        }
       }
     }
   })
@@ -275,9 +297,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     if (!courierLoc) return
 
     const courierOrders = orders.filter((o) => o.courier_id === c.id)
-    const inTransitOrders = courierOrders.filter((o) => o.status === 'in_transit')
-    const hasActiveRoute =
-      courierOrders.some((o) => o.route_started === true) && inTransitOrders.length > 0
+    const inTransitOrders = courierOrders.filter(
+      (o) => o.status === 'in_transit' && o.route_started === true,
+    )
+    const hasActiveRoute = inTransitOrders.length > 0
 
     let courierTitle = `🧍 ${c.name} (Disponível)`
     let courierSubtitle = 'Status: Presente • Disponível'
