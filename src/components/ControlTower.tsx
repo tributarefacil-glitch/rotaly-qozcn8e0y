@@ -56,6 +56,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { OrderRecord, UserRecord, LocationRecord } from '@/types/delivery'
+import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
 import {
@@ -165,6 +166,20 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const [markersRef, setMarkersRef] = useState<any[]>([])
   const [polylineRef, setPolylineRef] = useState<any>(null)
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
+
+  // Retry maps loading
+  const handleRetryMaps = () => {
+    setMapsError(false)
+    loadGoogleMapsScript().then((loaded) => {
+      if (loaded && !isGoogleMapsAuthError()) {
+        setMapsLoaded(true)
+        setMapsError(false)
+      } else {
+        setMapsError(true)
+        setMapsLoaded(false)
+      }
+    })
+  }
 
   // Drawer mini-map state
   const drawerMiniMapRef = useRef<HTMLDivElement | null>(null)
@@ -438,6 +453,54 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const availableCouriers = useMemo(() => {
     return allCourierData.filter((c) => !c.hasRouteStarted)
   }, [allCourierData])
+
+  // Marcadores formatados para o mapa vetorial e Google Maps
+  const controlTowerMapMarkers = useMemo<MapMarkerItem[]>(() => {
+    const list: MapMarkerItem[] = []
+
+    // 1. Entregadores em rota ativa (marcador azul pulsante)
+    activeRouteCouriers.forEach((item) => {
+      const courierName = item.courier.name || item.courier.email
+      const plate = item.courier.vehicle_plate ? ` • Placa: ${item.courier.vehicle_plate}` : ''
+      list.push({
+        id: `courier-${item.courier.id}`,
+        title: `🛵 ${courierName} (Em Rota)`,
+        subtitle: `${formatVehicle(item.vehicle)}${plate} • ${item.inTransitCount} em rota`,
+        lat: item.lat,
+        lng: item.lng,
+        type: 'courier',
+        speed: item.speed,
+        courier_name: courierName,
+      })
+    })
+
+    // 2. Destinos de entregas em trânsito e pendentes (marcador laranja)
+    todayOrders
+      .filter((o) => o.status === 'in_transit' || o.status === 'pending')
+      .forEach((order) => {
+        const cust = order.expand?.customer_id
+        if (cust?.lat && cust?.lng) {
+          const courier = order.expand?.courier_id
+          const isTransit = order.status === 'in_transit' || order.route_started
+          list.push({
+            id: `order-${order.id}`,
+            title: `${order.tracking_code} • ${cust.name || 'Cliente'}`,
+            subtitle: `${cust.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
+            lat: cust.lat,
+            lng: cust.lng,
+            type: isTransit ? 'order_transit' : 'order_pending',
+            tracking_code: order.tracking_code,
+            customer_name: cust.name,
+            customer_address: cust.address,
+            total_price: Number(order.total_price || 0),
+            estimated_arrival: order.estimated_arrival,
+            courier_name: courier?.name,
+          })
+        }
+      })
+
+    return list
+  }, [activeRouteCouriers, todayOrders])
 
   // Filtered orders for Kanban
   const filteredOrders = useMemo(() => {
@@ -1253,36 +1316,56 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 min-h-[460px]">
-            {/* Mapa Interativo */}
-            <div className="relative w-full h-[380px] lg:h-[480px] lg:col-span-3 bg-[#070D1E] border-b lg:border-b-0 lg:border-r border-[#1E2B58]">
-              <div ref={mapContainerRef} className="w-full h-full" />
-
-              <div className="absolute top-3 left-3 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
-                <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
-                <span className="font-semibold text-white">
-                  {activeRouteCouriers.length} entregadores ativos com rota iniciada
-                </span>
-              </div>
-
-              {/* Fallback caso Google Maps falhe */}
-              {mapsError && (
-                <div className="absolute inset-0 bg-[#070D1E]/95 p-6 overflow-y-auto z-20 flex flex-col justify-center items-center text-center">
-                  <div className="max-w-md space-y-3">
-                    <div className="flex justify-center text-amber-400">
-                      <AlertCircle className="h-10 w-10" />
-                    </div>
-                    <h4 className="font-bold text-white text-base">
-                      Modo Mapa de Contingência Ativo
-                    </h4>
-                    <p className="text-xs text-slate-400">
-                      A visualização visual de satélite/ruas está em modo de fallback geográfico. Os
-                      dados e rotas continuam atualizando em tempo real normalmente.
-                    </p>
-                    <div className="pt-2 text-xs text-slate-300">
-                      <strong>Entregadores em Rota:</strong> {activeRouteCouriers.length} |{' '}
-                      <strong>Entregadores Disponíveis:</strong> {availableCouriers.length}
-                    </div>
+            {/* Mapa Interativo Principal: Google Maps nativo ou Canvas Vetorial de Contingência (LiveMap) */}
+            <div className="relative w-full h-[400px] lg:h-[500px] lg:col-span-3 bg-[#070D1E] border-b lg:border-b-0 lg:border-r border-[#1E2B58] overflow-hidden">
+              {mapsLoaded && !mapsError ? (
+                <>
+                  <div ref={mapContainerRef} className="w-full h-full" />
+                  <div className="absolute top-3 left-3 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
+                    <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
+                    <span className="font-semibold text-white">
+                      {activeRouteCouriers.length} entregadores ativos com rota iniciada
+                    </span>
                   </div>
+                </>
+              ) : (
+                <div className="relative w-full h-full flex flex-col">
+                  {/* Badge de cabeçalho do mapa de contingência com botão de Retry */}
+                  <div className="absolute top-3 right-3 z-30 flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleRetryMaps}
+                      className="h-7 px-2.5 text-xs bg-slate-900/90 text-slate-200 border-slate-700 hover:bg-slate-800 hover:text-white rounded-lg shadow-md gap-1.5 backdrop-blur"
+                      title="Tentar carregar Google Maps novamente"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      <span>Tentar Google Maps</span>
+                    </Button>
+                  </div>
+
+                  {/* Canvas vetorial de contingência idêntico ao LiveMap.tsx com marcadores interativos */}
+                  <LiveMap
+                    markers={controlTowerMapMarkers}
+                    center={
+                      activeRouteCouriers[0]
+                        ? { lat: activeRouteCouriers[0].lat, lng: activeRouteCouriers[0].lng }
+                        : { lat: -22.906847, lng: -43.172896 }
+                    }
+                    zoom={13}
+                    height="100%"
+                    onSelectMarker={(m) => {
+                      if (m.type === 'courier') {
+                        const courierId = m.id.replace('courier-', '')
+                        const targetCourier = couriers.find((c) => c.id === courierId)
+                        if (targetCourier) setSelectedCourier(targetCourier)
+                      } else {
+                        const orderId = m.id.replace('order-', '')
+                        const targetOrder = orders.find((o) => o.id === orderId)
+                        if (targetOrder) handleOpenOrderDetails(targetOrder)
+                      }
+                    }}
+                  />
                 </div>
               )}
             </div>
@@ -1643,11 +1726,112 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     </span>
                   </div>
 
-                  <div className="relative w-full h-[200px] rounded-xl overflow-hidden border border-[#1E2B58] bg-[#070D1E]">
-                    <div ref={drawerMiniMapRef} className="w-full h-full" />
-                    {!mapsLoaded && (
-                      <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500 bg-[#070D1E]/90 p-4 text-center">
-                        Carregando visualização de satélite...
+                  <div className="relative w-full h-[220px] rounded-xl overflow-hidden border border-[#1E2B58] bg-[#070D1E]">
+                    {/* Google Mini Map Container (ativo se mapsLoaded e sem erro) */}
+                    <div
+                      ref={drawerMiniMapRef}
+                      className={`w-full h-full ${mapsLoaded && !mapsError ? 'block' : 'hidden'}`}
+                    />
+
+                    {/* Fallback Vetorial Interativo com Pontos da Rota, Coordenadas GPS e Botão de Retry */}
+                    {(!mapsLoaded || mapsError) && (
+                      <div className="relative w-full h-full flex flex-col justify-between p-3 bg-gradient-to-br from-slate-950 via-[#0a1128] to-slate-900 text-white select-none overflow-hidden">
+                        {/* Grid de fundo */}
+                        <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
+
+                        {/* Linhas simuladas e trajeto SVG conectando Base -> Entregador -> Cliente */}
+                        <svg
+                          className="absolute inset-0 w-full h-full pointer-events-none"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          <path
+                            d="M 20,40 Q 90,80 150,110 T 280,170"
+                            fill="none"
+                            stroke="#38BDF8"
+                            strokeWidth="2.5"
+                            strokeDasharray="4,4"
+                            className="opacity-70"
+                          />
+                        </svg>
+
+                        {/* Top bar do mini-mapa com GPS e Retry */}
+                        <div className="relative z-10 flex items-center justify-between text-[11px]">
+                          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-950/80 border border-blue-500/30 text-blue-300 font-mono text-[10px]">
+                            <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-ping" />
+                            GPS:{' '}
+                            {orderCourierInfo?.lat
+                              ? `${orderCourierInfo.lat.toFixed(4)}, ${orderCourierInfo.lng.toFixed(4)}`
+                              : 'Aguardando sinal'}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={handleRetryMaps}
+                            className="h-6 px-2 text-[10px] bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 gap-1 rounded-md"
+                            title="Tentar carregar Google Maps novamente"
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                            <span>Retry</span>
+                          </Button>
+                        </div>
+
+                        {/* Pontos da rota plotados no canvas vetorial: Base (🟢), Entregador (🛵), Cliente (🏁) */}
+                        <div className="relative w-full flex-1 my-1">
+                          {/* 1. Base de Partida 🟢 */}
+                          <div
+                            style={{ left: '16%', top: '22%' }}
+                            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group cursor-pointer"
+                          >
+                            <div className="h-7 w-7 rounded-full bg-emerald-500/20 border-2 border-emerald-400 text-emerald-300 flex items-center justify-center text-xs shadow-md shadow-emerald-500/30">
+                              🟢
+                            </div>
+                            <span className="mt-1 px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-800 text-[9px] font-bold text-emerald-300 whitespace-nowrap shadow">
+                              {selectedOrder.start_base_name || 'Base Partida'}
+                            </span>
+                          </div>
+
+                          {/* 2. Entregador 🛵 */}
+                          <div
+                            style={{ left: '50%', top: '50%' }}
+                            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group cursor-pointer z-10"
+                          >
+                            <span className="absolute -inset-1 rounded-full animate-ping bg-blue-400/30" />
+                            <div className="h-8 w-8 rounded-full bg-blue-600 border-2 border-blue-300 text-white flex items-center justify-center text-xs shadow-lg shadow-blue-500/40">
+                              🛵
+                            </div>
+                            <span className="mt-1 px-1.5 py-0.5 rounded bg-blue-950/90 border border-blue-500/40 text-[9px] font-bold text-blue-200 whitespace-nowrap shadow">
+                              {orderCourierInfo?.courier?.name
+                                ? orderCourierInfo.courier.name.split(' ')[0]
+                                : 'Entregador'}
+                              {orderCourierInfo?.speed ? ` • ${orderCourierInfo.speed}km/h` : ''}
+                            </span>
+                          </div>
+
+                          {/* 3. Cliente 🏁 */}
+                          <div
+                            style={{ left: '84%', top: '76%' }}
+                            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group cursor-pointer"
+                          >
+                            <div className="h-7 w-7 rounded-full bg-orange-500/20 border-2 border-orange-400 text-orange-300 flex items-center justify-center text-xs shadow-md shadow-orange-500/30">
+                              🏁
+                            </div>
+                            <span className="mt-1 px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-800 text-[9px] font-bold text-orange-300 whitespace-nowrap shadow">
+                              {selectedOrder.expand?.customer_id?.name
+                                ? selectedOrder.expand.customer_id.name.split(' ')[0]
+                                : 'Cliente'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Endereço resumido e status da rota */}
+                        <div className="relative z-10 bg-slate-900/90 border border-slate-800/80 rounded-lg p-1.5 px-2 text-[10px] text-slate-300 flex items-center justify-between">
+                          <span className="truncate max-w-[210px] text-slate-300">
+                            🏁 {selectedOrder.expand?.customer_id?.address || 'Destino da Entrega'}
+                          </span>
+                          <span className="font-mono text-blue-300 font-bold shrink-0 ml-1">
+                            {getEtaDisplay(selectedOrder)}
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>
