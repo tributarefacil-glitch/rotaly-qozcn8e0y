@@ -272,6 +272,21 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const markersAndPolylinesRef = useRef<any[]>([])
   const [isMapsLoaded, setIsMapsLoaded] = useState(false)
   const [mapsAuthError, setMapsAuthError] = useState(() => isGoogleMapsAuthError())
+  // Detecta se os tiles reais do Google Maps foram pintados dentro do tempo limite
+  const [mapTilesLoaded, setMapTilesLoaded] = useState(false)
+  const [vectorFallbackActive, setVectorFallbackActive] = useState(false)
+  const tilesLoadedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Drag interativo no mapa vetorial (fallback)
+  const [draggingStop, setDraggingStop] = useState<{
+    courierId: string
+    stopId: string
+    initialLat: number
+    initialLng: number
+    currentLat: number
+    currentLng: number
+  } | null>(null)
+  const vectorCanvasRef = useRef<HTMLDivElement>(null)
 
   const getGoogle = () =>
     typeof window !== 'undefined' ? (window as unknown as { google?: any }).google : undefined
@@ -315,12 +330,20 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         if (defaultStart) setSelectedStartBaseId(defaultStart.id)
         if (defaultEnd) setSelectedEndBaseId(defaultEnd.id)
       })
+      setMapTilesLoaded(false)
+      setVectorFallbackActive(false)
       loadGoogleMapsScript().then((success) => {
         const isAuthErr = isGoogleMapsAuthError()
         const ok = success && !isAuthErr
         setIsMapsLoaded(ok)
         setMapsAuthError(isAuthErr)
       })
+    } else {
+      if (tilesLoadedTimeoutRef.current) {
+        clearTimeout(tilesLoadedTimeoutRef.current)
+        tilesLoadedTimeoutRef.current = null
+      }
+      setDraggingStop(null)
     }
   }, [open, couriers])
 
@@ -328,6 +351,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     const unsub = onGoogleMapsAuthError(() => {
       setMapsAuthError(true)
       setIsMapsLoaded(false)
+      setVectorFallbackActive(true)
     })
     return unsub
   }, [])
@@ -1539,7 +1563,12 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     if (!open) return
 
     const google = getGoogle()
-    if (!mapContainerRef.current || !google?.maps || !isMapsLoaded || mapsAuthError) return
+    if (!mapContainerRef.current || !google?.maps || !isMapsLoaded || mapsAuthError) {
+      if (mapsAuthError || !isMapsLoaded) {
+        setVectorFallbackActive(true)
+      }
+      return
+    }
 
     try {
       if (!mapInstanceRef.current) {
@@ -1556,9 +1585,33 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             { featureType: 'administrative', stylers: [{ visibility: 'simplified' }] },
           ],
         })
+
+        // Ouvinte de tiles carregados: desativa o fallback vetorial e limpa timeout
+        mapInstanceRef.current.addListener('tilesloaded', () => {
+          setMapTilesLoaded(true)
+          setVectorFallbackActive(false)
+          if (tilesLoadedTimeoutRef.current) {
+            clearTimeout(tilesLoadedTimeoutRef.current)
+            tilesLoadedTimeoutRef.current = null
+          }
+        })
       } else {
         google.maps.event.trigger(mapInstanceRef.current, 'resize')
       }
+
+      // Timeout de contingência: se em 2.2s tilesloaded não disparar, exibe fallback vetorial
+      if (tilesLoadedTimeoutRef.current) {
+        clearTimeout(tilesLoadedTimeoutRef.current)
+      }
+      tilesLoadedTimeoutRef.current = setTimeout(() => {
+        // Se após 2.2s os tiles não foram marcados como carregados, ativar fallback vetorial
+        setMapTilesLoaded((alreadyLoaded) => {
+          if (!alreadyLoaded) {
+            setVectorFallbackActive(true)
+          }
+          return alreadyLoaded
+        })
+      }, 2200)
 
       // Clear previous overlays
       markersAndPolylinesRef.current.forEach((obj) => obj.setMap(null))
@@ -1983,7 +2036,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Trigger map resize when modal opens or step changes to avoid black/blank map
   useEffect(() => {
     if (!open) return
-    const timers = [100, 300, 600, 1000].map((delay) =>
+    const timers = [50, 150, 300, 600, 1000, 1500].map((delay) =>
       setTimeout(() => {
         const google = getGoogle()
         if (mapInstanceRef.current && google?.maps) {
@@ -1993,6 +2046,38 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     )
     return () => timers.forEach(clearTimeout)
   }, [open, wizardStep, isMapsLoaded, optimizationResult])
+
+  // ResizeObserver no container do mapa: detecta quando o container ganha dimensões reais
+  // (ex: ao abrir o modal ou mudar de etapa 1->2->3) e aciona resize do Google Maps imediatamente
+  useEffect(() => {
+    if (!open) return
+    const container = mapContainerRef.current
+    if (!container || typeof ResizeObserver === 'undefined') return
+
+    let lastW = 0
+    let lastH = 0
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect
+        if (
+          width > 0 &&
+          height > 0 &&
+          (Math.abs(width - lastW) > 5 || Math.abs(height - lastH) > 5)
+        ) {
+          lastW = width
+          lastH = height
+          const google = getGoogle()
+          if (mapInstanceRef.current && google?.maps) {
+            google.maps.event.trigger(mapInstanceRef.current, 'resize')
+          }
+        }
+      }
+    })
+
+    ro.observe(container)
+    return () => ro.disconnect()
+  }, [open, wizardStep, isMapsLoaded])
 
   // Apply & Save Distribution (com opção de atribuir ou já Liberar Rota diretamente)
   const handleApplyDistribution = async (releaseDirectly = false) => {
@@ -3451,12 +3536,12 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             <div className="relative w-full h-72 sm:h-80 rounded-2xl overflow-hidden border border-slate-300 dark:border-slate-700 shadow-inner bg-slate-900">
               <div
                 ref={mapContainerRef}
-                className={`absolute inset-0 w-full h-full ${isMapsLoaded && !mapsAuthError ? 'z-10 opacity-100' : 'z-0 opacity-0 pointer-events-none'}`}
+                className={`absolute inset-0 w-full h-full ${isMapsLoaded && !mapsAuthError && !vectorFallbackActive ? 'z-10 opacity-100' : 'z-0 opacity-0 pointer-events-none'}`}
               />
 
-              {/* Fallback canvas overlay if Google Maps is not available or auth error */}
-              {(!isMapsLoaded || mapsAuthError) && (
-                <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white z-10 select-none overflow-hidden">
+              {/* Fallback canvas overlay if Google Maps is not available, auth error or tiles failed to paint */}
+              {(!isMapsLoaded || mapsAuthError || vectorFallbackActive) && (
+                <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white z-20 select-none overflow-hidden">
                   <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#6366f1_1px,transparent_1px)] [background-size:20px_20px]" />
 
                   {/* Visual Route Lines */}
@@ -3489,13 +3574,27 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                     )}
                   </div>
 
-                  {/* Botão de Contingência / Retry Maps no Fallback */}
-                  <div className="absolute top-3 right-3 z-30">
+                  {/* Botão de Contingência / Alternar Modo Fallback / Retry Maps */}
+                  <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
+                    {mapTilesLoaded && !mapsAuthError && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setVectorFallbackActive(false)}
+                        className="h-6 px-2 text-[10px] bg-indigo-900/90 text-indigo-100 border-indigo-700 hover:bg-indigo-800 hover:text-white rounded-md shadow gap-1"
+                      >
+                        <Navigation className="h-3 w-3" />
+                        <span>Ver Google Maps</span>
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
                       onClick={() => {
+                        setVectorFallbackActive(false)
+                        setMapTilesLoaded(false)
                         loadGoogleMapsScript().then((success) => {
                           const isAuthErr = isGoogleMapsAuthError()
                           const ok = success && !isAuthErr
@@ -3504,6 +3603,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           if (ok && mapInstanceRef.current) {
                             const google = getGoogle()
                             google?.maps?.event?.trigger(mapInstanceRef.current, 'resize')
+                          } else {
+                            setVectorFallbackActive(true)
                           }
                         })
                       }}
@@ -3665,7 +3766,33 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                     }
 
                     return (
-                      <div className="relative z-20 flex-1 my-1 w-full rounded-xl bg-slate-950/80 border border-slate-700/60 p-2 overflow-hidden flex flex-col justify-between">
+                      <div
+                        ref={vectorCanvasRef}
+                        onMouseMove={(e) => {
+                          if (!draggingStop || !vectorCanvasRef.current) return
+                          const rect = vectorCanvasRef.current.getBoundingClientRect()
+                          if (rect.width <= 0 || rect.height <= 0) return
+                          const xRel = ((e.clientX - rect.left) / rect.width) * 100
+                          const yRel = ((e.clientY - rect.top) / rect.height) * 100
+                          // Inverter projeção: relX -> lng, relY -> lat
+                          const newLng = centerLng + ((xRel - 50) / 80) * lngSpan
+                          const newLat = centerLat - ((yRel - 50) / 75) * latSpan
+                          setDraggingStop((prev) =>
+                            prev ? { ...prev, currentLat: newLat, currentLng: newLng } : null,
+                          )
+                        }}
+                        onMouseUp={() => {
+                          if (!draggingStop) return
+                          handleMarkerDragEnd(
+                            draggingStop.courierId,
+                            draggingStop.stopId,
+                            draggingStop.currentLat,
+                            draggingStop.currentLng,
+                          )
+                          setDraggingStop(null)
+                        }}
+                        className="relative z-20 flex-1 my-1 w-full rounded-xl bg-slate-950/80 border border-slate-700/60 p-2 overflow-hidden flex flex-col justify-between"
+                      >
                         {/* Cartographic canvas overlay with real route lines and interactive draggable pins */}
                         <div className="relative w-full h-full min-h-[140px]">
                           {/* Trajeto viário real (Linha Azul / Linha colorida por entregador) */}
@@ -3700,15 +3827,29 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                                   if (!isTabActive) return null
 
                                   const geom = streetRouteGeometries[plan.courier.id]
+                                  const effectiveStops = plan.stops.map((s) => {
+                                    if (
+                                      draggingStop &&
+                                      draggingStop.courierId === plan.courier.id &&
+                                      draggingStop.stopId === s.id
+                                    ) {
+                                      return {
+                                        lat: draggingStop.currentLat,
+                                        lng: draggingStop.currentLng,
+                                      }
+                                    }
+                                    return { lat: s.lat, lng: s.lng }
+                                  })
+
                                   const routeCoords: LatLngPoint[] =
-                                    geom && geom.points.length >= 2
+                                    !draggingStop && geom && geom.points.length >= 2
                                       ? geom.points
                                       : [
                                           {
                                             lat: plan.start_base?.lat || centerLat,
                                             lng: plan.start_base?.lng || centerLng,
                                           },
-                                          ...plan.stops.map((s) => ({ lat: s.lat, lng: s.lng })),
+                                          ...effectiveStops,
                                           {
                                             lat: plan.end_base?.lat || centerLat,
                                             lng: plan.end_base?.lng || centerLng,
@@ -3771,19 +3912,50 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           </svg>
 
                           {/* Render pins on vector canvas */}
-                          {points.map((p, idx) => {
-                            const x = calcX(p.lng)
-                            const y = calcY(p.lat)
+                          {points.map((p) => {
+                            const isBeingDragged =
+                              draggingStop &&
+                              p.type === 'stop' &&
+                              draggingStop.courierId === p.courierId &&
+                              draggingStop.stopId === p.stopId
+
+                            const renderLat = isBeingDragged ? draggingStop.currentLat : p.lat
+                            const renderLng = isBeingDragged ? draggingStop.currentLng : p.lng
+
+                            const x = calcX(renderLng)
+                            const y = calcY(renderLat)
 
                             return (
                               <div
                                 key={p.id}
                                 style={{ left: `${x}%`, top: `${y}%` }}
-                                className="absolute -translate-x-1/2 -translate-y-1/2 group z-30 cursor-pointer select-none"
+                                onMouseDown={(e) => {
+                                  if (p.type === 'stop' && p.courierId && p.stopId) {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    setDraggingStop({
+                                      courierId: p.courierId,
+                                      stopId: p.stopId,
+                                      initialLat: p.lat,
+                                      initialLng: p.lng,
+                                      currentLat: p.lat,
+                                      currentLng: p.lng,
+                                    })
+                                  }
+                                }}
+                                className={`absolute -translate-x-1/2 -translate-y-1/2 group select-none ${
+                                  p.type === 'stop' && p.courierId && p.stopId
+                                    ? 'cursor-grab active:cursor-grabbing z-40'
+                                    : 'cursor-pointer z-30'
+                                } ${isBeingDragged ? 'scale-125 z-50' : ''}`}
                                 title={`${p.label}${p.sublabel ? ` - ${p.sublabel}` : ''}`}
                               >
                                 <div
-                                  className={`flex items-center justify-center rounded-full text-white font-bold shadow-lg ring-2 ring-white/70 transition-transform hover:scale-125 ${
+                                  className={`flex items-center justify-center rounded-full text-white font-bold shadow-lg ring-2 ring-white/70 transition-transform ${
+                                    isBeingDragged
+                                      ? 'ring-amber-400 scale-125 shadow-amber-500/50'
+                                      : 'hover:scale-125'
+                                  } ${
                                     p.type === 'start'
                                       ? 'h-6 px-2 bg-emerald-600 text-[10px] gap-1 shadow-emerald-500/30'
                                       : p.type === 'end'
@@ -3809,7 +3981,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                                   )}
                                   {p.type === 'stop' && (
                                     <span className="text-[9px] text-amber-400 mt-0.5">
-                                      Ajuste a sequência na lista abaixo
+                                      ✋ Clique e arraste para reposicionar na rota
                                     </span>
                                   )}
                                 </div>
