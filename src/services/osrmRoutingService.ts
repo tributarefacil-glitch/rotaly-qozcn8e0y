@@ -1,0 +1,234 @@
+/**
+ * osrmRoutingService.ts
+ *
+ * Serviço de roteamento viário real via OSRM (Open Source Routing Machine).
+ * Fornece a geometria de ruas real (coordenadas [lat, lng]) para visualização
+ * de rotas sem depender de faturamento no Google Cloud.
+ *
+ * Características:
+ * - Cache em memória com TTL por par de coordenadas de origem e destino
+ * - Geometrias em GeoJSON LineString (precisão de vias/ruas reais)
+ * - Fallback gracioso com interpolação geométrica caso o serviço externo falhe
+ * - Utilitários para projeção de coordenadas e cálculo de desvio de rota
+ */
+
+export interface LatLngPoint {
+  lat: number
+  lng: number
+}
+
+export interface OsrmRouteResult {
+  coordinates: LatLngPoint[]
+  distanceMeters: number
+  durationSeconds: number
+  isRealStreetRoute: boolean
+}
+
+// Cache em memória para evitar exceder rate limits públicos
+interface CacheEntry {
+  result: OsrmRouteResult
+  timestamp: number
+}
+
+const routeCache = new Map<string, CacheEntry>()
+const CACHE_TTL_MS = 30 * 60 * 1000 // 30 minutos
+
+function getCacheKey(origin: LatLngPoint, destination: LatLngPoint): string {
+  // Arredonda para 4 casas decimais (~11m de precisão) para consolidar cache
+  return `${origin.lat.toFixed(4)},${origin.lng.toFixed(4)}->${destination.lat.toFixed(4)},${destination.lng.toFixed(4)}`
+}
+
+/**
+ * Busca a rota com geometria real de ruas entre origem e destino via OSRM público.
+ * Fallback para linha direta se falhar.
+ */
+export async function fetchStreetRoute(
+  origin: LatLngPoint,
+  destination: LatLngPoint,
+): Promise<OsrmRouteResult> {
+  const cacheKey = getCacheKey(origin, destination)
+  const cached = routeCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.result
+  }
+
+  // Validação básica de coordenadas
+  if (
+    typeof origin.lat !== 'number' ||
+    typeof origin.lng !== 'number' ||
+    typeof destination.lat !== 'number' ||
+    typeof destination.lng !== 'number' ||
+    isNaN(origin.lat) ||
+    isNaN(origin.lng) ||
+    isNaN(destination.lat) ||
+    isNaN(destination.lng)
+  ) {
+    return createDirectFallback(origin, destination)
+  }
+
+  // OSRM URL format: /route/v1/driving/{lng1},{lat1};{lng2},{lat2}?overview=full&geometries=geojson
+  // Note: OSRM uses longitude,latitude
+  const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson`
+
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000) // 6s timeout
+
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+      },
+    })
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      throw new Error(`OSRM request failed with HTTP status ${response.status}`)
+    }
+
+    const data = await response.json()
+    if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+      const primaryRoute = data.routes[0]
+      const geoCoords: [number, number][] = primaryRoute.geometry?.coordinates || []
+
+      // Convert [lng, lat] GeoJSON coordinates to LatLngPoint { lat, lng }
+      const coordinates: LatLngPoint[] = geoCoords.map(([lng, lat]) => ({
+        lat,
+        lng,
+      }))
+
+      if (coordinates.length >= 2) {
+        const result: OsrmRouteResult = {
+          coordinates,
+          distanceMeters: primaryRoute.distance ?? 0,
+          durationSeconds: primaryRoute.duration ?? 0,
+          isRealStreetRoute: true,
+        }
+        routeCache.set(cacheKey, { result, timestamp: Date.now() })
+        return result
+      }
+    }
+
+    throw new Error('OSRM returned empty or invalid route geometry')
+  } catch (err) {
+    console.warn('OSRM route fetch warning, using fallback geometry:', err)
+    const fallback = createDirectFallback(origin, destination)
+    // Armazena no cache por um curto período (1 min) para não inundar o OSRM se estiver instável
+    routeCache.set(cacheKey, { result: fallback, timestamp: Date.now() - (CACHE_TTL_MS - 60000) })
+    return fallback
+  }
+}
+
+/**
+ * Cria uma rota com interpolação suave caso o serviço viário externo falhe.
+ */
+function createDirectFallback(origin: LatLngPoint, destination: LatLngPoint): OsrmRouteResult {
+  const steps = 10
+  const coordinates: LatLngPoint[] = []
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    coordinates.push({
+      lat: origin.lat + t * (destination.lat - origin.lat),
+      lng: origin.lng + t * (destination.lng - origin.lng),
+    })
+  }
+
+  return {
+    coordinates,
+    distanceMeters: 0,
+    durationSeconds: 0,
+    isRealStreetRoute: false,
+  }
+}
+
+/**
+ * Distância Haversine em metros entre dois pontos geográficos.
+ */
+export function distanceMeters(p1: LatLngPoint, p2: LatLngPoint): number {
+  if (p1.lat === p2.lat && p1.lng === p2.lng) return 0
+  const R = 6371e3
+  const phi1 = (p1.lat * Math.PI) / 180
+  const phi2 = (p2.lat * Math.PI) / 180
+  const deltaPhi = ((p2.lat - p1.lat) * Math.PI) / 180
+  const deltaLambda = ((p2.lng - p1.lng) * Math.PI) / 180
+
+  const a =
+    Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+/**
+ * Encontra a projeção de um ponto P sobre o segmento A-B e a menor distância em metros.
+ */
+export function pointToSegmentProjection(
+  p: LatLngPoint,
+  a: LatLngPoint,
+  b: LatLngPoint,
+): { projected: LatLngPoint; distanceMeters: number } {
+  const dAB = distanceMeters(a, b)
+  if (dAB === 0) {
+    return { projected: a, distanceMeters: distanceMeters(p, a) }
+  }
+
+  const cosMeanLat = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180)
+  const x = (b.lng - a.lng) * cosMeanLat
+  const y = b.lat - a.lat
+  const px = (p.lng - a.lng) * cosMeanLat
+  const py = p.lat - a.lat
+
+  const dot = px * x + py * y
+  const lenSq = x * x + y * y
+  const param = lenSq !== 0 ? Math.max(0, Math.min(1, dot / lenSq)) : 0
+
+  const projLat = a.lat + param * (b.lat - a.lat)
+  const projLng = a.lng + param * (b.lng - a.lng)
+  const projected = { lat: projLat, lng: projLng }
+
+  return {
+    projected,
+    distanceMeters: distanceMeters(p, projected),
+  }
+}
+
+/**
+ * Encontra o ponto mais próximo de P ao longo de toda a rota viária polilinha (linha azul).
+ */
+export function findNearestPointOnRoute(
+  point: LatLngPoint,
+  routeCoordinates: LatLngPoint[],
+): { nearestPoint: LatLngPoint; distanceMeters: number; segmentIndex: number } {
+  if (routeCoordinates.length === 0) {
+    return { nearestPoint: point, distanceMeters: 0, segmentIndex: 0 }
+  }
+  if (routeCoordinates.length === 1) {
+    return {
+      nearestPoint: routeCoordinates[0],
+      distanceMeters: distanceMeters(point, routeCoordinates[0]),
+      segmentIndex: 0,
+    }
+  }
+
+  let minDistance = Infinity
+  let bestPoint = routeCoordinates[0]
+  let bestSegmentIndex = 0
+
+  for (let i = 0; i < routeCoordinates.length - 1; i++) {
+    const a = routeCoordinates[i]
+    const b = routeCoordinates[i + 1]
+    const { projected, distanceMeters: d } = pointToSegmentProjection(point, a, b)
+    if (d < minDistance) {
+      minDistance = d
+      bestPoint = projected
+      bestSegmentIndex = i
+    }
+  }
+
+  return {
+    nearestPoint: bestPoint,
+    distanceMeters: minDistance,
+    segmentIndex: bestSegmentIndex,
+  }
+}

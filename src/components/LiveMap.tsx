@@ -36,6 +36,14 @@ export interface MapMarkerItem {
   courier_name?: string
 }
 
+export interface RouteGeometryItem {
+  origin: { lat: number; lng: number }
+  destination: { lat: number; lng: number }
+  streetCoordinates?: { lat: number; lng: number }[]
+  courierPosition?: { lat: number; lng: number }
+  isDeviated?: boolean
+}
+
 interface LiveMapProps {
   markers?: MapMarkerItem[]
   center?: { lat: number; lng: number }
@@ -44,6 +52,7 @@ interface LiveMapProps {
   selectedMarkerId?: string | null
   onSelectMarker?: (marker: MapMarkerItem) => void
   showTraffic?: boolean
+  routeLines?: RouteGeometryItem[]
 }
 
 export const LiveMap: React.FC<LiveMapProps> = ({
@@ -54,6 +63,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   selectedMarkerId,
   onSelectMarker,
   showTraffic = false,
+  routeLines = [],
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -350,31 +360,101 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           {/* Subtle grid lines background */}
           <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:24px_24px]" />
 
-          {/* Simulated Street overlay paths */}
+          {/* Street overlay paths & Real routes (Linha Azul das ruas e Linha Vermelha de desvio) */}
           <svg
-            className="absolute inset-0 w-full h-full opacity-20 pointer-events-none"
-            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            className="absolute inset-0 w-full h-full pointer-events-none z-10"
           >
-            <path
-              d="M 0,150 Q 300,180 600,100 T 1200,220"
-              fill="none"
-              stroke="#60a5fa"
-              strokeWidth="4"
-            />
-            <path
-              d="M 200,0 Q 250,300 400,600"
-              fill="none"
-              stroke="#cbd5e1"
-              strokeWidth="3"
-              strokeDasharray="6,6"
-            />
-            <path d="M 800,0 Q 750,250 900,600" fill="none" stroke="#cbd5e1" strokeWidth="2" />
-            <path
-              d="M 0,350 Q 400,320 800,420 T 1200,380"
-              fill="none"
-              stroke="#a855f7"
-              strokeWidth="3"
-            />
+            <defs>
+              <filter id="livemap-blue-glow" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow
+                  dx="0"
+                  dy="0"
+                  stdDeviation="0.8"
+                  floodColor="#3B82F6"
+                  floodOpacity="0.8"
+                />
+              </filter>
+              <filter id="livemap-red-glow" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow
+                  dx="0"
+                  dy="0"
+                  stdDeviation="1"
+                  floodColor="#EF4444"
+                  floodOpacity="0.9"
+                />
+              </filter>
+            </defs>
+
+            {/* Rotas viárias reais passadas via props */}
+            {routeLines.map((r, i) => {
+              const coords = r.streetCoordinates || [r.origin, r.destination]
+              if (coords.length < 2) return null
+
+              const pathStr = coords
+                .map((c, idx) => {
+                  const relX = Math.max(8, Math.min(92, 50 + (c.lng - center.lng) * 1200))
+                  const relY = Math.max(12, Math.min(88, 50 - (c.lat - center.lat) * 1200))
+                  return `${idx === 0 ? 'M' : 'L'} ${relX.toFixed(1)} ${relY.toFixed(1)}`
+                })
+                .join(' ')
+
+              let deviationLine = null
+              if (r.isDeviated && r.courierPosition) {
+                const cX = Math.max(
+                  8,
+                  Math.min(92, 50 + (r.courierPosition.lng - center.lng) * 1200),
+                )
+                const cY = Math.max(
+                  12,
+                  Math.min(88, 50 - (r.courierPosition.lat - center.lat) * 1200),
+                )
+
+                // Primeiro ponto da rota como referência de retorno
+                const ref = coords[0]
+                const refX = Math.max(8, Math.min(92, 50 + (ref.lng - center.lng) * 1200))
+                const refY = Math.max(12, Math.min(88, 50 - (ref.lat - center.lat) * 1200))
+
+                deviationLine = (
+                  <line
+                    key={`dev-${i}`}
+                    x1={cX.toFixed(1)}
+                    y1={cY.toFixed(1)}
+                    x2={refX.toFixed(1)}
+                    y2={refY.toFixed(1)}
+                    stroke="#EF4444"
+                    strokeWidth="2"
+                    strokeDasharray="2,1.5"
+                    filter="url(#livemap-red-glow)"
+                  />
+                )
+              }
+
+              return (
+                <React.Fragment key={`route-${i}`}>
+                  {/* LINHA AZUL: Trajeto de ruas indicado pelo sistema */}
+                  <path
+                    d={pathStr}
+                    fill="none"
+                    stroke="#2563EB"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    filter="url(#livemap-blue-glow)"
+                  />
+                  <path
+                    d={pathStr}
+                    fill="none"
+                    stroke="#93C5FD"
+                    strokeWidth="0.8"
+                    strokeLinecap="round"
+                  />
+                  {/* LINHA VERMELHA: Caso o entregador faça um desvio */}
+                  {deviationLine}
+                </React.Fragment>
+              )
+            })}
           </svg>
 
           {/* Fallback Interactive Marker Pins on Canvas */}
@@ -562,18 +642,22 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           </div>
 
           {/* Legend */}
-          <div className="absolute bottom-3 left-3 z-30 flex flex-wrap gap-3 rounded-card bg-white/95 p-2.5 backdrop-blur border border-slate-200 text-[11px] text-[#1a1a1a] shadow-brand font-sans">
+          <div className="absolute bottom-3 left-3 z-30 flex flex-wrap gap-3 rounded-card bg-slate-900/95 p-2.5 backdrop-blur border border-slate-700 text-[11px] text-slate-200 shadow-xl font-sans">
             <div className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-[#0052CC]"></span>
-              <span className="font-medium">Entregador (Azul)</span>
+              <span className="font-medium">Entregador</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-[#FF6B35]"></span>
-              <span className="font-medium">Cliente / Pedido (Laranja)</span>
+              <span className="font-medium">Destino / Cliente</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#00AA44]"></span>
-              <span className="font-medium">Entregue (Verde)</span>
+              <span className="h-1.5 w-4 rounded-full bg-[#2563EB]"></span>
+              <span className="font-medium text-blue-300">Linha Azul: Trajeto Real</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="h-1.5 w-4 rounded-full bg-[#EF4444]"></span>
+              <span className="font-medium text-rose-400">Linha Vermelha: Desvio</span>
             </div>
           </div>
         </div>

@@ -54,6 +54,8 @@ import {
   Compass,
   ArrowRight,
   ShieldCheck,
+  Route,
+  AlertOctagon,
 } from 'lucide-react'
 import { OrderRecord, UserRecord, LocationRecord } from '@/types/delivery'
 import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
@@ -65,6 +67,13 @@ import {
   onGoogleMapsAuthError,
 } from '@/lib/googleMaps'
 import { useToast } from '@/hooks/use-toast'
+import {
+  fetchStreetRoute,
+  findNearestPointOnRoute,
+  distanceMeters,
+  type LatLngPoint,
+  type OsrmRouteResult,
+} from '@/services/osrmRoutingService'
 
 interface ControlTowerProps {
   orders?: OrderRecord[]
@@ -186,18 +195,27 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const [drawerMapInstance, setDrawerMapInstance] = useState<any>(null)
   const drawerMarkersRef = useRef<any[]>([])
   const drawerPolylineRef = useRef<any>(null)
+  const drawerDeviationPolylineRef = useRef<any>(null)
+
+  // Geometria de rota real via OSRM e telemetria de desvio do pedido selecionado
+  const [streetRoute, setStreetRoute] = useState<OsrmRouteResult | null>(null)
+  const [isLoadingStreetRoute, setIsLoadingStreetRoute] = useState(false)
+  const [recentDeviations, setRecentDeviations] = useState<any[]>([])
 
   // Fetch initial/refreshed data
   const fetchData = async () => {
     try {
-      const [fetchedOrders, fetchedCouriers, fetchedLocations] = await Promise.all([
-        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
-        deliveryService.getCouriers(),
-        deliveryService.getLatestLocations(),
-      ])
+      const [fetchedOrders, fetchedCouriers, fetchedLocations, fetchedDeviations] =
+        await Promise.all([
+          deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
+          deliveryService.getCouriers(),
+          deliveryService.getLatestLocations(),
+          deliveryService.getOffRouteEvents('', '-created', 30).catch(() => []),
+        ])
       setOrders(fetchedOrders)
       setCouriers(fetchedCouriers)
       setLocations(fetchedLocations)
+      setRecentDeviations(fetchedDeviations || [])
       setLastUpdated(new Date())
     } catch (err) {
       console.warn('Erro ao atualizar dados da Torre de Controle:', err)
@@ -271,12 +289,32 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         console.warn('Torre de Controle: erro subscrição orders:', err)
       })
 
+    // Subscribe to off_route_events (live deviation events)
+    pb.collection('off_route_events')
+      .subscribe('*', (e) => {
+        if (!isSubscribed) return
+        if (e.action === 'create') {
+          setRecentDeviations((prev) => [e.record, ...prev])
+          setLastUpdated(new Date())
+        } else if (e.action === 'update') {
+          setRecentDeviations((prev) =>
+            prev.map((item) => (item.id === e.record.id ? e.record : item)),
+          )
+        }
+      })
+      .catch((err) => {
+        console.warn('Torre de Controle: erro subscrição off_route_events:', err)
+      })
+
     return () => {
       isSubscribed = false
       pb.collection('locations')
         .unsubscribe('*')
         .catch(() => {})
       pb.collection('orders')
+        .unsubscribe('*')
+        .catch(() => {})
+      pb.collection('off_route_events')
         .unsubscribe('*')
         .catch(() => {})
     }
@@ -710,8 +748,52 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   // Open Drawer for Order
   const handleOpenOrderDetails = (order: OrderRecord) => {
     setSelectedOrder(order)
+    setStreetRoute(null)
     setIsDrawerOpen(true)
   }
+
+  // Buscar rota viária real via OSRM quando um pedido é selecionado no Drawer
+  useEffect(() => {
+    if (!isDrawerOpen || !selectedOrder) return
+
+    const cust = selectedOrder.expand?.customer_id
+    if (!cust?.lat || !cust?.lng) return
+
+    // Ponto de origem: base de partida ou localização atual do entregador ou ponto inicial padrão
+    const originLat = selectedOrder.start_base_lat || orderCourierInfo?.lat || -22.906847
+    const originLng = selectedOrder.start_base_lng || orderCourierInfo?.lng || -43.172896
+
+    const origin: LatLngPoint = { lat: Number(originLat), lng: Number(originLng) }
+    const destination: LatLngPoint = { lat: Number(cust.lat), lng: Number(cust.lng) }
+
+    let isCurrent = true
+    setIsLoadingStreetRoute(true)
+
+    fetchStreetRoute(origin, destination)
+      .then((res) => {
+        if (isCurrent) {
+          setStreetRoute(res)
+          setIsLoadingStreetRoute(false)
+        }
+      })
+      .catch((err) => {
+        console.warn('Erro ao buscar rota viária:', err)
+        if (isCurrent) setIsLoadingStreetRoute(false)
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [
+    isDrawerOpen,
+    selectedOrder?.id,
+    selectedOrder?.start_base_lat,
+    selectedOrder?.start_base_lng,
+    selectedOrder?.expand?.customer_id?.lat,
+    selectedOrder?.expand?.customer_id?.lng,
+    orderCourierInfo?.lat,
+    orderCourierInfo?.lng,
+  ])
 
   // Get courier data for the selected order
   const orderCourierInfo = useMemo(() => {
@@ -855,23 +937,75 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       drawerMarkersRef.current.push(clientMarker)
     }
 
-    // Draw route path line
-    if (pathCoordinates.length >= 2) {
+    // Limpar polilinhas antigas de desvio
+    if (drawerDeviationPolylineRef.current) {
+      drawerDeviationPolylineRef.current.setMap(null)
+      drawerDeviationPolylineRef.current = null
+    }
+
+    // Desenhar a rota indicada pelo sistema (LINHA AZUL)
+    // Se temos a geometria de ruas do OSRM, usamos a sequência completa de ruas; caso contrário os pontos chave
+    const blueLinePoints =
+      streetRoute && streetRoute.coordinates.length >= 2
+        ? streetRoute.coordinates.map((c) => ({ lat: c.lat, lng: c.lng }))
+        : pathCoordinates
+
+    if (blueLinePoints.length >= 2) {
+      blueLinePoints.forEach((p) => bounds.extend(p))
+
       const polyline = new win.google.maps.Polyline({
-        path: pathCoordinates,
+        path: blueLinePoints,
         geodesic: true,
-        strokeColor: '#38BDF8',
-        strokeOpacity: 0.8,
-        strokeWeight: 3,
+        strokeColor: '#2563EB', // LINHA AZUL INDICADA PELO SISTEMA
+        strokeOpacity: 0.9,
+        strokeWeight: 5,
       })
       polyline.setMap(miniMap)
       drawerPolylineRef.current = polyline
     }
 
+    // Verificar se o entregador está em desvio de rota e desenhar LINHA VERMELHA
+    if (courierData && courierData.hasRouteStarted && blueLinePoints.length >= 2) {
+      const courierPoint: LatLngPoint = { lat: courierData.lat, lng: courierData.lng }
+      const nearest = findNearestPointOnRoute(courierPoint, blueLinePoints)
+
+      // Verificar desvio registrado pelo sistema (coleção off_route_events ou distância > 150m)
+      const hasSystemDeviationEvent = recentDeviations.some(
+        (dev) =>
+          dev.courier_id === courierData.courier.id &&
+          (dev.order_id === selectedOrder.id || !dev.order_id) &&
+          dev.resolved !== true,
+      )
+
+      const isOffRoute = hasSystemDeviationEvent || nearest.distanceMeters > 150
+
+      if (isOffRoute) {
+        // LINHA VERMELHA do desvio: liga a posição atual do entregador ao ponto correspondente na rota azul
+        const deviationPath = [courierPoint, nearest.nearestPoint]
+
+        const deviationPolyline = new win.google.maps.Polyline({
+          path: deviationPath,
+          geodesic: true,
+          strokeColor: '#EF4444', // LINHA VERMELHA DE DESVIO
+          strokeOpacity: 1,
+          strokeWeight: 4,
+          icons: [
+            {
+              icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+              offset: '0',
+              repeat: '10px',
+            },
+          ],
+        })
+        deviationPolyline.setMap(miniMap)
+        drawerDeviationPolylineRef.current = deviationPolyline
+      }
+    }
+
     if (!bounds.isEmpty()) {
       miniMap.fitBounds(bounds, { top: 30, right: 30, bottom: 30, left: 30 })
     }
-  }, [isDrawerOpen, selectedOrder, mapsLoaded, orderCourierInfo])
+  }, [isDrawerOpen, selectedOrder, mapsLoaded, orderCourierInfo, streetRoute, recentDeviations])
 
   // Contact helpers
   const openWhatsApp = (phone?: string, text?: string) => {
@@ -1344,7 +1478,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     </Button>
                   </div>
 
-                  {/* Canvas vetorial de contingência idêntico ao LiveMap.tsx com marcadores interativos */}
+                  {/* Canvas vetorial de contingência idêntico ao LiveMap.tsx com marcadores interativos e rotas viárias */}
                   <LiveMap
                     markers={controlTowerMapMarkers}
                     center={
@@ -1354,6 +1488,33 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     }
                     zoom={13}
                     height="100%"
+                    routeLines={(() => {
+                      // Construir rotas ativas dos entregadores em rota
+                      const lines: any[] = []
+                      activeRouteCouriers.forEach((c) => {
+                        const firstTransitOrder = c.nextOrder
+                        const cust = firstTransitOrder?.expand?.customer_id
+                        if (cust?.lat && cust?.lng) {
+                          const baseLat = firstTransitOrder.start_base_lat || c.lat
+                          const baseLng = firstTransitOrder.start_base_lng || c.lng
+
+                          const hasDev = recentDeviations.some(
+                            (dev) =>
+                              dev.courier_id === c.courier.id &&
+                              (dev.order_id === firstTransitOrder.id || !dev.order_id) &&
+                              dev.resolved !== true,
+                          )
+
+                          lines.push({
+                            origin: { lat: baseLat, lng: baseLng },
+                            destination: { lat: cust.lat, lng: cust.lng },
+                            courierPosition: { lat: c.lat, lng: c.lng },
+                            isDeviated: hasDev,
+                          })
+                        }
+                      })
+                      return lines
+                    })()}
                     onSelectMarker={(m) => {
                       if (m.type === 'courier') {
                         const courierId = m.id.replace('courier-', '')
@@ -1726,129 +1887,341 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     </span>
                   </div>
 
-                  <div className="relative w-full h-[220px] rounded-xl overflow-hidden border border-[#1E2B58] bg-[#070D1E]">
+                  <div className="relative w-full h-[250px] rounded-xl overflow-hidden border border-[#1E2B58] bg-[#070D1E]">
                     {/* Google Mini Map Container (ativo se mapsLoaded e sem erro) */}
                     <div
                       ref={drawerMiniMapRef}
                       className={`w-full h-full ${mapsLoaded && !mapsError ? 'block' : 'hidden'}`}
                     />
 
-                    {/* Fallback Vetorial Interativo com Pontos da Rota, Coordenadas GPS e Botão de Retry */}
-                    {(!mapsLoaded || mapsError) && (
-                      <div className="relative w-full h-full flex flex-col justify-between p-3 bg-gradient-to-br from-slate-950 via-[#0a1128] to-slate-900 text-white select-none overflow-hidden">
-                        {/* Grid de fundo */}
-                        <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
+                    {/* Fallback Vetorial Interativo com Ruas Reais OSRM, Linha Azul e Linha Vermelha de Desvio */}
+                    {(!mapsLoaded || mapsError) &&
+                      (() => {
+                        const cust = selectedOrder.expand?.customer_id
+                        const baseLat = selectedOrder.start_base_lat || -22.906847
+                        const baseLng = selectedOrder.start_base_lng || -43.172896
+                        const clientLat = cust?.lat || baseLat + 0.035
+                        const clientLng = cust?.lng || baseLng + 0.04
 
-                        {/* Linhas simuladas e trajeto SVG conectando Base -> Entregador -> Cliente */}
-                        <svg
-                          className="absolute inset-0 w-full h-full pointer-events-none"
-                          xmlns="http://www.w3.org/2000/svg"
-                        >
-                          <path
-                            d="M 20,40 Q 90,80 150,110 T 280,170"
-                            fill="none"
-                            stroke="#38BDF8"
-                            strokeWidth="2.5"
-                            strokeDasharray="4,4"
-                            className="opacity-70"
-                          />
-                        </svg>
+                        // Posição do entregador se houver
+                        const courierLat =
+                          orderCourierInfo?.lat ?? (baseLat + clientLat) / 2 + 0.008
+                        const courierLng =
+                          orderCourierInfo?.lng ?? (baseLng + clientLng) / 2 + 0.009
 
-                        {/* Top bar do mini-mapa com GPS e Retry */}
-                        <div className="relative z-10 flex items-center justify-between text-[11px]">
-                          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-950/80 border border-blue-500/30 text-blue-300 font-mono text-[10px]">
-                            <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-ping" />
-                            GPS:{' '}
-                            {orderCourierInfo?.lat
-                              ? `${orderCourierInfo.lat.toFixed(4)}, ${orderCourierInfo.lng.toFixed(4)}`
-                              : 'Aguardando sinal'}
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={handleRetryMaps}
-                            className="h-6 px-2 text-[10px] bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 gap-1 rounded-md"
-                            title="Tentar carregar Google Maps novamente"
-                          >
-                            <RefreshCw className="h-3 w-3" />
-                            <span>Retry</span>
-                          </Button>
-                        </div>
+                        // Coordenadas da rota real (ou pontos interpolados de rua)
+                        const routeCoords: LatLngPoint[] =
+                          streetRoute && streetRoute.coordinates.length >= 2
+                            ? streetRoute.coordinates
+                            : [
+                                { lat: baseLat, lng: baseLng },
+                                { lat: baseLat + 0.008, lng: baseLng + 0.004 },
+                                { lat: baseLat + 0.016, lng: baseLng + 0.018 },
+                                { lat: clientLat - 0.009, lng: clientLng - 0.012 },
+                                { lat: clientLat, lng: clientLng },
+                              ]
 
-                        {/* Pontos da rota plotados no canvas vetorial: Base (🟢), Entregador (🛵), Cliente (🏁) */}
-                        <div className="relative w-full flex-1 my-1">
-                          {/* 1. Base de Partida 🟢 */}
-                          <div
-                            style={{ left: '16%', top: '22%' }}
-                            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group cursor-pointer"
-                          >
-                            <div className="h-7 w-7 rounded-full bg-emerald-500/20 border-2 border-emerald-400 text-emerald-300 flex items-center justify-center text-xs shadow-md shadow-emerald-500/30">
-                              🟢
+                        // Cálculo de bounding box para projeção SVG no canvas
+                        const allLats = [
+                          ...routeCoords.map((c) => c.lat),
+                          baseLat,
+                          clientLat,
+                          courierLat,
+                        ]
+                        const allLngs = [
+                          ...routeCoords.map((c) => c.lng),
+                          baseLng,
+                          clientLng,
+                          courierLng,
+                        ]
+                        const minLat = Math.min(...allLats)
+                        const maxLat = Math.max(...allLats)
+                        const minLng = Math.min(...allLngs)
+                        const maxLng = Math.max(...allLngs)
+
+                        const latSpan = Math.max(maxLat - minLat, 0.004)
+                        const lngSpan = Math.max(maxLng - minLng, 0.004)
+
+                        // Função de projeção lat/lng -> porcentagem (%) no canvas com margem de 10%
+                        const padPercent = 12
+                        const toCanvas = (lat: number, lng: number) => {
+                          const x = padPercent + ((lng - minLng) / lngSpan) * (100 - 2 * padPercent)
+                          // Inversão do eixo Y (latitude sobe para o norte / topo do mapa)
+                          const y =
+                            100 - padPercent - ((lat - minLat) / latSpan) * (100 - 2 * padPercent)
+                          return {
+                            x: Math.max(4, Math.min(96, x)),
+                            y: Math.max(4, Math.min(96, y)),
+                          }
+                        }
+
+                        // Gerar string SVG Path com o percurso real pelas ruas (LINHA AZUL)
+                        const blueSvgPath = routeCoords
+                          .map((c, i) => {
+                            const p = toCanvas(c.lat, c.lng)
+                            return `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`
+                          })
+                          .join(' ')
+
+                        // Identificar se o entregador está em desvio (coleção off_route_events ou distância > 150m)
+                        const courierPoint: LatLngPoint = { lat: courierLat, lng: courierLng }
+                        const nearest = findNearestPointOnRoute(courierPoint, routeCoords)
+                        const hasDeviationFlag = recentDeviations.some(
+                          (dev) =>
+                            dev.courier_id === orderCourierInfo?.courier?.id &&
+                            (dev.order_id === selectedOrder.id || !dev.order_id) &&
+                            dev.resolved !== true,
+                        )
+                        const isDeviated =
+                          orderCourierInfo?.hasRouteStarted &&
+                          (hasDeviationFlag || nearest.distanceMeters > 150)
+
+                        const courierPos = toCanvas(courierLat, courierLng)
+                        const nearestPos = toCanvas(
+                          nearest.nearestPoint.lat,
+                          nearest.nearestPoint.lng,
+                        )
+                        const basePos = toCanvas(baseLat, baseLng)
+                        const clientPos = toCanvas(clientLat, clientLng)
+
+                        return (
+                          <div className="relative w-full h-full flex flex-col justify-between p-2.5 bg-gradient-to-br from-slate-950 via-[#071126] to-[#040915] text-white select-none overflow-hidden">
+                            {/* Malha de ruas vetorial estilizada (map tile feeling) */}
+                            <div className="absolute inset-0 opacity-20 pointer-events-none bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px]" />
+
+                            {/* SVG do Percurso Real com Ruas (LINHA AZUL) + Desvio (LINHA VERMELHA) */}
+                            <svg
+                              viewBox="0 0 100 100"
+                              preserveAspectRatio="none"
+                              className="absolute inset-0 w-full h-full pointer-events-none z-0"
+                            >
+                              <defs>
+                                {/* Efeito glow para a linha azul */}
+                                <filter id="blue-glow" x="-20%" y="-20%" width="140%" height="140%">
+                                  <feDropShadow
+                                    dx="0"
+                                    dy="0"
+                                    stdDeviation="1"
+                                    floodColor="#3B82F6"
+                                    floodOpacity="0.8"
+                                  />
+                                </filter>
+                                {/* Efeito glow para a linha vermelha */}
+                                <filter id="red-glow" x="-20%" y="-20%" width="140%" height="140%">
+                                  <feDropShadow
+                                    dx="0"
+                                    dy="0"
+                                    stdDeviation="1.5"
+                                    floodColor="#EF4444"
+                                    floodOpacity="0.9"
+                                  />
+                                </filter>
+                              </defs>
+
+                              {/* LINHA AZUL: Trajeto Viário Indicado pelo Sistema */}
+                              {blueSvgPath && (
+                                <>
+                                  {/* Traçado de fundo largo para contraste de rua */}
+                                  <path
+                                    d={blueSvgPath}
+                                    fill="none"
+                                    stroke="#1E3A8A"
+                                    strokeWidth="4"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    opacity="0.8"
+                                  />
+                                  {/* Traçado principal azul brilhante */}
+                                  <path
+                                    d={blueSvgPath}
+                                    fill="none"
+                                    stroke="#2563EB"
+                                    strokeWidth="2.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    filter="url(#blue-glow)"
+                                  />
+                                  {/* Linha interna guia ciano */}
+                                  <path
+                                    d={blueSvgPath}
+                                    fill="none"
+                                    stroke="#60A5FA"
+                                    strokeWidth="0.8"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </>
+                              )}
+
+                              {/* LINHA VERMELHA: Caso o entregador faça um desvio de rota */}
+                              {isDeviated && (
+                                <>
+                                  {/* Linha de desvio conectando a posição do entregador até o ponto de retorno na rota */}
+                                  <line
+                                    x1={courierPos.x}
+                                    y1={courierPos.y}
+                                    x2={nearestPos.x}
+                                    y2={nearestPos.y}
+                                    stroke="#EF4444"
+                                    strokeWidth="2.5"
+                                    strokeDasharray="2,1.5"
+                                    strokeLinecap="round"
+                                    filter="url(#red-glow)"
+                                  />
+                                  {/* Marcador circular no ponto onde o entregador saiu da rota */}
+                                  <circle
+                                    cx={nearestPos.x}
+                                    cy={nearestPos.y}
+                                    r="1.8"
+                                    fill="#EF4444"
+                                    stroke="#FFFFFF"
+                                    strokeWidth="0.5"
+                                  />
+                                </>
+                              )}
+                            </svg>
+
+                            {/* Top bar do mini-mapa com tags de Trajeto Real, Alerta de Desvio e Retry */}
+                            <div className="relative z-10 flex items-center justify-between text-[11px] gap-2">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-950/90 border border-blue-500/40 text-blue-300 font-bold text-[10px]">
+                                  <Route className="h-3 w-3 text-blue-400" />
+                                  {streetRoute?.isRealStreetRoute
+                                    ? `Trajeto Viário Real (${streetRoute.coordinates.length} nós)`
+                                    : 'Trajeto de Ruas'}
+                                </span>
+
+                                {isDeviated ? (
+                                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-950/90 border border-rose-500/60 text-rose-300 font-bold text-[10px] animate-pulse">
+                                    <AlertOctagon className="h-3 w-3 text-rose-400" />
+                                    DESVIO DETECTADO ({Math.round(nearest.distanceMeters)}m)
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-500/30 text-emerald-300 text-[10px]">
+                                    <ShieldCheck className="h-3 w-3 text-emerald-400" />
+                                    Na rota indicada
+                                  </span>
+                                )}
+                              </div>
+
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={handleRetryMaps}
+                                className="h-6 px-2 text-[10px] bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 gap-1 rounded-md shrink-0"
+                                title="Tentar carregar Google Maps nativo"
+                              >
+                                <RefreshCw className="h-3 w-3" />
+                                <span>Tentar Google Maps</span>
+                              </Button>
                             </div>
-                            <span className="mt-1 px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-800 text-[9px] font-bold text-emerald-300 whitespace-nowrap shadow">
-                              {selectedOrder.start_base_name || 'Base Partida'}
-                            </span>
-                          </div>
 
-                          {/* 2. Entregador 🛵 */}
-                          <div
-                            style={{ left: '50%', top: '50%' }}
-                            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group cursor-pointer z-10"
-                          >
-                            <span className="absolute -inset-1 rounded-full animate-ping bg-blue-400/30" />
-                            <div className="h-8 w-8 rounded-full bg-blue-600 border-2 border-blue-300 text-white flex items-center justify-center text-xs shadow-lg shadow-blue-500/40">
-                              🛵
+                            {/* Pontos Marcadores no Canvas Vetorial */}
+                            <div className="relative w-full flex-1 pointer-events-none">
+                              {/* 1. Base de Partida 🟢 */}
+                              <div
+                                style={{ left: `${basePos.x}%`, top: `${basePos.y}%` }}
+                                className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-auto"
+                              >
+                                <div className="h-6 w-6 rounded-full bg-emerald-500/25 border-2 border-emerald-400 text-emerald-300 flex items-center justify-center text-[10px] shadow-lg shadow-emerald-500/30">
+                                  🟢
+                                </div>
+                                <span className="mt-0.5 px-1.5 py-0.2 rounded bg-slate-900/90 border border-slate-800 text-[8px] font-bold text-emerald-300 whitespace-nowrap shadow">
+                                  {selectedOrder.start_base_name || 'Partida'}
+                                </span>
+                              </div>
+
+                              {/* 2. Entregador 🛵 (Com indicador de desvio em vermelho se aplicável) */}
+                              {orderCourierInfo && (
+                                <div
+                                  style={{ left: `${courierPos.x}%`, top: `${courierPos.y}%` }}
+                                  className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-auto z-20"
+                                >
+                                  {isDeviated && (
+                                    <span className="absolute -top-3 px-1 py-0.2 rounded bg-rose-600 text-white text-[7px] font-extrabold uppercase tracking-wider animate-bounce shadow">
+                                      Desvio
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`absolute -inset-1 rounded-full animate-ping ${
+                                      isDeviated ? 'bg-rose-500/50' : 'bg-blue-400/40'
+                                    }`}
+                                  />
+                                  <div
+                                    className={`h-7 w-7 rounded-full border-2 text-white flex items-center justify-center text-[11px] shadow-lg ${
+                                      isDeviated
+                                        ? 'bg-rose-600 border-rose-300 shadow-rose-500/50'
+                                        : 'bg-blue-600 border-blue-300 shadow-blue-500/50'
+                                    }`}
+                                  >
+                                    🛵
+                                  </div>
+                                  <span
+                                    className={`mt-0.5 px-1.5 py-0.2 rounded text-[8px] font-bold whitespace-nowrap shadow border ${
+                                      isDeviated
+                                        ? 'bg-rose-950/95 border-rose-500 text-rose-200'
+                                        : 'bg-blue-950/95 border-blue-500 text-blue-200'
+                                    }`}
+                                  >
+                                    {orderCourierInfo.courier?.name
+                                      ? orderCourierInfo.courier.name.split(' ')[0]
+                                      : 'Entregador'}
+                                    {orderCourierInfo.speed
+                                      ? ` • ${orderCourierInfo.speed}km/h`
+                                      : ''}
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* 3. Cliente Destino 🏁 */}
+                              <div
+                                style={{ left: `${clientPos.x}%`, top: `${clientPos.y}%` }}
+                                className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-auto"
+                              >
+                                <div className="h-6 w-6 rounded-full bg-orange-500/25 border-2 border-orange-400 text-orange-300 flex items-center justify-center text-[10px] shadow-lg shadow-orange-500/30">
+                                  🏁
+                                </div>
+                                <span className="mt-0.5 px-1.5 py-0.2 rounded bg-slate-900/90 border border-slate-800 text-[8px] font-bold text-orange-300 whitespace-nowrap shadow">
+                                  {selectedOrder.expand?.customer_id?.name
+                                    ? selectedOrder.expand.customer_id.name.split(' ')[0]
+                                    : 'Cliente'}
+                                </span>
+                              </div>
                             </div>
-                            <span className="mt-1 px-1.5 py-0.5 rounded bg-blue-950/90 border border-blue-500/40 text-[9px] font-bold text-blue-200 whitespace-nowrap shadow">
-                              {orderCourierInfo?.courier?.name
-                                ? orderCourierInfo.courier.name.split(' ')[0]
-                                : 'Entregador'}
-                              {orderCourierInfo?.speed ? ` • ${orderCourierInfo.speed}km/h` : ''}
-                            </span>
-                          </div>
 
-                          {/* 3. Cliente 🏁 */}
-                          <div
-                            style={{ left: '84%', top: '76%' }}
-                            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group cursor-pointer"
-                          >
-                            <div className="h-7 w-7 rounded-full bg-orange-500/20 border-2 border-orange-400 text-orange-300 flex items-center justify-center text-xs shadow-md shadow-orange-500/30">
-                              🏁
+                            {/* Barra inferior: dados de trajeto real e legenda explicativa das cores */}
+                            <div className="relative z-10 bg-slate-900/95 border border-slate-800/80 rounded-lg p-1.5 px-2 text-[10px] text-slate-300 flex items-center justify-between">
+                              <span className="truncate max-w-[210px] text-slate-300">
+                                🏁{' '}
+                                {selectedOrder.expand?.customer_id?.address || 'Destino da Entrega'}
+                              </span>
+                              <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                                {isLoadingStreetRoute && (
+                                  <span className="text-[9px] text-blue-300 flex items-center gap-1">
+                                    <RefreshCw className="h-2.5 w-2.5 animate-spin" /> Ruas...
+                                  </span>
+                                )}
+                                <span className="font-mono text-blue-300 font-bold">
+                                  {getEtaDisplay(selectedOrder)}
+                                </span>
+                              </div>
                             </div>
-                            <span className="mt-1 px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-800 text-[9px] font-bold text-orange-300 whitespace-nowrap shadow">
-                              {selectedOrder.expand?.customer_id?.name
-                                ? selectedOrder.expand.customer_id.name.split(' ')[0]
-                                : 'Cliente'}
-                            </span>
                           </div>
-                        </div>
-
-                        {/* Endereço resumido e status da rota */}
-                        <div className="relative z-10 bg-slate-900/90 border border-slate-800/80 rounded-lg p-1.5 px-2 text-[10px] text-slate-300 flex items-center justify-between">
-                          <span className="truncate max-w-[210px] text-slate-300">
-                            🏁 {selectedOrder.expand?.customer_id?.address || 'Destino da Entrega'}
-                          </span>
-                          <span className="font-mono text-blue-300 font-bold shrink-0 ml-1">
-                            {getEtaDisplay(selectedOrder)}
-                          </span>
-                        </div>
-                      </div>
-                    )}
+                        )
+                      })()}
                   </div>
 
-                  {/* Legenda do mini-mapa */}
-                  <div className="flex items-center justify-around text-[10px] text-slate-400 pt-1 border-t border-[#1E2B58]">
-                    <span className="flex items-center gap-1">
-                      <span className="h-2 w-2 rounded-full bg-emerald-400 inline-block" />
-                      Partida 🟢
+                  {/* Legenda explicativa com as linhas AZUL e VERMELHA exigidas pelo usuário */}
+                  <div className="flex flex-wrap items-center justify-between text-[10px] text-slate-300 pt-1.5 border-t border-[#1E2B58] gap-2">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span className="h-1.5 w-4 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6] inline-block" />
+                      <span className="text-blue-300 font-bold">Linha Azul:</span> Rota Indicada
+                      (Ruas Reais)
                     </span>
-                    <span className="flex items-center gap-1">
-                      <span className="h-2 w-2 rounded-full bg-blue-500 inline-block" />
-                      Entregador 🛵
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="h-2 w-2 rounded-full bg-orange-500 inline-block" />
-                      Cliente 🏁
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span className="h-1.5 w-4 rounded-full bg-rose-500 shadow-[0_0_8px_#ef4444] inline-block" />
+                      <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio do
+                      Entregador
                     </span>
                   </div>
                 </div>
