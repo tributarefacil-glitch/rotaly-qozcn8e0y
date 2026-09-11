@@ -198,7 +198,7 @@ export default function Index() {
             onClick={() => setSelectedProfile(null)}
             className="flex items-center hover:opacity-95"
           >
-            <RotalyLogo size="md" theme="dark" showTagline={true} />
+            <RotalyLogo size="md" theme="dark" showTagline={false} />
           </Link>
 
           <div className="flex items-center gap-3">

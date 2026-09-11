@@ -1,5 +1,5 @@
 import React from 'react'
-import rotalyLogoImg from '@/assets/imagemgerada1789096613753-c0f37.png'
+import { rotalyLogoImg } from '@/assets/logo-rotaly'
 
 export interface RotalyLogoProps {
   className?: string
@@ -160,7 +160,7 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
 
         {showTagline && (
           <span
-            className={`font-sans tracking-wide uppercase font-semibold leading-tight ml-2.5 ${
+            className={`font-sans tracking-wide font-medium leading-tight ml-2.5 ${
               theme === 'dark' ? 'text-slate-300/85' : 'text-slate-600'
             } ${currentSize.tagline}`}
           >
