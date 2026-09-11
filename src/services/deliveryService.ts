@@ -625,23 +625,28 @@ export const deliveryService = {
   },
 
   // Compute Real-time Courier Current Account
-  // Regra: Soma dos Adiantamentos - Gasto em Rotas Oficiais (apenas km roteirizados das ordens)
+  // Regra: Soma dos Adiantamentos - Gasto em Rotas Oficiais (KM Real de GPS quando disponível, descontados desvios e paradas)
   // Usando parâmetros de consumo e preço específicos do tipo de veículo do entregador (moto, carro ou caminhão)
   async getCourierFuelAccounts(): Promise<CourierFuelAccount[]> {
-    const [couriers, advances, orders, settings] = await Promise.all([
+    const [couriers, advances, orders, settings, locations, offRouteEvents] = await Promise.all([
       this.getCouriers(),
       this.getFuelAdvances(),
       this.getOrders(),
       this.getSettings(),
+      this.getLatestLocations(),
+      this.getOffRouteEvents(),
     ])
+
+    const { calculateRealKmForOrder } = await import('@/lib/telemetryKmEngine')
 
     return couriers.map((courier) => {
       const courierAdvances = advances.filter((a) => a.courier_id === courier.id)
       const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
 
-      // Regra: Contabilizar km (distance_km + return_trip_km) para todo pedido com:
-      // route_started === true OU status in_transit / delivered / address_error / client_absent com entregador vinculado
-      // independente do motivo de finalização (incluindo rotas parciais de retorno)
+      const courierLocations = locations.filter((l) => l.user_id === courier.id)
+      const courierEvents = offRouteEvents.filter((ev) => ev.courier_id === courier.id)
+
+      // Regra: Contabilizar km para todo pedido com rota iniciada ou entregue/parcial
       const courierOrders = orders.filter(
         (o) =>
           o.courier_id === courier.id &&
@@ -653,23 +658,13 @@ export const deliveryService = {
       )
 
       const totalRouteKm = courierOrders.reduce((sum, o) => {
-        // Base distance
-        let baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-        // Return trip addition
-        let returnKm =
-          typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
-
-        // Se a rota foi iniciada ou é rota parcial (address_error/client_absent/delivered) e distance_km for 0,
-        // aplicar estimativa mínima de percurso urbano para não zerar km de entregador em rota
-        if (
-          baseKm === 0 &&
-          (o.status === 'address_error' || o.status === 'client_absent' || o.route_started)
-        ) {
-          baseKm = 4.5
-          if (returnKm === 0) returnKm = 4.5
-        }
-
-        return sum + baseKm + returnKm
+        const realCalc = calculateRealKmForOrder({
+          order: o,
+          allCourierLocations: courierLocations,
+          courierEvents,
+          allCourierOrders: courierOrders,
+        })
+        return sum + realCalc.officialRealKm
       }, 0)
 
       const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
@@ -683,9 +678,9 @@ export const deliveryService = {
       return {
         courier,
         totalAdvances,
-        totalRouteKm,
-        totalSpent,
-        balance,
+        totalRouteKm: Number(totalRouteKm.toFixed(1)),
+        totalSpent: Number(totalSpent.toFixed(2)),
+        balance: Number(balance.toFixed(2)),
         advanceCount: courierAdvances.length,
         deliveriesCount: courierOrders.length,
       }

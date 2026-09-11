@@ -38,6 +38,8 @@ import type {
   UserRecord,
   LocationRecord,
   NotificationRecord,
+  AppSettingsRecord,
+  OffRouteEventRecord,
 } from '@/types/delivery'
 import { playOffRouteWarningSound, sendBrowserPushNotification } from '@/lib/notificationSound'
 import { useAuth } from '@/contexts/AuthContext'

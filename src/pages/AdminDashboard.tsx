@@ -56,6 +56,7 @@ import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistory
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { deliveryService } from '@/services/deliveryService'
+import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import type {
   OrderRecord,
   UserRecord,
@@ -654,18 +655,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       o.status === 'address_error' ||
       o.status === 'client_absent'
     ) {
-      let dist = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-      let ret = typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+      const realTelemetry = calculateRealKmForOrder({
+        order: o,
+        allCourierLocations: locations,
+        courierEvents: offRouteEvents,
+        allCourierOrders: orders,
+      })
 
-      if (
-        dist === 0 &&
-        (o.status === 'address_error' || o.status === 'client_absent' || o.route_started)
-      ) {
-        dist = 4.5
-        if (ret === 0) ret = 4.5
-      }
-
-      const orderKm = dist + ret
+      const orderKm = realTelemetry.officialRealKm
       totalKmRodada += orderKm
 
       // Obter veículo do entregador
@@ -2898,6 +2895,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         }
         orders={orders}
         offRouteEvents={offRouteEvents}
+        locations={locations}
         settings={settings}
       />
     </div>

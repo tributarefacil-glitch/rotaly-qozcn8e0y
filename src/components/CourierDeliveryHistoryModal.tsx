@@ -43,8 +43,10 @@ import type {
   AppSettingsRecord,
   OffRouteEventRecord,
   CourierFuelAccount,
+  LocationRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
+import { calculateRealKmForOrder, sanitizeGpsPoints } from '@/lib/telemetryKmEngine'
 
 export interface CourierDeliveryHistoryItem {
   order: OrderRecord
@@ -57,6 +59,11 @@ export interface CourierDeliveryHistoryItem {
   statusLabel: string
   statusColor: string
   kmRodado: number
+  isRealTelemetry: boolean
+  deviationKm: number
+  plannedKm: number
+  gpsPointsCount: number
+  filteredNoisePointsCount: number
   hasReturnKm: boolean
   fuelCost: number
   litersSpent: number
@@ -71,7 +78,8 @@ interface CourierDeliveryHistoryModalProps {
   courier: UserRecord | null
   fuelAccount?: CourierFuelAccount | null
   orders: OrderRecord[]
-  offRouteEvents: OffRouteEventRecord[]
+  offRouteEvents?: OffRouteEventRecord[]
+  locations?: LocationRecord[]
   settings: AppSettingsRecord | null
 }
 
@@ -81,7 +89,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   courier,
   fuelAccount,
   orders,
-  offRouteEvents,
+  offRouteEvents = [],
+  locations: externalLocations,
   settings,
 }) => {
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>('all')
@@ -89,6 +98,38 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedItemForDetails, setSelectedItemForDetails] =
     useState<CourierDeliveryHistoryItem | null>(null)
+  const [fetchedLocations, setFetchedLocations] = useState<LocationRecord[]>([])
+  const [isLoadingLocations, setIsLoadingLocations] = useState(false)
+
+  // Carregar locations caso não tenham sido passadas externamente
+  React.useEffect(() => {
+    if (!isOpen || !courier?.id) return
+    if (externalLocations && externalLocations.length > 0) return
+
+    let isMounted = true
+    setIsLoadingLocations(true)
+    deliveryService
+      .getLatestLocations()
+      .then((locs) => {
+        if (isMounted) {
+          setFetchedLocations(locs)
+        }
+      })
+      .catch((err) => {
+        console.warn('Erro ao carregar telemetria de GPS para histórico:', err)
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingLocations(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [isOpen, courier?.id, externalLocations])
+
+  const allLocations = useMemo(() => {
+    return externalLocations && externalLocations.length > 0 ? externalLocations : fetchedLocations
+  }, [externalLocations, fetchedLocations])
 
   // Obter parâmetros de combustível específicos do entregador
   const fuelParams = useMemo(() => {
@@ -117,37 +158,39 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     return offRouteEvents.filter((ev) => ev.courier_id === courier.id)
   }, [offRouteEvents, courier])
 
-  // Processar itens detalhados de cada entrega
+  // Processar itens detalhados de cada entrega utilizando o motor de telemetria GPS 100% REAL
   const historyItems: CourierDeliveryHistoryItem[] = useMemo(() => {
     if (!courier) return []
 
     return courierOrders.map((o) => {
-      // Cálculo de KM oficial com ida e volta
-      let baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-      let returnKm =
-        typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+      // Cálculo de KM 100% Real por telemetria de GPS, com desconto de desvios e paradas fora da rota
+      const realTelemetry = calculateRealKmForOrder({
+        order: o,
+        allCourierLocations: allLocations,
+        courierEvents,
+        allCourierOrders: courierOrders,
+      })
 
-      // Estimativa mínima em rotas ativas ou parciais sem km registrado
-      if (
-        baseKm === 0 &&
-        (o.status === 'address_error' || o.status === 'client_absent' || o.route_started)
-      ) {
-        baseKm = 4.5
-        if (returnKm === 0) returnKm = 4.5
-      }
-
-      const totalKm = baseKm + returnKm
-      const liters = fuelParams.consumptionKml > 0 ? totalKm / fuelParams.consumptionKml : 0
+      const kmOficial = realTelemetry.officialRealKm
+      const liters = fuelParams.consumptionKml > 0 ? kmOficial / fuelParams.consumptionKml : 0
       const cost = liters * fuelParams.pricePerLiter
 
-      // Eventos associados a esta entrega específica (por order_id ou aproximação)
-      const associatedEvents = courierEvents.filter((ev) => ev.order_id === o.id)
-      const offRouteCount = associatedEvents.filter(
-        (ev) => ev.event_type === 'route_deviation',
-      ).length
-      const unexpectedStopsCount = associatedEvents.filter(
-        (ev) => ev.event_type === 'unexpected_stop',
-      ).length
+      // Eventos associados a esta entrega específica
+      const associatedEvents = courierEvents.filter(
+        (ev) =>
+          ev.order_id === o.id ||
+          (ev.courier_id === courier.id &&
+            ev.created >= (o.route_started_at || o.created) &&
+            ev.created <= (o.actual_arrival || o.updated || o.created)),
+      )
+      const offRouteCount = Math.max(
+        realTelemetry.offRouteCount,
+        associatedEvents.filter((ev) => ev.event_type === 'route_deviation').length,
+      )
+      const unexpectedStopsCount = Math.max(
+        realTelemetry.unexpectedStopsCount,
+        associatedEvents.filter((ev) => ev.event_type === 'unexpected_stop').length,
+      )
 
       let statusLabel = 'Em Espera'
       let statusColor = 'bg-slate-500/15 text-slate-300 border-slate-700'
@@ -192,16 +235,24 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         status: o.status,
         statusLabel,
         statusColor,
-        kmRodado: Number(totalKm.toFixed(1)),
-        hasReturnKm: returnKm > 0,
+        kmRodado: kmOficial,
+        isRealTelemetry: realTelemetry.isRealTelemetry,
+        deviationKm: realTelemetry.deviationKm,
+        plannedKm: realTelemetry.plannedKm,
+        gpsPointsCount: realTelemetry.gpsPointsCount,
+        filteredNoisePointsCount: realTelemetry.filteredNoisePointsCount,
+        hasReturnKm: realTelemetry.hasReturnKm,
         fuelCost: Number(cost.toFixed(2)),
         litersSpent: Number(liters.toFixed(2)),
         offRouteCount,
         unexpectedStopsCount,
-        events: associatedEvents,
+        events:
+          associatedEvents.length > 0
+            ? associatedEvents
+            : courierEvents.filter((ev) => ev.order_id === o.id),
       }
     })
-  }, [courier, courierOrders, courierEvents, fuelParams])
+  }, [courier, courierOrders, courierEvents, allLocations, fuelParams])
 
   // Aplicar filtros de período, status e busca
   const filteredItems = useMemo(() => {
@@ -269,7 +320,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     }
   }, [filteredItems, fuelAccount])
 
-  // Exportar dados em CSV
+  // Exportar dados em CSV com KM Real e KM de Desvios em colunas separadas
   const handleExportCSV = () => {
     if (!courier || filteredItems.length === 0) return
 
@@ -279,10 +330,13 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       'Cliente',
       'Endereço',
       'Status',
-      'KM Rodado',
-      'Combustível (R$)',
-      'Litros Estimados',
-      'Desvios (>300m)',
+      'KM Real Oficial (Reembolsável)',
+      'KM em Desvios e Paradas (Não Reembolsável)',
+      'Origem Telemetria (GPS Real vs Estimado)',
+      'Pontos GPS Válidos',
+      'Combustível Oficial (R$)',
+      'Litros Consumidos',
+      'Desvios de Rota (>300m)',
       'Paradas Fora da Rota',
     ]
 
@@ -293,6 +347,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       `"${item.customerAddress.replace(/"/g, '""')}"`,
       `"${item.statusLabel}"`,
       item.kmRodado.toFixed(1),
+      item.deviationKm.toFixed(1),
+      item.isRealTelemetry ? '100% Real (GPS)' : 'Estimado (Planejado)',
+      item.gpsPointsCount,
       item.fuelCost.toFixed(2),
       item.litersSpent.toFixed(2),
       item.offRouteCount,
@@ -416,12 +473,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
               </span>
             </div>
 
-            {/* 3. KM Total Rodado */}
+            {/* 3. KM Real Rodado (Oficial) */}
             <div className="p-3.5 rounded-xl bg-[#0E1738] border border-[#1E2B58] relative overflow-hidden">
               <div className="absolute top-0 left-0 right-0 h-1 bg-[#FF6B35]" />
               <div className="flex items-center justify-between text-slate-400 text-xs">
                 <span className="font-semibold uppercase tracking-wider text-[10px]">
-                  KM Total (Ida+Volta)
+                  KM Real Oficial
                 </span>
                 <Navigation className="h-4 w-4 text-[#FF6B35]" />
               </div>
@@ -429,8 +486,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 {metricsSummary.totalKm}{' '}
                 <span className="text-xs font-normal text-slate-400">km</span>
               </p>
-              <span className="text-[10px] text-slate-400 block mt-0.5">
-                Em {metricsSummary.totalDeliveries} entrega(s) filtradas
+              <span className="text-[10px] text-emerald-400/90 block mt-0.5 font-medium">
+                Descontados desvios e paradas fora da rota
               </span>
             </div>
 
@@ -453,7 +510,27 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
           </div>
 
           {/* TELEMETRIA & OCORRÊNCIAS DE ROTA (DESVIOS E PARADAS) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-3 rounded-xl bg-[#0A1128] border border-blue-500/30 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/40">
+                  <Navigation className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Telemetria GPS Real
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    {filteredItems.filter((i) => i.isRealTelemetry).length} de{' '}
+                    {filteredItems.length} entrega(s) com GPS 100% real
+                  </p>
+                </div>
+              </div>
+              <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/40 text-xs font-bold font-mono px-2.5 py-1">
+                100% Real
+              </Badge>
+            </div>
+
             <div className="p-3 rounded-xl bg-[#0A1128] border border-amber-500/30 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40">
@@ -480,10 +557,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 </div>
                 <div>
                   <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                    Desvios de Rota (&gt;300m)
+                    Desvios (&gt;300m)
                   </h4>
                   <p className="text-[11px] text-slate-400">
-                    Afastamento do percurso (não entra no cálculo de combustível)
+                    KM separado (não entra no cálculo de combustível)
                   </p>
                 </div>
               </div>
@@ -550,9 +627,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                     <th className="py-2.5 px-3 font-semibold">Data / Rota</th>
                     <th className="py-2.5 px-3 font-semibold">Código / Cliente</th>
                     <th className="py-2.5 px-3 font-semibold">Status</th>
-                    <th className="py-2.5 px-3 font-semibold text-right">KM Rodado</th>
+                    <th className="py-2.5 px-3 font-semibold text-right">KM Real Rodado</th>
                     <th className="py-2.5 px-3 font-semibold text-right">Combustível</th>
                     <th className="py-2.5 px-3 font-semibold text-center">Parada Fora Rota</th>
+                    <th className="py-2.5 px-3 font-semibold text-center">KM Desvios</th>
                     <th className="py-2.5 px-3 font-semibold text-center">Desvio (&gt;300m)</th>
                     <th className="py-2.5 px-3 font-semibold text-right">Detalhes</th>
                   </tr>
@@ -601,9 +679,27 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                           </Badge>
                         </td>
 
-                        {/* KM Rodado (Ida + Volta) */}
+                        {/* KM Real Rodado (Oficial) */}
                         <td className="py-2.5 px-3 text-right font-mono font-semibold text-white">
-                          {item.kmRodado.toFixed(1)} km
+                          <div className="flex items-center justify-end gap-1.5">
+                            {!item.isRealTelemetry && (
+                              <span
+                                className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300 font-sans border border-slate-600"
+                                title="Sem pontos de GPS gravados. KM estimado do planejamento."
+                              >
+                                ~estimado
+                              </span>
+                            )}
+                            {item.isRealTelemetry && (
+                              <span
+                                className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-[#60A5FA] font-sans border border-blue-500/30 font-bold"
+                                title={`KM 100% Real calculado por ${item.gpsPointsCount} pontos de GPS`}
+                              >
+                                100% real
+                              </span>
+                            )}
+                            <span>{item.kmRodado.toFixed(1)} km</span>
+                          </div>
                           {item.hasReturnKm && (
                             <span className="block text-[9px] text-[#22C55E]">c/ retorno</span>
                           )}
@@ -622,11 +718,28 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                         {/* Paradas Fora da Rota */}
                         <td className="py-2.5 px-3 text-center">
                           {item.unexpectedStopsCount > 0 ? (
-                            <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/40 text-[10px] font-mono font-bold">
+                            <Badge
+                              className="bg-amber-500/20 text-amber-400 border-amber-500/40 text-[10px] font-mono font-bold"
+                              title="Parada não programada detectada"
+                            >
                               🛑 {item.unexpectedStopsCount}
                             </Badge>
                           ) : (
                             <span className="text-slate-500 text-[11px]">-</span>
+                          )}
+                        </td>
+
+                        {/* KM em Desvios (destacado à parte, não somado) */}
+                        <td className="py-2.5 px-3 text-center">
+                          {item.deviationKm > 0 ? (
+                            <span
+                              className="font-mono text-[11px] text-rose-400 font-bold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 inline-block"
+                              title="KM gasto em desvios e paradas fora da rota (não reembolsável)"
+                            >
+                              +{item.deviationKm.toFixed(1)} km
+                            </span>
+                          ) : (
+                            <span className="text-slate-500 text-[11px] font-mono">0.0 km</span>
                           )}
                         </td>
 
@@ -697,33 +810,67 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                   </p>
                 </div>
 
-                {/* Métricas de Combustível */}
+                {/* Métricas de KM e Combustível */}
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="p-3 rounded-lg bg-[#0E1738] border border-[#1E2B58]">
                     <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                      KM Rodado
+                      KM Real Oficial (Reembolsável)
                     </span>
-                    <span className="text-lg font-black text-white font-mono">
-                      {selectedItemForDetails.kmRodado} km
-                    </span>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-lg font-black text-white font-mono">
+                        {selectedItemForDetails.kmRodado} km
+                      </span>
+                      {selectedItemForDetails.isRealTelemetry ? (
+                        <Badge className="bg-blue-500/20 text-[#60A5FA] border-blue-500/30 text-[9px] px-1 font-bold">
+                          100% Real
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] px-1 text-slate-400 border-slate-600"
+                        >
+                          ~estimado
+                        </Badge>
+                      )}
+                    </div>
                     <span className="text-[9px] text-slate-400 block mt-0.5">
-                      {selectedItemForDetails.hasReturnKm
-                        ? 'Ida + Volta computada'
-                        : 'Percurso oficial'}
+                      {selectedItemForDetails.isRealTelemetry
+                        ? `${selectedItemForDetails.gpsPointsCount} pontos GPS analisados`
+                        : `Planejado: ${selectedItemForDetails.plannedKm} km`}
                     </span>
                   </div>
 
                   <div className="p-3 rounded-lg bg-[#0E1738] border border-[#1E2B58]">
                     <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                      Combustível
+                      Combustível Oficial
                     </span>
-                    <span className="text-lg font-black text-amber-400 font-mono">
+                    <span className="text-lg font-black text-amber-400 font-mono mt-0.5 block">
                       R$ {selectedItemForDetails.fuelCost.toFixed(2)}
                     </span>
                     <span className="text-[9px] text-slate-400 block mt-0.5">
                       ~{selectedItemForDetails.litersSpent} L @ R${' '}
                       {fuelParams.pricePerLiter.toFixed(2)}/L
                     </span>
+                  </div>
+                </div>
+
+                {/* Bloco de Desvios e Paradas fora da Rota (Exibido à parte, NÃO somado no oficial) */}
+                <div className="p-3 rounded-lg bg-[#0E1738] border border-rose-500/20 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-rose-400 uppercase font-bold block">
+                        Desvios & Paradas Fora da Rota (Não Reembolsável)
+                      </span>
+                      <p className="text-[11px] text-slate-300 mt-0.5">
+                        Quilometragem percorrida fora do corredor oficial de entrega.
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-base font-black font-mono text-rose-400 block">
+                        +{selectedItemForDetails.deviationKm.toFixed(1)} km
+                      </span>
+                      <span className="text-[9px] text-slate-400">Descontado da rota</span>
+                    </div>
                   </div>
                 </div>
 

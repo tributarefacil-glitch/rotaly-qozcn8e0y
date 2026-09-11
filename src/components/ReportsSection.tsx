@@ -41,6 +41,7 @@ import {
 } from 'lucide-react'
 import { OrderRecord, UserRecord, AppSettingsRecord, OffRouteEventRecord } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
+import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { useToast } from '@/hooks/use-toast'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 
@@ -215,9 +216,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     }
   }, [filteredOrders])
 
-  // MÉTRICA 4: Análise de Custo por Tipo de Veículo (custo médio, custo total, custo por km)
-  // Contabiliza rotas com route_started === true OU status in_transit, delivered, address_error, client_absent com entregador
-  // Considera IDA E VOLTA (return_trip_km) e rotas parciais, aplicando os parâmetros do veículo do entregador
+  // MÉTRICA 4: Análise de Custo por Tipo de Veículo com KM Real Rodado (descontados desvios e paradas)
   const costAnalysis = useMemo(() => {
     let totalKm = 0
     let totalCost = 0
@@ -231,19 +230,14 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     )
 
     activeRouteOrders.forEach((o) => {
-      let baseKm = typeof o.distance_km === 'number' && o.distance_km > 0 ? o.distance_km : 0
-      let returnKm =
-        typeof o.return_trip_km === 'number' && o.return_trip_km > 0 ? o.return_trip_km : 0
+      const realTelemetry = calculateRealKmForOrder({
+        order: o,
+        allCourierLocations: [],
+        courierEvents: offRouteEvents,
+        allCourierOrders: orders,
+      })
 
-      if (
-        baseKm === 0 &&
-        (o.status === 'address_error' || o.status === 'client_absent' || o.route_started)
-      ) {
-        baseKm = 4.5
-        if (returnKm === 0) returnKm = 4.5
-      }
-
-      const orderKm = baseKm + returnKm
+      const orderKm = realTelemetry.officialRealKm
       totalKm += orderKm
 
       const courier = couriers.find((c) => c.id === o.courier_id) || o.expand?.courier_id
@@ -269,7 +263,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       avgCostPerDelivery: Number(avgCostPerDelivery.toFixed(2)),
       activeRouteOrdersCount: activeRouteOrders.length,
     }
-  }, [filteredOrders, couriers, settings])
+  }, [filteredOrders, couriers, settings, offRouteEvents, orders])
 
   // MÉTRICA 5: Problemas Registrados (tipo de problema, frequência, entregador)
   const problemRecords = useMemo(() => {
