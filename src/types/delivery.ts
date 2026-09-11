@@ -230,6 +230,9 @@ export interface LocationRecord extends RecordModel {
   speed?: number
   heading?: number
   battery_level?: number
+  gps_status?: 'active' | 'disabled' | 'offline' | string
+  offline_buffered?: boolean
+  accuracy?: number
   created?: string
   updated?: string
   expand?: {

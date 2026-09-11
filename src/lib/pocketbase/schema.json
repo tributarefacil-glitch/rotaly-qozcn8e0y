@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T22:53:38.512Z",
+  "generatedAt": "2026-09-11T23:10:34.072Z",
   "collections": [
     {
       "name": "users",
@@ -566,6 +566,24 @@
         },
         {
           "name": "battery_level",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gps_status",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "offline_buffered",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "accuracy",
           "type": "number",
           "required": false,
           "system": false

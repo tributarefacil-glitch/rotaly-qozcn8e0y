@@ -470,6 +470,11 @@ export const deliveryService = {
     speed = 0,
     heading = 0,
     batteryLevel?: number | null,
+    extra?: {
+      gps_status?: 'active' | 'disabled' | 'offline' | string
+      offline_buffered?: boolean
+      accuracy?: number
+    },
   ) {
     const payload: Partial<LocationRecord> = {
       user_id: userId,
@@ -480,6 +485,15 @@ export const deliveryService = {
     }
     if (typeof batteryLevel === 'number' && !isNaN(batteryLevel)) {
       payload.battery_level = Math.max(0, Math.min(100, Math.round(batteryLevel)))
+    }
+    if (extra?.gps_status) {
+      payload.gps_status = extra.gps_status
+    }
+    if (extra?.offline_buffered !== undefined) {
+      payload.offline_buffered = extra.offline_buffered
+    }
+    if (typeof extra?.accuracy === 'number' && !isNaN(extra.accuracy)) {
+      payload.accuracy = Math.round(extra.accuracy * 10) / 10
     }
     return pb.collection<LocationRecord>('locations').create(payload)
   },
