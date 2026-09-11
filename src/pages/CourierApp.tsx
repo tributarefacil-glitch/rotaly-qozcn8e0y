@@ -121,10 +121,19 @@ export default function CourierApp() {
           e.record.status === 'in_transit' ||
           e.record.status === 'delivered')
       ) {
-        notifyCourierNewDelivery(
-          '📦 Nova Rota Liberada!',
-          `Pedido ${e.record.tracking_code} está liberado para entrega na sua rota.`,
-        )
+        // Se a rota já está iniciada e chega um pedido novo com sequence maior, notifica inclusão
+        const isAlreadyInRoute = activeStartedOrders.some((o) => o.id === e.record.id)
+        if (hasActiveStartedRoute && !isAlreadyInRoute && e.record.status === 'in_transit') {
+          notifyCourierNewDelivery(
+            '📦 Nova Parada Incluída na Rota!',
+            `O pedido ${e.record.tracking_code} foi adicionado como parada #${e.record.sequence || 'nova'} na sua rota atual.`,
+          )
+        } else {
+          notifyCourierNewDelivery(
+            '📦 Nova Rota Liberada!',
+            `Pedido ${e.record.tracking_code} está liberado para entrega na sua rota.`,
+          )
+        }
       }
       loadCourierOrders()
       loadFuelAndAccountData()

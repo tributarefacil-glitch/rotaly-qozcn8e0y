@@ -843,6 +843,224 @@ export const deliveryService = {
     }
   },
 
+  /**
+   * Incluir Cliente / Pedido em Rota Já Iniciada ou Liberada
+   * - Atribui courier_id
+   * - Sequência = max+1
+   * - route_released = true
+   * - Se rota já iniciada (route_started=true na rota do entregador), marca route_started=true e status='in_transit'
+   * - Recalcula distance_km, fuel_cost (consumo do veículo) e ETA
+   * - Dispara notificação push/realtime ao entregador
+   */
+  async addOrderToActiveRoute(params: {
+    orderId: string
+    courierId: string
+    settings?: Partial<AppSettingsRecord> | null
+  }): Promise<{ success: boolean; order: OrderRecord }> {
+    const { orderId, courierId, settings } = params
+    try {
+      // 1. Obter entregador para veículo/consumo
+      const courier = await pb.collection<UserRecord>('users').getOne(courierId)
+
+      // 2. Obter pedidos atuais atribuídos a esse entregador
+      const courierOrders = await pb.collection<OrderRecord>('orders').getFullList({
+        filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled'`,
+        sort: 'sequence',
+        requestKey: null,
+      })
+
+      // Verificar se a rota já está iniciada pelo entregador
+      const isRouteStarted = courierOrders.some((o) => o.route_started === true)
+      const maxSequence = courierOrders.reduce((max, o) => Math.max(max, o.sequence || 0), 0)
+      const nextSequence = maxSequence + 1
+
+      // 3. Obter dados do pedido e cliente para cálculo de distância
+      const order = await pb.collection<OrderRecord>('orders').getOne(orderId, {
+        expand: 'customer_id',
+      })
+      const customer = order.expand?.customer_id as CustomerRecord | undefined
+
+      // Referência anterior (última parada da rota ou base)
+      const lastOrder = courierOrders[courierOrders.length - 1]
+      let prevLat: number | undefined
+      let prevLng: number | undefined
+
+      if (lastOrder) {
+        const lastCust = lastOrder.expand?.customer_id as CustomerRecord | undefined
+        prevLat = lastCust?.lat || lastOrder.end_address_lat || lastOrder.start_base_lat
+        prevLng = lastCust?.lng || lastOrder.end_address_lng || lastOrder.start_base_lng
+      }
+
+      if (!prevLat || !prevLng) {
+        prevLat = lastOrder?.start_base_lat || -22.7001402
+        prevLng = lastOrder?.start_base_lng || -43.2982834
+      }
+
+      const custLat = customer?.lat || prevLat
+      const custLng = customer?.lng || prevLng
+
+      // Distância estimada até o novo cliente
+      const R = 6371e3
+      const φ1 = (prevLat * Math.PI) / 180
+      const φ2 = (custLat * Math.PI) / 180
+      const Δφ = ((custLat - prevLat) * Math.PI) / 180
+      const Δλ = ((custLng - prevLng) * Math.PI) / 180
+      const a =
+        Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+      const stepDistMeters = R * c
+      const stepDistKm = Number((stepDistMeters / 1000).toFixed(2))
+
+      const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
+        settings,
+        courier.vehicle_type,
+      )
+      const fuelCost =
+        consumptionKml > 0 ? Number(((stepDistKm * pricePerLiter) / consumptionKml).toFixed(2)) : 0
+
+      const now = new Date()
+      const etaTime = new Date(now.getTime() + (20 + nextSequence * 15) * 60 * 1000).toISOString()
+
+      const updateData: Partial<OrderRecord> = {
+        courier_id: courierId,
+        sequence: nextSequence,
+        route_released: true,
+        route_released_at: now.toISOString(),
+        distance_km: stepDistKm > 0 ? stepDistKm : 1.5,
+        fuel_cost: fuelCost,
+        estimated_duration_minutes: Math.round(stepDistKm * 3.5 + 8),
+        estimated_arrival: etaTime,
+        start_base_name: lastOrder?.start_base_name || 'Base Operacional',
+        start_base_address: lastOrder?.start_base_address,
+        start_base_lat: lastOrder?.start_base_lat,
+        start_base_lng: lastOrder?.start_base_lng,
+        end_address_name: lastOrder?.end_address_name,
+        end_address_text: lastOrder?.end_address_text,
+        end_address_lat: lastOrder?.end_address_lat,
+        end_address_lng: lastOrder?.end_address_lng,
+      }
+
+      if (isRouteStarted) {
+        updateData.route_started = true
+        updateData.route_started_at = lastOrder?.route_started_at || now.toISOString()
+        updateData.status = 'in_transit'
+      } else {
+        updateData.status = 'assigned'
+      }
+
+      const updated = await pb.collection<OrderRecord>('orders').update(orderId, updateData)
+
+      // Criar notificação realtime ao entregador
+      try {
+        await this.createNotification({
+          user_id: courierId,
+          title: '📦 Nova Entrega Incluída na sua Rota!',
+          message: `O pedido ${order.tracking_code || ''} para ${customer?.name || 'Cliente'} foi adicionado como parada #${nextSequence} na sua rota!`,
+          type: 'order',
+          read: false,
+          order_id: orderId,
+        })
+      } catch (notifErr) {
+        console.warn('Erro ao notificar entregador sobre inclusão de cliente:', notifErr)
+      }
+
+      return { success: true, order: updated }
+    } catch (err) {
+      console.error('Error adding order to active route:', err)
+      throw err
+    }
+  },
+
+  /**
+   * Cancelar Rota Já Iniciada ou Liberada de um Entregador
+   * - Para cada pedido pendente da rota (não entregue e não cancelado):
+   *     courier_id = null / ''
+   *     status = 'pending'
+   *     sequence = null
+   *     route_released = false
+   *     route_started = false
+   *     route_started_at = null
+   *     route_released_at = null
+   *     route_finished = false
+   *     route_finished_at = null
+   * - Preserva histórico dos pedidos já entregues (delivered)
+   * - Libera o status do entregador de volta para 'active' se não tiver outras rotas em andamento
+   * - Notifica o entregador: "⚠️ Rota Cancelada pela Central"
+   * - Os pedidos voltam automaticamente para pendingOrders da Etapa 2 via tempo real
+   */
+  async cancelActiveRoute(courierId: string): Promise<{
+    success: boolean
+    cancelledOrdersCount: number
+    preservedOrdersCount: number
+  }> {
+    try {
+      // 1. Obter todos os pedidos atribuídos a este entregador
+      const courierOrders = await pb.collection<OrderRecord>('orders').getFullList({
+        filter: `courier_id='${courierId}'`,
+        requestKey: null,
+      })
+
+      // Separar pendentes (a resetar) e entregues/cancelados (a preservar)
+      const pendingToReset = courierOrders.filter(
+        (o) =>
+          o.status !== 'delivered' &&
+          o.status !== 'cancelled' &&
+          (o.route_finished === false ||
+            o.route_finished === null ||
+            o.route_finished === undefined),
+      )
+      const preserved = courierOrders.filter((o) => o.status === 'delivered')
+
+      let cancelledOrdersCount = 0
+      for (const order of pendingToReset) {
+        await pb.collection('orders').update(order.id, {
+          courier_id: null,
+          status: 'pending',
+          sequence: null,
+          route_released: false,
+          route_released_at: null,
+          route_started: false,
+          route_started_at: null,
+          route_finished: false,
+          route_finished_at: null,
+        })
+        cancelledOrdersCount++
+      }
+
+      // 2. Liberar status do entregador para 'active'
+      try {
+        await pb.collection('users').update(courierId, {
+          status: 'active',
+        })
+      } catch (userErr) {
+        console.warn('Não foi possível restaurar status do entregador:', userErr)
+      }
+
+      // 3. Notificar o entregador
+      try {
+        await this.createNotification({
+          user_id: courierId,
+          title: '⚠️ Rota Cancelada pela Central',
+          message: `Sua rota com ${cancelledOrdersCount} parada(s) pendente(s) foi cancelada pela central. Você está livre para novas rotas.`,
+          type: 'order',
+          read: false,
+        })
+      } catch (notifErr) {
+        console.warn('Erro ao notificar cancelamento de rota:', notifErr)
+      }
+
+      return {
+        success: true,
+        cancelledOrdersCount,
+        preservedOrdersCount: preserved.length,
+      }
+    } catch (err) {
+      console.error('Error cancelling active route:', err)
+      throw err
+    }
+  },
+
   // Calculate Fuel Cost
   // Formula: Distância (km) * Preço do Litro (R$/L) / Consumo (km/L)
   calculateFuelCost(distanceKm: number, fuelPrice = 5.59, consumptionKml = 35.0): number {

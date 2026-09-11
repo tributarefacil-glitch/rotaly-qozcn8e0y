@@ -59,6 +59,7 @@ import {
   Loader2,
   X,
   Compass,
+  Ban,
 } from 'lucide-react'
 import { fetchStreetRoute, type LatLngPoint } from '@/services/osrmRoutingService'
 import {
@@ -188,15 +189,25 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const [customerToDelete, setCustomerToDelete] = useState<CustomerRecord | null>(null)
   const [isDeletingCustomer, setIsDeletingCustomer] = useState(false)
 
+  // Selected available couriers (ids) - ETAPA 1
+  const [selectedCourierIds, setSelectedCourierIds] = useState<string[]>([])
+
+  // Selected pending orders to optimize (ids) - ETAPA 2 (Seleção dos Clientes/Entregas)
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([])
+  const [searchOrderFilter, setSearchOrderFilter] = useState<string>('')
+
   // Pending orders eligible for routing optimization
   // Regras de Negócio:
   // 1. Somente clientes com venda/entrega PENDENTE cadastrada pelo vendedor (pedidos criados e ainda não incluídos em rota liberada/atribuída). Cliente sem venda/entrega pendente NÃO aparece.
   // 2. Após "Salvar & Liberar Rota", as entregas incluídas na rota SAEM da Etapa 2 (não aparecem mais como pendentes na busca de uma nova otimização).
   // 3. Se a rota for desfeita/cancelada e a entrega voltar para pendente (sem rota liberada nem iniciada), ela reaparece na busca.
+  // 4. REOTIMIZAÇÃO: Pedidos já selecionados (selectedOrderIds) que pertencem a uma rota que está sendo reotimizada também ficam disponíveis na Etapa 2.
   const pendingOrders = useMemo(() => {
     return localOrders.filter((o) => {
       // Pedidos entregues ou cancelados nunca devem aparecer
       if (o.status === 'delivered' || o.status === 'cancelled') return false
+      // Se este pedido foi pré-selecionado para reotimização de rota, mantê-lo visível na Etapa 2!
+      if (selectedOrderIds.includes(o.id)) return true
       // Se a rota foi liberada (route_released = true), NÃO aparece na Etapa 2
       if (o.route_released) return false
       // Se a rota já foi iniciada pelo entregador, NÃO aparece
@@ -209,14 +220,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       // Retorna pedidos pendentes de roteirização
       return o.status === 'pending' || !o.courier_id
     })
-  }, [localOrders])
-
-  // Selected available couriers (ids) - ETAPA 1
-  const [selectedCourierIds, setSelectedCourierIds] = useState<string[]>([])
-
-  // Selected pending orders to optimize (ids) - ETAPA 2 (Seleção dos Clientes/Entregas)
-  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([])
-  const [searchOrderFilter, setSearchOrderFilter] = useState<string>('')
+  }, [localOrders, selectedOrderIds])
 
   // Wizard active step: 'couriers' | 'orders' | 'review'
   const [wizardStep, setWizardStep] = useState<'couriers' | 'orders' | 'review'>('couriers')
@@ -306,6 +310,213 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     },
     [localOrders],
   )
+
+  // ==========================================
+  // ESPECIFICAÇÃO: ROTAS ATIVAS & LIBERADAS EM ANDAMENTO
+  // Agrupar pedidos locais por courier_id para exibir na Etapa 1
+  // ==========================================
+  interface ActiveCourierRouteGroup {
+    courier: UserRecord
+    orders: OrderRecord[]
+    pendingStops: OrderRecord[]
+    deliveredStops: OrderRecord[]
+    isStarted: boolean
+    isReleased: boolean
+    isReturningToBase: boolean
+  }
+
+  const activeCourierRoutes = useMemo((): ActiveCourierRouteGroup[] => {
+    // Agrupar pedidos que estão com rota liberada ou iniciada e não finalizados
+    const groupsMap = new Map<string, OrderRecord[]>()
+
+    localOrders.forEach((order) => {
+      if (!order.courier_id) return
+      if (order.status === 'cancelled') return
+      if (order.route_finished === true) return
+
+      // Deve ser uma rota liberada ou já iniciada
+      const isRel = order.route_released === true
+      const isStart = order.route_started === true
+      if (!isRel && !isStart) return
+
+      const list = groupsMap.get(order.courier_id) || []
+      list.push(order)
+      groupsMap.set(order.courier_id, list)
+    })
+
+    const result: ActiveCourierRouteGroup[] = []
+
+    groupsMap.forEach((ordersList, courierId) => {
+      const courier = couriers.find((c) => c.id === courierId)
+      if (!courier) return
+
+      // Ordenar por sequência
+      ordersList.sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+
+      const pendingStops = ordersList.filter((o) => o.status !== 'delivered')
+      const deliveredStops = ordersList.filter((o) => o.status === 'delivered')
+
+      const isStarted = ordersList.some((o) => o.route_started === true)
+      const isReleased = ordersList.some((o) => o.route_released === true)
+      // Se todas as entregas foram concluídas mas a rota ainda não foi finalizada na base
+      const isReturningToBase = isStarted && pendingStops.length === 0 && deliveredStops.length > 0
+
+      // Só adiciona se houver paradas pendentes OU se estiver retornando à base
+      if (pendingStops.length > 0 || isReturningToBase) {
+        result.push({
+          courier,
+          orders: ordersList,
+          pendingStops,
+          deliveredStops,
+          isStarted,
+          isReleased,
+          isReturningToBase,
+        })
+      }
+    })
+
+    return result
+  }, [localOrders, couriers])
+
+  // Modais de ação para Rotas Ativas
+  const [includeOrderModalOpen, setIncludeOrderModalOpen] = useState(false)
+  const [targetCourierForInclude, setTargetCourierForInclude] = useState<UserRecord | null>(null)
+  const [selectedIncludeOrderId, setSelectedIncludeOrderId] = useState<string>('')
+  const [isSubmittingInclude, setIsSubmittingInclude] = useState(false)
+
+  const [cancelRouteAlertOpen, setCancelRouteAlertOpen] = useState(false)
+  const [targetCourierForCancel, setTargetCourierForCancel] = useState<UserRecord | null>(null)
+  const [isSubmittingCancel, setIsSubmittingCancel] = useState(false)
+
+  // Abrir modal de inclusão de cliente em rota ativa
+  const handleOpenIncludeCustomerModal = (courier: UserRecord) => {
+    setTargetCourierForInclude(courier)
+    setSelectedIncludeOrderId('')
+    setIncludeOrderModalOpen(true)
+  }
+
+  // Executar inclusão de cliente em rota ativa
+  const handleConfirmIncludeCustomer = async () => {
+    if (!targetCourierForInclude || !selectedIncludeOrderId) {
+      toast.error('Selecione uma entrega para incluir na rota.')
+      return
+    }
+
+    try {
+      setIsSubmittingInclude(true)
+      const res = await deliveryService.addOrderToActiveRoute({
+        orderId: selectedIncludeOrderId,
+        courierId: targetCourierForInclude.id,
+        settings: appSettings,
+      })
+
+      // Atualizar localOrders instantaneamente
+      setLocalOrders((prev) =>
+        prev.map((o) => (o.id === res.order.id ? { ...o, ...res.order } : o)),
+      )
+
+      // Remover o id incluído de selectedOrderIds se estivesse marcado
+      setSelectedOrderIds((prev) => prev.filter((id) => id !== selectedIncludeOrderId))
+
+      toast.success(
+        `Cliente incluído com sucesso na rota de ${targetCourierForInclude.name}! Parada #${res.order.sequence}`,
+      )
+      setIncludeOrderModalOpen(false)
+      setTargetCourierForInclude(null)
+      setSelectedIncludeOrderId('')
+      onRoutesApplied()
+    } catch (err: any) {
+      console.error('Erro ao incluir cliente na rota ativa:', err)
+      toast.error(`Falha ao incluir cliente na rota: ${err?.message || 'Erro desconhecido'}`)
+    } finally {
+      setIsSubmittingInclude(false)
+    }
+  }
+
+  // Abrir confirmação de cancelamento de rota ativa
+  const handleOpenCancelRouteConfirm = (courier: UserRecord) => {
+    setTargetCourierForCancel(courier)
+    setCancelRouteAlertOpen(true)
+  }
+
+  // Confirmar cancelamento da rota ativa
+  const handleConfirmCancelRoute = async () => {
+    if (!targetCourierForCancel) return
+
+    try {
+      setIsSubmittingCancel(true)
+      const res = await deliveryService.cancelActiveRoute(targetCourierForCancel.id)
+
+      // Atualizar localOrders no estado: pedidos pendentes deste courier voltam a pending
+      setLocalOrders((prev) =>
+        prev.map((o) => {
+          if (
+            o.courier_id === targetCourierForCancel.id &&
+            o.status !== 'delivered' &&
+            o.status !== 'cancelled'
+          ) {
+            return {
+              ...o,
+              courier_id: undefined,
+              status: 'pending',
+              sequence: undefined,
+              route_released: false,
+              route_released_at: undefined,
+              route_started: false,
+              route_started_at: undefined,
+              route_finished: false,
+              route_finished_at: undefined,
+            }
+          }
+          return o
+        }),
+      )
+
+      toast.success(
+        `Rota de ${targetCourierForCancel.name} cancelada! ${res.cancelledOrdersCount} entrega(s) voltaram para a Etapa 2.` +
+          (res.preservedOrdersCount > 0
+            ? ` (${res.preservedOrdersCount} entrega(s) concluída(s) preservada(s))`
+            : ''),
+      )
+
+      setCancelRouteAlertOpen(false)
+      setTargetCourierForCancel(null)
+      onRoutesApplied()
+    } catch (err: any) {
+      console.error('Erro ao cancelar rota ativa:', err)
+      toast.error(`Falha ao cancelar rota: ${err?.message || 'Erro desconhecido'}`)
+    } finally {
+      setIsSubmittingCancel(false)
+    }
+  }
+
+  // Pedidos estritamente pendentes (sem rota ativa/liberada) para inclusão avulsa
+  const strictlyPendingOrders = useMemo(() => {
+    return localOrders.filter((o) => {
+      if (o.status === 'delivered' || o.status === 'cancelled') return false
+      if (o.route_released || o.route_started) return false
+      if (o.status === 'in_transit' || o.status === 'address_error' || o.status === 'client_absent')
+        return false
+      if (o.status === 'assigned' && Boolean(o.courier_id)) return false
+      return o.status === 'pending' || !o.courier_id
+    })
+  }, [localOrders])
+
+  // Reotimizar Rota: pré-seleciona o entregador na Etapa 1 e as paradas pendentes da rota na Etapa 2
+  const handleReoptimizeRoute = (routeGroup: ActiveCourierRouteGroup) => {
+    // 1. Selecionar o entregador na Etapa 1
+    setSelectedCourierIds([routeGroup.courier.id])
+
+    // 2. Selecionar os pedidos pendentes dessa rota na Etapa 2
+    const pendingIds = routeGroup.pendingStops.map((o) => o.id)
+    setSelectedOrderIds(pendingIds)
+
+    // 3. Mudar wizard para a Etapa 2 para o vendedor poder ver/acrescentar mais vendas
+    setWizardStep('orders')
+    toast.info(
+      `Rota de ${routeGroup.courier.name} carregada (${pendingIds.length} parada(s) pendente(s))! Você pode marcar novas entregas e avançar para a Etapa 3.`,
+    )
+  }
 
   // Initialize selected couriers and load app settings when opened
   useEffect(() => {
@@ -3055,7 +3266,162 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           </div>
           {/* ETAPA 1: PRIMEIRO SELECIONA OS ENTREGADORES */}
           {wizardStep === 'couriers' && (
-            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-900/50 space-y-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-900/50 space-y-4">
+              {/* CARD: ROTAS ATIVAS & LIBERADAS EM ANDAMENTO */}
+              {activeCourierRoutes.length > 0 && (
+                <div className="rounded-xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/90 to-blue-50/70 p-3.5 dark:border-indigo-900/70 dark:from-slate-900/90 dark:to-indigo-950/40 shadow-sm space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                        <Navigation className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                        Rotas Ativas & Liberadas em Andamento ({activeCourierRoutes.length})
+                      </h4>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] bg-white/80 dark:bg-slate-800 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300"
+                    >
+                      Operação ao vivo
+                    </Badge>
+                  </div>
+
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                    Entregadores com rota liberada ou em trânsito. Você pode{' '}
+                    <strong>acrescentar novos clientes</strong> sem reiniciar a rota,{' '}
+                    <strong>reotimizar</strong> todo o circuito ou <strong>cancelar</strong> a rota
+                    devolvendo os clientes pendentes para a Etapa 2.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {activeCourierRoutes.map((routeGroup) => {
+                      const {
+                        courier,
+                        pendingStops,
+                        deliveredStops,
+                        isStarted,
+                        isReleased,
+                        isReturningToBase,
+                      } = routeGroup
+                      const vehicleIcon =
+                        courier.vehicle_type === 'bicicleta' || courier.vehicle_type === 'bicycle'
+                          ? '🚲'
+                          : courier.vehicle_type === 'carro'
+                            ? '🚗'
+                            : courier.vehicle_type === 'caminhao'
+                              ? '🚚'
+                              : courier.vehicle_type === 'van'
+                                ? '🚐'
+                                : '🛵'
+
+                      return (
+                        <div
+                          key={courier.id}
+                          className="rounded-lg border border-indigo-200/90 dark:border-indigo-900/60 bg-white dark:bg-slate-900 p-3 shadow-xs space-y-2.5 transition hover:shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xl shrink-0" role="img" aria-label="veículo">
+                                {vehicleIcon}
+                              </span>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                  {courier.name}
+                                </p>
+                                <p className="text-[10px] text-slate-500 truncate">
+                                  {courier.vehicle_model || courier.vehicle_type || 'Moto'}
+                                  {courier.vehicle_plate ? ` • ${courier.vehicle_plate}` : ''}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Badge de Status */}
+                            <div className="shrink-0">
+                              {isReturningToBase ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950/70 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
+                                  🟣 Retornando à Base
+                                </span>
+                              ) : isStarted ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
+                                  🔵 Em Rota Ativa
+                                </span>
+                              ) : isReleased ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                                  🟡 Rota Liberada
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          {/* Métricas de Paradas */}
+                          <div className="flex items-center justify-between text-[11px] bg-slate-50 dark:bg-slate-800/60 rounded-md px-2.5 py-1.5 border border-slate-100 dark:border-slate-800">
+                            <div className="flex items-center gap-1 text-slate-700 dark:text-slate-300">
+                              <Clock className="h-3.5 w-3.5 text-amber-600" />
+                              <span>
+                                Pendentes: <strong>{pendingStops.length}</strong>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span>
+                                Concluídas: <strong>{deliveredStops.length}</strong>
+                              </span>
+                            </div>
+                            <div className="text-slate-500">
+                              Total: <strong>{pendingStops.length + deliveredStops.length}</strong>
+                            </div>
+                          </div>
+
+                          {/* Ações da Rota Ativa */}
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800/80">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenIncludeCustomerModal(courier)}
+                              disabled={strictlyPendingOrders.length === 0}
+                              className="h-7 text-[11px] px-2 text-indigo-700 border-indigo-300 hover:bg-indigo-50 dark:text-indigo-300 dark:border-indigo-800 dark:hover:bg-indigo-950/50 flex items-center gap-1 flex-1"
+                              title={
+                                strictlyPendingOrders.length === 0
+                                  ? 'Nenhuma entrega pendente disponível para incluir'
+                                  : 'Acrescentar cliente na rota em andamento deste entregador'
+                              }
+                            >
+                              <Plus className="h-3 w-3" />
+                              Incluir Cliente
+                            </Button>
+
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleReoptimizeRoute(routeGroup)}
+                              className="h-7 text-[11px] px-2 text-blue-700 border-blue-300 hover:bg-blue-50 dark:text-blue-300 dark:border-blue-800 dark:hover:bg-blue-950/50 flex items-center gap-1 flex-1"
+                              title="Reabrir paradas e entregador para reotimizar rota"
+                            >
+                              <RefreshCw className="h-3 w-3" />
+                              Reotimizar Rota
+                            </Button>
+
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleOpenCancelRouteConfirm(courier)}
+                              className="h-7 text-[11px] px-2 text-rose-700 border-rose-300 hover:bg-rose-50 dark:text-rose-300 dark:border-rose-800 dark:hover:bg-rose-950/50 flex items-center gap-1"
+                              title="Cancelar rota em andamento (clientes voltam para pendentes)"
+                            >
+                              <Ban className="h-3 w-3" />
+                              Cancelar Rota
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Users className="h-4 w-4 text-indigo-600" />
@@ -4382,6 +4748,211 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             >
               <Trash2 className="h-4 w-4" />
               {isDeletingCustomer ? 'Excluindo...' : 'Sim, Excluir Cliente'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Modal: Incluir Cliente / Entrega em Rota Já Iniciada */}
+      <Dialog
+        open={includeOrderModalOpen}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setIncludeOrderModalOpen(false)
+            setTargetCourierForInclude(null)
+            setSelectedIncludeOrderId('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400">
+              <Plus className="h-5 w-5" />
+              Incluir Cliente em Rota Já Iniciada
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {targetCourierForInclude && (
+              <div className="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-900/60 text-xs space-y-1">
+                <p className="font-semibold text-slate-800 dark:text-slate-200">
+                  Entregador:{' '}
+                  <span className="text-indigo-700 dark:text-indigo-300 font-bold">
+                    {targetCourierForInclude.name}
+                  </span>
+                </p>
+                <p className="text-slate-600 dark:text-slate-400">
+                  Veículo:{' '}
+                  {targetCourierForInclude.vehicle_model ||
+                    targetCourierForInclude.vehicle_type ||
+                    'Moto'}
+                  {targetCourierForInclude.vehicle_plate
+                    ? ` • Placa: ${targetCourierForInclude.vehicle_plate}`
+                    : ''}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  O cliente será incluído como a próxima parada da rota atual. O entregador receberá
+                  a notificação em tempo real.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Selecione a entrega pendente a adicionar:
+              </Label>
+
+              {strictlyPendingOrders.length === 0 ? (
+                <div className="p-4 text-center rounded-lg border border-dashed border-slate-300 text-xs text-slate-500">
+                  Nenhuma entrega pendente disponível para inclusão.
+                </div>
+              ) : (
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                  {strictlyPendingOrders.map((ord) => {
+                    const cust = localCustomers.find((c) => c.id === ord.customer_id)
+                    const isSelected = selectedIncludeOrderId === ord.id
+
+                    return (
+                      <div
+                        key={ord.id}
+                        onClick={() => setSelectedIncludeOrderId(ord.id)}
+                        className={`p-2.5 rounded-lg border transition cursor-pointer select-none text-xs flex items-center justify-between gap-2 ${
+                          isSelected
+                            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/60 ring-2 ring-indigo-500/30'
+                            : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 dark:text-white truncate">
+                            {cust?.name || 'Cliente'}
+                          </p>
+                          <p className="text-[11px] text-slate-500 truncate">
+                            {cust?.address || 'Sem endereço'}
+                          </p>
+                          <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono mt-0.5">
+                            Rastreio: {ord.tracking_code || ord.id.slice(0, 8)}
+                          </p>
+                        </div>
+                        <input
+                          type="radio"
+                          name="include-order-choice"
+                          checked={isSelected}
+                          onChange={() => setSelectedIncludeOrderId(ord.id)}
+                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIncludeOrderModalOpen(false)
+                setTargetCourierForInclude(null)
+                setSelectedIncludeOrderId('')
+              }}
+              disabled={isSubmittingInclude}
+              className="w-full sm:w-auto text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmIncludeCustomer}
+              disabled={isSubmittingInclude || !selectedIncludeOrderId}
+              className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5"
+            >
+              {isSubmittingInclude ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Incluindo...
+                </>
+              ) : (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  Confirmar Inclusão
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* AlertDialog: Cancelar Rota Já Iniciada */}
+      <AlertDialog
+        open={cancelRouteAlertOpen}
+        onOpenChange={(isOpen) => {
+          if (!isOpen && !isSubmittingCancel) {
+            setCancelRouteAlertOpen(false)
+            setTargetCourierForCancel(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+              <Ban className="h-5 w-5 text-rose-600 shrink-0" />
+              Cancelar Rota em Andamento?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 pt-2 text-slate-700 dark:text-slate-300 text-xs">
+              <p>
+                Tem certeza que deseja cancelar a rota de{' '}
+                <strong className="text-slate-900 dark:text-white">
+                  {targetCourierForCancel?.name}
+                </strong>
+                ?
+              </p>
+              <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-900 dark:text-amber-200 space-y-1">
+                <p className="font-semibold flex items-center gap-1">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> Regra do cancelamento:
+                </p>
+                <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+                  <li>
+                    Todas as entregas <strong>pendentes</strong> voltam para a{' '}
+                    <strong>Etapa 2</strong> disponíveis para nova roteirização.
+                  </li>
+                  <li>
+                    Entregas <strong>já concluídas</strong> continuam salvas no histórico com
+                    comprovante.
+                  </li>
+                  <li>O entregador será liberado para novas rotas e notificado em tempo real.</li>
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel
+              disabled={isSubmittingCancel}
+              onClick={() => {
+                setCancelRouteAlertOpen(false)
+                setTargetCourierForCancel(null)
+              }}
+              className="w-full sm:w-auto text-xs"
+            >
+              Manter Rota
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isSubmittingCancel}
+              onClick={handleConfirmCancelRoute}
+              className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1.5"
+            >
+              {isSubmittingCancel ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Cancelando...
+                </>
+              ) : (
+                <>
+                  <Ban className="h-3.5 w-3.5" />
+                  Sim, Cancelar Rota
+                </>
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
