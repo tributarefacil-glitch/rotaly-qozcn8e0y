@@ -490,17 +490,24 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     }
   }
 
-  // Pedidos estritamente pendentes (sem rota ativa/liberada) para inclusão avulsa
+  // Pedidos disponíveis para inclusão avulsa em rota ativa:
+  // Deve listar TODOS os pedidos pendentes disponíveis, incluindo os que estão atualmente
+  // selecionados/marcados na Etapa 2 (selectedOrderIds) ou pendentes sem rota ativa/liberada.
   const strictlyPendingOrders = useMemo(() => {
     return localOrders.filter((o) => {
       if (o.status === 'delivered' || o.status === 'cancelled') return false
+      // Se já está com rota liberada ou já iniciada, já está rodando em outra rota ativa
       if (o.route_released || o.route_started) return false
       if (o.status === 'in_transit' || o.status === 'address_error' || o.status === 'client_absent')
         return false
+      // Se está marcado na Etapa 2 atual do otimizador, está disponível para inclusão avulsa
+      if (selectedOrderIds.includes(o.id)) return true
+      // Se já foi atribuído a um entregador e não está marcado para reotimização/Etapa 2
       if (o.status === 'assigned' && Boolean(o.courier_id)) return false
+      // Pedido pendente ou sem entregador
       return o.status === 'pending' || !o.courier_id
     })
-  }, [localOrders])
+  }, [localOrders, selectedOrderIds])
 
   // Reotimizar Rota: pré-seleciona o entregador na Etapa 1 e as paradas pendentes da rota na Etapa 2
   const handleReoptimizeRoute = (routeGroup: ActiveCourierRouteGroup) => {
@@ -4798,19 +4805,25 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             )}
 
             <div className="space-y-2">
-              <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Selecione a entrega pendente a adicionar:
-              </Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Selecione a entrega pendente a adicionar:
+                </Label>
+                <span className="text-[11px] text-slate-500 font-medium">
+                  {strictlyPendingOrders.length} disponível(is)
+                </span>
+              </div>
 
               {strictlyPendingOrders.length === 0 ? (
                 <div className="p-4 text-center rounded-lg border border-dashed border-slate-300 text-xs text-slate-500">
                   Nenhuma entrega pendente disponível para inclusão.
                 </div>
               ) : (
-                <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
                   {strictlyPendingOrders.map((ord) => {
                     const cust = localCustomers.find((c) => c.id === ord.customer_id)
                     const isSelected = selectedIncludeOrderId === ord.id
+                    const isInStep2 = selectedOrderIds.includes(ord.id)
 
                     return (
                       <div
@@ -4822,11 +4835,21 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900'
                         }`}
                       >
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-900 dark:text-white truncate">
-                            {cust?.name || 'Cliente'}
-                          </p>
-                          <p className="text-[11px] text-slate-500 truncate">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-bold text-slate-900 dark:text-white truncate">
+                              {cust?.name || 'Cliente'}
+                            </p>
+                            {isInStep2 && (
+                              <Badge
+                                variant="secondary"
+                                className="text-[10px] px-1.5 py-0 bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800 font-semibold shrink-0"
+                              >
+                                Na Etapa 2
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-500 truncate mt-0.5">
                             {cust?.address || 'Sem endereço'}
                           </p>
                           <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono mt-0.5">
@@ -4838,7 +4861,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           name="include-order-choice"
                           checked={isSelected}
                           onChange={() => setSelectedIncludeOrderId(ord.id)}
-                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
+                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 shrink-0 ml-2 cursor-pointer"
                         />
                       </div>
                     )
