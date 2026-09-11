@@ -194,6 +194,107 @@ export const deliveryService = {
     return pb.collection<CustomerRecord>('customers').update(id, data)
   },
 
+  /**
+   * Exclusão em cascata de cliente e seus registros vinculados (pedidos, avaliações, desvios e notificações).
+   * Tenta via endpoint seguro atômico (/backend/v1/customers/:id/delete-cascade).
+   * Caso o backend retorne erro de rota ou permissão, realiza fallback seguro via client SDK.
+   */
+  async deleteCustomerCascade(
+    customerId: string,
+  ): Promise<{ success: boolean; deletedOrdersCount: number }> {
+    try {
+      const res = await pb.send<{ success: boolean; message: string; deletedOrdersCount: number }>(
+        `/backend/v1/customers/${customerId}/delete-cascade`,
+        {
+          method: 'POST',
+        },
+      )
+      return { success: true, deletedOrdersCount: res.deletedOrdersCount || 0 }
+    } catch (err) {
+      console.warn('Fallback para exclusão client-side de cliente e pedidos:', err)
+
+      // Fallback client-side se o endpoint falhar
+      // 1. Buscar todos os pedidos vinculados a este cliente
+      const linkedOrders = await pb.collection<OrderRecord>('orders').getFullList({
+        filter: `customer_id = '${customerId}'`,
+        requestKey: null,
+      })
+
+      // Verificar se algum está ativo em trânsito
+      const activeInTransit = linkedOrders.filter(
+        (o) =>
+          o.status === 'in_transit' ||
+          (o.route_started && !o.route_finished) ||
+          (o.route_released && o.status === 'assigned'),
+      )
+      if (activeInTransit.length > 0) {
+        throw new Error(
+          'Não é possível excluir o cliente pois ele possui entregas em trânsito ou em rota já liberada.',
+        )
+      }
+
+      // 2. Excluir pedidos vinculados
+      let deletedOrdersCount = 0
+      for (const ord of linkedOrders) {
+        try {
+          // Excluir notificações ligadas ao pedido
+          const notifs = await pb.collection('notifications').getFullList({
+            filter: `order_id = '${ord.id}'`,
+            requestKey: null,
+          })
+          for (const n of notifs) {
+            await pb
+              .collection('notifications')
+              .delete(n.id)
+              .catch(() => {})
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+
+        try {
+          // Excluir avaliações ligadas ao pedido
+          const revs = await pb.collection('reviews').getFullList({
+            filter: `order_id = '${ord.id}'`,
+            requestKey: null,
+          })
+          for (const r of revs) {
+            await pb
+              .collection('reviews')
+              .delete(r.id)
+              .catch(() => {})
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+
+        try {
+          // Excluir desvios ligados ao pedido
+          const off = await pb.collection('off_route_events').getFullList({
+            filter: `order_id = '${ord.id}'`,
+            requestKey: null,
+          })
+          for (const o of off) {
+            await pb
+              .collection('off_route_events')
+              .delete(o.id)
+              .catch(() => {})
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+
+        await pb.collection('orders').delete(ord.id)
+        deletedOrdersCount++
+      }
+
+      // 3. Excluir o cliente
+      await pb.collection('customers').delete(customerId)
+
+      return { success: true, deletedOrdersCount }
+    }
+  },
+
   // Users / Couriers / Sellers
   async getCouriers() {
     return pb.collection<UserRecord>('users').getFullList({

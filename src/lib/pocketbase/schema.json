@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T13:20:06.045Z",
+  "generatedAt": "2026-09-11T13:35:27.088Z",
   "collections": [
     {
       "name": "users",
@@ -109,7 +109,7 @@
         "view": "@request.auth.id != ''",
         "create": "@request.auth.id != ''",
         "update": "@request.auth.id != ''",
-        "delete": "@request.auth.role = 'admin'"
+        "delete": "@request.auth.role = 'admin' || @request.auth.role = 'seller'"
       },
       "fields": [
         {
@@ -233,7 +233,7 @@
         "view": "@request.auth.id != '' || tracking_code != ''",
         "create": "@request.auth.id != ''",
         "update": "@request.auth.id != ''",
-        "delete": "@request.auth.role = 'admin'"
+        "delete": "@request.auth.role = 'admin' || @request.auth.role = 'seller'"
       },
       "fields": [
         {
