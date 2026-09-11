@@ -81,6 +81,8 @@ import {
   X,
   Phone,
   Edit,
+  MessageCircle,
+  Share2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -141,8 +143,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     if (e) e.stopPropagation()
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const fullUrl = `${origin}/track/${trackingCode}`
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(fullUrl)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(fullUrl).catch(() => {})
     }
     setCopiedOrderId(orderId)
     toast.success(`Link de rastreio copiado!`, {
@@ -151,6 +153,26 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     setTimeout(() => {
       setCopiedOrderId(null)
     }, 2000)
+  }
+
+  const handleShareTrackingWhatsApp = (order: OrderRecord, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const url = `${origin}/track/${order.tracking_code}`
+    const cust = customers.find((c) => c.id === order.customer_id)
+    const custName = cust?.name || order.expand?.customer_id?.name || 'Cliente'
+    const phone = cust?.phone || order.expand?.customer_id?.phone || ''
+    const text = `Olá ${custName}! Acompanhe sua entrega em tempo real: ${url}`
+    const msgEncoded = encodeURIComponent(text)
+
+    if (!phone) {
+      window.open(`https://wa.me/?text=${msgEncoded}`, '_blank')
+      return
+    }
+
+    const cleanNumber = phone.replace(/\D/g, '')
+    const finalNumber = cleanNumber.startsWith('55') ? cleanNumber : `55${cleanNumber}`
+    window.open(`https://wa.me/${finalNumber}?text=${msgEncoded}`, '_blank')
   }
 
   const loadData = async () => {
@@ -1544,24 +1566,36 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                     onClick={(e) =>
                                       handleCopyTrackingLink(order.tracking_code, order.id, e)
                                     }
-                                    className={`h-7 px-2 text-[11px] gap-1 transition-all rounded-input ${
+                                    className={`h-7 px-2 text-[11px] gap-1 transition-all rounded-input font-bold ${
                                       copiedOrderId === order.id
-                                        ? 'bg-emerald-50 border-emerald-300 text-[#00AA44] font-bold'
-                                        : 'text-[#0052CC] border-[#0052CC]/30 hover:bg-blue-50'
+                                        ? 'bg-emerald-600 border-emerald-500 text-white shadow-sm'
+                                        : 'bg-[#0052CC]/20 border-[#0052CC]/50 text-[#60A5FA] hover:bg-[#0052CC] hover:text-white'
                                     }`}
-                                    title="Copiar link de rastreamento para enviar ao cliente"
+                                    title="Copiar link de acompanhamento para a área de transferência"
                                   >
                                     {copiedOrderId === order.id ? (
                                       <>
-                                        <CheckCircle2 className="h-3 w-3 text-[#00AA44]" />
+                                        <CheckCircle2 className="h-3 w-3 text-white" />
                                         <span>Copiado!</span>
                                       </>
                                     ) : (
                                       <>
-                                        <ExternalLink className="h-3 w-3" />
+                                        <Share2 className="h-3 w-3" />
                                         <span>Copiar Link</span>
                                       </>
                                     )}
+                                  </Button>
+
+                                  {/* Enviar Link por WhatsApp direto para o cliente */}
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => handleShareTrackingWhatsApp(order, e)}
+                                    className="h-7 px-2 text-[11px] gap-1 bg-emerald-950/60 border-emerald-500/50 text-emerald-300 hover:bg-emerald-700 hover:text-white rounded-input font-bold"
+                                    title="Enviar link de rastreamento com mensagem pronta pelo WhatsApp do cliente"
+                                  >
+                                    <MessageCircle className="h-3 w-3 text-emerald-400" />
+                                    <span>WhatsApp</span>
                                   </Button>
 
                                   {/* Link Rastreio Público */}
@@ -1569,7 +1603,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                     to={`/track/${order.tracking_code}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-slate-500 hover:text-[#0052CC] text-xs px-1.5 py-1 rounded-input"
+                                    className="inline-flex items-center gap-1 text-slate-400 hover:text-white text-xs px-1.5 py-1 rounded-input"
                                     title="Abrir página de rastreio em nova aba"
                                   >
                                     <span>Abrir</span>

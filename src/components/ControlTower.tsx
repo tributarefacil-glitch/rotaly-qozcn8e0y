@@ -56,8 +56,10 @@ import {
   ShieldCheck,
   Route,
   AlertOctagon,
+  Star,
+  Share2,
 } from 'lucide-react'
-import { OrderRecord, UserRecord, LocationRecord } from '@/types/delivery'
+import { OrderRecord, UserRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
 import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
 import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
@@ -221,6 +223,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   // Drawer mini-map state
   const drawerMiniMapRef = useRef<HTMLDivElement | null>(null)
   const [drawerMapInstance, setDrawerMapInstance] = useState<any>(null)
+  const [drawerMapFailed, setDrawerMapFailed] = useState(false)
+  const [drawerTilesLoaded, setDrawerTilesLoaded] = useState(false)
+  const [drawerReview, setDrawerReview] = useState<ReviewRecord | null>(null)
+  const [isLoadingDrawerReview, setIsLoadingDrawerReview] = useState(false)
   const [drawerDeviationInfo, setDrawerDeviationInfo] = useState<{
     isDeviated: boolean
     meters: number
@@ -229,6 +235,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const drawerMarkersRef = useRef<any[]>([])
   const drawerPolylineRef = useRef<any>(null)
   const drawerDeviationPolylineRef = useRef<any>(null)
+  const drawerBoundsRef = useRef<any>(null)
+  const drawerCenterRef = useRef<{ lat: number; lng: number } | null>(null)
 
   // Geometria de rota real via OSRM e telemetria de desvio do pedido selecionado
   const [streetRoute, setStreetRoute] = useState<OsrmRouteResult | null>(null)
@@ -996,8 +1004,41 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const handleOpenOrderDetails = (order: OrderRecord) => {
     setSelectedOrder(order)
     setStreetRoute(null)
+    setDrawerMapFailed(false)
+    setDrawerTilesLoaded(false)
+    setDrawerReview(null)
     setIsDrawerOpen(true)
   }
+
+  // Carregar avaliação (review) vinculada ao pedido quando o Drawer abrir
+  useEffect(() => {
+    if (!isDrawerOpen || !selectedOrder?.id) {
+      setDrawerReview(null)
+      return
+    }
+
+    let isCurrent = true
+    setIsLoadingDrawerReview(true)
+    deliveryService
+      .getReviewByOrderId(selectedOrder.id)
+      .then((rev) => {
+        if (isCurrent) {
+          setDrawerReview(rev)
+          setIsLoadingDrawerReview(false)
+        }
+      })
+      .catch((err) => {
+        console.warn('Erro ao carregar review do pedido:', err)
+        if (isCurrent) {
+          setDrawerReview(null)
+          setIsLoadingDrawerReview(false)
+        }
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [isDrawerOpen, selectedOrder?.id])
 
   // Get courier data for the selected order
   const orderCourierInfo = useMemo(() => {
@@ -1058,11 +1099,24 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
   }, [selectedOrder, todayOrders])
 
-  // Render Mini-Map inside the Drawer
+  // Render Mini-Map inside the Drawer com ResizeObserver e timeout de fallback de tiles
   useEffect(() => {
-    if (!isDrawerOpen || !selectedOrder || !mapsLoaded || typeof window === 'undefined') return
+    if (!isDrawerOpen || !selectedOrder) {
+      setDrawerTilesLoaded(false)
+      setDrawerMapFailed(false)
+      return
+    }
+
+    if (!mapsLoaded || mapsError || typeof window === 'undefined') {
+      setDrawerMapFailed(true)
+      return
+    }
+
     const win = window as any
-    if (!win.google || !win.google.maps) return
+    if (!win.google || !win.google.maps) {
+      setDrawerMapFailed(true)
+      return
+    }
 
     const container = drawerMiniMapRef.current
     if (!container) return
@@ -1073,8 +1127,11 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     // Coordinates for center: courier lat/lng or customer lat/lng
     const centerLat = courierData?.lat || cust?.lat || -22.906847
     const centerLng = courierData?.lng || cust?.lng || -43.172896
+    drawerCenterRef.current = { lat: centerLat, lng: centerLng }
 
     let miniMap = drawerMapInstance
+    let isMounted = true
+
     if (!miniMap) {
       try {
         miniMap = new win.google.maps.Map(container, {
@@ -1100,10 +1157,67 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         setDrawerMapInstance(miniMap)
       } catch (err) {
         console.warn('Mini-map init failed:', err)
+        setDrawerMapFailed(true)
         return
       }
     } else {
       miniMap.setCenter({ lat: centerLat, lng: centerLng })
+    }
+
+    // Monitoramento do carregamento dos tiles e estado idle do Google Maps
+    let tilesOrIdleReceived = false
+    const onTileSuccess = () => {
+      tilesOrIdleReceived = true
+      if (isMounted) {
+        setDrawerTilesLoaded(true)
+        setDrawerMapFailed(false)
+      }
+    }
+
+    const tilesListener = miniMap.addListener('tilesloaded', onTileSuccess)
+    const idleListener = miniMap.addListener('idle', () => {
+      // Se já disparou idle e o container tem dimensões, considerar renderizado
+      if (container.clientWidth > 0 && container.clientHeight > 0) {
+        onTileSuccess()
+      }
+    })
+
+    // Timeout de 1.8s: se não disparar tilesloaded/idle em dimensões válidas, marcar como falho e acionar o fallback vetorial
+    const fallbackTimer = setTimeout(() => {
+      if (!tilesOrIdleReceived && isMounted) {
+        console.warn(
+          'Google Maps no Drawer não respondeu tilesloaded/idle a tempo; acionando fallback vetorial.',
+        )
+        setDrawerMapFailed(true)
+      }
+    }, 1800)
+
+    // ResizeObserver: enquanto o Drawer anima e container ganha dimensões > 0, dispara o resize do Google Maps
+    let resizeObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const { width, height } = entry.contentRect
+          if (width > 0 && height > 0 && miniMap) {
+            try {
+              win.google.maps.event.trigger(miniMap, 'resize')
+              if (drawerBoundsRef.current && !drawerBoundsRef.current.isEmpty()) {
+                miniMap.fitBounds(drawerBoundsRef.current, {
+                  top: 30,
+                  right: 30,
+                  bottom: 30,
+                  left: 30,
+                })
+              } else if (drawerCenterRef.current) {
+                miniMap.setCenter(drawerCenterRef.current)
+              }
+            } catch (e) {
+              console.warn('Erro ao disparar resize no mini-mapa:', e)
+            }
+          }
+        }
+      })
+      resizeObserver.observe(container)
     }
 
     // Clear old drawer markers and lines
@@ -1261,10 +1375,33 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       setDrawerUnexpectedStop(false)
     }
 
+    drawerBoundsRef.current = bounds
     if (!bounds.isEmpty()) {
       miniMap.fitBounds(bounds, { top: 30, right: 30, bottom: 30, left: 30 })
     }
-  }, [isDrawerOpen, selectedOrder, mapsLoaded, orderCourierInfo, streetRoute, recentDeviations])
+
+    return () => {
+      isMounted = false
+      clearTimeout(fallbackTimer)
+      if (tilesListener && win.google?.maps?.event) {
+        win.google.maps.event.removeListener(tilesListener)
+      }
+      if (idleListener && win.google?.maps?.event) {
+        win.google.maps.event.removeListener(idleListener)
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect()
+      }
+    }
+  }, [
+    isDrawerOpen,
+    selectedOrder,
+    mapsLoaded,
+    mapsError,
+    orderCourierInfo,
+    streetRoute,
+    recentDeviations,
+  ])
 
   // Contact helpers
   const openWhatsApp = (phone?: string, text?: string) => {
@@ -1297,15 +1434,36 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const copyTracking = (code: string) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const url = `${origin}/track/${code}`
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(url)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).catch(() => {})
     }
     setCopiedCode(code)
     toast({
-      title: 'Link copiado!',
+      title: 'Link copiado com sucesso!',
       description: url,
     })
     setTimeout(() => setCopiedCode(null), 2500)
+  }
+
+  // Compartilhamento com o cliente via WhatsApp com mensagem pronta
+  const shareTrackingViaWhatsApp = (order: OrderRecord) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const url = `${origin}/track/${order.tracking_code}`
+    const custName = order.expand?.customer_id?.name || 'Cliente'
+    const phone = order.expand?.customer_id?.phone || ''
+    const text = `Olá ${custName}! Acompanhe sua entrega em tempo real: ${url}`
+
+    if (!phone) {
+      // Se não houver telefone salvo, abre wa.me apenas com o texto para escolha do contato
+      const msgEncoded = encodeURIComponent(text)
+      window.open(`https://wa.me/?text=${msgEncoded}`, '_blank')
+      return
+    }
+
+    const cleanNumber = phone.replace(/\D/g, '')
+    const finalNumber = cleanNumber.startsWith('55') ? cleanNumber : `55${cleanNumber}`
+    const msgEncoded = encodeURIComponent(text)
+    window.open(`https://wa.me/${finalNumber}?text=${msgEncoded}`, '_blank')
   }
 
   function formatVehicle(type?: string) {
@@ -2288,15 +2446,148 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                     </div>
                   )}
 
+                  {/* SEÇÃO DESTACADA: COMPARTILHAMENTO DO LINK DE RASTREIO DO CLIENTE */}
+                  <div className="rounded-xl border border-blue-500/30 bg-gradient-to-r from-blue-950/70 via-[#0B1A40] to-slate-900 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Share2 className="h-3.5 w-3.5 text-blue-400" />
+                        Link de Acompanhamento do Cliente
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        /track/{selectedOrder.tracking_code}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
+                      <Button
+                        size="sm"
+                        onClick={() => copyTracking(selectedOrder.tracking_code)}
+                        className={`h-8 text-xs font-bold gap-1.5 rounded-lg transition-all ${
+                          copiedCode === selectedOrder.tracking_code
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
+                            : 'bg-blue-600 hover:bg-blue-700 text-white shadow-brand'
+                        }`}
+                        title="Copiar URL pública completa para a área de transferência"
+                      >
+                        {copiedCode === selectedOrder.tracking_code ? (
+                          <>
+                            <Check className="h-3.5 w-3.5 text-white" />
+                            <span>Link Copiado!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5" />
+                            <span>Copiar Link de Acompanhamento</span>
+                          </>
+                        )}
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        onClick={() => shareTrackingViaWhatsApp(selectedOrder)}
+                        className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 rounded-lg shadow-sm"
+                        title="Enviar link formatado diretamente para o WhatsApp do cliente"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        <span>Enviar por WhatsApp</span>
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* AVALIAÇÃO DO CLIENTE (SE HOUVER REGISTRO EM reviews) */}
+                  {drawerReview && (
+                    <div className="rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-950/40 via-[#1a1408] to-slate-950 p-3.5 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                          <Star className="h-3.5 w-3.5 text-amber-400 fill-amber-400" />
+                          Avaliação do Cliente
+                        </span>
+                        {drawerReview.created && (
+                          <span className="text-[10px] text-slate-400">
+                            {new Date(drawerReview.created).toLocaleDateString('pt-BR', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                          <span className="text-[10px] text-slate-400 block mb-0.5">
+                            Nota Entregador:
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <div className="flex">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <Star
+                                  key={star}
+                                  className={`h-3 w-3 ${
+                                    star <= (drawerReview.courier_rating || 0)
+                                      ? 'text-amber-400 fill-amber-400'
+                                      : 'text-slate-600'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <span className="font-bold text-white text-xs ml-1 font-mono">
+                              {drawerReview.courier_rating}/5
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                          <span className="text-[10px] text-slate-400 block mb-0.5">
+                            Nota Loja:
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <div className="flex">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <Star
+                                  key={star}
+                                  className={`h-3 w-3 ${
+                                    star <= (drawerReview.seller_rating || 0)
+                                      ? 'text-amber-400 fill-amber-400'
+                                      : 'text-slate-600'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <span className="font-bold text-white text-xs ml-1 font-mono">
+                              {drawerReview.seller_rating}/5
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {drawerReview.comment && (
+                        <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 text-slate-200 text-xs italic">
+                          &ldquo;{drawerReview.comment}&rdquo;
+                          {drawerReview.customer_name && (
+                            <span className="block not-italic text-[10px] text-slate-400 mt-1 text-right font-medium">
+                              — {drawerReview.customer_name}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="relative w-full h-[250px] rounded-xl overflow-hidden border border-[#1E2B58] bg-[#070D1E]">
-                    {/* Google Mini Map Container (ativo se mapsLoaded e sem erro) */}
+                    {/* Google Mini Map Container (visível SOMENTE se mapsLoaded && !mapsError && !drawerMapFailed && drawerTilesLoaded) */}
                     <div
                       ref={drawerMiniMapRef}
-                      className={`w-full h-full ${mapsLoaded && !mapsError ? 'block' : 'hidden'}`}
+                      className={`w-full h-full ${
+                        mapsLoaded && !mapsError && !drawerMapFailed && drawerTilesLoaded
+                          ? 'block'
+                          : 'hidden'
+                      }`}
                     />
 
-                    {/* Fallback Vetorial Interativo com Ruas Reais OSRM, Linha Azul e Linha Vermelha de Desvio */}
-                    {(!mapsLoaded || mapsError) &&
+                    {/* Fallback Vetorial Interativo com Ruas Reais OSRM, Linha Azul e Linha Vermelha de Desvio: ativo quando Google não renderizou ou falhou */}
+                    {(!mapsLoaded || mapsError || drawerMapFailed || !drawerTilesLoaded) &&
                       (() => {
                         const cust = selectedOrder.expand?.customer_id
                         const baseLat = selectedOrder.start_base_lat || -22.906847

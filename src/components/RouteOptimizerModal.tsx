@@ -58,7 +58,9 @@ import {
   FileText,
   Loader2,
   X,
+  Compass,
 } from 'lucide-react'
+import { fetchStreetRoute, type LatLngPoint } from '@/services/osrmRoutingService'
 import {
   Select,
   SelectContent,
@@ -269,7 +271,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markersAndPolylinesRef = useRef<any[]>([])
   const [isMapsLoaded, setIsMapsLoaded] = useState(false)
-  const [mapsAuthError, setMapsAuthError] = useState(isGoogleMapsAuthError())
+  const [mapsAuthError, setMapsAuthError] = useState(() => isGoogleMapsAuthError())
 
   const getGoogle = () =>
     typeof window !== 'undefined' ? (window as unknown as { google?: any }).google : undefined
@@ -321,11 +323,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         if (defaultEnd) setSelectedEndBaseId(defaultEnd.id)
       })
       loadGoogleMapsScript().then((success) => {
-        const ok = success && !isGoogleMapsAuthError()
+        const isAuthErr = isGoogleMapsAuthError()
+        const ok = success && !isAuthErr
         setIsMapsLoaded(ok)
-        if (!ok) {
-          setMapsAuthError(true)
-        }
+        setMapsAuthError(isAuthErr)
       })
     }
   }, [open, couriers])
@@ -849,6 +850,12 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     },
     [appSettings],
   )
+
+  // Cache de geometrias de rua reais computadas (OSRM/Google Directions) por entregador/rota
+  const [streetRouteGeometries, setStreetRouteGeometries] = useState<
+    Record<string, { points: LatLngPoint[]; color: string }>
+  >({})
+  const [isLoadingStreetRoutes, setIsLoadingStreetRoutes] = useState(false)
 
   // Deslocamento de parada por drag & drop no mapa: reordena a parada arrastada para a nova posição
   const handleMarkerDragEnd = (
@@ -1555,12 +1562,12 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     if (!open) return
 
     const google = getGoogle()
-    if (!mapContainerRef.current || !google?.maps) return
+    if (!mapContainerRef.current || !google?.maps || !isMapsLoaded || mapsAuthError) return
 
     try {
       if (!mapInstanceRef.current) {
         mapInstanceRef.current = new google.maps.Map(mapContainerRef.current, {
-          center: { lat: -22.906847, lng: -43.172896 },
+          center: { lat: -22.7001402, lng: -43.2982834 },
           zoom: 12,
           disableDefaultUI: false,
           zoomControl: true,
@@ -1572,6 +1579,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             { featureType: 'administrative', stylers: [{ visibility: 'simplified' }] },
           ],
         })
+      } else {
+        google.maps.event.trigger(mapInstanceRef.current, 'resize')
       }
 
       // Clear previous overlays
@@ -1728,16 +1737,32 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           markersAndPolylinesRef.current.push(endMarker)
 
           // 4. LINHA DA ROTA (Polyline: Partida → Paradas 1..N → Chegada)
-          if (pathCoords.length > 1) {
+          // Usa geometria viária real de ruas se disponível, com fallback para pathCoords direto
+          const geom = streetRouteGeometries[plan.courier.id]
+          const finalRouteCoords = geom && geom.points.length >= 2 ? geom.points : pathCoords
+
+          if (finalRouteCoords.length > 1) {
+            // Linha externa de destaque (azul real ou cor do entregador)
             const polyline = new google.maps.Polyline({
-              path: pathCoords,
+              path: finalRouteCoords,
               geodesic: true,
-              strokeColor: plan.color,
-              strokeOpacity: 0.85,
-              strokeWeight: 4,
+              strokeColor: plan.color || '#2563eb',
+              strokeOpacity: 0.9,
+              strokeWeight: 5,
               map: mapInstanceRef.current,
             })
             markersAndPolylinesRef.current.push(polyline)
+
+            // Linha interna suave para efeito de rodovia/rua iluminada
+            const innerLine = new google.maps.Polyline({
+              path: finalRouteCoords,
+              geodesic: true,
+              strokeColor: '#ffffff',
+              strokeOpacity: 0.5,
+              strokeWeight: 1.5,
+              map: mapInstanceRef.current,
+            })
+            markersAndPolylinesRef.current.push(innerLine)
           }
         })
       } else {
@@ -1899,19 +1924,98 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     selectedStartBaseId,
     selectedEndBaseId,
     baseAddresses,
+    streetRouteGeometries,
+    isMapsLoaded,
+    mapsAuthError,
   ])
+
+  // Computar geometrias de trajeto de rua real (linha viária azul/colorida) com OSRM/Google
+  useEffect(() => {
+    if (!open || !optimizationResult) return
+
+    let cancelled = false
+    setIsLoadingStreetRoutes(true)
+
+    const computeAllStreetRoutes = async () => {
+      const newGeoms: Record<string, { points: LatLngPoint[]; color: string }> = {}
+
+      for (const plan of optimizationResult.courierPlans) {
+        if (cancelled) return
+        const waypoints: LatLngPoint[] = []
+
+        // Início: base de partida
+        const startLat = plan.start_base?.lat || -22.906847
+        const startLng = plan.start_base?.lng || -43.172896
+        waypoints.push({ lat: startLat, lng: startLng })
+
+        // Paradas ordenadas
+        for (const stop of plan.stops) {
+          waypoints.push({ lat: stop.lat, lng: stop.lng })
+        }
+
+        // Chegada: base de chegada
+        const endLat = plan.end_base?.lat || startLat
+        const endLng = plan.end_base?.lng || startLng
+        waypoints.push({ lat: endLat, lng: endLng })
+
+        // Buscar segmentos de rua reais entre waypoints consecutivos
+        const allStreetPoints: LatLngPoint[] = []
+        for (let i = 0; i < waypoints.length - 1; i++) {
+          if (cancelled) return
+          const from = waypoints[i]
+          const to = waypoints[i + 1]
+          try {
+            const leg = await fetchStreetRoute(from, to)
+            if (leg.coordinates && leg.coordinates.length > 0) {
+              if (allStreetPoints.length > 0) {
+                allStreetPoints.push(...leg.coordinates.slice(1))
+              } else {
+                allStreetPoints.push(...leg.coordinates)
+              }
+            } else {
+              if (allStreetPoints.length === 0) allStreetPoints.push(from)
+              allStreetPoints.push(to)
+            }
+          } catch {
+            if (allStreetPoints.length === 0) allStreetPoints.push(from)
+            allStreetPoints.push(to)
+          }
+        }
+
+        newGeoms[plan.courier.id] = {
+          points: allStreetPoints.length >= 2 ? allStreetPoints : waypoints,
+          color: plan.color,
+        }
+      }
+
+      if (!cancelled) {
+        setStreetRouteGeometries(newGeoms)
+        setIsLoadingStreetRoutes(false)
+      }
+    }
+
+    computeAllStreetRoutes().catch(() => {
+      if (!cancelled) setIsLoadingStreetRoutes(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, optimizationResult])
 
   // Trigger map resize when modal opens or step changes to avoid black/blank map
   useEffect(() => {
     if (!open) return
-    const timer = setTimeout(() => {
-      const google = getGoogle()
-      if (mapInstanceRef.current && google?.maps) {
-        google.maps.event.trigger(mapInstanceRef.current, 'resize')
-      }
-    }, 200)
-    return () => clearTimeout(timer)
-  }, [open, wizardStep, isMapsLoaded])
+    const timers = [100, 300, 600, 1000].map((delay) =>
+      setTimeout(() => {
+        const google = getGoogle()
+        if (mapInstanceRef.current && google?.maps) {
+          google.maps.event.trigger(mapInstanceRef.current, 'resize')
+        }
+      }, delay),
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [open, wizardStep, isMapsLoaded, optimizationResult])
 
   // Apply & Save Distribution (com opção de atribuir ou já Liberar Rota diretamente)
   const handleApplyDistribution = async (releaseDirectly = false) => {
@@ -3378,7 +3482,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             <div className="relative w-full h-72 sm:h-80 rounded-2xl overflow-hidden border border-slate-300 dark:border-slate-700 shadow-inner bg-slate-900">
               <div
                 ref={mapContainerRef}
-                className={`w-full h-full ${isMapsLoaded && !mapsAuthError ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                className={`absolute inset-0 w-full h-full ${isMapsLoaded && !mapsAuthError ? 'z-10 opacity-100' : 'z-0 opacity-0 pointer-events-none'}`}
               />
 
               {/* Fallback canvas overlay if Google Maps is not available or auth error */}
@@ -3416,6 +3520,31 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                     )}
                   </div>
 
+                  {/* Botão de Contingência / Retry Maps no Fallback */}
+                  <div className="absolute top-3 right-3 z-30">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        loadGoogleMapsScript().then((success) => {
+                          const isAuthErr = isGoogleMapsAuthError()
+                          const ok = success && !isAuthErr
+                          setIsMapsLoaded(ok)
+                          setMapsAuthError(isAuthErr)
+                          if (ok && mapInstanceRef.current) {
+                            const google = getGoogle()
+                            google?.maps?.event?.trigger(mapInstanceRef.current, 'resize')
+                          }
+                        })
+                      }}
+                      className="h-6 px-2 text-[10px] bg-slate-900/90 text-slate-200 border-slate-700 hover:bg-slate-800 hover:text-white rounded-md shadow gap-1"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      <span>Tentar Google Maps</span>
+                    </Button>
+                  </div>
+
                   {/* Cartographic canvas with interactive pins: Ponto de Partida 🟢, Chegada 🏁 and Stops 📍 */}
                   {(() => {
                     const fallbackStartBase = resolvedStartEntity
@@ -3434,10 +3563,17 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       color: string
                       badge?: string
                       type: 'start' | 'end' | 'stop' | 'courier'
+                      courierId?: string
+                      stopId?: string
                     }
 
                     const points: MapPoint[] = []
-                    if (fallbackStartBase.lat && fallbackStartBase.lng) {
+                    if (
+                      typeof fallbackStartBase.lat === 'number' &&
+                      typeof fallbackStartBase.lng === 'number' &&
+                      !isNaN(fallbackStartBase.lat) &&
+                      !isNaN(fallbackStartBase.lng)
+                    ) {
                       points.push({
                         id: 'start-base',
                         label: `🟢 ${fallbackStartBase.name}`,
@@ -3451,8 +3587,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                     }
 
                     if (
-                      fallbackEndBase.lat &&
-                      fallbackEndBase.lng &&
+                      typeof fallbackEndBase.lat === 'number' &&
+                      typeof fallbackEndBase.lng === 'number' &&
+                      !isNaN(fallbackEndBase.lat) &&
+                      !isNaN(fallbackEndBase.lng) &&
                       (fallbackEndBase.id !== fallbackStartBase.id ||
                         fallbackEndBase.lat !== fallbackStartBase.lat ||
                         fallbackEndBase.lng !== fallbackStartBase.lng)
@@ -3475,16 +3613,25 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           activeCourierTab === 'all' || activeCourierTab === plan.courier.id
                         if (!isTabActive) return
                         plan.stops.forEach((stop, sIdx) => {
-                          points.push({
-                            id: `opt-stop-${stop.id}`,
-                            label: `#${sIdx + 1} ${stop.customer_name}`,
-                            sublabel: stop.address,
-                            lat: stop.lat,
-                            lng: stop.lng,
-                            color: plan.color,
-                            badge: `${sIdx + 1}`,
-                            type: 'stop',
-                          })
+                          if (
+                            typeof stop.lat === 'number' &&
+                            typeof stop.lng === 'number' &&
+                            !isNaN(stop.lat) &&
+                            !isNaN(stop.lng)
+                          ) {
+                            points.push({
+                              id: `opt-stop-${stop.id}`,
+                              label: `#${sIdx + 1} ${stop.customer_name}`,
+                              sublabel: stop.address,
+                              lat: stop.lat,
+                              lng: stop.lng,
+                              color: plan.color,
+                              badge: `${sIdx + 1}`,
+                              type: 'stop',
+                              courierId: plan.courier.id,
+                              stopId: stop.id,
+                            })
+                          }
                         })
                       })
                     } else {
@@ -3509,7 +3656,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       })
                     }
 
-                    // Bounds calculation for proportional canvas placement
+                    // Bounds calculation for proportional canvas placement with fallback to center
                     let minLat = Infinity
                     let maxLat = -Infinity
                     let minLng = Infinity
@@ -3521,81 +3668,180 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       if (p.lng > maxLng) maxLng = p.lng
                     })
 
-                    const latSpan = maxLat > minLat ? maxLat - minLat : 0.01
-                    const lngSpan = maxLng > minLng ? maxLng - minLng : 0.01
+                    const hasValidBounds =
+                      isFinite(minLat) && isFinite(maxLat) && isFinite(minLng) && isFinite(maxLng)
+                    const centerLat = hasValidBounds
+                      ? (minLat + maxLat) / 2
+                      : fallbackStartBase.lat || -22.7001402
+                    const centerLng = hasValidBounds
+                      ? (minLng + maxLng) / 2
+                      : fallbackStartBase.lng || -43.2982834
+
+                    const latSpan =
+                      hasValidBounds && maxLat > minLat
+                        ? Math.max(0.015, (maxLat - minLat) * 1.35)
+                        : 0.04
+                    const lngSpan =
+                      hasValidBounds && maxLng > minLng
+                        ? Math.max(0.015, (maxLng - minLng) * 1.35)
+                        : 0.04
+
+                    const calcX = (lng: number) => {
+                      const rel = 50 + ((lng - centerLng) / lngSpan) * 80
+                      return Math.max(8, Math.min(92, rel))
+                    }
+                    const calcY = (lat: number) => {
+                      const rel = 50 - ((lat - centerLat) / latSpan) * 75
+                      return Math.max(12, Math.min(88, rel))
+                    }
 
                     return (
-                      <div className="relative z-20 flex-1 my-1 w-full rounded-xl bg-slate-950/70 border border-slate-700/60 p-2 overflow-hidden flex flex-col justify-between">
-                        {/* Cartographic canvas overlay */}
+                      <div className="relative z-20 flex-1 my-1 w-full rounded-xl bg-slate-950/80 border border-slate-700/60 p-2 overflow-hidden flex flex-col justify-between">
+                        {/* Cartographic canvas overlay with real route lines and interactive draggable pins */}
                         <div className="relative w-full h-full min-h-[140px]">
-                          {/* Simulated route connectors */}
-                          <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-40">
-                            {points.length > 1 && (
-                              <polyline
-                                fill="none"
-                                stroke="#6366f1"
-                                strokeWidth="2"
-                                strokeDasharray="4,4"
-                                points={points
-                                  .slice(0, 15)
-                                  .map((p, idx) => {
-                                    const x = 12 + ((p.lng - minLng) / lngSpan) * 76
-                                    const y = 88 - ((p.lat - minLat) / latSpan) * 76
-                                    const safeX = isNaN(x)
-                                      ? 15 + ((idx * 15) % 70)
-                                      : Math.max(10, Math.min(90, x))
-                                    const safeY = isNaN(y)
-                                      ? 20 + ((idx * 18) % 65)
-                                      : Math.max(15, Math.min(85, y))
-                                    return `${safeX}%,${safeY}%`
-                                  })
-                                  .join(' ')}
-                              />
-                            )}
+                          {/* Trajeto viário real (Linha Azul / Linha colorida por entregador) */}
+                          <svg
+                            viewBox="0 0 100 100"
+                            preserveAspectRatio="none"
+                            className="absolute inset-0 w-full h-full pointer-events-none z-10"
+                          >
+                            <defs>
+                              <filter
+                                id="route-blue-glow"
+                                x="-20%"
+                                y="-20%"
+                                width="140%"
+                                height="140%"
+                              >
+                                <feDropShadow
+                                  dx="0"
+                                  dy="0"
+                                  stdDeviation="1"
+                                  floodColor="#3b82f6"
+                                  floodOpacity="0.8"
+                                />
+                              </filter>
+                            </defs>
+
+                            {optimizationResult
+                              ? optimizationResult.courierPlans.map((plan) => {
+                                  const isTabActive =
+                                    activeCourierTab === 'all' ||
+                                    activeCourierTab === plan.courier.id
+                                  if (!isTabActive) return null
+
+                                  const geom = streetRouteGeometries[plan.courier.id]
+                                  const routeCoords: LatLngPoint[] =
+                                    geom && geom.points.length >= 2
+                                      ? geom.points
+                                      : [
+                                          {
+                                            lat: plan.start_base?.lat || centerLat,
+                                            lng: plan.start_base?.lng || centerLng,
+                                          },
+                                          ...plan.stops.map((s) => ({ lat: s.lat, lng: s.lng })),
+                                          {
+                                            lat: plan.end_base?.lat || centerLat,
+                                            lng: plan.end_base?.lng || centerLng,
+                                          },
+                                        ]
+
+                                  if (routeCoords.length < 2) return null
+
+                                  const pathD = routeCoords
+                                    .map((pt, idx) => {
+                                      const x = calcX(pt.lng).toFixed(1)
+                                      const y = calcY(pt.lat).toFixed(1)
+                                      return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`
+                                    })
+                                    .join(' ')
+
+                                  return (
+                                    <g key={plan.courier.id}>
+                                      {/* Linha externa larga azul viária com glow */}
+                                      <path
+                                        d={pathD}
+                                        fill="none"
+                                        stroke="#2563eb"
+                                        strokeWidth="3.2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        filter="url(#route-blue-glow)"
+                                        opacity="0.9"
+                                      />
+                                      {/* Linha interna colorida específica do entregador */}
+                                      <path
+                                        d={pathD}
+                                        fill="none"
+                                        stroke={plan.color || '#93c5fd'}
+                                        strokeWidth="1.8"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        opacity="0.95"
+                                      />
+                                    </g>
+                                  )
+                                })
+                              : /* Polyline para pedidos antes da otimização */
+                                points.length > 1 && (
+                                  <path
+                                    d={points
+                                      .map((p, idx) => {
+                                        const x = calcX(p.lng).toFixed(1)
+                                        const y = calcY(p.lat).toFixed(1)
+                                        return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`
+                                      })
+                                      .join(' ')}
+                                    fill="none"
+                                    stroke="#6366f1"
+                                    strokeWidth="2"
+                                    strokeDasharray="4,3"
+                                    opacity="0.7"
+                                  />
+                                )}
                           </svg>
 
-                          {/* Render pins on canvas */}
-                          {points.slice(0, 18).map((p, idx) => {
-                            const x = 12 + ((p.lng - minLng) / lngSpan) * 76
-                            const y = 88 - ((p.lat - minLat) / latSpan) * 76
-                            const safeX = isNaN(x)
-                              ? 15 + ((idx * 15) % 70)
-                              : Math.max(10, Math.min(90, x))
-                            const safeY = isNaN(y)
-                              ? 20 + ((idx * 18) % 65)
-                              : Math.max(15, Math.min(85, y))
+                          {/* Render pins on vector canvas */}
+                          {points.map((p, idx) => {
+                            const x = calcX(p.lng)
+                            const y = calcY(p.lat)
 
                             return (
                               <div
                                 key={p.id}
-                                style={{ left: `${safeX}%`, top: `${safeY}%` }}
-                                className="absolute -translate-x-1/2 -translate-y-1/2 group z-30 cursor-pointer"
+                                style={{ left: `${x}%`, top: `${y}%` }}
+                                className="absolute -translate-x-1/2 -translate-y-1/2 group z-30 cursor-pointer select-none"
                                 title={`${p.label}${p.sublabel ? ` - ${p.sublabel}` : ''}`}
                               >
                                 <div
-                                  className={`flex items-center justify-center rounded-full text-white font-bold shadow-lg ring-2 ring-white/60 transition-transform group-hover:scale-125 ${
+                                  className={`flex items-center justify-center rounded-full text-white font-bold shadow-lg ring-2 ring-white/70 transition-transform hover:scale-125 ${
                                     p.type === 'start'
-                                      ? 'h-6 px-2 bg-emerald-600 text-[10px] gap-1'
+                                      ? 'h-6 px-2 bg-emerald-600 text-[10px] gap-1 shadow-emerald-500/30'
                                       : p.type === 'end'
-                                        ? 'h-6 px-2 bg-rose-600 text-[10px] gap-1'
-                                        : 'h-5 w-5 bg-orange-500 text-[9px]'
+                                        ? 'h-6 px-2 bg-rose-600 text-[10px] gap-1 shadow-rose-500/30'
+                                        : 'h-6 w-6 bg-orange-500 text-[10px] shadow-orange-500/30'
                                   }`}
                                   style={
                                     p.type === 'stop' ? { backgroundColor: p.color } : undefined
                                   }
                                 >
-                                  {p.type === 'start' && <span>🟢 Saída</span>}
-                                  {p.type === 'end' && <span>🏁 Retorno</span>}
+                                  {p.type === 'start' && <span>🟢 Partida</span>}
+                                  {p.type === 'end' && <span>🏁 Chegada</span>}
                                   {p.type === 'stop' && <span>{p.badge}</span>}
                                 </div>
 
                                 {/* Tooltip on hover */}
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50 whitespace-nowrap bg-slate-900 text-white text-[10px] px-2 py-1 rounded shadow-xl border border-slate-700 pointer-events-none">
-                                  <strong>{p.label}</strong>
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:flex flex-col z-50 whitespace-nowrap bg-slate-900 text-white text-[10px] px-2.5 py-1.5 rounded-lg shadow-2xl border border-slate-700 pointer-events-none">
+                                  <strong className="text-slate-100">{p.label}</strong>
                                   {p.sublabel && (
-                                    <p className="text-slate-400 text-[9px] max-w-[200px] truncate">
+                                    <p className="text-slate-400 text-[9px] max-w-[220px] truncate">
                                       {p.sublabel}
                                     </p>
+                                  )}
+                                  {p.type === 'stop' && (
+                                    <span className="text-[9px] text-amber-400 mt-0.5">
+                                      Ajuste a sequência na lista abaixo
+                                    </span>
                                   )}
                                 </div>
                               </div>
@@ -3607,16 +3853,21 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                         <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800 text-[10px] text-slate-300">
                           <div className="flex items-center gap-1.5 truncate">
                             <span className="font-bold text-emerald-400">🟢 Partida:</span>
-                            <span className="truncate max-w-[140px] text-slate-200">
+                            <span className="truncate max-w-[140px] text-slate-200 font-medium">
                               {fallbackStartBase.name}
                             </span>
                           </div>
-                          <div className="flex items-center gap-1 text-slate-400">
+                          <div className="flex items-center gap-2 text-slate-400">
+                            <span className="flex items-center gap-1 text-blue-300">
+                              <span className="h-1.5 w-3 rounded-full bg-blue-500 inline-block" />
+                              Rota Real
+                            </span>
+                            <span>•</span>
                             <span>📍 {points.filter((p) => p.type === 'stop').length} paradas</span>
                           </div>
                           <div className="flex items-center gap-1.5 truncate justify-end">
                             <span className="font-bold text-rose-400">🏁 Chegada:</span>
-                            <span className="truncate max-w-[140px] text-slate-200">
+                            <span className="truncate max-w-[140px] text-slate-200 font-medium">
                               {fallbackEndBase.name}
                             </span>
                           </div>
