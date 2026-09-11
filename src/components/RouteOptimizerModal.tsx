@@ -1821,6 +1821,18 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     const startBase = resolvedStartEntity
     const endBase = resolvedEndEntity
 
+    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
+    // Validação de segurança final antes de salvar/liberar
+    for (const plan of optimizationResult.courierPlans) {
+      if (plan.stops.length > 0 && isCourierWithActiveRoute(plan.courier.id)) {
+        toast.error(`Entregador "${plan.courier.name}" está com rota em andamento!`, {
+          description:
+            'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
+        })
+        return
+      }
+    }
+
     setIsApplying(true)
     let assignedCount = 0
 
@@ -2021,6 +2033,14 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     stopIndex: number,
   ) => {
     if (!optimizationResult || fromCourierId === toCourierId) return
+
+    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
+    if (isCourierWithActiveRoute(toCourierId)) {
+      toast.error('Entregador de destino possui rota em andamento!', {
+        description: 'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
+      })
+      return
+    }
 
     setOptimizationResult((prev) => {
       if (!prev) return prev

@@ -437,10 +437,16 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
     setReleasingOrderId(orderId)
     try {
-      await deliveryService.releaseRouteForOrders([orderId], courierId)
-      toast.success(
-        '🚀 Rota liberada com sucesso! O entregador já pode visualizar a entrega no app.',
-      )
+      const res = await deliveryService.releaseRouteForOrders([orderId], courierId)
+      if (res.updatedCount === 0) {
+        toast.warning(
+          'A rota não pôde ser liberada porque o entregador possui uma rota anterior não finalizada na base.',
+        )
+      } else {
+        toast.success(
+          '🚀 Rota liberada com sucesso! O entregador já pode visualizar a entrega no app.',
+        )
+      }
       loadData()
     } catch (err) {
       console.error('Error releasing order route:', err)
@@ -1075,10 +1081,16 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                           if (unreleasedOrders.length === 0) return
                           try {
                             const ids = unreleasedOrders.map((o) => o.id)
-                            await deliveryService.releaseRouteForOrders(ids)
-                            toast.success(
-                              `🚀 Todas as ${ids.length} entregas atribuídas foram liberadas para os entregadores!`,
-                            )
+                            const res = await deliveryService.releaseRouteForOrders(ids)
+                            if (res.updatedCount === 0) {
+                              toast.warning(
+                                'Nenhuma rota pôde ser liberada pois os entregadores atribuídos possuem rotas em andamento não finalizadas.',
+                              )
+                            } else {
+                              toast.success(
+                                `🚀 ${res.updatedCount} entregas atribuídas foram liberadas para os entregadores disponíveis!`,
+                              )
+                            }
                             loadData()
                           } catch (err) {
                             console.error('Error releasing all:', err)

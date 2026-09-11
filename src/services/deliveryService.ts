@@ -563,8 +563,37 @@ export const deliveryService = {
         })
       }
 
+      // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
+      // Verificar se algum entregador envolvido possui pedidos em andamento (route_started=true e route_finished!=true)
+      const targetCourierIds = Array.from(
+        new Set(
+          [courierId, ...ordersToUpdate.map((o) => o.courier_id)].filter((id): id is string =>
+            Boolean(id),
+          ),
+        ),
+      )
+
+      const blockedCourierIds = new Set<string>()
+      for (const cId of targetCourierIds) {
+        const activeRouteOrders = await pb.collection<OrderRecord>('orders').getList(1, 1, {
+          filter: `courier_id='${cId}' && route_started=true && (route_finished=false || route_finished=null)`,
+          requestKey: null,
+        })
+        if (activeRouteOrders.totalItems > 0) {
+          blockedCourierIds.add(cId)
+        }
+      }
+
       let updatedCount = 0
       for (const order of ordersToUpdate) {
+        // Se o entregador do pedido tem uma rota ativa não finalizada E o pedido atual ainda não tem rota iniciada, bloqueia liberação
+        if (order.courier_id && blockedCourierIds.has(order.courier_id) && !order.route_started) {
+          console.warn(
+            `[releaseRouteForOrders] Bloqueado para entregador ${order.courier_id}: rota anterior em andamento não finalizada na base.`,
+          )
+          continue
+        }
+
         await pb.collection('orders').update(order.id, {
           route_released: true,
           route_released_at: order.route_released_at || now,
@@ -969,20 +998,8 @@ export const deliveryService = {
       return !hasUnfinishedRoute && (c.status === 'active' || c.status === 'idle')
     })
     if (activeCouriers.length === 0) {
-      if (couriers.length > 0) {
-        // Fallback to any courier
-        const first = couriers[0]
-        return {
-          courier_id: first.id,
-          courier_name: first.name || first.email,
-          vehicle_type: first.vehicle_type || 'motorcycle',
-          order_in_route: 1,
-          estimated_time: '25-35 min',
-          km_saved: 3.2,
-          distance_km: 4.5,
-          reason: 'Entregador disponível na base',
-        }
-      }
+      // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
+      // Se não há entregadores livres de rotas em andamento, não sugerir nenhum
       return null
     }
 
