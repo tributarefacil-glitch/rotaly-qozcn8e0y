@@ -396,12 +396,45 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [releasingOrderId, setReleasingOrderId] = useState<string | null>(null)
   const [isReleasingAllForCourier, setIsReleasingAllForCourier] = useState<string | null>(null)
 
+  // Regra do Usuário: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
+  // Valida se o entregador já possui uma rota em andamento (iniciada e ainda não finalizada na base)
+  const isCourierBlockedByActiveRoute = (courierId: string) => {
+    return orders.some(
+      (o) =>
+        o.courier_id === courierId &&
+        o.route_started === true &&
+        (o.route_finished === false || o.route_finished === null || o.route_finished === undefined),
+    )
+  }
+
   const handleReleaseOrderRoute = async (
     orderId: string,
     courierId?: string,
     e?: React.MouseEvent,
   ) => {
     if (e) e.stopPropagation()
+
+    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
+    if (courierId && isCourierBlockedByActiveRoute(courierId)) {
+      const activeOrder = orders.find(
+        (o) =>
+          o.courier_id === courierId &&
+          o.route_started === true &&
+          (o.route_finished === false ||
+            o.route_finished === null ||
+            o.route_finished === undefined),
+      )
+      // Se o pedido que se tenta liberar não faz parte da rota em andamento, bloquear
+      if (activeOrder && activeOrder.id !== orderId) {
+        toast.error('Entregador com rota em andamento!', {
+          description:
+            'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
+          duration: 5000,
+        })
+        return
+      }
+    }
+
     setReleasingOrderId(orderId)
     try {
       await deliveryService.releaseRouteForOrders([orderId], courierId)
@@ -418,6 +451,15 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   }
 
   const handleReleaseAllForCourier = async (courierId: string) => {
+    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
+    if (isCourierBlockedByActiveRoute(courierId)) {
+      toast.error('Entregador com rota em andamento!', {
+        description: 'ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL na chegada à base.',
+        duration: 5000,
+      })
+      return
+    }
+
     setIsReleasingAllForCourier(courierId)
     try {
       const courierOrders = orders.filter(

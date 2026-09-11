@@ -55,6 +55,11 @@ export default function CourierApp() {
 
   const [isLoading, setIsLoading] = useState(true)
   const [isStartingRoute, setIsStartingRoute] = useState(false)
+  const [isFinishingRoute, setIsFinishingRoute] = useState(false)
+  const [currentCourierLocation, setCurrentCourierLocation] = useState<{
+    lat: number
+    lng: number
+  } | null>(null)
 
   // Carregar dados de conta corrente e configurações para manter paridade com o motor de combustível
   const loadFuelAndAccountData = async () => {
@@ -87,7 +92,7 @@ export default function CourierApp() {
         return
       }
       // Regra: O cliente só fica disponível após o vendedor otimizar e liberar a rota (Salvar & Liberar Rota)
-      const courierFilter = `courier_id = '${user.id}' && (route_released = true || status = 'in_transit' || status = 'delivered')`
+      const courierFilter = `courier_id = '${user.id}' && (route_released = true || status = 'in_transit' || status = 'delivered' || status = 'address_error' || status = 'client_absent')`
       const allOrders = await deliveryService.getOrders(
         courierFilter,
         'sequence,-created',
@@ -168,6 +173,7 @@ export default function CourierApp() {
           async (pos) => {
             const lat = pos.coords.latitude
             const lng = pos.coords.longitude
+            setCurrentCourierLocation({ lat, lng })
             const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 28
             try {
               await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90)
@@ -179,6 +185,7 @@ export default function CourierApp() {
             // Fallback suave
             const lat = -22.906847 + (Math.random() - 0.5) * 0.008
             const lng = -43.172896 + (Math.random() - 0.5) * 0.008
+            setCurrentCourierLocation({ lat, lng })
             try {
               await deliveryService.updateCourierLocation(user.id, lat, lng, 30, 110)
             } catch {
@@ -204,8 +211,58 @@ export default function CourierApp() {
     return seqA - seqB
   })
 
+  // Pedidos da rota atual que já foram iniciados mas ainda NÃO foram finalizados na base
+  // Regra do Usuário: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
+  const currentRouteOrders = orders.filter(
+    (o) =>
+      o.route_started === true &&
+      (o.route_finished === false || o.route_finished === null || o.route_finished === undefined),
+  )
+
   // Estado da rota: já foi aceita / iniciada pelo entregador?
-  const isRouteStarted = activeDeliveries.some((o) => o.route_started === true)
+  const isRouteStarted =
+    activeDeliveries.some((o) => o.route_started === true) || currentRouteOrders.length > 0
+
+  // Se todas as entregas individuais já foram concluídas (ou não há mais activeDeliveries pendentes)
+  // mas a rota ainda não foi finalizada na base, o entregador está na etapa de RETORNO À BASE!
+  const isReturningToBase =
+    isRouteStarted &&
+    activeDeliveries.length === 0 &&
+    currentRouteOrders.length > 0 &&
+    currentRouteOrders.every(
+      (o) =>
+        o.status === 'delivered' ||
+        o.status === 'address_error' ||
+        o.status === 'client_absent' ||
+        o.status === 'cancelled',
+    )
+
+  // Identificar coordenadas da base para guiar o retorno
+  const baseCoordinates = useMemo(() => {
+    const anchor = currentRouteOrders[0] || orders[0]
+    return {
+      name: anchor?.start_base_name || 'Base Operacional',
+      address: anchor?.start_base_address || 'Base de Distribuição',
+      lat: anchor?.start_base_lat || -22.906847,
+      lng: anchor?.start_base_lng || -43.172896,
+    }
+  }, [currentRouteOrders, orders])
+
+  // Distância do entregador até a base no momento (em metros)
+  const distanceToBaseMeters = useMemo(() => {
+    if (!currentCourierLocation || !baseCoordinates.lat || !baseCoordinates.lng) return null
+    const R = 6371000 // metros
+    const dLat = ((baseCoordinates.lat - currentCourierLocation.lat) * Math.PI) / 180
+    const dLng = ((baseCoordinates.lng - currentCourierLocation.lng) * Math.PI) / 180
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((currentCourierLocation.lat * Math.PI) / 180) *
+        Math.cos((baseCoordinates.lat * Math.PI) / 180) *
+        Math.sin(dLng / 2) *
+        Math.sin(dLng / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return Math.round(R * c)
+  }, [currentCourierLocation, baseCoordinates])
 
   // O primeiro cliente não finalizado da sequência é o único ativo
   const currentActiveDelivery = activeDeliveries.length > 0 ? activeDeliveries[0] : null
@@ -274,6 +331,45 @@ export default function CourierApp() {
     }
   }
 
+  // Ação: Retornar à Base (abre navegação para a base)
+  const handleNavigateToBase = () => {
+    toast.info(`Navegando de volta para a base: ${baseCoordinates.name}`)
+    openExternalNavigation(baseCoordinates.address, baseCoordinates.lat, baseCoordinates.lng)
+  }
+
+  // Ação: Finalizar Rota Inteira na Chegada à Base
+  // Regra do Usuário: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
+  const handleFinishFullRoute = async () => {
+    if (!user?.id) {
+      toast.error('Entregador não autenticado.')
+      return
+    }
+
+    if (currentRouteOrders.length === 0) {
+      toast.info('Nenhuma rota ativa pendente de encerramento.')
+      return
+    }
+
+    setIsFinishingRoute(true)
+    try {
+      const orderIdsToFinish = currentRouteOrders.map((o) => o.id)
+      await deliveryService.finishCourierRoute(user.id, orderIdsToFinish)
+      toast.success(
+        '🏁 Rota finalizada com sucesso na base! Odômetro oficial apurado e você já está liberado para receber uma nova rota.',
+        {
+          duration: 5000,
+        },
+      )
+      await loadCourierOrders()
+      await loadFuelAndAccountData()
+    } catch (err) {
+      console.error('Erro ao finalizar rota inteira:', err)
+      toast.error('Falha ao finalizar rota. Tente novamente.')
+    } finally {
+      setIsFinishingRoute(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col pb-24 md:pb-8 font-sans antialiased selection:bg-[#0052CC]/30">
       <Header />
@@ -307,8 +403,91 @@ export default function CourierApp() {
           </div>
         )}
 
-        {/* CASO: NENHUMA ENTREGA LIBERADA */}
-        {!isLoading && activeDeliveries.length === 0 && (
+        {/* CASO: TODAS AS ENTREGAS CONCLUÍDAS - RETORNO À BASE E FINALIZAÇÃO DA ROTA */}
+        {/* Regra do Usuário: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL." */}
+        {!isLoading && isReturningToBase && (
+          <div className="rounded-2xl border-2 border-[#0052CC] bg-[#0E1738] p-5 shadow-2xl shadow-blue-950/40 space-y-4">
+            <div className="flex items-start justify-between gap-3 border-b border-[#1E2B58] pb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0052CC] to-[#1D4ED8] text-white shadow-brand">
+                  <Navigation className="h-6 w-6" />
+                </div>
+                <div>
+                  <Badge className="bg-[#0052CC] text-white text-[10px] font-black uppercase px-2 py-0.5">
+                    Etapa Final da Rota
+                  </Badge>
+                  <h2 className="font-heading text-base font-bold text-white mt-1">
+                    Retorne à Base de Origem
+                  </h2>
+                </div>
+              </div>
+
+              <div className="text-right">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold">Status</span>
+                <span className="text-xs font-black text-amber-400">Em Trânsito à Base</span>
+              </div>
+            </div>
+
+            {/* Informações da Base */}
+            <div className="p-3.5 rounded-xl bg-[#0A1128] border border-[#1E2B58] space-y-2">
+              <div className="flex items-start gap-2.5">
+                <MapPin className="h-4 w-4 text-[#FF6B35] shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-white">{baseCoordinates.name}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                    {baseCoordinates.address}
+                  </p>
+                  {distanceToBaseMeters !== null && (
+                    <p className="text-[11px] font-mono text-[#60A5FA] mt-1 font-semibold">
+                      Distância atual estimada:{' '}
+                      {distanceToBaseMeters >= 1000
+                        ? `${(distanceToBaseMeters / 1000).toFixed(1)} km`
+                        : `${distanceToBaseMeters} metros`}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Regra de finalização explicada */}
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 leading-relaxed">
+              <p className="font-semibold flex items-center gap-1.5 text-amber-300 mb-1">
+                <Clock className="h-3.5 w-3.5" />
+                Todas as entregas da rota foram concluídas!
+              </p>
+              O km rodado do combustível continua acumulando via telemetria GPS até a sua chegada à
+              base. No ponto de chegada na base, finalize a rota inteira abaixo para liberar o
+              recebimento de uma nova rota.
+            </div>
+
+            {/* Botões de Ação: Navegar até a base & Finalizar Rota Inteira */}
+            <div className="space-y-2 pt-1">
+              <Button
+                type="button"
+                onClick={handleNavigateToBase}
+                className="w-full h-12 bg-[#121E46] hover:bg-[#1A2A5E] text-[#60A5FA] font-bold text-xs rounded-xl border border-blue-400/30 flex items-center justify-center gap-2"
+              >
+                <Navigation className="h-4 w-4" />
+                <span>Navegar até a Base (GPS / Waze)</span>
+              </Button>
+
+              <Button
+                type="button"
+                onClick={handleFinishFullRoute}
+                disabled={isFinishingRoute}
+                className="w-full h-14 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-sm uppercase tracking-wider rounded-xl shadow-xl shadow-emerald-950/40 flex items-center justify-center gap-3 border border-emerald-400/40"
+              >
+                <CheckCircle className="h-5 w-5" />
+                {isFinishingRoute
+                  ? 'Finalizando Rota...'
+                  : 'Finalizar Rota Inteira (Chegada à Base)'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* CASO: NENHUMA ENTREGA LIBERADA E NENHUMA ROTA AGUARDANDO RETORNO */}
+        {!isLoading && activeDeliveries.length === 0 && !isReturningToBase && (
           <div className="rounded-2xl border border-dashed border-[#1E2B58] bg-[#0E1738]/60 p-8 text-center space-y-2">
             <div className="h-12 w-12 rounded-full bg-[#121E46] text-slate-400 flex items-center justify-center mx-auto mb-1">
               <CheckCircle className="h-6 w-6" />

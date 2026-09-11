@@ -124,6 +124,8 @@ export interface OrderRecord extends RecordModel {
   route_released_at?: string
   route_started?: boolean
   route_started_at?: string
+  route_finished?: boolean
+  route_finished_at?: string
   start_base_name?: string
   start_base_address?: string
   start_base_lat?: number

@@ -114,51 +114,95 @@ export function pointToSegmentDistanceMeters(
 export function getOrderTimeWindow(
   order: OrderRecord,
   allCourierOrders: OrderRecord[] = [],
-): { startTime: number; endTime: number } {
-  // Horário de término da entrega
-  const endTimestamp = order.actual_arrival
-    ? new Date(order.actual_arrival).getTime()
-    : order.status === 'delivered' ||
-        order.status === 'address_error' ||
-        order.status === 'client_absent'
-      ? new Date(order.updated || order.created).getTime()
-      : Date.now()
+): { startTime: number; endTime: number; isRouteWindow?: boolean } {
+  // Identificar pedidos que pertencem à mesma rota (mesmo route_started_at ou mesmo ciclo de rota)
+  const isEligibleRouteOrder = (o: OrderRecord) =>
+    o.courier_id === order.courier_id &&
+    (o.route_started ||
+      o.status === 'delivered' ||
+      o.status === 'in_transit' ||
+      o.status === 'address_error' ||
+      o.status === 'client_absent')
 
-  // Horário de início da entrega
+  const sameBatchOrders = allCourierOrders.filter((o) => {
+    if (!isEligibleRouteOrder(o)) return false
+    if (order.route_started_at && o.route_started_at) {
+      const t1 = new Date(order.route_started_at).getTime()
+      const t2 = new Date(o.route_started_at).getTime()
+      // Começaram dentro da mesma janela de 10 minutos = mesma rota despachada
+      return Math.abs(t1 - t2) < 10 * 60 * 1000
+    }
+    return true
+  })
+
+  // Se faz parte de uma rota (mesmo que com 1 ou mais entregas):
+  // Regra do Usuário: "O KM RODADO INICIA NA SAIDA DA BASE, CONTINUA CONTANDO EM TODAS ENTREGAS E FINALIZA NA BASE DE VOLTA"
+  // O início é a saída da base (route_started_at da rota).
   let startTimestamp: number | null = null
-
   if (order.route_started_at) {
     startTimestamp = new Date(order.route_started_at).getTime()
-  } else if (order.route_released_at) {
-    startTimestamp = new Date(order.route_released_at).getTime()
-  }
-
-  // Se o entregador teve entregas anteriores na mesma rota, a entrega atual começa após a finalização da anterior
-  if (allCourierOrders.length > 0) {
-    const priorCompleted = allCourierOrders
-      .filter((o) => o.id !== order.id)
-      .map((o) => (o.actual_arrival ? new Date(o.actual_arrival).getTime() : 0))
-      .filter((t) => t > 0 && t < endTimestamp)
-      .sort((a, b) => b - a)
-
-    if (priorCompleted.length > 0) {
-      const lastCompletedBefore = priorCompleted[0]
-      if (!startTimestamp || lastCompletedBefore > startTimestamp) {
-        startTimestamp = lastCompletedBefore
-      }
+  } else {
+    // Buscar menor route_started_at dos pedidos do lote
+    const startedTimes = sameBatchOrders
+      .map((o) => (o.route_started_at ? new Date(o.route_started_at).getTime() : 0))
+      .filter((t) => t > 0)
+    if (startedTimes.length > 0) {
+      startTimestamp = Math.min(...startedTimes)
+    } else if (order.route_released_at) {
+      startTimestamp = new Date(order.route_released_at).getTime()
     }
   }
 
-  // Se ainda não tiver início definido, usar created ou 2 horas antes da conclusão
-  if (!startTimestamp) {
-    const createdTime = new Date(order.created || Date.now()).getTime()
-    startTimestamp = Math.min(createdTime, endTimestamp - 45 * 60 * 1000)
+  // O término da rota: se foi finalizada na base (route_finished_at) ou pelo término da última entrega
+  let endTimestamp: number | null = null
+  const finishedAtTimes = sameBatchOrders
+    .map((o) => (o.route_finished_at ? new Date(o.route_finished_at).getTime() : 0))
+    .filter((t) => t > 0)
+
+  if (order.route_finished_at) {
+    endTimestamp = new Date(order.route_finished_at).getTime()
+  } else if (finishedAtTimes.length > 0) {
+    endTimestamp = Math.max(...finishedAtTimes)
+  } else {
+    // Se a rota ainda não tem route_finished_at mas tem entregas concluídas,
+    // verifica se todas as entregas do lote foram concluídas
+    const allCompleted =
+      sameBatchOrders.length > 0 &&
+      sameBatchOrders.every(
+        (o) =>
+          o.status === 'delivered' || o.status === 'address_error' || o.status === 'client_absent',
+      )
+    if (allCompleted) {
+      const arrivals = sameBatchOrders
+        .map((o) =>
+          o.actual_arrival
+            ? new Date(o.actual_arrival).getTime()
+            : new Date(o.updated || o.created).getTime(),
+        )
+        .filter((t) => t > 0)
+      const lastArrival = arrivals.length > 0 ? Math.max(...arrivals) : 0
+      // Se tiver chegadas, a rota aguarda o retorno à base ou usa até o último ponto GPS disponível
+      endTimestamp = lastArrival > 0 ? Math.max(lastArrival, Date.now()) : Date.now()
+    } else {
+      endTimestamp = Date.now()
+    }
   }
 
-  // Margem de segurança de 30 segundos
+  if (!startTimestamp) {
+    const createdTime = new Date(order.created || Date.now()).getTime()
+    startTimestamp = Math.min(createdTime, (endTimestamp || Date.now()) - 45 * 60 * 1000)
+  }
+
+  if (!endTimestamp) {
+    endTimestamp = Date.now()
+  }
+
+  // Se há múltiplas entregas no mesmo lote e esta função está sendo chamada para rateio por entrega,
+  // ou se é uma entrega individual, mantemos a janela consistente com margem de segurança de 30 segundos
   return {
     startTime: startTimestamp - 30 * 1000,
     endTime: endTimestamp + 30 * 1000,
+    isRouteWindow: true,
   }
 }
 

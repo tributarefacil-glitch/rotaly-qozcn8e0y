@@ -626,9 +626,66 @@ export const deliveryService = {
         updatedCount++
       }
 
+      // Marcar o status do entregador como ocupado ('busy')
+      try {
+        await pb.collection('users').update(courierId, {
+          status: 'busy',
+        })
+      } catch (userErr) {
+        console.warn('Não foi possível atualizar status do entregador para busy:', userErr)
+      }
+
       return { success: true, updatedCount }
     } catch (err) {
       console.error('Error starting courier route:', err)
+      throw err
+    }
+  },
+
+  // Finalizar a Rota Inteira ao Retornar à Base
+  // Regra: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
+  async finishCourierRoute(
+    courierId: string,
+    orderIds?: string[],
+  ): Promise<{ success: boolean; updatedCount: number }> {
+    try {
+      const now = new Date().toISOString()
+      let ordersToUpdate: OrderRecord[] = []
+
+      if (orderIds && orderIds.length > 0) {
+        const filter = orderIds.map((id) => `id='${id}'`).join(' || ')
+        ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
+          filter,
+          requestKey: null,
+        })
+      } else {
+        ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
+          filter: `courier_id='${courierId}' && route_started=true && (route_finished=false || route_finished=null)`,
+          requestKey: null,
+        })
+      }
+
+      let updatedCount = 0
+      for (const order of ordersToUpdate) {
+        await pb.collection('orders').update(order.id, {
+          route_finished: true,
+          route_finished_at: now,
+        })
+        updatedCount++
+      }
+
+      // Liberar o entregador de volta para disponível ('active')
+      try {
+        await pb.collection('users').update(courierId, {
+          status: 'active',
+        })
+      } catch (userErr) {
+        console.warn('Não foi possível atualizar status do entregador para active:', userErr)
+      }
+
+      return { success: true, updatedCount }
+    } catch (err) {
+      console.error('Error finishing courier route:', err)
       throw err
     }
   },
@@ -788,15 +845,29 @@ export const deliveryService = {
             o.status === 'client_absent'),
       )
 
-      const totalRouteKm = courierOrders.reduce((sum, o) => {
-        const realCalc = calculateRealKmForOrder({
-          order: o,
+      // Regra do Usuário: "O KM RODADO INICIA NA SAIDA DA BASE, CONTINUA CONTANDO EM TODAS ENTREGAS E FINALIZA NA BASE DE VOLTA"
+      // Agrupar pedidos por lote de rota (mesmo route_started_at aproximado)
+      const routeBatches = new Map<string, OrderRecord[]>()
+      courierOrders.forEach((o) => {
+        const key = o.route_started_at
+          ? `batch_${Math.floor(new Date(o.route_started_at).getTime() / (10 * 60 * 1000))}`
+          : `single_${o.id}`
+        const list = routeBatches.get(key) || []
+        list.push(o)
+        routeBatches.set(key, list)
+      })
+
+      let totalRouteKm = 0
+      routeBatches.forEach((batchOrders) => {
+        const anchorOrder = batchOrders[0]
+        const batchTelemetry = calculateRealKmForOrder({
+          order: anchorOrder,
           allCourierLocations: courierLocations,
           courierEvents,
-          allCourierOrders: courierOrders,
+          allCourierOrders: batchOrders,
         })
-        return sum + realCalc.officialRealKm
-      }, 0)
+        totalRouteKm += batchTelemetry.officialRealKm
+      })
 
       const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
         settings,
@@ -883,10 +954,20 @@ export const deliveryService = {
       this.getLatestLocations(),
     ])
 
-    const activeCouriers = couriers.filter(
-      (c) => c.status === 'active' || c.status === 'busy' || c.status === 'idle',
-    )
-
+    // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
+    // Entregadores com rota ativa não finalizada não devem receber nova atribuição automática
+    const activeCouriers = couriers.filter((c) => {
+      if (c.status === 'inactive') return false
+      const hasUnfinishedRoute = orders.some(
+        (o) =>
+          o.courier_id === c.id &&
+          o.route_started === true &&
+          (o.route_finished === false ||
+            o.route_finished === null ||
+            o.route_finished === undefined),
+      )
+      return !hasUnfinishedRoute && (c.status === 'active' || c.status === 'idle')
+    })
     if (activeCouriers.length === 0) {
       if (couriers.length > 0) {
         // Fallback to any courier

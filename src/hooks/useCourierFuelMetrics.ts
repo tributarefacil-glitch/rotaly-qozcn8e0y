@@ -164,49 +164,105 @@ export function calculateCourierFuelMetrics(params: {
     return true
   })
 
-  // 4. Calcular telemetria real (Haversine + Curvatura + Filtro >300m) para cada pedido
+  // 4. Agrupar pedidos por rota/ciclo de saída da base
+  // Regra do Usuário: "O KM RODADO INICIA NA SAIDA DA BASE, CONTINUA CONTANDO EM TODAS ENTREGAS E FINALIZA NA BASE DE VOLTA"
+  // Quando uma rota contém múltiplos pedidos despachados juntos (mesmo lote / route_started_at aproximado),
+  // a telemetria GPS mede a rota completa do entregador (Base -> Entregas -> Retorno à Base).
+  // O KM de combustível da rota é o percurso real completo, e para cada entrega exibimos a sua cota ou valor correspondente.
+
+  // Agrupamento por lote de rota (pedidos com mesmo route_started_at ou janela próxima)
+  const routeBatches = new Map<string, OrderRecord[]>()
+  eligibleOrders.forEach((o) => {
+    const key = o.route_started_at
+      ? `batch_${Math.floor(new Date(o.route_started_at).getTime() / (10 * 60 * 1000))}`
+      : `single_${o.id}`
+    const list = routeBatches.get(key) || []
+    list.push(o)
+    routeBatches.set(key, list)
+  })
+
+  // Pré-calcular métricas de telemetria por lote de rota completa
+  const batchTelemetryMap = new Map<string, ReturnType<typeof calculateRealKmForOrder>>()
+  routeBatches.forEach((batchOrders, key) => {
+    // Escolhe o pedido âncora do lote para apurar a rota inteira
+    const anchorOrder = batchOrders[0]
+    const batchTelemetry = calculateRealKmForOrder({
+      order: anchorOrder,
+      allCourierLocations: courierLocations,
+      courierEvents,
+      allCourierOrders: batchOrders,
+    })
+    batchTelemetryMap.set(key, batchTelemetry)
+  })
+
   let totalOfficialKm = 0
   let totalDeviationKm = 0
   let totalOdometerKm = 0
   let totalSpent = 0
   let totalLiters = 0
 
+  // Se houver múltiplos pedidos na mesma rota, distribuímos proporcionalmente o KM da rota inteira
+  // ou atribuímos a cada pedido de modo que a soma do lote corresponda exatamente ao KM real da rota inteira (Base -> Entregas -> Base).
+  const isBicycle = category === 'bicicleta'
+
   const orderCalculations: CourierOrderTelemetryCalculation[] = eligibleOrders.map((order) => {
-    const realTelemetry = calculateRealKmForOrder({
-      order,
-      allCourierLocations: courierLocations,
-      courierEvents,
-      allCourierOrders,
-    })
+    const key = order.route_started_at
+      ? `batch_${Math.floor(new Date(order.route_started_at).getTime() / (10 * 60 * 1000))}`
+      : `single_${order.id}`
 
-    const officialKm = realTelemetry.officialRealKm
-    const deviationKm = realTelemetry.deviationKm
-    const totalGpsKm = realTelemetry.totalGpsKm
+    const batchTelemetry = batchTelemetryMap.get(key)!
+    const batchOrders = routeBatches.get(key) || [order]
+    const batchCount = batchOrders.length
 
-    const isBicycle = category === 'bicicleta'
+    // Se houver mais de uma entrega na mesma rota, rateia o KM total da rota entre elas
+    // proporcionalmente (ou igualmente se não houver distâncias planejadas individuais)
+    let officialKm = batchTelemetry.officialRealKm
+    let deviationKm = batchTelemetry.deviationKm
+    let totalGpsKm = batchTelemetry.totalGpsKm
+
+    if (batchCount > 1) {
+      const totalPlannedInBatch = batchOrders.reduce((sum, b) => sum + (b.distance_km || 1), 0)
+      const orderPlanned = order.distance_km || 1
+      const ratio = totalPlannedInBatch > 0 ? orderPlanned / totalPlannedInBatch : 1 / batchCount
+
+      officialKm = Number((batchTelemetry.officialRealKm * ratio).toFixed(1))
+      deviationKm = Number((batchTelemetry.deviationKm * ratio).toFixed(1))
+      totalGpsKm = Number((batchTelemetry.totalGpsKm * ratio).toFixed(1))
+    }
+
     const litersSpent = !isBicycle && consumptionKml > 0 ? officialKm / consumptionKml : 0
     const fuelCost = !isBicycle ? litersSpent * pricePerLiter : 0
-
-    totalOfficialKm += officialKm
-    totalDeviationKm += deviationKm
-    totalOdometerKm += totalGpsKm
-    totalSpent += fuelCost
-    totalLiters += litersSpent
 
     return {
       order,
       officialKm,
       deviationKm,
       totalGpsKm,
-      discardedNoiseKm: realTelemetry.discardedNoiseKm,
-      isRealTelemetry: realTelemetry.isRealTelemetry,
-      hasReturnKm: realTelemetry.hasReturnKm,
+      discardedNoiseKm: batchTelemetry.discardedNoiseKm,
+      isRealTelemetry: batchTelemetry.isRealTelemetry,
+      hasReturnKm: batchTelemetry.hasReturnKm,
       fuelCost: Number(fuelCost.toFixed(2)),
       litersSpent: Number(litersSpent.toFixed(2)),
-      offRouteCount: realTelemetry.offRouteCount,
-      unexpectedStopsCount: realTelemetry.unexpectedStopsCount,
+      offRouteCount: batchTelemetry.offRouteCount,
+      unexpectedStopsCount: batchTelemetry.unexpectedStopsCount,
     }
   })
+
+  // Os totais consolidados somam diretamente os valores dos lotes de rotas
+  // para garantir exatidão sem erro de arredondamento:
+  // KM Rodado = soma das rotas (saída da base até volta à base)
+  batchTelemetryMap.forEach((batchTelemetry) => {
+    totalOfficialKm += batchTelemetry.officialRealKm
+    totalDeviationKm += batchTelemetry.deviationKm
+    totalOdometerKm += batchTelemetry.totalGpsKm
+  })
+
+  totalOfficialKm = Number(totalOfficialKm.toFixed(1))
+  totalDeviationKm = Number(totalDeviationKm.toFixed(1))
+  totalOdometerKm = Number(totalOdometerKm.toFixed(1))
+
+  totalLiters = !isBicycle && consumptionKml > 0 ? totalOfficialKm / consumptionKml : 0
+  totalSpent = !isBicycle ? totalLiters * pricePerLiter : 0
 
   const balance = totalAdvances - totalSpent
 

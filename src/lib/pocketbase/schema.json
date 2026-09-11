@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T12:15:42.809Z",
+  "generatedAt": "2026-09-11T12:26:56.074Z",
   "collections": [
     {
       "name": "users",
@@ -484,6 +484,18 @@
         },
         {
           "name": "route_released_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "route_finished",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "route_finished_at",
           "type": "date",
           "required": false,
           "system": false
