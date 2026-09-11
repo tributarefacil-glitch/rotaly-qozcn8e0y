@@ -34,6 +34,25 @@ export interface MapMarkerItem {
   total_price?: number
   estimated_arrival?: string
   courier_name?: string
+  vehicle_type?: string
+  delivery_sequence?: number
+}
+
+export function getVehicleEmoji(type?: string): string {
+  const norm = (type || '').toLowerCase().trim()
+  if (norm === 'carro' || norm === 'car' || norm === 'van') return '🚗'
+  if (norm === 'caminhao' || norm === 'caminhão' || norm === 'truck') return '🚛'
+  if (norm === 'bicicleta' || norm === 'bicycle' || norm === 'bike') return '🚲'
+  return '🛵' // moto default
+}
+
+export function getVehicleLabel(type?: string): string {
+  const norm = (type || '').toLowerCase().trim()
+  if (norm === 'carro' || norm === 'car') return 'Carro'
+  if (norm === 'van') return 'Van'
+  if (norm === 'caminhao' || norm === 'caminhão' || norm === 'truck') return 'Caminhão'
+  if (norm === 'bicicleta' || norm === 'bicycle' || norm === 'bike') return 'Bicicleta'
+  return 'Moto'
 }
 
 export interface RouteGeometryItem {
@@ -331,26 +350,101 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       disableAutoPan: true,
     })
 
+    // Helper para gerar SVG Data-URI com ícone do veículo e cor adequada
+    const makeCourierSvgIcon = (vehicle?: string) => {
+      const emoji = getVehicleEmoji(vehicle)
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+          <defs>
+            <filter id="c-shadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.45"/>
+            </filter>
+          </defs>
+          <circle cx="22" cy="22" r="18" fill="#0052CC" stroke="#FFFFFF" stroke-width="3" filter="url(#c-shadow)"/>
+          <text x="22" y="27" font-size="18" text-anchor="middle" dominant-baseline="middle">${emoji}</text>
+        </svg>
+      `.trim()
+      return {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        scaledSize: new google.maps.Size(44, 44),
+        anchor: new google.maps.Point(22, 22),
+      }
+    }
+
+    // Helper para gerar SVG Data-URI de pin de cliente com badge de sequência e nome visível
+    const makeCustomerSvgIcon = (customerName?: string, seq?: number, isTransit = false) => {
+      const pinColor = isTransit ? '#FF6B35' : '#475569'
+      const cleanName = (customerName || '').trim()
+      const hasName = cleanName.length > 0
+      const hasSeq = typeof seq === 'number' && seq > 0
+
+      // SVG com pin + badge numerado + etiqueta com nome legível
+      // Largura suficiente para etiqueta (até ~180px)
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="220" height="64" viewBox="0 0 220 64">
+          <defs>
+            <filter id="pin-shadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.5"/>
+            </filter>
+          </defs>
+
+          <!-- Label de Nome do Cliente no topo se presente -->
+          ${
+            hasName
+              ? `
+            <g filter="url(#pin-shadow)">
+              <rect x="2" y="2" width="216" height="20" rx="5" fill="#0A1128" fill-opacity="0.94" stroke="#1E2B58" stroke-width="1.2"/>
+              <text x="110" y="16" font-size="10" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
+                ${cleanName.length > 26 ? cleanName.slice(0, 25) + '…' : cleanName}
+              </text>
+            </g>
+          `
+              : ''
+          }
+
+          <!-- Pin corpo centralizado em X=110 -->
+          <g transform="translate(96, ${hasName ? 26 : 8})" filter="url(#pin-shadow)">
+            <!-- Formato clássico de pin 28x36 -->
+            <path d="M14 0 C6.27 0 0 6.27 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.27 21.73 0 14 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="2"/>
+            
+            <!-- Círculo interno ou número da sequência -->
+            ${
+              hasSeq
+                ? `
+              <circle cx="14" cy="13" r="9" fill="#FFFFFF"/>
+              <text x="14" y="17" font-size="11" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="${pinColor}" text-anchor="middle">${seq}</text>
+            `
+                : `
+              <circle cx="14" cy="13" r="5" fill="#FFFFFF"/>
+            `
+            }
+          </g>
+        </svg>
+      `.trim()
+
+      return {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        scaledSize: new google.maps.Size(220, 64),
+        anchor: new google.maps.Point(110, hasName ? 62 : 44),
+      }
+    }
+
     markers.forEach((item) => {
       if (!item.lat || !item.lng) return
 
-      // Rotaly Color Scheme: Blue for couriers, Orange for customers/orders, Green for delivered
-      let iconUrl = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
+      let markerIcon: any = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
       if (item.type === 'courier') {
-        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png' // Blue for Couriers
-      } else if (item.type === 'order_transit') {
-        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png' // Orange for Customers / Orders
-      } else if (item.type === 'order_delivered') {
-        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/green-dot.png' // Green for Delivered
-      } else if (item.type === 'order_pending') {
-        iconUrl = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
+        markerIcon = makeCourierSvgIcon(item.vehicle_type)
+      } else {
+        const isTransit = item.type === 'order_transit'
+        markerIcon = makeCustomerSvgIcon(item.customer_name, item.delivery_sequence, isTransit)
       }
 
       const marker = new google.maps.Marker({
         position: { lat: item.lat, lng: item.lng },
         map: mapInstanceRef.current,
         title: item.title,
-        icon: iconUrl,
+        icon: markerIcon,
         animation: item.id === selectedMarkerId ? google.maps.Animation.BOUNCE : undefined,
       })
 
@@ -550,26 +644,46 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                 >
                   {/* Ping effect for couriers & urgent orders */}
                   {(m.type === 'courier' || m.type === 'order_transit') && (
-                    <span className="absolute -inset-2 rounded-full animate-ping bg-[#FF6B35]/30 opacity-75" />
+                    <span className="absolute -inset-2 rounded-full animate-ping bg-[#FF6B35]/30 opacity-75 pointer-events-none" />
                   )}
 
-                  {/* Marker Pin Icon: Blue #0052CC for couriers, Orange #FF6B35 for customers */}
-                  <div
-                    className={`flex items-center justify-center p-2 rounded-full shadow-brand border-2 transition-all ${
-                      m.type === 'courier'
-                        ? 'bg-[#0052CC] border-blue-200 text-white shadow-brand-hover ring-2 ring-[#0052CC]/50'
-                        : m.type === 'order_transit'
-                          ? 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
-                          : m.type === 'order_delivered'
-                            ? 'bg-[#00AA44] border-emerald-200 text-white'
-                            : 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
-                    }`}
-                  >
-                    {m.type === 'courier' ? (
-                      <Navigation className="h-4 w-4 transform rotate-45" />
-                    ) : (
-                      <MapPin className="h-4 w-4" />
-                    )}
+                  {/* Nome do cliente visível acima do pin (Requisito 2) */}
+                  {m.type !== 'courier' && m.customer_name && (
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-0.5 rounded-md bg-[#0A1128]/95 border border-[#1E2B58] text-[9px] font-bold text-white whitespace-nowrap shadow-md pointer-events-none max-w-[150px] truncate">
+                      {m.customer_name}
+                    </div>
+                  )}
+
+                  {/* Marker Pin Icon: com veículo para entregador e badge de ordem para cliente */}
+                  <div className="relative">
+                    {/* Badge numérico de ordem de entrega (Requisito 3) */}
+                    {m.type !== 'courier' &&
+                      typeof m.delivery_sequence === 'number' &&
+                      m.delivery_sequence > 0 && (
+                        <span className="absolute -top-2 -right-2 z-10 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-white text-[#FF6B35] text-[10px] font-black shadow border border-[#FF6B35]">
+                          {m.delivery_sequence}
+                        </span>
+                      )}
+
+                    <div
+                      className={`flex items-center justify-center p-2 rounded-full shadow-brand border-2 transition-all ${
+                        m.type === 'courier'
+                          ? 'bg-[#0052CC] border-blue-200 text-white shadow-brand-hover ring-2 ring-[#0052CC]/50 text-sm'
+                          : m.type === 'order_transit'
+                            ? 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
+                            : m.type === 'order_delivered'
+                              ? 'bg-[#00AA44] border-emerald-200 text-white'
+                              : 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
+                      }`}
+                    >
+                      {m.type === 'courier' ? (
+                        <span className="text-base leading-none select-none">
+                          {getVehicleEmoji(m.vehicle_type)}
+                        </span>
+                      ) : (
+                        <MapPin className="h-4 w-4" />
+                      )}
+                    </div>
                   </div>
 
                   {/* Tooltip & Interactive Popover for Customer / Order Marker (Hover & Click) */}
@@ -702,20 +816,22 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           {/* Legend */}
           <div className="absolute bottom-3 left-3 z-30 flex flex-wrap gap-3 rounded-card bg-slate-900/95 p-2.5 backdrop-blur border border-slate-700 text-[11px] text-slate-200 shadow-xl font-sans">
             <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#0052CC]"></span>
-              <span className="font-medium">Entregador</span>
+              <span className="text-xs">🛵 🚗 🚛 🚲</span>
+              <span className="font-medium">Entregador (Veículo)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-[#FF6B35]"></span>
-              <span className="font-medium">Destino / Cliente</span>
+              <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-bold text-white">
+                1
+              </span>
+              <span className="font-medium">Ordem &amp; Nome</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-4 rounded-full bg-[#2563EB]"></span>
-              <span className="font-medium text-blue-300">Linha Azul: Trajeto Real</span>
+              <span className="font-medium text-blue-300">Linha Azul: Rota Real</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-4 rounded-full bg-[#EF4444]"></span>
-              <span className="font-medium text-rose-400">Linha Vermelha: Desvio</span>
+              <span className="font-medium text-rose-400">Linha Vermelha: Desvio &gt;150m</span>
             </div>
           </div>
         </div>

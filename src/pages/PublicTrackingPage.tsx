@@ -126,23 +126,26 @@ export default function PublicTrackingPage() {
   if (customer && customer.lat && customer.lng) {
     mapMarkers.push({
       id: 'destination',
-      title: '📍 Endereço de Entrega (Destino)',
+      title: `📍 ${customer.name || 'Endereço de Entrega (Destino)'}`,
       subtitle: customer.address,
       lat: customer.lat,
       lng: customer.lng,
-      type: 'order_pending',
+      type: 'order_transit',
+      customer_name: customer.name,
+      delivery_sequence: order?.sequence,
     })
   }
 
   if (courierLocation && courierLocation.lat && courierLocation.lng) {
     mapMarkers.push({
       id: 'courier-live',
-      title: `🛵 ${courier?.name || 'Entregador em Rota'}`,
+      title: `${courier?.name || 'Entregador em Rota'}`,
       subtitle: `Velocidade: ${courierLocation.speed || 30} km/h`,
       lat: courierLocation.lat,
       lng: courierLocation.lng,
       type: 'courier',
       speed: courierLocation.speed || 30,
+      vehicle_type: courier?.vehicle_type,
     })
   }
 

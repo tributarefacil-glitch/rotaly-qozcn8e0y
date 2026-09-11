@@ -20,48 +20,10 @@ export function extractFieldErrors(error: unknown): FieldErrors {
   return errors
 }
 
-export function getErrorMessage(error: unknown, fallback?: string): string {
+export function getErrorMessage(error: unknown): string {
   if (!(error instanceof ClientResponseError)) {
-    if (error instanceof Error) {
-      if (error.message.includes('Failed to authenticate')) {
-        return 'E-mail ou senha incorretos. Verifique suas credenciais de acesso.'
-      }
-      return error.message
-    }
-    return fallback || 'Ocorreu um erro inesperado. Tente novamente.'
+    return error instanceof Error ? error.message : 'An unexpected error occurred.'
   }
-
-  // Handle specific HTTP status codes and PocketBase message strings
-  const rawMsg = error.message || error.response?.message || ''
-
-  if (error.status === 400 && rawMsg.includes('Failed to authenticate')) {
-    return 'E-mail ou senha inválidos. Verifique se digitou as credenciais corretamente.'
-  }
-
-  if (error.status === 403) {
-    return 'Acesso não autorizado. Verifique suas permissões ou contate o administrador.'
-  }
-
-  if (error.status === 404) {
-    return 'Registro ou usuário não encontrado no sistema.'
-  }
-
   const msgs = Object.values(extractFieldErrors(error))
-  if (msgs.length > 0) {
-    return msgs.join(' ')
-  }
-
-  if (rawMsg.includes('Failed to authenticate')) {
-    return 'E-mail ou senha inválidos. Verifique suas credenciais de acesso.'
-  }
-
-  if (rawMsg.includes('Failed to create record')) {
-    return 'Falha ao criar registro. Verifique os dados fornecidos.'
-  }
-
-  if (rawMsg.includes('Failed to update record')) {
-    return 'Falha ao atualizar dados. Tente novamente.'
-  }
-
-  return rawMsg || fallback || 'Ocorreu um erro inesperado. Tente novamente.'
+  return msgs.length > 0 ? msgs.join(' ') : error.message || 'An unexpected error occurred.'
 }

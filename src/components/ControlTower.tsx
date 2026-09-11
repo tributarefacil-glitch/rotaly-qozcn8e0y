@@ -60,7 +60,7 @@ import {
   Share2,
 } from 'lucide-react'
 import { OrderRecord, UserRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
-import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
+import { LiveMap, type MapMarkerItem, getVehicleEmoji, getVehicleLabel } from '@/components/LiveMap'
 import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
 import {
@@ -656,7 +656,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const controlTowerMapMarkers = useMemo<MapMarkerItem[]>(() => {
     const list: MapMarkerItem[] = []
 
-    // 1. Entregadores em rota ativa (marcador azul pulsante)
+    // 1. Entregadores em rota ativa (marcador azul com ícone de veículo)
     activeRouteCouriers.forEach((item) => {
       const courierName = item.courier.name || item.courier.email
       const plate = item.courier.vehicle_plate ? ` • Placa: ${item.courier.vehicle_plate}` : ''
@@ -666,20 +666,22 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         : routeInfo?.isUnexpectedStop
           ? ' • ⛔ PARADA FORA DO LOCAL'
           : ''
+      const emoji = getVehicleEmoji(item.vehicle)
 
       list.push({
         id: `courier-${item.courier.id}`,
-        title: `🛵 ${courierName} (Em Rota)${warningSuffix}`,
+        title: `${emoji} ${courierName} (Em Rota)${warningSuffix}`,
         subtitle: `${formatVehicle(item.vehicle)}${plate} • ${item.inTransitCount} em rota`,
         lat: item.lat,
         lng: item.lng,
         type: 'courier',
         speed: item.speed,
         courier_name: courierName,
+        vehicle_type: item.vehicle,
       })
     })
 
-    // 2. Destinos de entregas em trânsito e pendentes (marcador laranja)
+    // 2. Destinos de entregas em trânsito e pendentes (marcador laranja com nome e número de sequência)
     todayOrders
       .filter((o) => o.status === 'in_transit' || o.status === 'pending')
       .forEach((order) => {
@@ -689,10 +691,11 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const isTransit = order.status === 'in_transit' || order.route_started
           const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
           const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
+          const seqText = order.sequence ? `[#${order.sequence}] ` : ''
 
           list.push({
             id: `order-${order.id}`,
-            title: `${order.tracking_code} • ${cust.name || 'Cliente'}${etaSuffix}`,
+            title: `${seqText}${cust.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
             subtitle: `${cust.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
             lat: cust.lat,
             lng: cust.lng,
@@ -703,6 +706,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             total_price: Number(order.total_price || 0),
             estimated_arrival: order.estimated_arrival,
             courier_name: courier?.name,
+            delivery_sequence: order.sequence,
           })
         }
       })
@@ -911,6 +915,82 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       }
     })
 
+    // Helpers de ícones SVG para o Google Maps nativo
+    const makeNativeCourierSvg = (vehicle?: string, pinColor = '#3B82F6') => {
+      const emoji = getVehicleEmoji(vehicle)
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="46" height="46" viewBox="0 0 46 46">
+          <defs>
+            <filter id="courier-glow" x="-30%" y="-30%" width="160%" height="160%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.5"/>
+            </filter>
+          </defs>
+          <circle cx="23" cy="23" r="20" fill="${pinColor}" stroke="#FFFFFF" stroke-width="3" filter="url(#courier-glow)"/>
+          <text x="23" y="29" font-size="19" text-anchor="middle" dominant-baseline="middle">${emoji}</text>
+        </svg>
+      `.trim()
+
+      return {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        scaledSize: new win.google.maps.Size(46, 46),
+        anchor: new win.google.maps.Point(23, 23),
+      }
+    }
+
+    const makeNativeCustomerSvg = (customerName?: string, seq?: number, isTransit = false) => {
+      const pinColor = isTransit ? '#FF6B35' : '#64748B'
+      const cleanName = (customerName || '').trim()
+      const hasName = cleanName.length > 0
+      const hasSeq = typeof seq === 'number' && seq > 0
+
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="220" height="66" viewBox="0 0 220 66">
+          <defs>
+            <filter id="pin-native-shadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.55"/>
+            </filter>
+          </defs>
+
+          <!-- Label de Nome do Cliente Visível no Pin -->
+          ${
+            hasName
+              ? `
+            <g filter="url(#pin-native-shadow)">
+              <rect x="2" y="2" width="216" height="20" rx="5" fill="#0A1128" fill-opacity="0.95" stroke="#1E2B58" stroke-width="1.2"/>
+              <text x="110" y="16" font-size="10" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
+                ${cleanName.length > 26 ? cleanName.slice(0, 25) + '…' : cleanName}
+              </text>
+            </g>
+          `
+              : ''
+          }
+
+          <!-- Pin corpo centralizado em X=110 -->
+          <g transform="translate(96, ${hasName ? 26 : 8})" filter="url(#pin-native-shadow)">
+            <path d="M14 0 C6.27 0 0 6.27 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.27 21.73 0 14 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="2"/>
+            
+            <!-- Círculo interno ou número da sequência da rota -->
+            ${
+              hasSeq
+                ? `
+              <circle cx="14" cy="13" r="9" fill="#FFFFFF"/>
+              <text x="14" y="17" font-size="11" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="${pinColor}" text-anchor="middle">${seq}</text>
+            `
+                : `
+              <circle cx="14" cy="13" r="5" fill="#FFFFFF"/>
+            `
+            }
+          </g>
+        </svg>
+      `.trim()
+
+      return {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        scaledSize: new win.google.maps.Size(220, 66),
+        anchor: new win.google.maps.Point(110, hasName ? 64 : 44),
+      }
+    }
+
     // Pins: Entregadores com rota iniciada
     activeRouteCouriers.forEach((item) => {
       const position = { lat: item.lat, lng: item.lng }
@@ -923,7 +1003,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
       // Cor do marcador do entregador: se tiver desvio ou parada indevida, destaque
       const pinColor =
-        isDeviated || item.statusColor === 'red' ? '#EF4444' : isStoppedOut ? '#F59E0B' : '#3B82F6'
+        isDeviated || item.statusColor === 'red' ? '#EF4444' : isStoppedOut ? '#F59E0B' : '#0052CC'
 
       const statusTag = isDeviated
         ? `⚠️ [DESVIO DETECTADO: ${routeInfo?.deviationMeters || 0}m]`
@@ -931,18 +1011,14 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           ? '⛔ [PARADA FORA DO LOCAL]'
           : '[Em Rota]'
 
+      const vehicleLabel = getVehicleLabel(item.vehicle)
+      const vehicleEmoji = getVehicleEmoji(item.vehicle)
+
       const courierMarker = new win.google.maps.Marker({
         position,
         map,
-        title: `${statusTag} ${item.courier.name || item.courier.email}`,
-        icon: {
-          path: win.google.maps.SymbolPath.CIRCLE,
-          scale: 9,
-          fillColor: pinColor,
-          fillOpacity: 1.0,
-          strokeWeight: 3,
-          strokeColor: '#FFFFFF',
-        },
+        title: `${vehicleEmoji} ${statusTag} ${item.courier.name || item.courier.email} (${vehicleLabel})`,
+        icon: makeNativeCourierSvg(item.vehicle, pinColor),
       })
 
       courierMarker.addListener('click', () => {
@@ -965,20 +1041,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const isTransit = order.status === 'in_transit'
           const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
           const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
+          const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
 
           const destMarker = new win.google.maps.Marker({
             position: destPos,
             map,
-            title: `🏁 Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`,
-            icon: {
-              path: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z',
-              fillColor: isTransit ? '#FF6B35' : '#64748B',
-              fillOpacity: 0.95,
-              strokeWeight: 1.5,
-              strokeColor: '#FFFFFF',
-              scale: 1.2,
-              anchor: new win.google.maps.Point(12, 22),
-            },
+            title: `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`,
+            icon: makeNativeCustomerSvg(cust.name, order.sequence, isTransit),
           })
 
           destMarker.addListener('click', () => {
@@ -1253,6 +1322,62 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       drawerMarkersRef.current.push(baseMarker)
     }
 
+    // Helpers de SVG para o mini mapa do Drawer
+    const makeMiniCourierSvg = (vehicle?: string) => {
+      const emoji = getVehicleEmoji(vehicle)
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="18" fill="#0052CC" stroke="#FFFFFF" stroke-width="2.5"/>
+          <text x="20" y="25" font-size="16" text-anchor="middle" dominant-baseline="middle">${emoji}</text>
+        </svg>
+      `.trim()
+      return {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        scaledSize: new win.google.maps.Size(40, 40),
+        anchor: new win.google.maps.Point(20, 20),
+      }
+    }
+
+    const makeMiniCustomerSvg = (customerName?: string, seq?: number) => {
+      const cleanName = (customerName || '').trim()
+      const hasName = cleanName.length > 0
+      const hasSeq = typeof seq === 'number' && seq > 0
+
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="200" height="60" viewBox="0 0 200 60">
+          ${
+            hasName
+              ? `
+            <rect x="2" y="2" width="196" height="18" rx="4" fill="#0A1128" fill-opacity="0.95" stroke="#1E2B58" stroke-width="1"/>
+            <text x="100" y="15" font-size="9.5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
+              ${cleanName.length > 24 ? cleanName.slice(0, 23) + '…' : cleanName}
+            </text>
+          `
+              : ''
+          }
+          <g transform="translate(86, ${hasName ? 24 : 8})">
+            <path d="M14 0 C6.27 0 0 6.27 0 14 C0 24.5 14 36 14 36 C14 36 28 24.5 28 14 C28 6.27 21.73 0 14 0 Z" fill="#FF6B35" stroke="#FFFFFF" stroke-width="2"/>
+            ${
+              hasSeq
+                ? `
+              <circle cx="14" cy="13" r="8.5" fill="#FFFFFF"/>
+              <text x="14" y="17" font-size="10" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="900" fill="#FF6B35" text-anchor="middle">${seq}</text>
+            `
+                : `
+              <circle cx="14" cy="13" r="4.5" fill="#FFFFFF"/>
+            `
+            }
+          </g>
+        </svg>
+      `.trim()
+
+      return {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        scaledSize: new win.google.maps.Size(200, 60),
+        anchor: new win.google.maps.Point(100, hasName ? 58 : 42),
+      }
+    }
+
     // 2. Entregador pin
     if (courierData && courierData.hasRouteStarted) {
       const courierPos = { lat: courierData.lat, lng: courierData.lng }
@@ -1262,20 +1387,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       const courierMarker = new win.google.maps.Marker({
         position: courierPos,
         map: miniMap,
-        title: `Entregador: ${courierData.courier.name}`,
-        icon: {
-          path: win.google.maps.SymbolPath.CIRCLE,
-          scale: 9,
-          fillColor: '#3B82F6',
-          fillOpacity: 1,
-          strokeWeight: 3,
-          strokeColor: '#FFFFFF',
-        },
+        title: `Entregador: ${courierData.courier.name} (${formatVehicle(courierData.courier.vehicle_type)})`,
+        icon: makeMiniCourierSvg(courierData.courier.vehicle_type),
       })
       drawerMarkersRef.current.push(courierMarker)
     }
 
-    // 3. Cliente destino pin (highlighted)
+    // 3. Cliente destino pin (highlighted com nome visível e número de sequência)
     if (cust?.lat && cust?.lng) {
       const clientPos = { lat: cust.lat, lng: cust.lng }
       bounds.extend(clientPos)
@@ -1285,15 +1403,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         position: clientPos,
         map: miniMap,
         title: `Cliente: ${cust.name}`,
-        icon: {
-          path: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z',
-          fillColor: '#FF6B35',
-          fillOpacity: 1,
-          strokeWeight: 2,
-          strokeColor: '#FFFFFF',
-          scale: 1.5,
-          anchor: new win.google.maps.Point(12, 22),
-        },
+        icon: makeMiniCustomerSvg(cust.name, selectedOrder.sequence),
       })
       drawerMarkersRef.current.push(clientMarker)
     }
@@ -1467,39 +1577,21 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   }
 
   function formatVehicle(type?: string) {
-    switch (type) {
-      case 'carro':
-      case 'car':
-        return 'Carro'
-      case 'van':
-        return 'Van'
-      case 'caminhao':
-      case 'truck':
-        return 'Caminhão'
-      case 'bicycle':
-        return 'Bicicleta'
-      case 'moto':
-      case 'motorcycle':
-      default:
-        return 'Moto'
-    }
+    return getVehicleLabel(type)
   }
 
   function renderVehicleIcon(type?: string) {
-    switch (type) {
-      case 'carro':
-      case 'car':
-      case 'van':
-        return <Car className="h-4 w-4 text-blue-400" />
-      case 'caminhao':
-      case 'truck':
-        return <Truck className="h-4 w-4 text-purple-400" />
-      case 'bicycle':
-      case 'moto':
-      case 'motorcycle':
-      default:
-        return <Bike className="h-4 w-4 text-emerald-400" />
+    const norm = (type || '').toLowerCase().trim()
+    if (norm === 'carro' || norm === 'car' || norm === 'van') {
+      return <Car className="h-4 w-4 text-blue-400" />
     }
+    if (norm === 'caminhao' || norm === 'caminhão' || norm === 'truck') {
+      return <Truck className="h-4 w-4 text-purple-400" />
+    }
+    if (norm === 'bicicleta' || norm === 'bicycle' || norm === 'bike') {
+      return <span className="text-sm select-none leading-none">🚲</span>
+    }
+    return <span className="text-sm select-none leading-none">🛵</span>
   }
 
   // Calculate ETA display
@@ -1959,7 +2051,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                   </div>
 
                   {/* Legenda explicativa no rodapé do Google Maps nativo */}
-                  <div className="absolute bottom-3 left-3 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-[#1E2B58] shadow-md text-[11px] text-slate-300 flex items-center gap-3">
+                  <div className="absolute bottom-3 left-3 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-3 py-1.5 rounded-xl border border-[#1E2B58] shadow-md text-[11px] text-slate-300 flex flex-wrap items-center gap-3">
                     <span className="flex items-center gap-1.5 font-medium">
                       <span className="h-2 w-4 rounded-full bg-blue-600 inline-block shadow-sm" />
                       <span className="text-blue-300 font-bold">Linha Azul:</span> Rota Real
@@ -1969,6 +2061,16 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                       <span className="h-2 w-4 rounded-full bg-rose-500 inline-block shadow-sm" />
                       <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio
                       &gt;150m
+                    </span>
+                    <span className="hidden sm:flex items-center gap-1 text-slate-400">
+                      <span>🛵 🚗 🚛 🚲</span>
+                      <span>Veículo</span>
+                    </span>
+                    <span className="hidden sm:flex items-center gap-1 text-slate-400">
+                      <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-bold text-white">
+                        1
+                      </span>
+                      <span>Ordem &amp; Nome</span>
                     </span>
                   </div>
                 </>
@@ -2840,13 +2942,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                                     }`}
                                   />
                                   <div
-                                    className={`h-7 w-7 rounded-full border-2 text-white flex items-center justify-center text-[11px] shadow-lg ${
+                                    className={`h-7 w-7 rounded-full border-2 text-white flex items-center justify-center text-[13px] shadow-lg ${
                                       isDeviated
                                         ? 'bg-rose-600 border-rose-300 shadow-rose-500/50'
                                         : 'bg-blue-600 border-blue-300 shadow-blue-500/50'
                                     }`}
                                   >
-                                    🛵
+                                    {getVehicleEmoji(orderCourierInfo.courier?.vehicle_type)}
                                   </div>
                                   <span
                                     className={`mt-0.5 px-1.5 py-0.2 rounded text-[8px] font-bold whitespace-nowrap shadow border ${
@@ -2865,18 +2967,23 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                                 </div>
                               )}
 
-                              {/* 3. Cliente Destino 🏁 */}
+                              {/* 3. Cliente Destino 🏁 com Badge de Ordem de entrega e nome completo */}
                               <div
                                 style={{ left: `${clientPos.x}%`, top: `${clientPos.y}%` }}
                                 className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-auto"
                               >
+                                {typeof selectedOrder.sequence === 'number' &&
+                                  selectedOrder.sequence > 0 && (
+                                    <span className="absolute -top-2 -right-2 z-10 flex h-3.5 min-w-3.5 px-1 items-center justify-center rounded-full bg-white text-[#FF6B35] text-[8px] font-black shadow border border-[#FF6B35]">
+                                      {selectedOrder.sequence}
+                                    </span>
+                                  )}
                                 <div className="h-6 w-6 rounded-full bg-orange-500/25 border-2 border-orange-400 text-orange-300 flex items-center justify-center text-[10px] shadow-lg shadow-orange-500/30">
                                   🏁
                                 </div>
-                                <span className="mt-0.5 px-1.5 py-0.2 rounded bg-slate-900/90 border border-slate-800 text-[8px] font-bold text-orange-300 whitespace-nowrap shadow">
-                                  {selectedOrder.expand?.customer_id?.name
-                                    ? selectedOrder.expand.customer_id.name.split(' ')[0]
-                                    : 'Cliente'}
+                                <span className="mt-0.5 px-1.5 py-0.2 rounded bg-slate-900/95 border border-[#1E2B58] text-[8px] font-bold text-white whitespace-nowrap shadow max-w-[120px] truncate">
+                                  {selectedOrder.sequence ? `#${selectedOrder.sequence} ` : ''}
+                                  {selectedOrder.expand?.customer_id?.name || 'Cliente'}
                                 </span>
                               </div>
                             </div>
