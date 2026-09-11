@@ -215,6 +215,35 @@ export const deliveryService = {
     return pb.collection<UserRecord>('users').update(id, data)
   },
 
+  /**
+   * Atualização de dados de usuário por um Administrador
+   * Utiliza a rota administrativa segura (/backend/v1/admin/users/:id)
+   * permitindo redefinição de senha sem oldPassword e validação estrita.
+   */
+  async adminUpdateUser(
+    id: string,
+    data: {
+      name?: string
+      email?: string
+      phone?: string
+      status?: string
+      password?: string
+    },
+  ) {
+    return pb.send<{
+      id: string
+      name: string
+      email: string
+      phone: string
+      status: string
+      role: string
+      updated: string
+    }>(`/backend/v1/admin/users/${id}`, {
+      method: 'POST',
+      body: data,
+    })
+  },
+
   async deleteUser(id: string) {
     return pb.collection<UserRecord>('users').delete(id)
   },

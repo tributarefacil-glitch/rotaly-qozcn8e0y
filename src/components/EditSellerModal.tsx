@@ -90,6 +90,7 @@ export function EditSellerModal({
       return
     }
 
+    // Só valida comprimento se uma nova senha tiver sido de fato informada
     if (trimmedPassword && trimmedPassword.length < 8) {
       toast.error('Se desejar redefinir a senha, ela deve ter no mínimo 8 caracteres.')
       return
@@ -97,42 +98,87 @@ export function EditSellerModal({
 
     setIsSubmitting(true)
     try {
-      const payload: Partial<UserRecord> & { password?: string; passwordConfirm?: string } = {
-        name: trimmedName,
-        phone: trimmedPhone,
-        status: status,
+      // Monta payload apenas com campos preenchidos e que foram alterados/informados
+      const payload: {
+        name?: string
+        email?: string
+        phone?: string
+        status?: string
+        password?: string
+      } = {}
+
+      if (trimmedName && trimmedName !== (seller.name || '')) {
+        payload.name = trimmedName
       }
 
-      // Se o e-mail mudou, inclui no payload de atualização
-      if (trimmedEmail !== seller.email?.toLowerCase()) {
+      if (trimmedEmail && trimmedEmail !== seller.email?.toLowerCase()) {
         payload.email = trimmedEmail
       }
 
-      // Se informou nova senha, atualiza password e passwordConfirm
-      if (trimmedPassword) {
-        payload.password = trimmedPassword
-        payload.passwordConfirm = trimmedPassword
+      if (trimmedPhone !== (seller.phone || '')) {
+        payload.phone = trimmedPhone
       }
 
-      await deliveryService.updateUser(seller.id, payload)
+      if (status !== (seller.status || 'active')) {
+        payload.status = status
+      }
+
+      // NUNCA envia senha vazia: apenas se o admin digitou uma nova senha (>= 8 caracteres)
+      if (trimmedPassword && trimmedPassword.length >= 8) {
+        payload.password = trimmedPassword
+      }
+
+      // Se nenhum campo foi alterado e nenhuma nova senha foi digitada, encerra com aviso amigável
+      if (Object.keys(payload).length === 0) {
+        toast.info('Nenhuma alteração foi realizada.')
+        onOpenChange(false)
+        return
+      }
+
+      // Utiliza a rota administrativa segura (adminUpdateUser), que suporta redefinição
+      // de senha por administrador sem exigir oldPassword.
+      await deliveryService.adminUpdateUser(seller.id, payload)
 
       toast.success(`Dados do vendedor "${trimmedName}" atualizados com sucesso!`)
+      setNewPassword('')
       onSellerUpdated()
       onOpenChange(false)
     } catch (err: unknown) {
       console.error('Error updating seller:', err)
       const fieldErrors = extractFieldErrors(err)
-      if (fieldErrors.email) {
-        toast.error(
-          `E-mail indisponível: ${fieldErrors.email.toLowerCase().includes('unique') || fieldErrors.email.toLowerCase().includes('already') ? 'Este e-mail já está sendo utilizado por outro usuário.' : fieldErrors.email}`,
-        )
+
+      if (fieldErrors.oldPassword) {
+        toast.error('Não foi possível alterar a senha: senha antiga inválida ou não informada.')
+      } else if (fieldErrors.email) {
+        const emailMsg = fieldErrors.email.toLowerCase()
+        if (
+          emailMsg.includes('unique') ||
+          emailMsg.includes('already') ||
+          emailMsg.includes('exist')
+        ) {
+          toast.error('Este e-mail já está sendo utilizado por outro usuário.')
+        } else {
+          toast.error(`E-mail inválido: ${fieldErrors.email}`)
+        }
       } else if (fieldErrors.password || fieldErrors.passwordConfirm) {
         toast.error(
-          'Erro na nova senha: ' + (fieldErrors.password || 'Mínimo de 8 caracteres exigidos.'),
+          'Erro na nova senha: ' +
+            (fieldErrors.password ||
+              fieldErrors.passwordConfirm ||
+              'Mínimo de 8 caracteres exigidos.'),
         )
+      } else if (fieldErrors.name) {
+        toast.error(`Nome inválido: ${fieldErrors.name}`)
       } else {
         const msg = getErrorMessage(err)
-        toast.error(msg || 'Falha ao atualizar dados do vendedor.')
+        // Mapeia mensagens cruas conhecidas em inglês para português
+        if (msg.includes('Cannot be blank')) {
+          toast.error('Campo obrigatório não pode ficar em branco.')
+        } else if (msg.includes('Failed to update')) {
+          toast.error('Falha ao atualizar dados do vendedor. Verifique os dados inseridos.')
+        } else {
+          toast.error(msg || 'Falha ao atualizar dados do vendedor.')
+        }
       }
     } finally {
       setIsSubmitting(false)
@@ -179,7 +225,7 @@ export function EditSellerModal({
             </Button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4 pt-3">
+          <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4 pt-3">
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                 <Building2 className="h-3.5 w-3.5 text-[#60A5FA]" />
@@ -189,6 +235,7 @@ export function EditSellerModal({
                 placeholder="Ex: Pimenta Verde Cosméticos"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                autoComplete="off"
                 className="h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                 required
               />
@@ -205,6 +252,7 @@ export function EditSellerModal({
                   placeholder="loja@loghype.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="off"
                   className="h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                   required
                 />
@@ -220,6 +268,7 @@ export function EditSellerModal({
                   placeholder="(21) 99999-9999"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
+                  autoComplete="off"
                   className="h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                 />
               </div>
@@ -253,6 +302,9 @@ export function EditSellerModal({
                   placeholder="Deixar em branco para manter"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  name="edit_seller_new_password"
+                  id="edit_seller_new_password"
                   className="h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500"
                   minLength={8}
                 />
