@@ -46,6 +46,7 @@ import {
   Receipt,
   ArrowDownRight,
   ArrowUpDown,
+  Edit3,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
@@ -53,6 +54,8 @@ import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { ControlTower } from '@/components/ControlTower'
 import { ReportsSection } from '@/components/ReportsSection'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
+import { CreateSellerModal } from '@/components/CreateSellerModal'
+import { EditSellerModal } from '@/components/EditSellerModal'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { deliveryService } from '@/services/deliveryService'
@@ -210,6 +213,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   // View Documents Modal state
   const [selectedUserForDocs, setSelectedUserForDocs] = useState<UserRecord | null>(null)
   const [isDocsModalOpen, setIsDocsModalOpen] = useState(false)
+
+  // Seller Modals state
+  const [isCreateSellerModalOpen, setIsCreateSellerModalOpen] = useState(false)
+  const [isEditSellerModalOpen, setIsEditSellerModalOpen] = useState(false)
+  const [selectedSellerForEdit, setSelectedSellerForEdit] = useState<UserRecord | null>(null)
 
   // New user modal state
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false)
@@ -2305,14 +2313,24 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       </CardDescription>
                     </div>
 
-                    <div className="relative w-48 sm:w-64">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                      <Input
-                        placeholder="Buscar vendedor por nome ou e-mail..."
-                        value={searchSellers}
-                        onChange={(e) => setSearchSellers(e.target.value)}
-                        className="h-9 pl-8 text-xs"
-                      />
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-48 sm:w-64">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                        <Input
+                          placeholder="Buscar vendedor por nome ou e-mail..."
+                          value={searchSellers}
+                          onChange={(e) => setSearchSellers(e.target.value)}
+                          className="h-9 pl-8 text-xs"
+                        />
+                      </div>
+
+                      <Button
+                        onClick={() => setIsCreateSellerModalOpen(true)}
+                        className="h-9 gap-1.5 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition duration-100 whitespace-nowrap"
+                      >
+                        <UserPlus className="h-3.5 w-3.5 text-[#FF6B35]" />
+                        Novo Vendedor
+                      </Button>
                     </div>
                   </div>
                 </CardHeader>
@@ -2385,6 +2403,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
                                 <td className="py-3 px-3 text-right">
                                   <div className="flex items-center justify-end gap-1.5">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                        setSelectedSellerForEdit(s)
+                                        setIsEditSellerModalOpen(true)
+                                      }}
+                                      className="h-7 px-2 text-blue-600 border-blue-200 dark:border-blue-900 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-[11px] gap-1 font-semibold"
+                                      title="Editar Dados do Vendedor"
+                                    >
+                                      <Edit3 className="h-3 w-3 text-blue-600" />
+                                      Editar
+                                    </Button>
+
                                     {isActive ? (
                                       <Button
                                         variant="outline"
@@ -2954,6 +2986,25 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         offRouteEvents={offRouteEvents}
         locations={locations}
         settings={settings}
+      />
+
+      {/* ================= MODAL: CADASTRAR NOVO VENDEDOR ================= */}
+      <CreateSellerModal
+        open={isCreateSellerModalOpen}
+        onOpenChange={setIsCreateSellerModalOpen}
+        onSellerCreated={loadData}
+      />
+
+      {/* ================= MODAL: EDITAR VENDEDOR ================= */}
+      <EditSellerModal
+        seller={selectedSellerForEdit}
+        open={isEditSellerModalOpen}
+        onOpenChange={(open) => {
+          setIsEditSellerModalOpen(open)
+          if (!open) setSelectedSellerForEdit(null)
+        }}
+        onSellerUpdated={loadData}
+        currentAdminId={user?.id}
       />
     </div>
   )
