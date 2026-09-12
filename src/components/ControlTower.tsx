@@ -1093,7 +1093,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           // Cálculo do tempo estimado da rota inteira e cruzamento com a carga horária
           const shiftMetrics = calculateRouteWorkShift(
             etaMinutesReturnBase,
-            primaryOrder.route_started_at || undefined,
+            primaryOrder.route_started_at ||
+              primaryOrder.route_released_at ||
+              primaryOrder.created ||
+              undefined,
             nowTime,
           )
 

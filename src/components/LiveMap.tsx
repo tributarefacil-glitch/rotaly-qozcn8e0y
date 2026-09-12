@@ -49,6 +49,10 @@ export interface MapMarkerItem {
   gps_status?: 'active' | 'disabled' | 'offline'
   gps_reason?: string
   offline_buffered?: boolean
+  remainingRouteMinutes?: number
+  projectedEndTimeFormatted?: string
+  isOvertime?: boolean
+  overtimeMinutes?: number
 }
 
 export function getVehicleEmoji(type?: string): string {

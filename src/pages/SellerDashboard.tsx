@@ -51,6 +51,11 @@ import {
   UNEXPECTED_STOP_THRESHOLD_METERS,
   haversineDistanceMeters,
 } from '@/lib/geo'
+import {
+  calculateRouteWorkShift,
+  formatRemainingDuration,
+  type RouteWorkShiftMetrics,
+} from '@/lib/routeWorkShift'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -1985,29 +1990,265 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 </p>
               </div>
 
-              <div>
-                <Label className="text-xs font-semibold">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-800">
                   Selecione o Entregador com Rota Ativa
                 </Label>
-                <Select value={targetCourierId} onValueChange={setTargetCourierId}>
-                  <SelectTrigger className="mt-1 text-xs">
-                    <SelectValue placeholder="Escolha um entregador..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {couriers
-                      .filter((c) => c.status !== 'inactive')
-                      .map((c) => {
-                        const inTransitCount = orders.filter(
-                          (o) => o.courier_id === c.id && o.status === 'in_transit',
-                        ).length
+                <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                  {couriers
+                    .filter((c) => c.status !== 'inactive')
+                    .map((c) => {
+                      const isSelected = targetCourierId === c.id
+                      const inTransitOrders = orders.filter(
+                        (o) =>
+                          o.courier_id === c.id &&
+                          (o.status === 'in_transit' ||
+                            (o.route_started &&
+                              o.status !== 'delivered' &&
+                              o.status !== 'cancelled')),
+                      )
+                      const inTransitCount = inTransitOrders.length
+                      const courierLoc = locations.find((l) => l.user_id === c.id)
+
+                      // Entregador sem rota ativa
+                      if (inTransitCount === 0) {
                         return (
-                          <SelectItem key={c.id} value={c.id}>
-                            🛵 {c.name} ({inTransitCount} entregas ativas)
-                          </SelectItem>
+                          <div
+                            key={c.id}
+                            onClick={() => setTargetCourierId(c.id)}
+                            className={`p-3 rounded-xl border transition cursor-pointer select-none text-xs ${
+                              isSelected
+                                ? 'border-[#0052CC] bg-blue-50/70 ring-2 ring-[#0052CC]/30'
+                                : 'border-slate-200 bg-white hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="font-bold text-slate-900 truncate">
+                                  🛵 {c.name} (0 entregas ativas)
+                                </p>
+                                <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                  {c.vehicle_model || c.vehicle_type || 'Moto'}
+                                  {c.vehicle_plate ? ` • ${c.vehicle_plate}` : ''}
+                                </p>
+                              </div>
+                              <input
+                                type="radio"
+                                name="target-courier-choice"
+                                checked={isSelected}
+                                onChange={() => setTargetCourierId(c.id)}
+                                className="h-4 w-4 text-[#0052CC] focus:ring-[#0052CC] shrink-0 cursor-pointer"
+                              />
+                            </div>
+                            <div className="mt-2 pt-2 border-t border-slate-100 flex items-center gap-1.5 text-[11px] text-emerald-700 font-medium">
+                              <span>🟢 Disponível sem rota ativa no momento</span>
+                            </div>
+                          </div>
                         )
-                      })}
-                  </SelectContent>
-                </Select>
+                      }
+
+                      // Cálculo para entregador com rota ativa
+                      const effectiveSpeedKmh =
+                        courierLoc && typeof courierLoc.speed === 'number' && courierLoc.speed > 5
+                          ? courierLoc.speed
+                          : 25
+                      const speedMps = effectiveSpeedKmh * (1000 / 3600)
+
+                      const primaryOrder = inTransitOrders[0]
+                      const defaultBase =
+                        baseAddresses.find((b) => b.is_default) || baseAddresses[0]
+                      const fallbackBasePos = {
+                        lat: defaultBase?.lat || -22.7001402,
+                        lng: defaultBase?.lng || -43.2982834,
+                      }
+
+                      const startPos =
+                        courierLoc?.lat && courierLoc?.lng
+                          ? { lat: Number(courierLoc.lat), lng: Number(courierLoc.lng) }
+                          : primaryOrder?.start_base_lat && primaryOrder?.start_base_lng
+                            ? {
+                                lat: Number(primaryOrder.start_base_lat),
+                                lng: Number(primaryOrder.start_base_lng),
+                              }
+                            : fallbackBasePos
+
+                      const returnBasePos =
+                        primaryOrder?.end_address_lat && primaryOrder?.end_address_lng
+                          ? {
+                              lat: Number(primaryOrder.end_address_lat),
+                              lng: Number(primaryOrder.end_address_lng),
+                            }
+                          : primaryOrder?.start_base_lat && primaryOrder?.start_base_lng
+                            ? {
+                                lat: Number(primaryOrder.start_base_lat),
+                                lng: Number(primaryOrder.start_base_lng),
+                              }
+                            : fallbackBasePos
+
+                      // Paradas pendentes atuais
+                      const pendingOrdersSorted = [...inTransitOrders].sort(
+                        (a, b) => (a.sequence || 0) - (b.sequence || 0),
+                      )
+                      const currentPendingStops = pendingOrdersSorted
+                        .map((o) => {
+                          const cust =
+                            customers.find((cu) => cu.id === o.customer_id) || o.expand?.customer_id
+                          return cust?.lat && cust?.lng
+                            ? { lat: Number(cust.lat), lng: Number(cust.lng) }
+                            : null
+                        })
+                        .filter(Boolean) as { lat: number; lng: number }[]
+
+                      // 1. Distância viária da rota ATUAL (sem o candidato)
+                      let currentRoadDist = 0
+                      let curPos = startPos
+                      for (const stop of currentPendingStops) {
+                        currentRoadDist +=
+                          haversineDistanceMeters(curPos.lat, curPos.lng, stop.lat, stop.lng) * 1.3
+                        curPos = stop
+                      }
+                      currentRoadDist +=
+                        haversineDistanceMeters(
+                          curPos.lat,
+                          curPos.lng,
+                          returnBasePos.lat,
+                          returnBasePos.lng,
+                        ) * 1.3
+                      const currentServiceMins = currentPendingStops.length * 6
+                      const currentTravelMins = Math.round(currentRoadDist / speedMps / 60)
+                      const currentEtaMins = Math.max(1, currentTravelMins + currentServiceMins)
+
+                      // 2. Distância viária com o CLIENTE CANDIDATO adicionado ao fim da fila
+                      const candidateCust = selectedOrderForAddToRoute
+                        ? customers.find(
+                            (cu) => cu.id === selectedOrderForAddToRoute.customer_id,
+                          ) || selectedOrderForAddToRoute.expand?.customer_id
+                        : null
+                      const candidatePos =
+                        candidateCust?.lat && candidateCust?.lng
+                          ? { lat: Number(candidateCust.lat), lng: Number(candidateCust.lng) }
+                          : null
+
+                      const withCandidateStops = candidatePos
+                        ? [...currentPendingStops, candidatePos]
+                        : currentPendingStops
+
+                      let withCandidateRoadDist = 0
+                      let curPosWithCandidate = startPos
+                      for (const stop of withCandidateStops) {
+                        withCandidateRoadDist +=
+                          haversineDistanceMeters(
+                            curPosWithCandidate.lat,
+                            curPosWithCandidate.lng,
+                            stop.lat,
+                            stop.lng,
+                          ) * 1.3
+                        curPosWithCandidate = stop
+                      }
+                      withCandidateRoadDist +=
+                        haversineDistanceMeters(
+                          curPosWithCandidate.lat,
+                          curPosWithCandidate.lng,
+                          returnBasePos.lat,
+                          returnBasePos.lng,
+                        ) * 1.3
+                      const withCandidateServiceMins = withCandidateStops.length * 6
+                      const withCandidateTravelMins = Math.round(
+                        withCandidateRoadDist / speedMps / 60,
+                      )
+                      const withCandidateEtaMins = Math.max(
+                        1,
+                        withCandidateTravelMins + withCandidateServiceMins,
+                      )
+
+                      // Início da rota para a jornada
+                      const routeStartTimestamp =
+                        primaryOrder?.route_started_at ||
+                        primaryOrder?.route_released_at ||
+                        primaryOrder?.created ||
+                        undefined
+
+                      const shiftBefore = calculateRouteWorkShift(
+                        currentEtaMins,
+                        routeStartTimestamp,
+                      )
+                      const shiftAfter = calculateRouteWorkShift(
+                        withCandidateEtaMins,
+                        routeStartTimestamp,
+                      )
+
+                      // Excesso gerado especificamente pelo candidato ou excesso total pós-inclusão
+                      const candidateCausesOvertime =
+                        !shiftBefore.isOvertime && shiftAfter.isOvertime
+                      const additionalOvertimeMins =
+                        shiftAfter.overtimeMinutes - shiftBefore.overtimeMinutes
+
+                      return (
+                        <div
+                          key={c.id}
+                          onClick={() => setTargetCourierId(c.id)}
+                          className={`p-3 rounded-xl border transition cursor-pointer select-none text-xs space-y-2 ${
+                            isSelected
+                              ? 'border-[#0052CC] bg-blue-50/70 ring-2 ring-[#0052CC]/30'
+                              : 'border-slate-200 bg-white hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-900 truncate">
+                                🛵 {c.name} ({inTransitCount} entregas ativas)
+                              </p>
+                              <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                {c.vehicle_model || c.vehicle_type || 'Moto'}
+                                {c.vehicle_plate ? ` • ${c.vehicle_plate}` : ''}
+                              </p>
+                            </div>
+                            <input
+                              type="radio"
+                              name="target-courier-choice"
+                              checked={isSelected}
+                              onChange={() => setTargetCourierId(c.id)}
+                              className="h-4 w-4 text-[#0052CC] focus:ring-[#0052CC] shrink-0 cursor-pointer"
+                            />
+                          </div>
+
+                          {/* Pílula de Tempo Restante + Término */}
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-800 font-semibold text-[10px] border border-slate-200">
+                              ⏱ {shiftBefore.remainingFormatted} • Término:{' '}
+                              {shiftBefore.projectedEndTimeFormatted}
+                            </span>
+
+                            {/* Badge de Carga Horária */}
+                            {shiftBefore.isOvertime ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px] border border-amber-300">
+                                ⚠️ Passa da carga horária (+{shiftBefore.overtimeMinutes} min)
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px] border border-emerald-300">
+                                ✓ Dentro da carga horária
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Aviso se aceitar o pedido candidato ultrapassar ou aumentar a jornada */}
+                          {isSelected && shiftAfter.isOvertime && (
+                            <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 space-y-0.5">
+                              <p className="font-bold flex items-center gap-1 text-amber-800">
+                                ⚠️ Aceitar este pedido fará o entregador exceder a carga horária em
+                                +{shiftAfter.overtimeMinutes} min.
+                              </p>
+                              <p className="text-[10px] text-amber-700">
+                                Novo término projetado:{' '}
+                                <strong>{shiftAfter.projectedEndTimeFormatted}</strong> (
+                                {shiftAfter.remainingFormatted}).
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                </div>
               </div>
             </div>
           )}

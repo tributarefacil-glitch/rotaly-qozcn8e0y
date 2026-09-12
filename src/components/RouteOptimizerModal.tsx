@@ -93,6 +93,11 @@ import {
   isGoogleMapsAuthError,
   fallbackGeocodeAddress,
 } from '@/lib/googleMaps'
+import {
+  calculateRouteWorkShift,
+  formatRemainingDuration,
+  type RouteWorkShiftMetrics,
+} from '@/lib/routeWorkShift'
 import { toast } from 'sonner'
 
 interface RouteOptimizerModalProps {
@@ -3431,6 +3436,105 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             </div>
                           </div>
 
+                          {/* Pílula de Tempo Restante + Término e Carga Horária */}
+                          {(() => {
+                            const courierLoc = locations.find((l) => l.user_id === courier.id)
+                            const effectiveSpeedKmh =
+                              courierLoc &&
+                              typeof courierLoc.speed === 'number' &&
+                              courierLoc.speed > 5
+                                ? courierLoc.speed
+                                : 25
+                            const speedMps = effectiveSpeedKmh * (1000 / 3600)
+
+                            const primaryOrder = routeGroup.orders[0]
+                            const defaultBase =
+                              baseAddresses.find((b) => b.is_default) || baseAddresses[0]
+                            const fallbackBasePos = {
+                              lat: defaultBase?.lat || -22.7001402,
+                              lng: defaultBase?.lng || -43.2982834,
+                            }
+
+                            const startPos =
+                              courierLoc?.lat && courierLoc?.lng
+                                ? { lat: Number(courierLoc.lat), lng: Number(courierLoc.lng) }
+                                : primaryOrder?.start_base_lat && primaryOrder?.start_base_lng
+                                  ? {
+                                      lat: Number(primaryOrder.start_base_lat),
+                                      lng: Number(primaryOrder.start_base_lng),
+                                    }
+                                  : fallbackBasePos
+
+                            const returnBasePos =
+                              primaryOrder?.end_address_lat && primaryOrder?.end_address_lng
+                                ? {
+                                    lat: Number(primaryOrder.end_address_lat),
+                                    lng: Number(primaryOrder.end_address_lng),
+                                  }
+                                : primaryOrder?.start_base_lat && primaryOrder?.start_base_lng
+                                  ? {
+                                      lat: Number(primaryOrder.start_base_lat),
+                                      lng: Number(primaryOrder.start_base_lng),
+                                    }
+                                  : fallbackBasePos
+
+                            const pendingStopsList = pendingStops
+                              .map((o) => {
+                                const cust =
+                                  localCustomers.find((c) => c.id === o.customer_id) ||
+                                  o.expand?.customer_id
+                                return cust?.lat && cust?.lng
+                                  ? { lat: Number(cust.lat), lng: Number(cust.lng) }
+                                  : null
+                              })
+                              .filter(Boolean) as { lat: number; lng: number }[]
+
+                            let totalDist = 0
+                            let curPos = startPos
+                            for (const stop of pendingStopsList) {
+                              totalDist +=
+                                haversineDistance(curPos.lat, curPos.lng, stop.lat, stop.lng) * 1.3
+                              curPos = stop
+                            }
+                            totalDist +=
+                              haversineDistance(
+                                curPos.lat,
+                                curPos.lng,
+                                returnBasePos.lat,
+                                returnBasePos.lng,
+                              ) * 1.3
+                            const serviceMins = pendingStopsList.length * 6
+                            const travelMins = Math.round(totalDist / speedMps / 60)
+                            const etaMins = Math.max(1, travelMins + serviceMins)
+
+                            const routeStartTimestamp =
+                              primaryOrder?.route_started_at ||
+                              primaryOrder?.route_released_at ||
+                              primaryOrder?.created ||
+                              undefined
+
+                            const shift = calculateRouteWorkShift(etaMins, routeStartTimestamp)
+
+                            return (
+                              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold text-[10px] border border-slate-200 dark:border-slate-700">
+                                  ⏱ {shift.remainingFormatted} • Término:{' '}
+                                  {shift.projectedEndTimeFormatted}
+                                </span>
+
+                                {shift.isOvertime ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 font-bold text-[10px] border border-amber-300 dark:border-amber-800">
+                                    ⚠️ Passa da carga horária (+{shift.overtimeMinutes} min)
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 font-bold text-[10px] border border-emerald-300 dark:border-emerald-800">
+                                    ✓ Dentro da carga horária
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          })()}
+
                           {/* Ações da Rota Ativa */}
                           <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800/80">
                             <Button
@@ -4926,6 +5030,194 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Impacto no Término Projetado e Carga Horária ao incluir */}
+            {targetCourierForInclude &&
+              selectedIncludeOrderId &&
+              (() => {
+                const courierOrders = localOrders.filter(
+                  (o) =>
+                    o.courier_id === targetCourierForInclude.id &&
+                    (o.status === 'in_transit' ||
+                      (o.route_started && o.status !== 'delivered' && o.status !== 'cancelled')),
+                )
+                const courierLoc = locations.find((l) => l.user_id === targetCourierForInclude.id)
+                const effectiveSpeedKmh =
+                  courierLoc && typeof courierLoc.speed === 'number' && courierLoc.speed > 5
+                    ? courierLoc.speed
+                    : 25
+                const speedMps = effectiveSpeedKmh * (1000 / 3600)
+
+                const primaryOrder = courierOrders[0]
+                const defaultBase = baseAddresses.find((b) => b.is_default) || baseAddresses[0]
+                const fallbackBasePos = {
+                  lat: defaultBase?.lat || -22.7001402,
+                  lng: defaultBase?.lng || -43.2982834,
+                }
+
+                const startPos =
+                  courierLoc?.lat && courierLoc?.lng
+                    ? { lat: Number(courierLoc.lat), lng: Number(courierLoc.lng) }
+                    : primaryOrder?.start_base_lat && primaryOrder?.start_base_lng
+                      ? {
+                          lat: Number(primaryOrder.start_base_lat),
+                          lng: Number(primaryOrder.start_base_lng),
+                        }
+                      : fallbackBasePos
+
+                const returnBasePos =
+                  primaryOrder?.end_address_lat && primaryOrder?.end_address_lng
+                    ? {
+                        lat: Number(primaryOrder.end_address_lat),
+                        lng: Number(primaryOrder.end_address_lng),
+                      }
+                    : primaryOrder?.start_base_lat && primaryOrder?.start_base_lng
+                      ? {
+                          lat: Number(primaryOrder.start_base_lat),
+                          lng: Number(primaryOrder.start_base_lng),
+                        }
+                      : fallbackBasePos
+
+                const pendingStopsSorted = [...courierOrders].sort(
+                  (a, b) => (a.sequence || 0) - (b.sequence || 0),
+                )
+                const currentPendingStops = pendingStopsSorted
+                  .map((o) => {
+                    const cust =
+                      localCustomers.find((c) => c.id === o.customer_id) || o.expand?.customer_id
+                    return cust?.lat && cust?.lng
+                      ? { lat: Number(cust.lat), lng: Number(cust.lng) }
+                      : null
+                  })
+                  .filter(Boolean) as { lat: number; lng: number }[]
+
+                // Rota atual
+                let currentRoadDist = 0
+                let curPos = startPos
+                for (const stop of currentPendingStops) {
+                  currentRoadDist +=
+                    haversineDistance(curPos.lat, curPos.lng, stop.lat, stop.lng) * 1.3
+                  curPos = stop
+                }
+                currentRoadDist +=
+                  haversineDistance(curPos.lat, curPos.lng, returnBasePos.lat, returnBasePos.lng) *
+                  1.3
+                const currentServiceMins = currentPendingStops.length * 6
+                const currentTravelMins = Math.round(currentRoadDist / speedMps / 60)
+                const currentEtaMins = Math.max(1, currentTravelMins + currentServiceMins)
+
+                // Rota com inclusão
+                const candOrder = localOrders.find((o) => o.id === selectedIncludeOrderId)
+                const candCust = candOrder
+                  ? localCustomers.find((c) => c.id === candOrder.customer_id) ||
+                    candOrder.expand?.customer_id
+                  : null
+                const candPos =
+                  candCust?.lat && candCust?.lng
+                    ? { lat: Number(candCust.lat), lng: Number(candCust.lng) }
+                    : null
+
+                const withCandidateStops = candPos
+                  ? [...currentPendingStops, candPos]
+                  : currentPendingStops
+
+                let withCandidateRoadDist = 0
+                let curPosCand = startPos
+                for (const stop of withCandidateStops) {
+                  withCandidateRoadDist +=
+                    haversineDistance(curPosCand.lat, curPosCand.lng, stop.lat, stop.lng) * 1.3
+                  curPosCand = stop
+                }
+                withCandidateRoadDist +=
+                  haversineDistance(
+                    curPosCand.lat,
+                    curPosCand.lng,
+                    returnBasePos.lat,
+                    returnBasePos.lng,
+                  ) * 1.3
+                const withCandidateServiceMins = withCandidateStops.length * 6
+                const withCandidateTravelMins = Math.round(withCandidateRoadDist / speedMps / 60)
+                const withCandidateEtaMins = Math.max(
+                  1,
+                  withCandidateTravelMins + withCandidateServiceMins,
+                )
+
+                const routeStartTimestamp =
+                  primaryOrder?.route_started_at ||
+                  primaryOrder?.route_released_at ||
+                  primaryOrder?.created ||
+                  undefined
+
+                const shiftBefore = calculateRouteWorkShift(currentEtaMins, routeStartTimestamp)
+                const shiftAfter = calculateRouteWorkShift(
+                  withCandidateEtaMins,
+                  routeStartTimestamp,
+                )
+                const diffMinutes = Math.max(
+                  0,
+                  shiftAfter.remainingRouteMinutes - shiftBefore.remainingRouteMinutes,
+                )
+
+                return (
+                  <div className="p-3 rounded-lg border border-indigo-200 dark:border-indigo-900/60 bg-gradient-to-br from-indigo-50/70 to-slate-50/70 dark:from-slate-900/80 dark:to-indigo-950/40 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <Clock className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                        Impacto no Término Projetado da Rota:
+                      </p>
+                      <span className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold">
+                        +{diffMinutes} min na rota
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="p-2 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                        <p className="text-slate-500 dark:text-slate-400 text-[10px]">
+                          Previsão Atual
+                        </p>
+                        <p className="font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                          ⏱ {shiftBefore.remainingFormatted}
+                        </p>
+                        <p className="text-slate-600 dark:text-slate-400 text-[10px]">
+                          Término: {shiftBefore.projectedEndTimeFormatted}
+                        </p>
+                      </div>
+
+                      <div className="p-2 rounded bg-indigo-100/60 dark:bg-indigo-950/80 border border-indigo-300 dark:border-indigo-800">
+                        <p className="text-indigo-800 dark:text-indigo-300 font-semibold text-[10px]">
+                          Após Inclusão
+                        </p>
+                        <p className="font-bold text-indigo-950 dark:text-indigo-100 mt-0.5">
+                          ⏱ {shiftAfter.remainingFormatted}
+                        </p>
+                        <p className="text-indigo-900 dark:text-indigo-200 text-[10px] font-medium">
+                          Término: {shiftAfter.projectedEndTimeFormatted}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Badge de Impacto de Carga Horária */}
+                    <div className="pt-1 flex items-center justify-between">
+                      {shiftAfter.isOvertime ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 font-bold text-[10px] border border-amber-300 dark:border-amber-800">
+                          ⚠️ Passa da carga horária (+{shiftAfter.overtimeMinutes} min)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 font-bold text-[10px] border border-emerald-300 dark:border-emerald-800">
+                          ✓ Dentro da carga horária
+                        </span>
+                      )}
+
+                      {shiftAfter.isOvertime && (
+                        <span className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">
+                          ⚠️ Aceitar este pedido fará o entregador exceder a carga horária em +
+                          {shiftAfter.overtimeMinutes} min.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
           </div>
 
           <DialogFooter className="flex-col sm:flex-row gap-2">
