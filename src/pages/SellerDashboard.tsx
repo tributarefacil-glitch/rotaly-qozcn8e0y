@@ -623,24 +623,31 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
 
     setIsAddingToRoute(true)
+    const orderToProcess = selectedOrderForAddToRoute
+    const courierToProcess = targetCourierId
+    const orderTracking = orderToProcess.tracking_code
+
+    // Fecha o modal e dá feedback imediato ao vendedor sem bloquear
+    setIsAddToRouteModalOpen(false)
+    setSelectedOrderForAddToRoute(null)
+    setTargetCourierId('')
+
     try {
-      const orderTracking = selectedOrderForAddToRoute.tracking_code
-      await deliveryService.addOrderToActiveRoute({
-        orderId: selectedOrderForAddToRoute.id,
-        courierId: targetCourierId,
+      // Dispara a inclusão com resequenciamento viário automático completo
+      const res = await deliveryService.addOrderToActiveRoute({
+        orderId: orderToProcess.id,
+        courierId: courierToProcess,
         settings,
       })
 
       toast.success(
-        `✨ Entrega ${orderTracking} adicionada e rota inteira resequenciada viariamente pelo menor trajeto!`,
+        `✨ Entrega ${orderTracking} adicionada à rota (Parada #${res.order?.sequence || 1}) e resequenciada viariamente pelo menor trajeto!`,
       )
-      setIsAddToRouteModalOpen(false)
-      setSelectedOrderForAddToRoute(null)
-      setTargetCourierId('')
       loadData()
     } catch (err) {
       console.error('Error adding to active route:', err)
       toast.error('Erro ao adicionar entrega à rota.')
+      loadData()
     } finally {
       setIsAddingToRoute(false)
     }

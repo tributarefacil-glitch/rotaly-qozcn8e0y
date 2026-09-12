@@ -1207,12 +1207,13 @@ export const deliveryService = {
     settings?: Partial<AppSettingsRecord> | null,
   ): Promise<{ success: boolean; sequencedCount: number; totalDistanceKm: number }> {
     try {
-      const { optimizeRouteSequence } = await import('@/services/intelligentRoadRouter')
+      const { optimizeRouteSequence, sequenceStopsWithDeterministicTsp } =
+        await import('@/services/intelligentRoadRouter')
 
       // 1. Obter entregador
       const courier = await pb.collection<UserRecord>('users').getOne(courierId)
 
-      // 2. Obter pedidos ativos desse entregador
+      // 2. Obter pedidos ativos desse entregador (nunca mexe no TRK-2026-622)
       const courierOrders = await pb.collection<OrderRecord>('orders').getFullList({
         filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished=false && tracking_code!='TRK-2026-622'`,
         sort: 'sequence,created',
@@ -1263,34 +1264,115 @@ export const deliveryService = {
         }
       })
 
-      // 5. Executar o motor viário inteligente
-      const roadResult = await optimizeRouteSequence({
-        origin: originPoint,
-        destination: destinationPoint,
-        stops: candidates,
-        vehicleType: courier.vehicle_type,
-        pricePerLiter,
-        consumptionKml,
-      })
+      // 5. Executar o motor viário inteligente (Google Directions + mesma rua + fallback 2-Opt)
+      let roadResult
+      try {
+        roadResult = await optimizeRouteSequence({
+          origin: originPoint,
+          destination: destinationPoint,
+          stops: candidates,
+          vehicleType: courier.vehicle_type,
+          pricePerLiter,
+          consumptionKml,
+        })
+      } catch (optErr) {
+        console.warn(
+          '[deliveryService] optimizeRouteSequence falhou, acionando fallback determinístico 2-Opt local:',
+          optErr,
+        )
+        // Fallback robusto garantido com sequenceStopsWithDeterministicTsp
+        const orderedFallback = sequenceStopsWithDeterministicTsp(
+          originPoint,
+          destinationPoint,
+          candidates,
+        )
+        let fallbackOutboundMeters = 0
+        let prevLat = originPoint.lat
+        let prevLng = originPoint.lng
+        const stopsWithStep = orderedFallback.map((s, idx) => {
+          const direct = Math.sqrt(
+            Math.pow((s.lat - prevLat) * 111000, 2) +
+              Math.pow((s.lng - prevLng) * 111000 * Math.cos((originPoint.lat * Math.PI) / 180), 2),
+          )
+          const stepMeters = Math.max(500, Math.round(direct * 1.3))
+          fallbackOutboundMeters += stepMeters
+          prevLat = s.lat
+          prevLng = s.lng
+          return {
+            ...s,
+            sequence: idx + 1,
+            step_distance_meters: stepMeters,
+            cumulative_distance_meters: fallbackOutboundMeters,
+            step_duration_seconds: Math.round((stepMeters / 1000) * 160 + 300),
+          }
+        })
+        const returnMeters = Math.max(
+          500,
+          Math.round(
+            Math.sqrt(
+              Math.pow((prevLat - destinationPoint.lat) * 111000, 2) +
+                Math.pow(
+                  (prevLng - destinationPoint.lng) *
+                    111000 *
+                    Math.cos((originPoint.lat * Math.PI) / 180),
+                  2,
+                ),
+            ) * 1.3,
+          ),
+        )
+        const totalDistKm = Number(((fallbackOutboundMeters + returnMeters) / 1000).toFixed(2))
+        const returnDistKm = Number((returnMeters / 1000).toFixed(2))
+        const effectiveCons =
+          consumptionKml > 0 ? consumptionKml : courier.vehicle_type === 'moto' ? 32 : 10
+        const totalFuel = effectiveCons > 0 ? (totalDistKm * pricePerLiter) / effectiveCons : 0
 
-      // 6. Persistir novos valores de sequência e métricas em cada pedido
+        roadResult = {
+          stops: stopsWithStep,
+          total_distance_km: totalDistKm,
+          outbound_distance_km: Number((fallbackOutboundMeters / 1000).toFixed(2)),
+          return_distance_km: returnDistKm,
+          estimated_duration_minutes: Math.round(totalDistKm * 3.5 + candidates.length * 5),
+          estimated_fuel_cost: Number(totalFuel.toFixed(2)),
+          isRealStreetRoute: false,
+        }
+      }
+
+      // Regra "linha = cabeçalho":
+      // A soma dos combustíveis e distâncias das pernas de cada parada deve coincidir com o total da rota.
+      // A última perna ou rateio do retorno é incorporado para garantir que Σ fuel_cost = total_route_fuel_cost.
+      const totalStopsCount = roadResult.stops.length
+      const totalRouteFuel = roadResult.estimated_fuel_cost
+      let allocatedFuelSum = 0
+
+      // 6. Persistir novos valores de sequência (1..N, NUNCA 0) e métricas viárias em cada pedido
       const nowIso = new Date().toISOString()
       let cumulativeMins = 0
 
-      for (let i = 0; i < roadResult.stops.length; i++) {
+      for (let i = 0; i < totalStopsCount; i++) {
         const stop = roadResult.stops[i]
-        const legDurationMin = Math.max(5, Math.round(stop.step_duration_seconds / 60))
+        const isLastStop = i === totalStopsCount - 1
+        const legDurationMin = Math.max(5, Math.round((stop.step_duration_seconds || 300) / 60))
         cumulativeMins += legDurationMin
         const etaIso = new Date(Date.now() + cumulativeMins * 60 * 1000).toISOString()
-        const stepDistKm = Number((stop.step_distance_meters / 1000).toFixed(2))
+        const stepDistKm = Number(((stop.step_distance_meters || 800) / 1000).toFixed(2))
 
-        const legFuelCost =
-          consumptionKml > 0
-            ? Number(((stepDistKm * pricePerLiter) / consumptionKml).toFixed(2))
-            : 0
+        // Rateio exato do combustível da rota para cumprir regra "linha = cabeçalho"
+        let legFuelCost: number
+        if (!isLastStop) {
+          legFuelCost =
+            consumptionKml > 0
+              ? Number(((stepDistKm * pricePerLiter) / consumptionKml).toFixed(2))
+              : 0
+          allocatedFuelSum += legFuelCost
+        } else {
+          // Última parada: absorve o trecho de retorno garantindo que a soma feche exatamente no cabeçalho
+          legFuelCost = Number(Math.max(0, totalRouteFuel - allocatedFuelSum).toFixed(2))
+        }
+
+        const calculatedSequence = i + 1 // NUNCA ZERO: 1..N
 
         const updatePayload: Partial<OrderRecord> = {
-          sequence: i + 1,
+          sequence: calculatedSequence,
           distance_km: stepDistKm > 0 ? stepDistKm : 0.8,
           return_trip_km: roadResult.return_distance_km,
           total_route_with_return_km: roadResult.total_distance_km,
@@ -1328,6 +1410,23 @@ export const deliveryService = {
       }
     } catch (err) {
       console.error('Error resequencing active route for courier:', err)
+      // Fallback final: garantir que nenhum pedido fique com sequence = 0 mesmo em falha grave
+      try {
+        const fallbackOrders = await pb.collection<OrderRecord>('orders').getFullList({
+          filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished=false && tracking_code!='TRK-2026-622'`,
+          sort: 'created',
+          requestKey: null,
+        })
+        for (let idx = 0; idx < fallbackOrders.length; idx++) {
+          if (!fallbackOrders[idx].sequence || fallbackOrders[idx].sequence === 0) {
+            await pb.collection('orders').update(fallbackOrders[idx].id, {
+              sequence: idx + 1,
+            })
+          }
+        }
+      } catch (fallbackSeqErr) {
+        console.warn('Erro no fallback de emergência de sequência:', fallbackSeqErr)
+      }
       return { success: false, sequencedCount: 0, totalDistanceKm: 0 }
     }
   },
@@ -1338,7 +1437,8 @@ export const deliveryService = {
    * - route_released = true
    * - Se rota já iniciada (route_started=true na rota do entregador), marca route_started=true e status='in_transit'
    * - Dispara RESEQUENCIAMENTO AUTOMÁTICO da rota inteira com motor viário inteligente (Google Directions + mesma rua + 2-Opt)
-   * - Garante sequência sempre no menor trajeto possível viariamente
+   * - Garante sequência sempre 1..N no menor trajeto viário possível (NUNCA sequence = 0)
+   * - Recalcula os totais da rota (km, combustível, tempo) mantendo a regra linha = cabeçalho
    * - Dispara notificação push/realtime ao entregador
    */
   async addOrderToActiveRoute(params: {
@@ -1361,17 +1461,23 @@ export const deliveryService = {
       // Verificar se a rota já está iniciada pelo entregador
       const isRouteStarted = courierOrders.some((o) => o.route_started === true)
       const lastOrder = courierOrders[courierOrders.length - 1]
+      const bases = await this.getBaseAddresses()
+      const defaultBase = bases.find((b) => b.is_default) || bases[0]
       const now = new Date()
+
+      // Atribui sequence provisória = courierOrders.length + 1 para NUNCA ter sequence = 0
+      const provisionalSequence = Math.max(1, courierOrders.length + 1)
 
       // 3. Atualizar o pedido para vincular ao entregador e à rota ativa
       const initialUpdateData: Partial<OrderRecord> = {
         courier_id: courierId,
+        sequence: provisionalSequence,
         route_released: true,
         route_released_at: now.toISOString(),
-        start_base_name: lastOrder?.start_base_name || 'Base Operacional',
-        start_base_address: lastOrder?.start_base_address,
-        start_base_lat: lastOrder?.start_base_lat,
-        start_base_lng: lastOrder?.start_base_lng,
+        start_base_name: lastOrder?.start_base_name || defaultBase?.name || 'Mais Saudavel',
+        start_base_address: lastOrder?.start_base_address || defaultBase?.address,
+        start_base_lat: lastOrder?.start_base_lat || defaultBase?.lat || -22.7001402,
+        start_base_lng: lastOrder?.start_base_lng || defaultBase?.lng || -43.2982834,
       }
 
       if (isRouteStarted) {
@@ -1382,10 +1488,10 @@ export const deliveryService = {
         initialUpdateData.status = 'assigned'
       }
 
-      const updated = await pb.collection<OrderRecord>('orders').update(orderId, initialUpdateData)
+      await pb.collection<OrderRecord>('orders').update(orderId, initialUpdateData)
 
-      // 4. RESEQUENCIAMENTO AUTOMÁTICO VIÁRIO DA ROTA INTEIRA
-      // Roda o motor viário e recalcula sequences (1..N) e quilometragens de toda a rota ativa
+      // 4. RESEQUENCIAMENTO AUTOMÁTICO VIÁRIO COMPLETO DA ROTA INTEIRA
+      // Roda o motor viário inteligente e persiste sequences 1..N e distâncias viárias em todos os pedidos ativos
       try {
         await this.resequenceActiveRouteForCourier(courierId, settings)
       } catch (reseqErr) {

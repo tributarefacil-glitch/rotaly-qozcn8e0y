@@ -873,12 +873,42 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           ? suggestionState
           : 'none'
 
+      // Se atribuído diretamente a um entregador, busca dados da base para não deixar start_base vazia
+      let baseDataForOrder: {
+        start_base_name?: string
+        start_base_address?: string
+        start_base_lat?: number
+        start_base_lng?: number
+      } = {}
+      if (assignedCourier) {
+        try {
+          const bases = await deliveryService.getBaseAddresses()
+          const defaultBase = bases.find((b) => b.is_default) || bases[0]
+          if (defaultBase) {
+            baseDataForOrder = {
+              start_base_name: defaultBase.name,
+              start_base_address: defaultBase.address,
+              start_base_lat: defaultBase.lat,
+              start_base_lng: defaultBase.lng,
+            }
+          }
+        } catch (bErr) {
+          console.warn('Erro ao carregar base default:', bErr)
+        }
+      }
+
       const createdOrder = await deliveryService.createOrder({
         tracking_code: trackingCode,
         seller_id: user?.id,
         customer_id: finalCustomerId,
         courier_id: assignedCourier,
         status: assignedCourier ? 'in_transit' : 'pending',
+        sequence: assignedCourier ? 1 : undefined, // sequence provisório para nunca ser 0
+        route_released: assignedCourier ? true : false,
+        route_released_at: assignedCourier ? now.toISOString() : undefined,
+        route_started: assignedCourier ? true : false,
+        route_started_at: assignedCourier ? now.toISOString() : undefined,
+        ...baseDataForOrder,
         priority,
         items: validItems,
         total_price: totalPrice,
@@ -893,15 +923,14 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       })
 
       // Se atribuído diretamente a um entregador, disparar resequenciamento viário automático da rota ativa
+      // Executa de forma assíncrona para não bloquear a resposta do vendedor e garante sequência válida
       if (assignedCourier && createdOrder?.id) {
-        try {
-          await deliveryService.resequenceActiveRouteForCourier(assignedCourier)
-        } catch (reseqErr) {
+        deliveryService.resequenceActiveRouteForCourier(assignedCourier).catch((reseqErr) => {
           console.warn(
             'Erro ao resequenciar rota ativa após criação com entregador atribuído:',
             reseqErr,
           )
-        }
+        })
       }
 
       // Trigger automatic in-app notification
