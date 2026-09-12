@@ -87,7 +87,12 @@ import {
 import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificationSound'
 import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
 import { useAuth } from '@/contexts/AuthContext'
-import { calculateRouteWorkShift, type RouteWorkShiftMetrics } from '@/lib/routeWorkShift'
+import {
+  calculateRouteWorkShift,
+  type RouteWorkShiftMetrics,
+  type WorkShiftConfig,
+} from '@/lib/routeWorkShift'
+import type { AppSettingsRecord } from '@/types/delivery'
 
 interface ControlTowerProps {
   orders?: OrderRecord[]
@@ -169,6 +174,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const [orders, setOrders] = useState<OrderRecord[]>(initialOrders || [])
   const [couriers, setCouriers] = useState<UserRecord[]>(initialCouriers || [])
   const [locations, setLocations] = useState<LocationRecord[]>([])
+  const [appSettings, setAppSettings] = useState<AppSettingsRecord | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
 
@@ -397,6 +403,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         fetchedCouriers,
         fetchedLocations,
         fetchedDeviations,
+        fetchedSettings,
       ] = await Promise.all([
         deliveryService.getOrders(
           sellerOrdersFilter,
@@ -411,12 +418,16 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         deliveryService.getCouriers(),
         deliveryService.getLatestLocations(),
         deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
+        deliveryService.getSettings().catch(() => null),
       ])
       setOrders(fetchedOrders)
       setGlobalInTransitOrders(fetchedGlobalTransitOrders || [])
       setCouriers(fetchedCouriers)
       setLocations(fetchedLocations)
       setRecentDeviations(fetchedDeviations || [])
+      if (fetchedSettings) {
+        setAppSettings(fetchedSettings)
+      }
       setLastUpdated(new Date())
     } catch (err) {
       console.warn('Erro ao atualizar dados da Torre de Controle:', err)
@@ -1090,6 +1101,16 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             minute: '2-digit',
           })
 
+          // Configuração de jornada da empresa para cálculo de carga horária e janela de almoço
+          const shiftConfig: WorkShiftConfig | undefined = appSettings
+            ? {
+                workStartTime: appSettings.work_start_time,
+                lunchStartTime: appSettings.lunch_start_time,
+                lunchEndTime: appSettings.lunch_end_time,
+                workEndTime: appSettings.work_end_time,
+              }
+            : undefined
+
           // Cálculo do tempo estimado da rota inteira e cruzamento com a carga horária
           const shiftMetrics = calculateRouteWorkShift(
             etaMinutesReturnBase,
@@ -1098,6 +1119,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               primaryOrder.created ||
               undefined,
             nowTime,
+            shiftConfig,
           )
 
           const routeResult = {
@@ -1282,7 +1304,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     return () => {
       isCurrent = false
     }
-  }, [activeRouteCouriers, recentDeviations, toast])
+  }, [activeRouteCouriers, recentDeviations, toast, appSettings])
 
   // Marcadores formatados para o mapa vetorial e Google Maps
   const controlTowerMapMarkers = useMemo<MapMarkerItem[]>(() => {

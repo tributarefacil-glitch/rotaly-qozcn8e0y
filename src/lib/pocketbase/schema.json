@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T19:40:25.851Z",
+  "generatedAt": "2026-09-12T19:48:51.388Z",
   "collections": [
     {
       "name": "users",
@@ -753,6 +753,30 @@
         {
           "name": "caminhao_consumption_kml",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "work_start_time",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "lunch_start_time",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "lunch_end_time",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "work_end_time",
+          "type": "text",
           "required": false,
           "system": false
         }

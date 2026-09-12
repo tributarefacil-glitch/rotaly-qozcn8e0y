@@ -2168,13 +2168,26 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                         primaryOrder?.created ||
                         undefined
 
+                      const shiftConfig = settings
+                        ? {
+                            workStartTime: settings.work_start_time,
+                            lunchStartTime: settings.lunch_start_time,
+                            lunchEndTime: settings.lunch_end_time,
+                            workEndTime: settings.work_end_time,
+                          }
+                        : undefined
+
                       const shiftBefore = calculateRouteWorkShift(
                         currentEtaMins,
                         routeStartTimestamp,
+                        Date.now(),
+                        shiftConfig,
                       )
                       const shiftAfter = calculateRouteWorkShift(
                         withCandidateEtaMins,
                         routeStartTimestamp,
+                        Date.now(),
+                        shiftConfig,
                       )
 
                       // Excesso gerado especificamente pelo candidato ou excesso total pós-inclusão

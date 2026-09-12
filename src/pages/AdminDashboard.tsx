@@ -184,6 +184,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [carroConsInput, setCarroConsInput] = useState('12.0')
   const [caminhaoPriceInput, setCaminhaoPriceInput] = useState('5.59')
   const [caminhaoConsInput, setCaminhaoConsInput] = useState('7.0')
+
+  // Work Shift Settings (Jornada de Trabalho da Empresa)
+  const [workStartTimeInput, setWorkStartTimeInput] = useState('08:00')
+  const [lunchStartTimeInput, setLunchStartTimeInput] = useState('12:00')
+  const [lunchEndTimeInput, setLunchEndTimeInput] = useState('13:00')
+  const [workEndTimeInput, setWorkEndTimeInput] = useState('18:30')
+  const [isSavingShiftSettings, setIsSavingShiftSettings] = useState(false)
+
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [savingCategory, setSavingCategory] = useState<string | null>(null)
 
@@ -303,6 +311,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setCarroConsInput(String(appSettings.carro_consumption_kml ?? 12.0))
       setCaminhaoPriceInput(String(appSettings.caminhao_fuel_price ?? fallbackPrice))
       setCaminhaoConsInput(String(appSettings.caminhao_consumption_kml ?? 7.0))
+
+      // Jornada de Trabalho
+      setWorkStartTimeInput(appSettings.work_start_time || '08:00')
+      setLunchStartTimeInput(appSettings.lunch_start_time || '12:00')
+      setLunchEndTimeInput(appSettings.lunch_end_time || '13:00')
+      setWorkEndTimeInput(appSettings.work_end_time || '18:30')
     } catch (err) {
       console.error('Error loading admin data:', err)
       setLoadError('Não foi possível carregar os dados desta seção')
@@ -435,6 +449,50 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       toast.error('Erro ao salvar configurações.')
     } finally {
       setIsSavingSettings(false)
+    }
+  }
+
+  // Save Work Shift Settings (Jornada de Trabalho)
+  const handleSaveWorkShiftSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    setIsSavingShiftSettings(true)
+    try {
+      const timeRegex = /^([01]\d|2[0-3]):[0-5]\d$/
+      if (!timeRegex.test(workStartTimeInput.trim())) {
+        toast.error('Informe um horário de entrada válido no formato HH:mm (ex: 08:00).')
+        setIsSavingShiftSettings(false)
+        return
+      }
+      if (!timeRegex.test(lunchStartTimeInput.trim())) {
+        toast.error('Informe um horário de saída para almoço válido no formato HH:mm (ex: 12:00).')
+        setIsSavingShiftSettings(false)
+        return
+      }
+      if (!timeRegex.test(lunchEndTimeInput.trim())) {
+        toast.error('Informe um horário de volta do almoço válido no formato HH:mm (ex: 13:00).')
+        setIsSavingShiftSettings(false)
+        return
+      }
+      if (!timeRegex.test(workEndTimeInput.trim())) {
+        toast.error('Informe um horário de fim de expediente válido no formato HH:mm (ex: 18:30).')
+        setIsSavingShiftSettings(false)
+        return
+      }
+
+      const updated = await deliveryService.updateSettings({
+        work_start_time: workStartTimeInput.trim(),
+        lunch_start_time: lunchStartTimeInput.trim(),
+        lunch_end_time: lunchEndTimeInput.trim(),
+        work_end_time: workEndTimeInput.trim(),
+      })
+
+      setSettings(updated as AppSettingsRecord)
+      toast.success('Jornada de trabalho da empresa atualizada com sucesso!')
+    } catch (err) {
+      console.error('Error saving work shift settings:', err)
+      toast.error('Erro ao salvar jornada de trabalho.')
+    } finally {
+      setIsSavingShiftSettings(false)
     }
   }
 
@@ -1793,6 +1851,155 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       ℹ️ Caso um entregador não tenha veículo definido ou possua cadastro antigo, o
                       sistema aplica <strong>Moto (35 km/L)</strong> como fallback de segurança.
                     </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* CARD: JORNADA DE TRABALHO DA EMPRESA */}
+              <Card className="border-slate-200 dark:border-slate-800 shadow-sm max-w-4xl">
+                <CardHeader>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-white">
+                        <Clock className="h-5 w-5 text-blue-600" />
+                        Jornada de Trabalho da Empresa
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        Defina o horário padrão de entrada, intervalo de almoço e término do
+                        expediente. Estes horários alimentam diretamente o motor de cálculo da carga
+                        horária das rotas, projeção de volta à base e os alertas de jornada na Torre
+                        de Controle e Otimizador.
+                      </CardDescription>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() => handleSaveWorkShiftSettings()}
+                      disabled={isSavingShiftSettings}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 shrink-0 shadow-sm"
+                    >
+                      <Save className="h-4 w-4" />
+                      {isSavingShiftSettings ? 'Salvando Jornada...' : 'Salvar Jornada de Trabalho'}
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Grid de 4 Horários: Entrada, Saída Almoço, Volta Almoço, Fim do Expediente */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* 1. Entrada */}
+                    <div className="rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/30 dark:bg-blue-950/20 p-4 space-y-2">
+                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <span className="text-base">🟢</span>
+                        Entrada (Início)
+                      </Label>
+                      <p className="text-[11px] text-slate-500">Início da jornada diária</p>
+                      <Input
+                        type="time"
+                        value={workStartTimeInput}
+                        onChange={(e) => setWorkStartTimeInput(e.target.value)}
+                        className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
+                      />
+                      <span className="text-[10px] text-slate-400 block text-center">
+                        Ex: 08:00
+                      </span>
+                    </div>
+
+                    {/* 2. Saída para Almoço */}
+                    <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/30 dark:bg-amber-950/20 p-4 space-y-2">
+                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <span className="text-base">🍽️</span>
+                        Saída para Almoço
+                      </Label>
+                      <p className="text-[11px] text-slate-500">Início da pausa de almoço</p>
+                      <Input
+                        type="time"
+                        value={lunchStartTimeInput}
+                        onChange={(e) => setLunchStartTimeInput(e.target.value)}
+                        className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
+                      />
+                      <span className="text-[10px] text-slate-400 block text-center">
+                        Ex: 12:00
+                      </span>
+                    </div>
+
+                    {/* 3. Volta do Almoço */}
+                    <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/30 dark:bg-amber-950/20 p-4 space-y-2">
+                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <span className="text-base">☕</span>
+                        Volta do Almoço
+                      </Label>
+                      <p className="text-[11px] text-slate-500">Término da pausa de almoço</p>
+                      <Input
+                        type="time"
+                        value={lunchEndTimeInput}
+                        onChange={(e) => setLunchEndTimeInput(e.target.value)}
+                        className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
+                      />
+                      <span className="text-[10px] text-slate-400 block text-center">
+                        Ex: 13:00
+                      </span>
+                    </div>
+
+                    {/* 4. Fim do Expediente */}
+                    <div className="rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/30 dark:bg-rose-950/20 p-4 space-y-2">
+                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <span className="text-base">🏁</span>
+                        Fim do Expediente
+                      </Label>
+                      <p className="text-[11px] text-slate-500">Horário limite da carga horária</p>
+                      <Input
+                        type="time"
+                        value={workEndTimeInput}
+                        onChange={(e) => setWorkEndTimeInput(e.target.value)}
+                        className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
+                      />
+                      <span className="text-[10px] text-slate-400 block text-center">
+                        Ex: 18:30
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Resumo da Jornada e Explicação das Regras */}
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border text-xs space-y-2.5 text-slate-600 dark:text-slate-300">
+                    <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      Como esses horários impactam os cálculos de rota:
+                    </p>
+                    <ul className="list-disc list-inside space-y-1 text-[11px] leading-relaxed">
+                      <li>
+                        <strong>Término Projetado &amp; Volta à Base:</strong> Se a rota do
+                        entregador atravessar o intervalo de almoço (das{' '}
+                        <span className="font-mono font-bold text-amber-700 dark:text-amber-400">
+                          {lunchStartTimeInput || '12:00'}
+                        </span>{' '}
+                        às{' '}
+                        <span className="font-mono font-bold text-amber-700 dark:text-amber-400">
+                          {lunchEndTimeInput || '13:00'}
+                        </span>
+                        ), a duração da pausa é considerada no tempo total restante e no horário
+                        estimado de chegada.
+                      </li>
+                      <li>
+                        <strong>Badge de Carga Horária:</strong> Quando a previsão de término
+                        ultrapassar{' '}
+                        <span className="font-mono font-bold text-rose-700 dark:text-rose-400">
+                          {workEndTimeInput || '18:30'}
+                        </span>{' '}
+                        ou a jornada efetiva diária for excedida, o sistema exibe o badge{' '}
+                        <span className="font-bold text-amber-600">
+                          &quot;⚠️ Passa da carga horária (+X min)&quot;
+                        </span>
+                        . Caso contrário, exibe{' '}
+                        <span className="font-bold text-emerald-600">
+                          &quot;✓ Dentro da carga horária&quot;
+                        </span>
+                        .
+                      </li>
+                      <li>
+                        <strong>Aviso na Atribuição de Pedidos:</strong> Ao incluir novos clientes
+                        em rotas ativas no Otimizador ou pelo Vendedor, o impacto na jornada é
+                        projetado em tempo real comparando com estes parâmetros.
+                      </li>
+                    </ul>
                   </div>
                 </CardContent>
               </Card>

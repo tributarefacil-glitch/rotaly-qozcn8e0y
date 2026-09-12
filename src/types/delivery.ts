@@ -163,6 +163,10 @@ export interface AppSettingsRecord extends RecordModel {
   carro_consumption_kml?: number
   caminhao_fuel_price?: number
   caminhao_consumption_kml?: number
+  work_start_time?: string // Horário de entrada padrão (ex: "08:00")
+  lunch_start_time?: string // Saída para almoço (ex: "12:00")
+  lunch_end_time?: string // Retorno do almoço (ex: "13:00")
+  work_end_time?: string // Fim do expediente (ex: "18:30")
   extra?: Record<string, unknown>
 }
 

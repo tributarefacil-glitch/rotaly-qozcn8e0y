@@ -3513,7 +3513,19 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                               primaryOrder?.created ||
                               undefined
 
-                            const shift = calculateRouteWorkShift(etaMins, routeStartTimestamp)
+                            const shift = calculateRouteWorkShift(
+                              etaMins,
+                              routeStartTimestamp,
+                              Date.now(),
+                              appSettings
+                                ? {
+                                    workStartTime: appSettings.work_start_time,
+                                    lunchStartTime: appSettings.lunch_start_time,
+                                    lunchEndTime: appSettings.lunch_end_time,
+                                    workEndTime: appSettings.work_end_time,
+                                  }
+                                : undefined,
+                            )
 
                             return (
                               <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
@@ -5148,10 +5160,26 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   primaryOrder?.created ||
                   undefined
 
-                const shiftBefore = calculateRouteWorkShift(currentEtaMins, routeStartTimestamp)
+                const shiftConfig = appSettings
+                  ? {
+                      workStartTime: appSettings.work_start_time,
+                      lunchStartTime: appSettings.lunch_start_time,
+                      lunchEndTime: appSettings.lunch_end_time,
+                      workEndTime: appSettings.work_end_time,
+                    }
+                  : undefined
+
+                const shiftBefore = calculateRouteWorkShift(
+                  currentEtaMins,
+                  routeStartTimestamp,
+                  Date.now(),
+                  shiftConfig,
+                )
                 const shiftAfter = calculateRouteWorkShift(
                   withCandidateEtaMins,
                   routeStartTimestamp,
+                  Date.now(),
+                  shiftConfig,
                 )
                 const diffMinutes = Math.max(
                   0,
