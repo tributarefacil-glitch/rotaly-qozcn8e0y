@@ -485,24 +485,67 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         if (!isSubscribed) return
         const rec = e.record as unknown as OrderRecord
 
+        // ALTERAÇÃO 2: Ao receber update com route_finished === true ou status === 'delivered':
+        // remover imediatamente o courier do cache de rotas ativas, remover polilinhas e expurgar de globalInTransitOrders
+        const isRouteFinished = Boolean(rec.route_finished)
+
+        const affectedCourierId = rec.courier_id
+
+        if (affectedCourierId && (rec.route_finished === true || rec.status === 'delivered')) {
+          if (rec.route_finished === true) {
+            // Rota finalizada: limpa o cache de rotas do entregador imediatamente
+            activeRoutesCacheRef.current.delete(affectedCourierId)
+
+            // Remove polilinhas ativas no Google Maps nativo
+            if (googlePolylinesRef.current && googlePolylinesRef.current.length > 0) {
+              googlePolylinesRef.current.forEach((p) => {
+                try {
+                  p.setMap(null)
+                } catch {
+                  /* intentionally ignored */
+                }
+              })
+              googlePolylinesRef.current = []
+            }
+
+            // Remove o marcador animado do entregador no Google Maps nativo imediatamente
+            const courierMarker = courierMarkersMapRef.current.get(affectedCourierId)
+            if (courierMarker) {
+              try {
+                courierMarker.setMap(null)
+              } catch {
+                /* intentionally ignored */
+              }
+              courierMarkersMapRef.current.delete(affectedCourierId)
+            }
+            const animId = courierAnimFramesRef.current.get(affectedCourierId)
+            if (animId) {
+              cancelAnimationFrame(animId)
+              courierAnimFramesRef.current.delete(affectedCourierId)
+            }
+          }
+        }
+
         // Manter lista global de pedidos em trânsito sempre sincronizada (para todos os lojistas)
         if (e.action === 'delete') {
           setGlobalInTransitOrders((prev) => prev.filter((o) => o.id !== rec.id))
         } else {
           const isRecActiveRoute =
             rec.route_started === true &&
+            rec.route_finished !== true &&
             (rec.route_finished === false ||
               rec.route_finished === null ||
               rec.route_finished === undefined)
+
           setGlobalInTransitOrders((prev) => {
-            const exists = prev.some((o) => o.id === rec.id)
-            if (isRecActiveRoute) {
-              return exists
-                ? prev.map((o) => (o.id === rec.id ? { ...o, ...rec } : o))
-                : [rec, ...prev]
-            } else {
+            if (isRouteFinished || !isRecActiveRoute) {
+              // Expurgar imediatamente o registro defasado
               return prev.filter((o) => o.id !== rec.id)
             }
+            const exists = prev.some((o) => o.id === rec.id)
+            return exists
+              ? prev.map((o) => (o.id === rec.id ? { ...o, ...rec } : o))
+              : [rec, ...prev]
           })
         }
 
@@ -557,7 +600,6 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       .catch((err) => {
         console.warn('Torre de Controle: erro subscrição orders:', err)
       })
-
     // Subscribe to off_route_events (live deviation events)
     pb.collection('off_route_events')
       .subscribe('*', (e) => {
@@ -612,16 +654,38 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   }, [])
 
   // Today's orders
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], [])
+  // ALTERAÇÃO 3: Usar data local para hoje (evita divergência de fuso horário UTC vs Brasil).
+  // Incluir no todayOrders todo pedido status === 'delivered' cuja DATA DE ENTREGA seja hoje
+  // usando order.actual_arrival ou, na falta, order.updated, convertido para data LOCAL.
+  // Pedidos em rota / pending / assigned continuam entrando como hoje.
+  const todayStr = useMemo(() => new Date().toLocaleDateString('sv'), [])
   const todayOrders = useMemo(() => {
     return orders.filter((o) => {
-      const createdDate = o.created ? o.created.split('T')[0] : ''
-      return (
-        createdDate === todayStr ||
-        o.status === 'in_transit' ||
-        o.status === 'pending' ||
-        o.status === 'assigned'
-      )
+      // 1. Pedidos ativos/em andamento sempre visíveis na operação do dia
+      if (o.status === 'in_transit' || o.status === 'pending' || o.status === 'assigned') {
+        return true
+      }
+
+      // 2. Pedidos entregues: verificar data efetiva de entrega (actual_arrival ou updated em data local)
+      if (o.status === 'delivered') {
+        const deliveryTimestamp = o.actual_arrival || o.updated || o.created
+        if (deliveryTimestamp) {
+          const deliveryLocalDate = new Date(deliveryTimestamp).toLocaleDateString('sv')
+          if (deliveryLocalDate === todayStr) {
+            return true
+          }
+        }
+      }
+
+      // 3. Fallback por data de criação em data local
+      if (o.created) {
+        const createdLocalDate = new Date(o.created).toLocaleDateString('sv')
+        if (createdLocalDate === todayStr) {
+          return true
+        }
+      }
+
+      return false
     })
   }, [orders, todayStr])
 
@@ -734,10 +798,17 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
       // Entregas da rota iniciada atribuídas ao entregador que ainda não foram marcadas como route_finished
       const activeRouteOrdersForCourier = [
-        ...globalCourierTransit,
+        ...globalCourierTransit.filter(
+          (o) =>
+            o.route_started === true &&
+            o.route_finished !== true &&
+            (o.route_finished === false || o.route_finished == null),
+        ),
         ...courierLocalOrders.filter(
           (o) =>
-            o.route_started === true && (o.route_finished === false || o.route_finished == null),
+            o.route_started === true &&
+            o.route_finished !== true &&
+            (o.route_finished === false || o.route_finished == null),
         ),
       ]
       const uniqueCourierRouteOrders = Array.from(
@@ -1262,9 +1333,24 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         gps_reason: item.gps_reason,
         offline_buffered: item.offline_buffered,
       })
-    }) // 2. Destinos de entregas em trânsito e pendentes (marcador laranja com nome e número de sequência)
+    })
+
+    // 2. Destinos de entregas em rota ativa (marcador laranja com nome e número de sequência)
+    // REQUISITO ESTRITO: um pedido só gera pin se TODAS as condições:
+    // status !== 'delivered' && status !== 'cancelled' && route_started === true && route_finished !== true
+    // E o courier vinculado está no conjunto de entregadores com rota ativa (activeRouteCouriers)
+    const activeRouteCourierIdSet = new Set(activeRouteCouriers.map((c) => c.courier.id))
+
     todayOrders
-      .filter((o) => o.status === 'in_transit' || o.status === 'pending')
+      .filter((o) => {
+        return (
+          o.status !== 'delivered' &&
+          o.status !== 'cancelled' &&
+          o.route_started === true &&
+          o.route_finished !== true &&
+          Boolean(o.courier_id && activeRouteCourierIdSet.has(o.courier_id))
+        )
+      })
       .forEach((order) => {
         const cust = order.expand?.customer_id
         if (cust?.lat && cust?.lng) {
@@ -1850,9 +1936,22 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         newMarkers.push(courierMarker)
       })
 
-      // Pins: Destinos das entregas em trânsito e pendentes
+      // Pins: Destinos das entregas em rota ativa (Google Maps nativo)
+      // REQUISITO ESTRITO: um pedido só gera pin se TODAS as condições:
+      // status !== 'delivered' && status !== 'cancelled' && route_started === true && route_finished !== true
+      // E o courier vinculado está no conjunto de entregadores com rota ativa (activeRouteCouriers)
+      const nativeActiveCourierIds = new Set(activeRouteCouriers.map((c) => c.courier.id))
+
       todayOrders
-        .filter((o) => o.status === 'in_transit' || o.status === 'pending')
+        .filter((o) => {
+          return (
+            o.status !== 'delivered' &&
+            o.status !== 'cancelled' &&
+            o.route_started === true &&
+            o.route_finished !== true &&
+            Boolean(o.courier_id && nativeActiveCourierIds.has(o.courier_id))
+          )
+        })
         .forEach((order) => {
           const cust = order.expand?.customer_id
           if (cust?.lat && cust?.lng) {
@@ -1860,7 +1959,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             bounds.extend(destPos)
             hasCoords = true
 
-            const isTransit = order.status === 'in_transit'
+            const isTransit = order.status === 'in_transit' || order.route_started
             const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
             const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
             const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
