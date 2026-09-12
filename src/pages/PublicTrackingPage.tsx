@@ -4,12 +4,10 @@ import {
   Truck,
   MapPin,
   Clock,
-  CheckCircle2,
   Package,
   ArrowLeft,
   RefreshCw,
   AlertCircle,
-  Navigation,
   Star,
   MessageSquare,
   Check,
@@ -17,14 +15,10 @@ import {
   ChevronUp,
   Headphones,
   Share2,
-  Calendar,
-  Home,
   ThumbsUp,
   Crosshair,
   Store,
   ExternalLink,
-  ShieldCheck,
-  X,
 } from 'lucide-react'
 import { LiveMap, type MapMarkerItem, type RouteGeometryItem } from '@/components/LiveMap'
 import { deliveryService } from '@/services/deliveryService'
@@ -81,14 +75,7 @@ export default function PublicTrackingPage() {
   // Expansão do "Detalhe do envio"
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
 
-  // Modais dos 4 botões inferiores
-  const [isRescheduleModalOpen, setIsRescheduleModalOpen] = useState(false)
-  const [selectedRescheduleOption, setSelectedRescheduleOption] = useState<
-    'today' | 'next_business'
-  >('today')
-  const [rescheduleSavedNote, setRescheduleSavedNote] = useState<string | null>(null)
-
-  const [isRecipientModalOpen, setIsRecipientModalOpen] = useState(false)
+  // Modais dos botões inferiores e suporte
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false)
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false)
 
@@ -414,17 +401,6 @@ export default function PublicTrackingPage() {
     }
   }
 
-  // Confirmar preferência de recebimento
-  const handleConfirmReschedule = () => {
-    const note =
-      selectedRescheduleOption === 'today'
-        ? 'Cliente confirmou que pode receber hoje até as 23h.'
-        : 'Cliente solicitou receber no próximo dia útil (segunda-feira).'
-    setRescheduleSavedNote(note)
-    setIsRescheduleModalOpen(false)
-    toast.success('Preferência registrada! A loja será avisada.')
-  }
-
   // Determinar status amigável, título e subtítulo com base no print
   const statusInfo = useMemo(() => {
     if (!order) {
@@ -677,14 +653,6 @@ export default function PublicTrackingPage() {
                 </p>
               </div>
 
-              {/* Nota de reagendamento / preferência salva caso exista */}
-              {rescheduleSavedNote && (
-                <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-900 flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
-                  <span>{rescheduleSavedNote}</span>
-                </div>
-              )}
-
               {/* Linha do tempo horizontal (stepper): bolinha → linha → caminhão → linha → círculo */}
               <div className="pt-2 pb-1">
                 <div className="relative flex items-center justify-between px-3">
@@ -846,22 +814,10 @@ export default function PublicTrackingPage() {
               </div>
             </div>
 
-            {/* 3. BARRA INFERIOR DE AÇÕES (4 botões circulares azul-claro com ícone + legenda) */}
-            <div className="fixed sm:absolute bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200/80 px-3 py-2.5 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-              <div className="grid grid-cols-4 gap-1 max-w-[440px] mx-auto">
-                {/* 1. Receber */}
-                <button
-                  type="button"
-                  onClick={() => setIsRescheduleModalOpen(true)}
-                  className="flex flex-col items-center justify-center py-1 group"
-                >
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E0EFFF] text-[#0052CC] group-hover:bg-[#D0E5FF] group-active:scale-95 transition">
-                    <Calendar className="h-5 w-5" />
-                  </div>
-                  <span className="text-[10px] font-medium text-slate-700 mt-1">Receber</span>
-                </button>
-
-                {/* 2. Compartilhar */}
+            {/* 3. BARRA INFERIOR DE AÇÕES (2 botões: Compartilhar e Opinar sobre) */}
+            <div className="fixed sm:absolute bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200/80 px-6 py-2.5 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+              <div className="grid grid-cols-2 gap-4 max-w-[440px] mx-auto">
+                {/* 1. Compartilhar */}
                 <button
                   type="button"
                   onClick={handleShare}
@@ -870,22 +826,10 @@ export default function PublicTrackingPage() {
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E0EFFF] text-[#0052CC] group-hover:bg-[#D0E5FF] group-active:scale-95 transition">
                     <Share2 className="h-5 w-5" />
                   </div>
-                  <span className="text-[10px] font-medium text-slate-700 mt-1">Compartilhar</span>
+                  <span className="text-[11px] font-medium text-slate-700 mt-1">Compartilhar</span>
                 </button>
 
-                {/* 3. Entregar para */}
-                <button
-                  type="button"
-                  onClick={() => setIsRecipientModalOpen(true)}
-                  className="flex flex-col items-center justify-center py-1 group"
-                >
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E0EFFF] text-[#0052CC] group-hover:bg-[#D0E5FF] group-active:scale-95 transition">
-                    <Home className="h-5 w-5" />
-                  </div>
-                  <span className="text-[10px] font-medium text-slate-700 mt-1">Entregar para</span>
-                </button>
-
-                {/* 4. Opinar sobre a entrega */}
+                {/* 2. Opinar sobre a entrega */}
                 <button
                   type="button"
                   onClick={() => setIsReviewModalOpen(true)}
@@ -894,7 +838,7 @@ export default function PublicTrackingPage() {
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E0EFFF] text-[#0052CC] group-hover:bg-[#D0E5FF] group-active:scale-95 transition">
                     <ThumbsUp className="h-5 w-5" />
                   </div>
-                  <span className="text-[10px] font-medium text-slate-700 mt-1">Opinar sobre</span>
+                  <span className="text-[11px] font-medium text-slate-700 mt-1">Opinar sobre</span>
                 </button>
               </div>
             </div>
@@ -902,135 +846,7 @@ export default function PublicTrackingPage() {
         )}
       </div>
 
-      {/* MODAL 1: RECEBER / PREFERÊNCIA DE HORÁRIO */}
-      <Dialog open={isRescheduleModalOpen} onOpenChange={setIsRescheduleModalOpen}>
-        <DialogContent className="max-w-sm rounded-3xl p-5 bg-white text-slate-900 border-slate-200">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold font-heading">
-              Preferência de Recebimento
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500">
-              Escolha quando você prefere receber este pacote.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-2.5 py-2 text-xs">
-            <label
-              className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
-                selectedRescheduleOption === 'today'
-                  ? 'border-[#0052CC] bg-blue-50/50'
-                  : 'border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              <input
-                type="radio"
-                name="reschedule"
-                checked={selectedRescheduleOption === 'today'}
-                onChange={() => setSelectedRescheduleOption('today')}
-                className="mt-0.5 text-[#0052CC]"
-              />
-              <div>
-                <p className="font-bold text-slate-900">Receber hoje</p>
-                <p className="text-[11px] text-slate-600 mt-0.5">
-                  Confirmar que haverá alguém disponível até o fim do dia para receber.
-                </p>
-              </div>
-            </label>
-
-            <label
-              className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
-                selectedRescheduleOption === 'next_business'
-                  ? 'border-[#0052CC] bg-blue-50/50'
-                  : 'border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              <input
-                type="radio"
-                name="reschedule"
-                checked={selectedRescheduleOption === 'next_business'}
-                onChange={() => setSelectedRescheduleOption('next_business')}
-                className="mt-0.5 text-[#0052CC]"
-              />
-              <div>
-                <p className="font-bold text-slate-900">Receber na segunda-feira</p>
-                <p className="text-[11px] text-slate-600 mt-0.5">
-                  Caso prefira que a entrega seja reagendada para o próximo dia útil.
-                </p>
-              </div>
-            </label>
-          </div>
-
-          <div className="flex gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setIsRescheduleModalOpen(false)}
-              className="flex-1 text-xs rounded-xl h-10 border-slate-200"
-            >
-              Voltar
-            </Button>
-            <Button
-              type="button"
-              onClick={handleConfirmReschedule}
-              className="flex-1 text-xs font-bold rounded-xl h-10 bg-[#0052CC] hover:bg-blue-600 text-white"
-            >
-              Confirmar
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* MODAL 2: ENTREGAR PARA (DESTINATÁRIO) */}
-      <Dialog open={isRecipientModalOpen} onOpenChange={setIsRecipientModalOpen}>
-        <DialogContent className="max-w-sm rounded-3xl p-5 bg-white text-slate-900 border-slate-200">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold font-heading flex items-center gap-2">
-              <Home className="h-4 w-4 text-[#0052CC]" />
-              Dados do Destinatário
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500">
-              Endereço cadastrado para a entrega deste pacote.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 py-2 text-xs">
-            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
-              <span className="text-[10px] font-bold uppercase text-slate-500">
-                Nome do cliente
-              </span>
-              <p className="font-semibold text-slate-900 text-sm">{customer?.name || 'Cliente'}</p>
-            </div>
-
-            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
-              <span className="text-[10px] font-bold uppercase text-slate-500">
-                Endereço de entrega
-              </span>
-              <p className="font-medium text-slate-800 leading-relaxed">
-                {customer?.address || 'Endereço não informado'}
-              </p>
-            </div>
-
-            {order?.notes && (
-              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200/80 space-y-1">
-                <span className="text-[10px] font-bold uppercase text-amber-700">
-                  Observações de entrega
-                </span>
-                <p className="text-amber-900 font-medium">{order.notes}</p>
-              </div>
-            )}
-          </div>
-
-          <Button
-            type="button"
-            onClick={() => setIsRecipientModalOpen(false)}
-            className="w-full text-xs font-bold rounded-xl h-10 bg-slate-900 hover:bg-slate-800 text-white"
-          >
-            Fechar
-          </Button>
-        </DialogContent>
-      </Dialog>
-
-      {/* MODAL 3: OPINAR SOBRE A ENTREGA (AVALIAÇÃO EXISTENTE) */}
+      {/* MODAL: OPINAR SOBRE A ENTREGA (AVALIAÇÃO EXISTENTE) */}
       <Dialog open={isReviewModalOpen} onOpenChange={setIsReviewModalOpen}>
         <DialogContent className="max-w-sm rounded-3xl p-5 bg-white text-slate-900 border-slate-200 max-h-[90vh] overflow-y-auto">
           <DialogHeader>
