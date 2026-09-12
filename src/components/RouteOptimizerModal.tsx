@@ -71,6 +71,7 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { deliveryService } from '@/services/deliveryService'
+import { useRealtime } from '@/hooks/use-realtime'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import {
   BaseAddressAutocomplete,
@@ -574,6 +575,17 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     }
     wasOpenRef.current = open
   }, [open, couriers])
+
+  // Assinar realtime da coleção app_settings para refletir qualquer alteração de jornada na hora
+  useRealtime<AppSettingsRecord>(
+    'app_settings',
+    (e) => {
+      if (e.action === 'create' || e.action === 'update') {
+        setAppSettings(e.record)
+      }
+    },
+    open,
+  )
 
   useEffect(() => {
     const unsub = onGoogleMapsAuthError(() => {

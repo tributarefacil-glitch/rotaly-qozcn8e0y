@@ -267,6 +267,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   })
 
+  // Realtime hook for app_settings (horários de jornada da empresa e combustível atualizados pelo Admin)
+  useRealtime<AppSettingsRecord>('app_settings', (e) => {
+    if (e.action === 'create' || e.action === 'update') {
+      setSettings(e.record)
+    }
+  })
+
   // Realtime hook for seller notifications (off-route alerts with audible warning for seller)
   useRealtime<NotificationRecord>('notifications', async (e) => {
     if (

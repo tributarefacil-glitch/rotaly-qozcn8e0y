@@ -98,6 +98,7 @@ import {
 } from '@/components/ui/select'
 import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
+import { useRealtime } from '@/hooks/use-realtime'
 
 interface AdminDashboardProps {
   defaultTab?:
@@ -403,6 +404,35 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     loadData()
   }, [])
 
+  // Sincronizar inputs controlados sempre que settings mudar do backend
+  useEffect(() => {
+    if (settings) {
+      if (settings.work_start_time) setWorkStartTimeInput(settings.work_start_time)
+      if (settings.lunch_start_time) setLunchStartTimeInput(settings.lunch_start_time)
+      if (settings.lunch_end_time) setLunchEndTimeInput(settings.lunch_end_time)
+      if (settings.work_end_time) setWorkEndTimeInput(settings.work_end_time)
+    }
+  }, [settings])
+
+  // Assinar realtime da coleção app_settings para refletir qualquer alteração instantaneamente
+  useRealtime<AppSettingsRecord>('app_settings', (e) => {
+    if (e.action === 'update' || e.action === 'create') {
+      const rec = e.record
+      setSettings(rec)
+      if (rec.work_start_time) setWorkStartTimeInput(rec.work_start_time)
+      if (rec.lunch_start_time) setLunchStartTimeInput(rec.lunch_start_time)
+      if (rec.lunch_end_time) setLunchEndTimeInput(rec.lunch_end_time)
+      if (rec.work_end_time) setWorkEndTimeInput(rec.work_end_time)
+      if (rec.moto_fuel_price != null) setMotoPriceInput(String(rec.moto_fuel_price))
+      if (rec.moto_consumption_kml != null) setMotoConsInput(String(rec.moto_consumption_kml))
+      if (rec.carro_fuel_price != null) setCarroPriceInput(String(rec.carro_fuel_price))
+      if (rec.carro_consumption_kml != null) setCarroConsInput(String(rec.carro_consumption_kml))
+      if (rec.caminhao_fuel_price != null) setCaminhaoPriceInput(String(rec.caminhao_fuel_price))
+      if (rec.caminhao_consumption_kml != null)
+        setCaminhaoConsInput(String(rec.caminhao_consumption_kml))
+    }
+  })
+
   // Save Admin Settings (all categories in batch)
   const handleSaveAllFuelSettings = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -479,18 +509,29 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         return
       }
 
-      const updated = await deliveryService.updateSettings({
+      const updated = (await deliveryService.updateSettings({
         work_start_time: workStartTimeInput.trim(),
         lunch_start_time: lunchStartTimeInput.trim(),
         lunch_end_time: lunchEndTimeInput.trim(),
         work_end_time: workEndTimeInput.trim(),
-      })
+      })) as AppSettingsRecord
 
-      setSettings(updated as AppSettingsRecord)
+      // Atualizar inputs com o retorno garantido do backend
+      if (updated) {
+        setSettings(updated)
+        setWorkStartTimeInput(updated.work_start_time || workStartTimeInput.trim())
+        setLunchStartTimeInput(updated.lunch_start_time || lunchStartTimeInput.trim())
+        setLunchEndTimeInput(updated.lunch_end_time || lunchEndTimeInput.trim())
+        setWorkEndTimeInput(updated.work_end_time || workEndTimeInput.trim())
+      }
       toast.success('Jornada de trabalho da empresa atualizada com sucesso!')
-    } catch (err) {
+      await loadData()
+    } catch (err: unknown) {
       console.error('Error saving work shift settings:', err)
-      toast.error('Erro ao salvar jornada de trabalho.')
+      const errorMsg = getErrorMessage(err)
+      toast.error(
+        errorMsg ? `Erro ao salvar jornada: ${errorMsg}` : 'Erro ao salvar jornada de trabalho.',
+      )
     } finally {
       setIsSavingShiftSettings(false)
     }

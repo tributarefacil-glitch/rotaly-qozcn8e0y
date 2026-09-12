@@ -635,6 +635,19 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         console.warn('Torre de Controle: erro subscrição off_route_events:', err)
       })
 
+    // Subscribe to app_settings (live work shift & fuel updates)
+    pb.collection('app_settings')
+      .subscribe('*', (e) => {
+        if (!isSubscribed) return
+        if (e.action === 'create' || e.action === 'update') {
+          setAppSettings(e.record as unknown as AppSettingsRecord)
+          setLastUpdated(new Date())
+        }
+      })
+      .catch((err) => {
+        console.warn('Torre de Controle: erro subscrição app_settings:', err)
+      })
+
     return () => {
       isSubscribed = false
       pb.collection('locations')
@@ -644,6 +657,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         .unsubscribe('*')
         .catch(() => {})
       pb.collection('off_route_events')
+        .unsubscribe('*')
+        .catch(() => {})
+      pb.collection('app_settings')
         .unsubscribe('*')
         .catch(() => {})
     }
