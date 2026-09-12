@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T21:02:41.216Z",
+  "generatedAt": "2026-09-12T21:17:03.635Z",
   "collections": [
     {
       "name": "users",
@@ -222,6 +222,13 @@
           "type": "text",
           "required": false,
           "system": false
+        },
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
         }
       ],
       "indexes": [
@@ -229,7 +236,8 @@
         "CREATE INDEX idx_customers_phone ON customers (phone)",
         "CREATE INDEX `idx_customers_phone2` ON `customers` (phone2)",
         "CREATE INDEX `idx_customers_phone3` ON `customers` (phone3)",
-        "CREATE INDEX `idx_customers_document` ON `customers` (document)"
+        "CREATE INDEX `idx_customers_document` ON `customers` (document)",
+        "CREATE INDEX `idx_customers_empresa` ON `customers` (empresa_id)"
       ]
     },
     {
@@ -506,13 +514,21 @@
           "type": "date",
           "required": false,
           "system": false
+        },
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
         }
       ],
       "indexes": [
         "CREATE UNIQUE INDEX idx_orders_tracking_code ON orders (tracking_code)",
         "CREATE INDEX idx_orders_status ON orders (status)",
         "CREATE INDEX idx_orders_courier ON orders (courier_id)",
-        "CREATE INDEX idx_orders_customer ON orders (customer_id)"
+        "CREATE INDEX idx_orders_customer ON orders (customer_id)",
+        "CREATE INDEX `idx_orders_empresa` ON `orders` (empresa_id)"
       ]
     },
     {
@@ -1119,9 +1135,556 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
         }
       ],
-      "indexes": ["CREATE INDEX idx_base_addresses_type ON base_addresses (type)"]
+      "indexes": [
+        "CREATE INDEX idx_base_addresses_type ON base_addresses (type)",
+        "CREATE INDEX `idx_base_addresses_empresa` ON `base_addresses` (empresa_id)"
+      ]
+    },
+    {
+      "name": "empresas",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "nome_razao_social",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "nome_fantasia",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cnpj",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "logradouro",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "numero",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "complemento",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "bairro",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cidade",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "uf",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cep",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "endereco_completo",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "telefone",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "email",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ativa",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_empresas_cnpj ON empresas (cnpj)",
+        "CREATE INDEX idx_empresas_ativa ON empresas (ativa)"
+      ]
+    },
+    {
+      "name": "membros",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "user_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "papel",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["admin", "vendedor", "entregador", "gestor"]
+        },
+        {
+          "name": "ativo",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_membros_empresa_user ON membros (empresa_id, user_id)",
+        "CREATE INDEX idx_membros_user ON membros (user_id)"
+      ]
+    },
+    {
+      "name": "colaboradores",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "user_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "nome",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "email",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "telefone",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cpf",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cargo",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["entregador", "vendedor", "gerente", "motorista", "administrativo"]
+        },
+        {
+          "name": "tipo_veiculo",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["moto", "carro", "van", "caminhao", "bicicleta"]
+        },
+        {
+          "name": "placa_veiculo",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ativo",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_colaboradores_empresa ON colaboradores (empresa_id)",
+        "CREATE INDEX idx_colaboradores_user ON colaboradores (user_id)"
+      ]
+    },
+    {
+      "name": "rotas",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "codigo_rota",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["planejada", "em_andamento", "concluida", "cancelada"]
+        },
+        {
+          "name": "data_inicio",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_fim",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "distancia_km",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "tempo_estimado_minutos",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "custo_combustivel",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "dados_planejamento",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_rotas_empresa ON rotas (empresa_id)",
+        "CREATE INDEX idx_rotas_courier ON rotas (courier_id)"
+      ]
+    },
+    {
+      "name": "entregas",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "codigo_rastreio",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "order_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "orders"
+        },
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "destinatario_nome",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "destinatario_endereco",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": [
+            "pendente",
+            "em_transito",
+            "entregue",
+            "erro_endereco",
+            "ausente",
+            "cancelada"
+          ]
+        },
+        {
+          "name": "valor_total",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data_entrega",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "comprovante_foto",
+          "type": "file",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_entregas_empresa ON entregas (empresa_id)",
+        "CREATE INDEX idx_entregas_codigo ON entregas (codigo_rastreio)"
+      ]
+    },
+    {
+      "name": "relatorios",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "titulo",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "tipo",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["combustivel", "entregas", "desvios", "financeiro", "geral"]
+        },
+        {
+          "name": "periodo_inicio",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "periodo_fim",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "resumo",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gerado_por",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE INDEX idx_relatorios_empresa ON relatorios (empresa_id)"]
     }
   ]
 }

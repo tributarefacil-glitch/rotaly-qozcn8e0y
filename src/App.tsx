@@ -7,6 +7,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
+import { CompanyProvider } from '@/contexts/CompanyContext'
 import Layout from './components/Layout'
 import Index from './pages/Index'
 import RegisterPage from './pages/RegisterPage'
@@ -19,6 +20,7 @@ import CourierFuelPage from './pages/CourierFuelPage'
 import CourierHistoryPage from './pages/CourierHistoryPage'
 import CourierProfilePage from './pages/CourierProfilePage'
 import PublicTrackingPage from './pages/PublicTrackingPage'
+import CompaniesPage from './pages/CompaniesPage'
 import NotFound from './pages/NotFound'
 
 interface GlobalErrorBoundaryProps {
@@ -259,177 +261,197 @@ const App = () => (
   <BrowserRouter>
     <GlobalErrorBoundary>
       <AuthProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner richColors position="top-right" />
-          <Routes>
-            {/* Public Track Routes (com suporte a sufixos e variações de path) */}
-            <Route path="/track/:tracking_code" element={<PublicTrackingPage />} />
-            <Route path="/track" element={<PublicTrackingPage />} />
-            <Route path="/track/*" element={<PublicTrackingPage />} />
+        <CompanyProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner richColors position="top-right" />
+            <Routes>
+              {/* Public Track Routes (com suporte a sufixos e variações de path) */}
+              <Route path="/track/:tracking_code" element={<PublicTrackingPage />} />
+              <Route path="/track" element={<PublicTrackingPage />} />
+              <Route path="/track/*" element={<PublicTrackingPage />} />
 
-            {/* Authentication & Access Routes */}
-            <Route path="/" element={<Index />} />
-            <Route path="/login" element={<Index />} />
-            {/* Rota pública de registro desabilitada - exibe aviso claro e redireciona */}
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-            <Route path="/pending-approval" element={<PendingApprovalPage />} />
+              {/* Authentication & Access Routes */}
+              <Route path="/" element={<Index />} />
+              <Route path="/login" element={<Index />} />
+              {/* Rota pública de registro desabilitada - exibe aviso claro e redireciona */}
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/pending-approval" element={<PendingApprovalPage />} />
 
-            {/* Protected Seller & Admin Routes */}
-            <Route
-              path="/seller"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="overview" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/control-tower"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="control-tower" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/reports"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="reports" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/fuel"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="fuel" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/orders"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="overview" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/routes"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="control-tower" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/customers"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="customers" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/couriers"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <AdminDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/settings"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SettingsRoute />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/invoices"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="reports" />
-                </ProtectedRoute>
-              }
-            />
+              {/* Protected Seller & Admin Routes */}
+              <Route
+                path="/seller"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SellerDashboard defaultTab="overview" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/control-tower"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SellerDashboard defaultTab="control-tower" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/reports"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SellerDashboard defaultTab="reports" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/fuel"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SellerDashboard defaultTab="fuel" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/orders"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SellerDashboard defaultTab="overview" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/routes"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SellerDashboard defaultTab="control-tower" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/customers"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SellerDashboard defaultTab="customers" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/couriers"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <AdminDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SettingsRoute />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/invoices"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                    <SellerDashboard defaultTab="reports" />
+                  </ProtectedRoute>
+                }
+              />
 
-            {/* Protected Admin Executive Dashboard */}
-            <Route
-              path="/admin"
-              element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminDashboard defaultTab="overview" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/admin/users"
-              element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminDashboard defaultTab="couriers" />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/users"
-              element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminDashboard defaultTab="couriers" />
-                </ProtectedRoute>
-              }
-            />
+              {/* Multi-tenant Companies Management */}
+              <Route
+                path="/empresas"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <CompaniesPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/empresas"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <CompaniesPage />
+                  </ProtectedRoute>
+                }
+              />
 
-            {/* Protected Courier Mobile App */}
-            <Route
-              path="/courier"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                  <CourierApp />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/courier/fuel"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                  <CourierFuelPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/courier/tasks"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                  <CourierApp />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/courier/history"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                  <CourierHistoryPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/courier/profile"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                  <CourierProfilePage />
-                </ProtectedRoute>
-              }
-            />
+              {/* Protected Admin Executive Dashboard */}
+              <Route
+                path="/admin"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <AdminDashboard defaultTab="overview" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/users"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <AdminDashboard defaultTab="couriers" />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/users"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <AdminDashboard defaultTab="couriers" />
+                  </ProtectedRoute>
+                }
+              />
 
-            {/* Fallback 404 */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </TooltipProvider>
+              {/* Protected Courier Mobile App */}
+              <Route
+                path="/courier"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'courier']}>
+                    <CourierApp />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/courier/fuel"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'courier']}>
+                    <CourierFuelPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/courier/tasks"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'courier']}>
+                    <CourierApp />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/courier/history"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'courier']}>
+                    <CourierHistoryPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/courier/profile"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'courier']}>
+                    <CourierProfilePage />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Fallback 404 */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </TooltipProvider>
+        </CompanyProvider>
       </AuthProvider>
     </GlobalErrorBoundary>
   </BrowserRouter>

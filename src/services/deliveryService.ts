@@ -16,13 +16,124 @@ import type {
   VehicleType,
   BaseAddressRecord,
   BaseAddressType,
+  EmpresaRecord,
+  MembroRecord,
+  ColaboradorRecord,
+  RotaRecord,
+  EntregaRecord,
+  RelatorioRecord,
 } from '@/types/delivery'
 
 export const deliveryService = {
+  // Multi-tenant Empresas & Membros
+  async getEmpresas(filter = '', sort = 'nome_razao_social') {
+    return pb.collection<EmpresaRecord>('empresas').getFullList({
+      filter,
+      sort,
+      requestKey: null,
+    })
+  },
+
+  async getEmpresaById(id: string) {
+    return pb.collection<EmpresaRecord>('empresas').getOne(id, {
+      requestKey: null,
+    })
+  },
+
+  async createEmpresa(data: Partial<EmpresaRecord>) {
+    return pb.collection<EmpresaRecord>('empresas').create(data)
+  },
+
+  async updateEmpresa(id: string, data: Partial<EmpresaRecord>) {
+    return pb.collection<EmpresaRecord>('empresas').update(id, data)
+  },
+
+  async getMembros(filter = '', sort = '-created', expand = 'empresa_id,user_id') {
+    return pb.collection<MembroRecord>('membros').getFullList({
+      filter,
+      sort,
+      expand,
+      requestKey: null,
+    })
+  },
+
+  async createMembro(data: Partial<MembroRecord>) {
+    return pb.collection<MembroRecord>('membros').create(data)
+  },
+
+  async updateMembro(id: string, data: Partial<MembroRecord>) {
+    return pb.collection<MembroRecord>('membros').update(id, data)
+  },
+
+  async deleteMembro(id: string) {
+    return pb.collection<MembroRecord>('membros').delete(id)
+  },
+
+  // Multi-tenant Colaboradores, Rotas, Entregas, Relatórios
+  async getColaboradores(empresaId?: string) {
+    const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
+    return pb.collection<ColaboradorRecord>('colaboradores').getFullList({
+      filter,
+      sort: 'nome',
+      requestKey: null,
+    })
+  },
+
+  async createColaborador(data: Partial<ColaboradorRecord>) {
+    return pb.collection<ColaboradorRecord>('colaboradores').create(data)
+  },
+
+  async getRotas(empresaId?: string) {
+    const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
+    return pb.collection<RotaRecord>('rotas').getFullList({
+      filter,
+      sort: '-created',
+      requestKey: null,
+    })
+  },
+
+  async createRota(data: Partial<RotaRecord>) {
+    return pb.collection<RotaRecord>('rotas').create(data)
+  },
+
+  async getEntregas(empresaId?: string) {
+    const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
+    return pb.collection<EntregaRecord>('entregas').getFullList({
+      filter,
+      sort: '-created',
+      requestKey: null,
+    })
+  },
+
+  async createEntrega(data: Partial<EntregaRecord>) {
+    return pb.collection<EntregaRecord>('entregas').create(data)
+  },
+
+  async getRelatorios(empresaId?: string) {
+    const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
+    return pb.collection<RelatorioRecord>('relatorios').getFullList({
+      filter,
+      sort: '-created',
+      requestKey: null,
+    })
+  },
+
+  async createRelatorio(data: Partial<RelatorioRecord>) {
+    return pb.collection<RelatorioRecord>('relatorios').create(data)
+  },
+
   // Orders
   async getOrders(filter = '', sort = '-created', expand = 'customer_id,courier_id,seller_id') {
+    // Injeção automática e segura de empresa_id se disponível no storage e não filtrado explicitamente
+    let finalFilter = filter
+    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
+    if (activeCompanyId && !filter.includes('empresa_id') && !filter.includes('tracking_code')) {
+      const companyClause = `(empresa_id = '${activeCompanyId}' || empresa_id = '' || empresa_id = null)`
+      finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
+    }
+
     return pb.collection<OrderRecord>('orders').getFullList({
-      filter,
+      filter: finalFilter,
       sort,
       expand,
       requestKey: null,
@@ -95,7 +206,12 @@ export const deliveryService = {
   },
 
   async createOrder(data: Partial<OrderRecord>) {
-    return pb.collection<OrderRecord>('orders').create(data)
+    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
+    const payload = {
+      ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+    }
+    return pb.collection<OrderRecord>('orders').create(payload)
   },
 
   async updateOrder(id: string, data: Partial<OrderRecord> | FormData) {
@@ -107,8 +223,16 @@ export const deliveryService = {
   },
 
   // Customers
-  async getCustomers() {
+  async getCustomers(customFilter = '') {
+    let finalFilter = customFilter
+    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
+    if (activeCompanyId && !customFilter.includes('empresa_id')) {
+      const companyClause = `(empresa_id = '${activeCompanyId}' || empresa_id = '' || empresa_id = null)`
+      finalFilter = customFilter ? `(${customFilter}) && ${companyClause}` : companyClause
+    }
+
     return pb.collection<CustomerRecord>('customers').getFullList({
+      filter: finalFilter,
       sort: 'name',
       requestKey: null,
     })
@@ -236,7 +360,12 @@ export const deliveryService = {
   },
 
   async createCustomer(data: Partial<CustomerRecord>) {
-    return pb.collection<CustomerRecord>('customers').create(data)
+    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
+    const payload = {
+      ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+    }
+    return pb.collection<CustomerRecord>('customers').create(payload)
   },
 
   async updateCustomer(id: string, data: Partial<CustomerRecord>) {

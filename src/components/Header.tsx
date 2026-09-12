@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCompany } from '@/contexts/CompanyContext'
 import { RotalyLogo } from '@/components/RotalyLogo'
 import { deliveryService } from '@/services/deliveryService'
 import type { NotificationRecord } from '@/types/delivery'
@@ -30,11 +31,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Building2, ChevronDown } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { toast } from 'sonner'
 
 export const Header: React.FC = () => {
   const { user, role, logout } = useAuth()
+  const { currentCompany, allCompanies, setCurrentCompany, hasMultiCompanyAccess } = useCompany()
   const navigate = useNavigate()
   const [searchTracking, setSearchTracking] = useState('')
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
@@ -125,6 +128,74 @@ export const Header: React.FC = () => {
           </span>
           <span className="text-[11px] font-sans tracking-wide">GPS &amp; Realtime Ativo</span>
         </div>
+
+        {/* Multi-Tenant Active Company Switcher */}
+        {currentCompany && (
+          <div className="hidden lg:flex items-center">
+            {hasMultiCompanyAccess && allCompanies.length > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-2 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2.5 text-xs text-white hover:bg-[#121E46]"
+                  >
+                    <Building2 className="h-3.5 w-3.5 text-[#FF6B35]" />
+                    <span className="max-w-[130px] truncate font-semibold">
+                      {currentCompany.nome_fantasia || currentCompany.nome_razao_social}
+                    </span>
+                    <ChevronDown className="h-3 w-3 text-slate-400" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="w-56 bg-[#0E1738] border-[#1E2B58] text-white"
+                >
+                  <DropdownMenuLabel className="text-[10px] uppercase text-slate-400 font-bold">
+                    Alternar Empresa
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator className="bg-[#1E2B58]" />
+                  {allCompanies.map((emp) => (
+                    <DropdownMenuItem
+                      key={emp.id}
+                      onClick={() => {
+                        setCurrentCompany(emp)
+                        toast.success(
+                          `Empresa ativa: ${emp.nome_fantasia || emp.nome_razao_social}`,
+                        )
+                      }}
+                      className={`text-xs flex items-center justify-between cursor-pointer ${
+                        currentCompany.id === emp.id ? 'bg-[#0052CC] text-white font-bold' : ''
+                      }`}
+                    >
+                      <span className="truncate">{emp.nome_fantasia || emp.nome_razao_social}</span>
+                      {currentCompany.id === emp.id && <CheckCircle2 className="h-3 w-3" />}
+                    </DropdownMenuItem>
+                  ))}
+                  {role === 'admin' && (
+                    <>
+                      <DropdownMenuSeparator className="bg-[#1E2B58]" />
+                      <DropdownMenuItem
+                        onClick={() => navigate('/empresas')}
+                        className="text-xs text-[#60A5FA] cursor-pointer"
+                      >
+                        <Building2 className="mr-2 h-3.5 w-3.5" />
+                        Gerenciar Empresas
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <div className="flex items-center gap-1.5 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2.5 py-1 text-xs text-slate-300">
+                <Building2 className="h-3.5 w-3.5 text-[#FF6B35]" />
+                <span className="max-w-[140px] truncate font-medium">
+                  {currentCompany.nome_fantasia || currentCompany.nome_razao_social}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Center section: Global Tracking Code Search */}
@@ -278,10 +349,16 @@ export const Header: React.FC = () => {
               <span>Ir para Meu Painel</span>
             </DropdownMenuItem>
             {role === 'admin' && (
-              <DropdownMenuItem onClick={() => navigate('/admin')}>
-                <Shield className="mr-2 h-4 w-4" />
-                <span>Painel Admin & KPIs</span>
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuItem onClick={() => navigate('/admin')}>
+                  <Shield className="mr-2 h-4 w-4" />
+                  <span>Painel Admin & KPIs</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate('/empresas')}>
+                  <Building2 className="mr-2 h-4 w-4" />
+                  <span>Gestão de Empresas</span>
+                </DropdownMenuItem>
+              </>
             )}
             <DropdownMenuItem onClick={() => navigate('/track/TRK-2025-001')}>
               <ExternalLink className="mr-2 h-4 w-4" />

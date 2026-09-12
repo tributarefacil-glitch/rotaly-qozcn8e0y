@@ -12,6 +12,7 @@ import {
   FileText,
   Users,
   Search,
+  Building2,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Badge } from '@/components/ui/badge'
@@ -32,6 +33,13 @@ const navItems: NavItem[] = [
     href: '/admin',
     icon: LayoutDashboard,
     roles: ['admin'],
+  },
+  {
+    title: 'Empresas & Multi-Tenant',
+    href: '/empresas',
+    icon: Building2,
+    roles: ['admin'],
+    badge: 'Tenant',
   },
   {
     title: 'Painel do Lojista',

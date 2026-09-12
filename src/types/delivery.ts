@@ -13,6 +13,85 @@ export type VehicleType =
   | 'bicycle'
   | 'bicicleta'
 
+export interface EmpresaRecord extends RecordModel {
+  nome_razao_social: string
+  nome_fantasia?: string
+  cnpj?: string
+  logradouro?: string
+  numero?: string
+  complemento?: string
+  bairro?: string
+  cidade?: string
+  uf?: string
+  cep?: string
+  endereco_completo?: string
+  telefone?: string
+  email?: string
+  ativa?: boolean
+}
+
+export type MembroPapel = 'admin' | 'vendedor' | 'entregador' | 'gestor'
+
+export interface MembroRecord extends RecordModel {
+  empresa_id: string
+  user_id: string
+  papel?: MembroPapel
+  ativo?: boolean
+  expand?: {
+    empresa_id?: EmpresaRecord
+    user_id?: UserRecord
+  }
+}
+
+export interface ColaboradorRecord extends RecordModel {
+  empresa_id: string
+  user_id?: string
+  nome: string
+  email?: string
+  telefone?: string
+  cpf?: string
+  cargo?: 'entregador' | 'vendedor' | 'gerente' | 'motorista' | 'administrativo'
+  tipo_veiculo?: string
+  placa_veiculo?: string
+  ativo?: boolean
+}
+
+export interface RotaRecord extends RecordModel {
+  empresa_id: string
+  courier_id?: string
+  codigo_rota?: string
+  status?: 'planejada' | 'em_andamento' | 'concluida' | 'cancelada'
+  data_inicio?: string
+  data_fim?: string
+  distancia_km?: number
+  tempo_estimado_minutos?: number
+  custo_combustivel?: number
+  dados_planejamento?: any
+}
+
+export interface EntregaRecord extends RecordModel {
+  empresa_id: string
+  codigo_rastreio: string
+  order_id?: string
+  courier_id?: string
+  destinatario_nome?: string
+  destinatario_endereco?: string
+  status?: 'pendente' | 'em_transito' | 'entregue' | 'erro_endereco' | 'ausente' | 'cancelada'
+  valor_total?: number
+  data_entrega?: string
+  comprovante_foto?: string
+}
+
+export interface RelatorioRecord extends RecordModel {
+  empresa_id: string
+  titulo: string
+  tipo?: 'combustivel' | 'entregas' | 'desvios' | 'financeiro' | 'geral'
+  periodo_inicio?: string
+  periodo_fim?: string
+  resumo?: any
+  gerado_por?: string
+}
+
 export interface UserRecord extends RecordModel {
   email: string
   name: string
@@ -30,6 +109,7 @@ export interface UserRecord extends RecordModel {
 }
 
 export interface CustomerRecord extends RecordModel {
+  empresa_id?: string
   name: string
   phone: string
   phone2?: string
@@ -98,6 +178,7 @@ export interface BaseAddressRecord extends RecordModel {
 }
 
 export interface OrderRecord extends RecordModel {
+  empresa_id?: string
   seller_id?: string
   customer_id: string
   courier_id?: string
