@@ -1,9 +1,12 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import React, { Component, ErrorInfo, ReactNode } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { AlertTriangle, RefreshCw, Home, ShieldAlert } from 'lucide-react'
 import { Toaster } from '@/components/ui/toaster'
 import { Toaster as Sonner } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
-import GlobalErrorBoundary from '@/components/GlobalErrorBoundary'
 import Layout from './components/Layout'
 import Index from './pages/Index'
 import RegisterPage from './pages/RegisterPage'
@@ -18,7 +21,145 @@ import CourierProfilePage from './pages/CourierProfilePage'
 import PublicTrackingPage from './pages/PublicTrackingPage'
 import NotFound from './pages/NotFound'
 
-// Role Guard Component with User Status verification
+interface GlobalErrorBoundaryProps {
+  children: ReactNode
+}
+
+interface GlobalErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+  errorInfo: ErrorInfo | null
+}
+
+// Fallback UI for GlobalErrorBoundary (Dark Navy #0A1128 theme)
+function GlobalErrorFallback({
+  error,
+  errorInfo,
+  onReset,
+}: {
+  error: Error | null
+  errorInfo: ErrorInfo | null
+  onReset: () => void
+}) {
+  const navigate = useNavigate()
+
+  const handleGoHome = () => {
+    onReset()
+    navigate('/')
+  }
+
+  const handleReload = () => {
+    window.location.reload()
+  }
+
+  return (
+    <div className="min-h-screen w-full bg-[#0A1128] text-slate-100 flex items-center justify-center p-4 select-none relative overflow-hidden">
+      {/* Background glow graphics */}
+      <div className="absolute -top-32 -left-32 w-80 h-80 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-[#FF6B35]/15 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="max-w-md w-full relative z-10">
+        <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-2xl rounded-2xl overflow-hidden">
+          <div className="h-1.5 w-full bg-gradient-to-r from-[#FF6B35] via-amber-500 to-[#0052CC]" />
+
+          <CardHeader className="text-center pt-8 pb-4">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mb-2 shadow-inner">
+              <AlertTriangle className="h-7 w-7 text-amber-400" />
+            </div>
+            <CardTitle className="font-heading text-xl font-bold text-white tracking-tight">
+              Algo saiu do trilho
+            </CardTitle>
+            <CardDescription className="text-slate-300 text-xs sm:text-sm mt-1 leading-relaxed">
+              Tivemos um problema ao exibir esta tela.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-5 px-6 pb-6">
+            {error && (
+              <details className="rounded-xl border border-[#1E2B58] bg-[#0A1128] p-3 text-xs text-slate-300">
+                <summary className="cursor-pointer font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1.5 outline-none select-none">
+                  <span>Detalhes do erro para debug</span>
+                </summary>
+                <div className="mt-2.5 space-y-1.5 font-mono text-[11px] text-slate-300 overflow-x-auto max-h-40 whitespace-pre-wrap bg-black/40 p-2.5 rounded-lg border border-white/5">
+                  <p className="text-rose-400 font-bold">{error.toString()}</p>
+                  {errorInfo?.componentStack && (
+                    <p className="text-slate-400 text-[10px] mt-1">{errorInfo.componentStack}</p>
+                  )}
+                </div>
+              </details>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <Button
+                onClick={handleReload}
+                className="flex-1 h-10 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-md rounded-xl transition-all"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Recarregar página
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleGoHome}
+                className="flex-1 h-10 gap-2 border-[#1E2B58] bg-[#0A1128] hover:bg-[#121E46] text-slate-200 hover:text-white text-xs font-semibold rounded-xl"
+              >
+                <Home className="h-4 w-4 text-[#60A5FA]" />
+                Ir para o início
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+// CORREÇÃO 1: GlobalErrorBoundary class component wrapping all routes inside BrowserRouter
+export class GlobalErrorBoundary extends Component<
+  GlobalErrorBoundaryProps,
+  GlobalErrorBoundaryState
+> {
+  constructor(props: GlobalErrorBoundaryProps) {
+    super(props)
+    this.state = {
+      hasError: false,
+      error: null,
+      errorInfo: null,
+    }
+  }
+
+  static getDerivedStateFromError(error: Error): Partial<GlobalErrorBoundaryState> {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error(
+      'GlobalErrorBoundary caught an unhandled error:',
+      error,
+      errorInfo?.componentStack,
+    )
+    this.setState({ errorInfo })
+  }
+
+  handleReset = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null })
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <GlobalErrorFallback
+          error={this.state.error}
+          errorInfo={this.state.errorInfo}
+          onReset={this.handleReset}
+        />
+      )
+    }
+
+    return this.props.children
+  }
+}
+
+// CORREÇÃO 4: Role Guard Component with Loop Prevention & Safe State
 function ProtectedRoute({
   children,
   allowedRoles,
@@ -27,24 +168,39 @@ function ProtectedRoute({
   allowedRoles?: ('admin' | 'seller' | 'courier')[]
 }) {
   const { user, role, isLoading, isAuthenticated } = useAuth()
+  const location = useLocation()
 
+  // Se ainda estiver carregando a sessão/perfil, exibe tela de loading elegante no tema Dark Navy
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+      <div className="flex min-h-screen items-center justify-center bg-[#0A1128] text-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-9 w-9 animate-spin rounded-full border-4 border-[#0052CC] border-t-transparent shadow-brand" />
+          <span className="font-heading text-xs font-semibold text-slate-300 tracking-wider uppercase">
+            Carregando sessão...
+          </span>
+        </div>
       </div>
     )
   }
 
+  // Se não autenticado ou sem usuário, redireciona para login preservando o state.from sem entrar em loop
   if (!isAuthenticated || !user) {
-    return <Navigate to="/login" replace />
+    if (location.pathname === '/login' || location.pathname === '/') {
+      return <>{children}</>
+    }
+    return <Navigate to="/login" state={{ from: location }} replace />
   }
 
   // Check courier approval status: pending or inactive couriers are directed to pending approval page
   if (role === 'courier' && (user.status === 'pending' || user.status === 'inactive')) {
-    return <Navigate to="/pending-approval" replace />
+    if (location.pathname !== '/pending-approval') {
+      return <Navigate to="/pending-approval" replace />
+    }
+    return <>{children}</>
   }
 
+  // Role verification
   if (allowedRoles && !allowedRoles.includes(role)) {
     if (role === 'courier') return <Navigate to="/courier" replace />
     if (role === 'admin') return <Navigate to="/admin" replace />
@@ -54,13 +210,58 @@ function ProtectedRoute({
   return <>{children}</>
 }
 
+// CORREÇÃO 2 & 3: Componente dedicado para a rota /settings
+// - Garante que se o perfil for não-admin (ex: vendedor), exibe cartão informativo sem quebrar nem tentar carregar dados de admin
+// - Se for admin, renderiza o painel com defaultTab="settings"
+function SettingsRoute() {
+  const { role } = useAuth()
+  const navigate = useNavigate()
+
+  if (role !== 'admin') {
+    return (
+      <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-center items-center p-4 sm:p-6">
+        <div className="max-w-md w-full">
+          <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl overflow-hidden">
+            <div className="h-1.5 w-full bg-[#FF6B35]" />
+            <CardHeader className="text-center pt-6 pb-2">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 mb-2">
+                <ShieldAlert className="h-6 w-6" />
+              </div>
+              <CardTitle className="font-heading text-lg font-bold text-white">
+                Acesso Restrito
+              </CardTitle>
+              <CardDescription className="text-slate-300 text-xs mt-1">
+                Você não tem permissão para acessar esta seção.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-2 pb-6">
+              <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+                As configurações globais e parâmetros de combustível são reservados para o perfil
+                Administrador.
+              </p>
+              <Button
+                onClick={() => navigate(role === 'courier' ? '/courier' : '/seller')}
+                className="w-full h-10 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs rounded-xl shadow-brand"
+              >
+                Voltar para Meu Painel
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
+  return <AdminDashboard defaultTab="settings" />
+}
+
 const App = () => (
   <BrowserRouter>
-    <AuthProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner richColors position="top-right" />
-        <GlobalErrorBoundary>
+    <GlobalErrorBoundary>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner richColors position="top-right" />
           <Routes>
             {/* Public Track Routes (com suporte a sufixos e variações de path) */}
             <Route path="/track/:tracking_code" element={<PublicTrackingPage />} />
@@ -76,14 +277,6 @@ const App = () => (
             <Route path="/pending-approval" element={<PendingApprovalPage />} />
 
             {/* Protected Seller & Admin Routes */}
-            <Route
-              path="/seller"
-              element={
-                <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <SellerDashboard defaultTab="overview" />
-                </ProtectedRoute>
-              }
-            />
             <Route
               path="/control-tower"
               element={
@@ -144,7 +337,7 @@ const App = () => (
               path="/settings"
               element={
                 <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                  <AdminDashboard />
+                  <SettingsRoute />
                 </ProtectedRoute>
               }
             />
@@ -220,9 +413,9 @@ const App = () => (
             {/* Fallback 404 */}
             <Route path="*" element={<NotFound />} />
           </Routes>
-        </GlobalErrorBoundary>
-      </TooltipProvider>
-    </AuthProvider>
+        </TooltipProvider>
+      </AuthProvider>
+    </GlobalErrorBoundary>
   </BrowserRouter>
 )
 
