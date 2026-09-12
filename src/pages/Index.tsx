@@ -87,7 +87,7 @@ export default function Index() {
       console.error('Quick login error:', err)
       const msg = getErrorMessage(
         err,
-        'Falha ao autenticar com as credenciais rápidas. Verifique se o usuário e senha (Skip@Pass) estão corretos.',
+        'Credenciais inválidas. Verifique seu e-mail e senha cadastrados.',
       )
       setLoginError(msg)
       toast.error(msg)

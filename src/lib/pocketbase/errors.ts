@@ -20,13 +20,42 @@ export function extractFieldErrors(error: unknown): FieldErrors {
   return errors
 }
 
-export function getErrorMessage(
-  error: unknown,
-  fallbackMessage = 'An unexpected error occurred.',
-): string {
+export function getErrorMessage(error: unknown, fallback?: string): string {
   if (!(error instanceof ClientResponseError)) {
-    return error instanceof Error ? error.message : fallbackMessage
+    if (error instanceof Error && error.message) {
+      return error.message
+    }
+    return fallback || 'Ocorreu um erro inesperado.'
   }
+
+  // Handle common HTTP status codes with user-friendly PT-BR messages
+  if (error.status === 400) {
+    const msgs = Object.values(extractFieldErrors(error))
+    if (msgs.length > 0) return msgs.join(' ')
+    if (error.message && !error.message.includes('Something went wrong')) {
+      return error.message
+    }
+    return fallback || 'Dados inválidos ou credenciais incorretas.'
+  }
+
+  if (error.status === 401 || error.status === 403) {
+    return 'E-mail ou senha incorretos. Verifique suas credenciais.'
+  }
+
+  if (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504) {
+    return 'Não foi possível conectar ao servidor. Verifique sua conexão ou tente novamente mais tarde.'
+  }
+
   const msgs = Object.values(extractFieldErrors(error))
-  return msgs.length > 0 ? msgs.join(' ') : error.message || fallbackMessage
+  if (msgs.length > 0) return msgs.join(' ')
+
+  if (
+    error.message &&
+    error.message !== 'Something went wrong.' &&
+    error.message !== 'Failed to authenticate.'
+  ) {
+    return error.message
+  }
+
+  return fallback || 'Falha ao processar solicitação. Tente novamente.'
 }
