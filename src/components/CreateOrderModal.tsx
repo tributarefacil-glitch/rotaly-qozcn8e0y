@@ -726,15 +726,40 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         return
       }
 
-      // Sanitizar coordenadas lat/lng
-      const parsedLat =
+      // Validação de coordenadas: nunca gravar silenciosamente fallback do Centro do RJ sem aviso
+      let parsedLat =
         typeof selectedCoords.lat === 'number' && !isNaN(selectedCoords.lat)
           ? selectedCoords.lat
           : Number(selectedCoords.lat) || undefined
-      const parsedLng =
+      let parsedLng =
         typeof selectedCoords.lng === 'number' && !isNaN(selectedCoords.lng)
           ? selectedCoords.lng
           : Number(selectedCoords.lng) || undefined
+
+      const isDefaultCoords =
+        !parsedLat ||
+        !parsedLng ||
+        (Math.abs(parsedLat - -22.906847) < 0.0001 && Math.abs(parsedLng - -43.172896) < 0.0001)
+
+      if (isDefaultCoords && !hasLocationPinned) {
+        // Tentar resolver pelo endereço antes de salvar
+        try {
+          const geocoded = await fallbackGeocodeAddress(combinedAddress || streetAndNumber.trim())
+          if (
+            geocoded &&
+            typeof geocoded.lat === 'number' &&
+            !(
+              Math.abs(geocoded.lat - -22.906847) < 0.0001 &&
+              Math.abs(geocoded.lng - -43.172896) < 0.0001
+            )
+          ) {
+            parsedLat = geocoded.lat
+            parsedLng = geocoded.lng
+          }
+        } catch {
+          // segue
+        }
+      }
 
       const cleanPhone2 = newCustPhone2.trim() ? sanitizePhone(newCustPhone2) : undefined
       const cleanPhone3 = newCustPhone3.trim() ? sanitizePhone(newCustPhone3) : undefined

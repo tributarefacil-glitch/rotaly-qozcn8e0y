@@ -2348,54 +2348,64 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const isoNow = new Date(now).toISOString()
 
       for (const plan of optimizationResult.courierPlans) {
-        // Revisão de rateio do retorno:
-        // 1. Se a distância base->destino < 100m (malote / mesmo local), return_trip_km = 0.
-        // 2. Para entregas normais, o rateio do retorno deve ser proporcional à distância da parada
-        //    (ou ponderado) para que entregas vizinhas à base (< 1 km) não herdem km de volta inflado.
+        // Rateio exato do percurso total (ida + paradas + volta) entre as entregas do lote
+        // para garantir COERÊNCIA MATEMÁTICA ESTRITA:
+        // soma das linhas (distance_km + return_trip_km) === plan.total_distance_km
+        // soma dos fuel_cost === plan.estimated_fuel_cost
+        const totalPlanStops = plan.stops.length
+        const planTotalKm = Number(plan.total_distance_km) || 0
+        const planTotalFuel = Number(plan.estimated_fuel_cost) || 0
+
         const totalOutboundPlanMeters = plan.stops.reduce(
           (sum, s) => sum + (s.step_distance_meters || 0),
           0,
         )
         const totalReturnKm = plan.return_distance_km || 0
 
+        let allocatedReturnSum = 0
+        let allocatedFuelSum = 0
+
         for (let i = 0; i < plan.stops.length; i++) {
           const stop = plan.stops[i]
+          const isLastStop = i === plan.stops.length - 1
           const etaTimestamp = new Date(now + (20 + i * 15) * 60 * 1000).toISOString()
           const stopDistanceKm = Number((stop.step_distance_meters / 1000).toFixed(2))
 
-          // Distância real entre a base e esta parada (Haversine × 1.3 fator rodoviário mínimo saneado)
-          const baseLat = plan.start_base?.lat || -22.7001402
-          const baseLng = plan.start_base?.lng || -43.2982834
-          const distToBaseMeters = haversineDistance(baseLat, baseLng, stop.lat, stop.lng)
-          const minRoadDistKm = Number(((distToBaseMeters / 1000) * 1.3).toFixed(2))
-
           let stopReturnKm = 0
-          if (distToBaseMeters < 100) {
-            // Malote / Destino = Base: sem retorno
-            stopReturnKm = 0
-          } else if (plan.stops.length === 1) {
-            // Entrega única: o retorno é exatamente a volta da entrega (mínimo real viário)
-            stopReturnKm = Math.max(totalReturnKm, minRoadDistKm)
-          } else {
-            // Retorno viário real da parada até a base: haversine x 1.3 fator viário mínimo saneado,
-            // nunca valores ínfimos espúrios (como 0.13 km para uma parada a 2.9 km da base)
-            const sharedReturnAlloc =
+          if (totalPlanStops === 1) {
+            stopReturnKm = Number(totalReturnKm.toFixed(2))
+            allocatedReturnSum += stopReturnKm
+          } else if (!isLastStop) {
+            const rawShare =
               totalOutboundPlanMeters > 0
                 ? (totalReturnKm * (stop.step_distance_meters || 1)) / totalOutboundPlanMeters
-                : totalReturnKm / plan.stops.length
-            stopReturnKm = Number(Math.max(minRoadDistKm, sharedReturnAlloc).toFixed(2))
+                : totalReturnKm / totalPlanStops
+            stopReturnKm = Number(rawShare.toFixed(2))
+            allocatedReturnSum += stopReturnKm
+          } else {
+            // Última parada: absorve o resíduo de arredondamento para a soma bater 100% com totalReturnKm
+            stopReturnKm = Number(Math.max(0, totalReturnKm - allocatedReturnSum).toFixed(2))
           }
 
           const { pricePerLiter: courierFuelPrice, consumptionKml: courierFuelCons } =
             deliveryService.getVehicleFuelParams(appSettings, plan.courier.vehicle_type)
-          const stopFuelCost =
-            courierFuelCons > 0
-              ? Number(
-                  (((stopDistanceKm + stopReturnKm) * courierFuelPrice) / courierFuelCons).toFixed(
-                    2,
-                  ),
-                )
-              : 0
+
+          let stopFuelCost = 0
+          if (!isLastStop) {
+            stopFuelCost =
+              courierFuelCons > 0
+                ? Number(
+                    (
+                      ((stopDistanceKm + stopReturnKm) * courierFuelPrice) /
+                      courierFuelCons
+                    ).toFixed(2),
+                  )
+                : 0
+            allocatedFuelSum += stopFuelCost
+          } else {
+            // Última parada: garante que a soma dos combustíveis feche exatamente em planTotalFuel
+            stopFuelCost = Number(Math.max(0, planTotalFuel - allocatedFuelSum).toFixed(2))
+          }
 
           await deliveryService.updateOrder(stop.id, {
             courier_id: plan.courier.id,

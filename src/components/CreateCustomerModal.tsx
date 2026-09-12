@@ -41,6 +41,7 @@ import {
   CheckCircle2,
   Link2,
   Crosshair,
+  AlertTriangle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -75,7 +76,8 @@ export function CreateCustomerModal({
   const [postalCode, setPostalCode] = useState('')
   const [lat, setLat] = useState<number | undefined>(undefined)
   const [lng, setLng] = useState<number | undefined>(undefined)
-
+  const [hasPrecisionWarning, setHasPrecisionWarning] = useState(false)
+  const [precisionWarningDismissed, setPrecisionWarningDismissed] = useState(false)
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
   const [isLoadingViaCep, setIsLoadingViaCep] = useState(false)
   const [isSearchingPhone, setIsSearchingPhone] = useState(false)
@@ -85,7 +87,6 @@ export function CreateCustomerModal({
   )
   const [locationLinkInput, setLocationLinkInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-
   const phoneDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const isEditMode = Boolean(customerToEdit)
@@ -114,6 +115,12 @@ export function CreateCustomerModal({
       setPostalCode(customerToEdit.postal_code || '')
       setLat(customerToEdit.lat)
       setLng(customerToEdit.lng)
+      // Se já estava com fallback Centro do RJ, alertar
+      const isFallback =
+        Math.abs((customerToEdit.lat || 0) - -22.906847) < 0.0001 &&
+        Math.abs((customerToEdit.lng || 0) - -43.172896) < 0.0001
+      setHasPrecisionWarning(isFallback)
+      setPrecisionWarningDismissed(false)
       setAddressSearchQuery(customerToEdit.address || '')
       setMatchedExistingCustomer(customerToEdit)
       setLocationLinkInput('')
@@ -137,6 +144,8 @@ export function CreateCustomerModal({
     setPostalCode('')
     setLat(undefined)
     setLng(undefined)
+    setHasPrecisionWarning(false)
+    setPrecisionWarningDismissed(false)
     setAddressSearchQuery('')
     setMatchedExistingCustomer(null)
     setLocationLinkInput('')
@@ -232,8 +241,22 @@ export function CreateCustomerModal({
     setAddressSearchQuery(result.address || result.name || '')
 
     if (typeof result.lat === 'number' && typeof result.lng === 'number') {
-      setLat(result.lat)
-      setLng(result.lng)
+      const isFallback =
+        Math.abs(result.lat - -22.906847) < 0.0001 && Math.abs(result.lng - -43.172896) < 0.0001
+      if (isFallback) {
+        setHasPrecisionWarning(true)
+        setPrecisionWarningDismissed(false)
+        toast.warning('Endereço não geocodificado com precisão — revise no mapa antes de salvar')
+      } else {
+        setHasPrecisionWarning(false)
+        setPrecisionWarningDismissed(false)
+        setLat(result.lat)
+        setLng(result.lng)
+      }
+    } else {
+      setHasPrecisionWarning(true)
+      setPrecisionWarningDismissed(false)
+      toast.warning('Endereço não geocodificado com precisão — revise no mapa antes de salvar')
     }
 
     toast.success('Endereço localizado e campos preenchidos com sucesso!')
@@ -265,9 +288,27 @@ export function CreateCustomerModal({
           // Tentar geocodificar para obter coordenadas (polo operacional RJ como bias)
           const full = `${res.street || ''}, ${res.neighborhood || ''}, ${res.city || ''} - ${res.state || ''}, Brasil`
           fallbackGeocodeAddress(full, { lat: -22.906847, lng: -43.172896 }).then((geo) => {
-            if (geo) {
-              setLat(geo.lat)
-              setLng(geo.lng)
+            if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+              const isFallback =
+                Math.abs(geo.lat - -22.906847) < 0.0001 && Math.abs(geo.lng - -43.172896) < 0.0001
+              if (isFallback) {
+                setHasPrecisionWarning(true)
+                setPrecisionWarningDismissed(false)
+                toast.warning(
+                  'Endereço não geocodificado com precisão — revise no mapa antes de salvar',
+                )
+              } else {
+                setLat(geo.lat)
+                setLng(geo.lng)
+                setHasPrecisionWarning(false)
+                setPrecisionWarningDismissed(false)
+              }
+            } else {
+              setHasPrecisionWarning(true)
+              setPrecisionWarningDismissed(false)
+              toast.warning(
+                'Endereço não geocodificado com precisão — revise no mapa antes de salvar',
+              )
             }
           })
         } else {
@@ -292,6 +333,8 @@ export function CreateCustomerModal({
       const parsedLng = parsed.lng
       setLat(parsedLat)
       setLng(parsedLng)
+      setHasPrecisionWarning(false)
+      setPrecisionWarningDismissed(false)
       setIsLoadingLocationLink(true)
 
       const toastId = toast.loading(
@@ -390,28 +433,79 @@ export function CreateCustomerModal({
 
     const phonesToValidate = [mainPhone, phone2.trim() || undefined, phone3.trim() || undefined]
 
-    let finalLat = lat || -22.906847
-    let finalLng = lng || -43.172896
+    // Validação estrita: nunca gravar silenciosamente coordenadas default/contingência (-22.906847, -43.172896)
+    const isDefaultFallback =
+      !lat || !lng || (Math.abs(lat - -22.906847) < 0.0001 && Math.abs(lng - -43.172896) < 0.0001)
+
+    if (isDefaultFallback) {
+      // Tentar geocodificar o endereço antes de rejeitar
+      let resolvedLat: number | undefined = undefined
+      let resolvedLng: number | undefined = undefined
+      try {
+        const geocoded = await fallbackGeocodeAddress(fullAddress)
+        if (geocoded && typeof geocoded.lat === 'number' && typeof geocoded.lng === 'number') {
+          const isStillFallback =
+            Math.abs(geocoded.lat - -22.906847) < 0.0001 &&
+            Math.abs(geocoded.lng - -43.172896) < 0.0001
+          if (!isStillFallback) {
+            resolvedLat = geocoded.lat
+            resolvedLng = geocoded.lng
+            setLat(resolvedLat)
+            setLng(resolvedLng)
+            setHasPrecisionWarning(false)
+          }
+        }
+      } catch (e) {
+        console.warn('Tentativa de geocodificação no submit falhou:', e)
+      }
+
+      if (!resolvedLat || !resolvedLng) {
+        setHasPrecisionWarning(true)
+        if (!precisionWarningDismissed) {
+          toast.error(
+            'Endereço não geocodificado com precisão — revise no mapa antes de salvar. Cole o link do Google Maps ou confirme a localização.',
+            { duration: 7000 },
+          )
+          return
+        }
+      }
+    }
+
+    let finalLat = lat
+    let finalLng = lng
 
     // Sanity check: se coordenadas foram capturadas/coladas do GPS do dispositivo,
-    // validar contra o endereço textual geocodificado; se distar > 2 km, preferir o endereço oficial
+    // validar contra o endereço textual geocodificado; se distar > 2 km, alertar
     if (fullAddress && finalLat && finalLng) {
       try {
         const geocoded = await fallbackGeocodeAddress(fullAddress)
         if (geocoded && typeof geocoded.lat === 'number' && typeof geocoded.lng === 'number') {
-          const distMeters = haversineDistanceMeters(finalLat, finalLng, geocoded.lat, geocoded.lng)
-          if (distMeters > 2000) {
-            toast.warning(
-              'Atenção: A coordenada capturada dista mais de 2 km do endereço digitado. Utilizando coordenadas oficiais do logradouro.',
-              { duration: 6000 },
+          const isFallback =
+            Math.abs(geocoded.lat - -22.906847) < 0.0001 &&
+            Math.abs(geocoded.lng - -43.172896) < 0.0001
+          if (!isFallback) {
+            const distMeters = haversineDistanceMeters(
+              finalLat,
+              finalLng,
+              geocoded.lat,
+              geocoded.lng,
             )
-            finalLat = geocoded.lat
-            finalLng = geocoded.lng
+            if (distMeters > 3000) {
+              toast.warning(
+                'Atenção: A coordenada dista mais de 3 km do endereço digitado. Verifique o número ou bairro.',
+                { duration: 6000 },
+              )
+            }
           }
         }
       } catch (err) {
         console.warn('Erro ao verificar sanidade de coordenadas vs endereço:', err)
       }
+    }
+
+    if (!finalLat || !finalLng) {
+      toast.error('Endereço não geocodificado com precisão — revise no mapa antes de salvar')
+      return
     }
 
     const payload: Partial<CustomerRecord> = {
@@ -524,6 +618,36 @@ export function CreateCustomerModal({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+          {/* Banner de Proteção contra Coordenada Default/Fallback Impreciso */}
+          {hasPrecisionWarning && (
+            <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-500/60 text-amber-200 text-xs flex items-start gap-2.5">
+              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <p className="font-semibold text-amber-300">
+                  Endereço não geocodificado com precisão — revise no mapa antes de salvar
+                </p>
+                <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                  O sistema evitou gravar a coordenada genérica do Centro do RJ para evitar erros de
+                  cálculo de km e combustível. Por favor, cole um link do Google Maps/WhatsApp
+                  abaixo ou confirme que deseja salvar com o endereço atual.
+                </p>
+                <div className="pt-1 flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPrecisionWarningDismissed(true)}
+                    className="h-6 text-[11px] bg-amber-500/20 border-amber-400/50 text-amber-200 hover:bg-amber-500/30 hover:text-white"
+                  >
+                    {precisionWarningDismissed
+                      ? '✓ Revisão confirmada'
+                      : 'Entendido, confirmar revisão consciente'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Identificação de duplicidade / cliente existente */}
           {matchedExistingCustomer && (
             <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#0052CC]/20 border border-[#0052CC]/50 text-xs text-[#60A5FA]">

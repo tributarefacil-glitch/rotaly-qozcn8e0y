@@ -320,7 +320,7 @@ export default function CourierApp() {
 
     const handleOnline = async () => {
       setIsOnline(true)
-      // Ao voltar online, disparar flush idempotente do buffer
+      // Ao voltar online, disparar flush idempotente do buffer E ping fresco imediato
       if (user?.id) {
         setIsFlushingBuffer(true)
         try {
@@ -332,6 +332,11 @@ export default function CourierApp() {
           console.warn('Falha ao flush do buffer offline:', e)
         } finally {
           setIsFlushingBuffer(false)
+        }
+
+        // Ping imediato de posição fresca (maximumAge: 0)
+        if (triggerImmediateGpsRef.current) {
+          triggerImmediateGpsRef.current()
         }
       }
     }
@@ -414,26 +419,20 @@ export default function CourierApp() {
     }
   }, [hasActiveStartedRoute])
 
-  // Telemetria GPS com dedupe, lock, buffer offline, timeout de ~20s, retry curto e reavaliação ao voltar
+  // Telemetria GPS contínua via watchPosition enquanto houver rota ativa
+  // Com fallback automático, flush em online/visibilitychange e ping imediato fresco (maximumAge: 0)
   useEffect(() => {
     if (!user || !isGpsActive) return
 
     let isEffectActive = true
-    let nextScheduledTimer: any = null
+    let watchId: number | null = null
+    let fallbackPollTimer: any = null
 
-    const clearScheduledTimer = () => {
-      if (nextScheduledTimer) {
-        clearTimeout(nextScheduledTimer)
-        nextScheduledTimer = null
+    const clearFallbackTimer = () => {
+      if (fallbackPollTimer) {
+        clearTimeout(fallbackPollTimer)
+        fallbackPollTimer = null
       }
-    }
-
-    const scheduleNextCheck = (delayMs: number) => {
-      clearScheduledTimer()
-      if (!isEffectActive) return
-      nextScheduledTimer = setTimeout(() => {
-        checkCurrentLocation(false)
-      }, delayMs)
     }
 
     const processAndSendGps = async (
@@ -458,8 +457,8 @@ export default function CourierApp() {
         const timeDiffSeconds = (now - last.timestamp) / 1000
         const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
 
-        // Só gravar se passaram > 30s do último envio OU moveu > 20 metros
-        if (timeDiffSeconds < 30 && distanceDiffMeters < 20) {
+        // Em movimento (>15m) envia com mais agilidade (após 5s); parado, respeita 25s
+        if (distanceDiffMeters < 15 && timeDiffSeconds < 25) {
           return
         }
       }
@@ -514,21 +513,12 @@ export default function CourierApp() {
       }
     }
 
-    const checkCurrentLocation = (isImmediate = false) => {
-      if (!isEffectActive) return
-
-      if (typeof navigator === 'undefined' || !navigator.geolocation) {
-        setGpsStatus('disabled')
-        setGpsFailureDetail('unsupported')
-        scheduleNextCheck(30000)
-        return
-      }
-
-      // Evitar chamadas simultâneas de getCurrentPosition
+    // Leitura fresca imediata de posição (maximumAge: 0)
+    const requestFreshImmediatePosition = () => {
+      if (!isEffectActive || typeof navigator === 'undefined' || !navigator.geolocation) return
       if (isFetchingPositionRef.current) return
       isFetchingPositionRef.current = true
 
-      // Timeout aumentado para 20s (item 2: área urbana no iOS)
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           isFetchingPositionRef.current = false
@@ -538,122 +528,105 @@ export default function CourierApp() {
             pos.coords.longitude,
             pos.coords.speed,
             pos.coords.accuracy,
-            isImmediate,
+            true, // forceSend imediato
           )
-          // Se deu certo, ciclo padrão de 30s
-          scheduleNextCheck(30000)
         },
-        async (err) => {
+        (err) => {
           isFetchingPositionRef.current = false
-          if (!isEffectActive) return
-
-          console.warn('Geolocation getCurrentPosition falhou com código:', err?.code, err?.message)
-
-          // 1. DISTINGUIR O MOTIVO DA FALHA
-          // Erro de permissão: code 1 / PERMISSION_DENIED
-          if (err.code === err.PERMISSION_DENIED) {
-            setGpsStatus('disabled')
-            setGpsFailureDetail('permission_denied')
-          } else if (err.code === err.TIMEOUT) {
-            // Timeout: code 3 -> âmbar "Sinal GPS fraco — tentando novamente..."
-            setGpsStatus('offline')
-            setGpsFailureDetail('weak_signal')
-          } else if (err.code === err.POSITION_UNAVAILABLE) {
-            // Posição indisponível temporária: code 2 -> âmbar
-            setGpsStatus('offline')
-            setGpsFailureDetail('position_unavailable')
-          } else {
-            setGpsStatus('offline')
-            setGpsFailureDetail('weak_signal')
-          }
-
-          // Se estiver em rota ativa, notifica Torre com o status e gps_reason correspondente
-          if (hasActiveStartedRoute) {
-            const now = Date.now()
-            const last = lastRecordedGpsRef.current
-            const fallbackLat = last ? last.lat : currentCourierLocation?.lat || 0
-            const fallbackLng = last ? last.lng : currentCourierLocation?.lng || 0
-
-            const pbStatus: 'disabled' | 'offline' =
-              err.code === err.PERMISSION_DENIED ? 'disabled' : 'offline'
-            const pbReason =
-              err.code === err.PERMISSION_DENIED ? 'permission_denied' : 'weak_signal'
-
-            if (fallbackLat && fallbackLng) {
-              try {
-                const bLevel = await getBatteryLevel().catch(() => 90)
-                await deliveryService.updateCourierLocation(
-                  user.id,
-                  fallbackLat,
-                  fallbackLng,
-                  0,
-                  0,
-                  bLevel,
-                  {
-                    gps_status: pbStatus,
-                    gps_reason: pbReason,
-                    offline_buffered: false,
-                  },
-                )
-              } catch {
-                offlineTelemetryBuffer.enqueuePoint({
-                  userId: user.id,
-                  lat: fallbackLat,
-                  lng: fallbackLng,
-                  speed: 0,
-                  heading: 0,
-                  accuracy: undefined,
-                  batteryLevel: 90,
-                  timestamp: now,
-                  reason: pbReason as any,
-                })
-              }
-            }
-          }
-
-          // Ciclo curto de retry: 12s se for timeout ou posição indisponível (tentar novamente sem spam)
-          // Se for permissão negada, espera 20s para re-verificar caso o usuário tenha ido aos Ajustes
-          const retryDelay = err.code === err.PERMISSION_DENIED ? 20000 : 12000
-          scheduleNextCheck(retryDelay)
+          console.warn('Fresh immediate position falhou:', err?.code, err?.message)
         },
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
       )
     }
 
-    // Expor função de disparo imediato para listeners de visibilidade e botão de retry
-    triggerImmediateGpsRef.current = () => {
-      checkCurrentLocation(true)
+    // Iniciar watchPosition contínuo (ideal enquanto há rota ativa ou app aberto)
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            if (!isEffectActive) return
+            processAndSendGps(
+              pos.coords.latitude,
+              pos.coords.longitude,
+              pos.coords.speed,
+              pos.coords.accuracy,
+              false,
+            )
+          },
+          async (err) => {
+            if (!isEffectActive) return
+            console.warn('watchPosition erro de telemetria:', err?.code, err?.message)
+
+            if (err.code === err.PERMISSION_DENIED) {
+              setGpsStatus('disabled')
+              setGpsFailureDetail('permission_denied')
+            } else if (err.code === err.TIMEOUT) {
+              setGpsStatus('offline')
+              setGpsFailureDetail('weak_signal')
+            } else if (err.code === err.POSITION_UNAVAILABLE) {
+              setGpsStatus('offline')
+              setGpsFailureDetail('position_unavailable')
+            } else {
+              setGpsStatus('offline')
+              setGpsFailureDetail('weak_signal')
+            }
+
+            // Agendar retry de fallback se o watchPosition pausar silenciosamente
+            clearFallbackTimer()
+            fallbackPollTimer = setTimeout(() => {
+              if (isEffectActive) requestFreshImmediatePosition()
+            }, 12000)
+          },
+          {
+            enableHighAccuracy: true,
+            maximumAge: 5000,
+            timeout: 20000,
+          },
+        )
+      } catch (errWatch) {
+        console.warn('Erro ao registrar watchPosition:', errWatch)
+      }
+    } else {
+      setGpsStatus('disabled')
+      setGpsFailureDetail('unsupported')
     }
 
-    // Disparo inicial
-    checkCurrentLocation(false)
+    // Expor função de disparo imediato para listeners externos (botão retry, reconexão etc)
+    triggerImmediateGpsRef.current = () => {
+      requestFreshImmediatePosition()
+    }
 
-    // REAVALIAÇÃO QUANDO A TELA VOLTA (item 3: visibilitychange e pageshow)
-    const handleResume = () => {
-      // Se a aba/tela voltou a ficar visível
+    // Disparo inicial com maximumAge 0 para garantir que a Torre receba a coordenada fresca imediatamente
+    requestFreshImmediatePosition()
+
+    // REAVALIAÇÃO QUANDO A TELA VOLTA / VISIBILITYCHANGE (item 3: flush de buffer E ping fresco com maximumAge: 0)
+    const handleResume = async () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
       }
 
-      // Re-adquirir wakeLock se estiver em rota ativa
+      // Re-adquirir Wake Lock se rota estiver ativa
       if (hasActiveStartedRoute && typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
-        ;(navigator as any).wakeLock
-          ?.request('screen')
-          .then((sentinel: any) => {
-            wakeLockSentinelRef.current = sentinel
-            setIsWakeLockActive(true)
-          })
-          .catch(() => {})
+        try {
+          const sentinel = await (navigator as any).wakeLock?.request('screen')
+          wakeLockSentinelRef.current = sentinel
+          setIsWakeLockActive(true)
+        } catch {
+          /* ignore */
+        }
       }
 
-      toast.info('Retomando rastreamento após pausa...', {
-        duration: 3000,
-        id: 'gps-resuming-toast',
-      })
+      // 1. Flush imediato do buffer offline
+      if (user?.id && offlineTelemetryBuffer.size(user.id) > 0) {
+        setIsFlushingBuffer(true)
+        offlineTelemetryBuffer
+          .flush(user.id)
+          .catch(() => {})
+          .finally(() => setIsFlushingBuffer(false))
+      }
 
-      // Limpar timer que pode ter "derretido" ou ficado pendente e disparar leitura de GPS imediata
-      clearScheduledTimer()
-      checkCurrentLocation(true)
+      // 2. Ping fresco imediato com maximumAge: 0
+      requestFreshImmediatePosition()
     }
 
     const handleVisibilityChange = () => {
@@ -674,7 +647,11 @@ export default function CourierApp() {
 
     return () => {
       isEffectActive = false
-      clearScheduledTimer()
+      if (watchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId)
+        watchId = null
+      }
+      clearFallbackTimer()
       triggerImmediateGpsRef.current = null
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('pageshow', handlePageShow)

@@ -353,26 +353,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         ? consolidatedMetrics.totalAdvances
         : 0
 
-    if (!isFiltered && consolidatedMetrics) {
-      // Se não há filtro ativo, usar diretamente as métricas consolidadas do período completo
-      return {
-        totalKm: consolidatedMetrics.totalOfficialKm,
-        totalFuelCost: consolidatedMetrics.totalSpent,
-        totalLiters: consolidatedMetrics.totalLiters,
-        totalDeviations: consolidatedMetrics.orderCalculations.reduce(
-          (acc, c) => acc + c.offRouteCount,
-          0,
-        ),
-        totalStops: consolidatedMetrics.orderCalculations.reduce(
-          (acc, c) => acc + c.unexpectedStopsCount,
-          0,
-        ),
-        saldoContaCorrente: consolidatedMetrics.balance,
-        totalAdiantado: Number(totalAdiantado.toFixed(2)),
-        totalDeliveries: consolidatedMetrics.orderCalculations.length,
-      }
-    }
-    // Caso o usuário aplique filtros (ex.: por data ou status), somamos os itens rateados proporcionalmente
+    // Garantir coerência matemática estrita: soma exata das linhas visíveis = total do cabeçalho
     const totalKm = filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
     const totalFuelCost = filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
     const totalLiters = filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)

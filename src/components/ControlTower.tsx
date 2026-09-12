@@ -1032,6 +1032,11 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
           const points = [...forwardPoints, ...returnPoints.slice(1)]
 
+          // Detecção de sinal congelado/obsoleto (> 2 minutos)
+          const locTime = item.location_timestamp ? new Date(item.location_timestamp).getTime() : 0
+          const isGpsFrozen =
+            item.gps_status === 'offline' || (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
+
           // Projeção e desvio
           const nearest = findNearestPointOnRoute(courierPos, points)
           const nextTargetPos = pendingStopsList[0] || returnBasePos
@@ -1054,7 +1059,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               }
               return true
             })
+
+          // SE POSIÇÃO ESTÁ CONGELADA (>2min), SUPRIMIR FALSOS ALARMES DE DESVIO/PARADA
           const isDeviated =
+            !isGpsFrozen &&
             hasActiveRouteStarted &&
             (hasDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
 
@@ -1064,9 +1072,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const isFarFromClient = distToClientMeters > UNEXPECTED_STOP_THRESHOLD_METERS
           const isFarFromBase = distToBaseMeters > UNEXPECTED_STOP_THRESHOLD_METERS
           const isUnexpectedStop =
-            hasActiveRouteStarted && isStopped && isFarFromClient && isFarFromBase
+            !isGpsFrozen && hasActiveRouteStarted && isStopped && isFarFromClient && isFarFromBase
 
-          // ETA
+          // ETA: Quando congelado, não projetar estimativas fictícias
           const effectiveSpeedKmh =
             typeof item.speed === 'number' && item.speed > 5 ? item.speed : 25
           const speedMps = effectiveSpeedKmh * (1000 / 3600)
@@ -1132,17 +1140,24 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             custPos: nextTargetPos,
             basePos: primaryOrder.start_base_lat ? origin : undefined,
             returnBasePos,
+            isGpsFrozen,
             isDeviated,
             deviationMeters: Math.round(nearest.distanceMeters),
             nearestPointOnRoute: nearest.nearestPoint,
             isUnexpectedStop,
-            etaMinutes: etaMinutesNextClient,
-            etaNextDeliveryTime: pendingStopsList.length > 0 ? etaNextDeliveryTime : undefined,
-            etaReturnBaseMinutes: etaMinutesReturnBase,
-            etaReturnBaseTime,
+            etaMinutes: isGpsFrozen ? undefined : etaMinutesNextClient,
+            etaNextDeliveryTime: isGpsFrozen
+              ? undefined
+              : pendingStopsList.length > 0
+                ? etaNextDeliveryTime
+                : undefined,
+            etaReturnBaseMinutes: isGpsFrozen ? undefined : etaMinutesReturnBase,
+            etaReturnBaseTime: isGpsFrozen ? undefined : etaReturnBaseTime,
             remainingRouteMinutes: shiftMetrics.remainingRouteMinutes,
             projectedEndTime: shiftMetrics.projectedEndTime,
-            projectedEndTimeFormatted: shiftMetrics.projectedEndTimeFormatted,
+            projectedEndTimeFormatted: isGpsFrozen
+              ? 'Aguardando sinal...'
+              : shiftMetrics.projectedEndTimeFormatted,
             isOvertime: shiftMetrics.isOvertime,
             overtimeMinutes: shiftMetrics.overtimeMinutes,
             shiftMetrics,
@@ -1176,8 +1191,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const orderId = r.orderId
           const courierName = r.courier?.name || r.courier?.email || 'Entregador'
 
-          // Caso de desvio
-          if (r.isDeviated) {
+          // Caso de desvio: suprimido se o entregador estiver com posição congelada (>2min)
+          if (r.isDeviated && !r.isGpsFrozen) {
             const devKey = `dev-${courierId}-${orderId}`
             currentActiveEventKeys.add(devKey)
             if (!notifiedEventsRef.current.has(devKey)) {
@@ -1191,8 +1206,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             }
           }
 
-          // Caso de parada fora do local
-          if (r.isUnexpectedStop) {
+          // Caso de parada fora do local: suprimido se congelado
+          if (r.isUnexpectedStop && !r.isGpsFrozen) {
             const stopKey = `stop-${courierId}`
             currentActiveEventKeys.add(stopKey)
             if (!notifiedEventsRef.current.has(stopKey)) {
@@ -1206,8 +1221,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             }
           }
 
-          // Caso de atraso relevante (ETA > 60 min em entrega em trânsito)
-          if (r.etaMinutes > 60) {
+          // Caso de atraso relevante (ETA > 60 min em entrega em trânsito): suprimido se congelado
+          if (typeof r.etaMinutes === 'number' && r.etaMinutes > 60 && !r.isGpsFrozen) {
             const etaKey = `eta-${courierId}-${orderId}`
             currentActiveEventKeys.add(etaKey)
             if (!notifiedEventsRef.current.has(etaKey)) {
@@ -1256,13 +1271,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           } else if (isSignalLost) {
             const signalKey = `signal-lost-${courierId}`
             currentActiveEventKeys.add(signalKey)
+            // Notificação única e informativa sem som repetitivo estridente
             if (!notifiedEventsRef.current.has(signalKey)) {
               notifiedEventsRef.current.add(signalKey)
-              playOffRouteWarningSound()
               toast({
-                title: '📴 PERDA DE SINAL NA ROTA',
-                description: `${courierName} está sem comunicação GPS há mais de 2 minutos!`,
-                variant: 'destructive',
+                title: '📴 POSIÇÃO CONGELADA NA ROTA',
+                description: `${courierName}: sem novos pings GPS há mais de 2 minutos. Cálculos de desvio pausados.`,
               })
             }
           }
@@ -1877,11 +1891,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             gpsBadgeColor = '#b91c1c'
             gpsBadgeBorder = '#fecaca'
           } else if (isSignalLost) {
-            if (item.gps_reason === 'weak_signal') {
-              gpsBadgeText = `📶 Sinal GPS fraco (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
-            } else {
-              gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
-            }
+            const locTimeFormatted = locTime
+              ? new Date(locTime).toLocaleTimeString('pt-BR', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : '--:--'
+            gpsBadgeText = `📴 Posição congelada às ${locTimeFormatted}`
             gpsBadgeBg = '#fffbeb'
             gpsBadgeColor = '#b45309'
             gpsBadgeBorder = '#fde68a'
@@ -1923,7 +1939,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           </div>
 
           ${
-            isDeviated && routeInfo?.deviationMeters
+            !isSignalLost && isDeviated && routeInfo?.deviationMeters
               ? `
             <div style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 4px 6px; margin-bottom: 5px; display: flex; align-items: center; gap: 4px;">
               <span style="font-size: 10px;">⚠️</span>
@@ -1935,7 +1951,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
           <div style="background-color: #f8fafc; border-radius: 6px; padding: 5px 7px; margin-top: 3px; border: 1px solid #e2e8f0;">
             <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; color: #2563eb; display: block; margin-bottom: 2px;">
-              📍 Endereço Atual em Tempo Real:
+              📍 Endereço ${isSignalLost ? 'Último Ponto Gravado' : 'Atual em Tempo Real'}:
             </span>
             <span style="font-size: 10.5px; color: #1e293b; font-weight: 500; display: block; line-height: 1.3;">
               ${addressText}
@@ -1943,8 +1959,16 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           </div>
 
           ${
-            routeInfo?.etaNextDeliveryTime || routeInfo?.etaReturnBaseTime
+            isSignalLost
               ? `
+            <div style="background-color: #fffbeb; border-radius: 6px; padding: 5px 7px; margin-top: 4px; border: 1px solid #fde68a;">
+              <div style="font-size: 10px; color: #b45309; font-weight: 700;">
+                📴 Posição congelada • Aguardando sinal...
+              </div>
+            </div>
+          `
+              : routeInfo?.etaNextDeliveryTime || routeInfo?.etaReturnBaseTime
+                ? `
             <div style="background-color: #f0fdf4; border-radius: 6px; padding: 5px 7px; margin-top: 4px; border: 1px solid #bbf7d0;">
               <div style="font-size: 10px; color: #15803d; font-weight: 700;">
                 ${
@@ -1957,7 +1981,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               </div>
             </div>
           `
-              : ''
+                : ''
           }
 
           ${item.speed ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${item.speed} km/h</p>` : ''}
@@ -3125,20 +3149,44 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                                 </div>
 
                                 <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
-                                  {shift ? (
-                                    <>
-                                      <span className="font-semibold truncate">
-                                        ⏱ {shift.remainingFormatted}
+                                  {(() => {
+                                    const lTime = item.location_timestamp
+                                      ? new Date(item.location_timestamp).getTime()
+                                      : 0
+                                    const isFrozen =
+                                      item.gps_status === 'offline' ||
+                                      (lTime > 0 && Date.now() - lTime > 2 * 60 * 1000)
+                                    if (isFrozen) {
+                                      const timeStr = lTime
+                                        ? new Date(lTime).toLocaleTimeString('pt-BR', {
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                          })
+                                        : '--:--'
+                                      return (
+                                        <span className="text-amber-400 font-semibold truncate text-[10px]">
+                                          📴 Posição congelada às {timeStr} • Aguardando sinal...
+                                        </span>
+                                      )
+                                    }
+                                    if (shift) {
+                                      return (
+                                        <>
+                                          <span className="font-semibold truncate">
+                                            ⏱ {shift.remainingFormatted}
+                                          </span>
+                                          <span className="text-slate-300 shrink-0 font-medium">
+                                            Volta: ~{shift.projectedEndTimeFormatted}
+                                          </span>
+                                        </>
+                                      )
+                                    }
+                                    return (
+                                      <span className="text-slate-400 italic text-[10px]">
+                                        Calculando tempo de rota...
                                       </span>
-                                      <span className="text-slate-300 shrink-0 font-medium">
-                                        Volta: ~{shift.projectedEndTimeFormatted}
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <span className="text-slate-400 italic text-[10px]">
-                                      Calculando tempo de rota...
-                                    </span>
-                                  )}
+                                    )
+                                  })()}
                                 </div>
 
                                 {shift && (
@@ -3447,20 +3495,44 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                                 </div>
 
                                 <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
-                                  {shift ? (
-                                    <>
-                                      <span className="font-semibold truncate">
-                                        ⏱ {shift.remainingFormatted}
+                                  {(() => {
+                                    const lTime = item.location_timestamp
+                                      ? new Date(item.location_timestamp).getTime()
+                                      : 0
+                                    const isFrozen =
+                                      item.gps_status === 'offline' ||
+                                      (lTime > 0 && Date.now() - lTime > 2 * 60 * 1000)
+                                    if (isFrozen) {
+                                      const timeStr = lTime
+                                        ? new Date(lTime).toLocaleTimeString('pt-BR', {
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                          })
+                                        : '--:--'
+                                      return (
+                                        <span className="text-amber-400 font-semibold truncate text-[10px]">
+                                          📴 Posição congelada às {timeStr} • Aguardando sinal...
+                                        </span>
+                                      )
+                                    }
+                                    if (shift) {
+                                      return (
+                                        <>
+                                          <span className="font-semibold truncate">
+                                            ⏱ {shift.remainingFormatted}
+                                          </span>
+                                          <span className="text-slate-300 shrink-0 font-medium">
+                                            Volta: ~{shift.projectedEndTimeFormatted}
+                                          </span>
+                                        </>
+                                      )
+                                    }
+                                    return (
+                                      <span className="text-slate-400 italic text-[10px]">
+                                        Calculando tempo de rota...
                                       </span>
-                                      <span className="text-slate-300 shrink-0 font-medium">
-                                        Volta: ~{shift.projectedEndTimeFormatted}
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <span className="text-slate-400 italic text-[10px]">
-                                      Calculando tempo de rota...
-                                    </span>
-                                  )}
+                                    )
+                                  })()}
                                 </div>
 
                                 {shift && (
