@@ -3041,61 +3041,103 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
                   {/* Painel de status no canto superior esquerdo do Google Maps */}
                   <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5 max-w-[340px]">
-                    <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
-                      <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
-                      <span className="font-semibold text-white truncate text-[11px]">
-                        {mapDisplayMode === 'delivered'
-                          ? `${metrics.delivered} entregas concluídas`
-                          : `${activeRouteCouriers.length} entregadores em rota`}
-                      </span>
-                    </div>
-
-                    {/* Pílula no topo do mapa com o tempo estimado da rota inteira e badge de carga horária por entregador em rota */}
-                    {mapDisplayMode === 'in_transit' &&
-                      activeRouteCouriers.map((item) => {
-                        const rInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
-                        if (!rInfo || !rInfo.shiftMetrics) return null
-                        const metrics = rInfo.shiftMetrics
-                        const courierName = (
-                          item.courier.name ||
-                          item.courier.email ||
-                          'Entregador'
-                        ).split(' ')[0]
-
-                        return (
-                          <div
-                            key={`top-shift-${item.courier.id}`}
-                            onClick={() => setSelectedCourier(item.courier)}
-                            className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-[#1E2B58] hover:border-blue-500/60 transition cursor-pointer shadow-md text-[11px] flex flex-col gap-1"
-                            title="Clique para ver detalhes do entregador"
-                          >
-                            <div className="flex items-center justify-between gap-1 text-slate-200">
-                              <span className="font-bold text-white flex items-center gap-1 truncate">
-                                <span>🛵 {courierName}</span>
-                              </span>
-                              <span className="text-blue-300 font-mono font-semibold shrink-0">
-                                ⏱ {metrics.remainingFormatted} • Término:{' '}
-                                {metrics.projectedEndTimeFormatted}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-1">
-                              {metrics.isOvertime ? (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
-                                  {metrics.badgeText}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
-                                  {metrics.badgeText}
-                                </span>
-                              )}
-                              <span className="text-[9.5px] text-slate-400 font-mono">
-                                ({item.inTransitCount} entrega{item.inTransitCount === 1 ? '' : 's'}
-                                )
-                              </span>
-                            </div>
+                    {mapDisplayMode === 'delivered' ? (
+                      <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
+                        <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                        <span className="font-semibold text-white truncate text-[11px]">
+                          {metrics.delivered} entregas concluídas
+                        </span>
+                      </div>
+                    ) : activeRouteCouriers.length === 0 ? (
+                      <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
+                        <span className="flex h-2 w-2 rounded-full bg-blue-400" />
+                        <span className="font-semibold text-white truncate text-[11px]">
+                          0 entregadores em rota
+                        </span>
+                      </div>
+                    ) : (
+                      /* Pílula com o total + lista detalhada de cada entregador em rota (nome, tempo para terminar e voltar à base) */
+                      <div className="bg-[#0A1128]/95 backdrop-blur-sm rounded-lg border border-[#1E2B58] shadow-lg text-xs overflow-hidden flex flex-col">
+                        <div className="px-2.5 py-1 border-b border-[#1E2B58]/70 flex items-center justify-between gap-2 bg-[#0E1738]/60">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
+                            <span className="font-bold text-white text-[11px]">
+                              {activeRouteCouriers.length}{' '}
+                              {activeRouteCouriers.length === 1
+                                ? 'entregador em rota'
+                                : 'entregadores em rota'}
+                            </span>
                           </div>
-                        )
-                      })}
+                          <span className="text-[9.5px] text-slate-400 font-mono">
+                            Toque para detalhes
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col divide-y divide-[#1E2B58]/50">
+                          {activeRouteCouriers.map((item) => {
+                            const rInfo = activeRoutesData.find(
+                              (r) => r.courierId === item.courier.id,
+                            )
+                            const shift = rInfo?.shiftMetrics
+                            const courierName =
+                              item.courier.name || item.courier.email || 'Entregador'
+                            const vehicleEmoji = getVehicleEmoji(item.vehicle)
+
+                            return (
+                              <button
+                                key={`top-shift-${item.courier.id}`}
+                                type="button"
+                                onClick={() => setSelectedCourier(item.courier)}
+                                className="w-full text-left px-2.5 py-1.5 hover:bg-blue-950/40 transition flex flex-col gap-0.5 focus:outline-none"
+                                title="Clique para ver detalhes do entregador"
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-bold text-white text-[11px] truncate flex items-center gap-1">
+                                    <span>{vehicleEmoji}</span>
+                                    <span className="truncate">{courierName}</span>
+                                  </span>
+                                  <span className="text-[9.5px] text-slate-400 font-mono shrink-0">
+                                    ({item.inTransitCount} entrega
+                                    {item.inTransitCount === 1 ? '' : 's'})
+                                  </span>
+                                </div>
+
+                                <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
+                                  {shift ? (
+                                    <>
+                                      <span className="font-semibold truncate">
+                                        ⏱ {shift.remainingFormatted}
+                                      </span>
+                                      <span className="text-slate-300 shrink-0 font-medium">
+                                        Volta: ~{shift.projectedEndTimeFormatted}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-400 italic text-[10px]">
+                                      Calculando tempo de rota...
+                                    </span>
+                                  )}
+                                </div>
+
+                                {shift && (
+                                  <div className="pt-0.5">
+                                    {shift.isOvertime ? (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
+                                        {shift.badgeText}
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
+                                        {shift.badgeText}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Alertas ativos na Torre: Desvios ou Paradas detectadas (dispensáveis) */}
                     {mapDisplayMode === 'in_transit' &&
@@ -3321,61 +3363,103 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
                   {/* Status e avisos no canto superior esquerdo também no Canvas vetorial */}
                   <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-[340px] pointer-events-auto">
-                    <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
-                      <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
-                      <span className="font-semibold text-white truncate text-[11px]">
-                        {mapDisplayMode === 'delivered'
-                          ? `${metrics.delivered} entregas concluídas`
-                          : `${activeRouteCouriers.length} entregadores em rota`}
-                      </span>
-                    </div>
-
-                    {/* Pílula no topo do mapa vetorial com tempo total restante e carga horária */}
-                    {mapDisplayMode === 'in_transit' &&
-                      activeRouteCouriers.map((item) => {
-                        const rInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
-                        if (!rInfo || !rInfo.shiftMetrics) return null
-                        const metrics = rInfo.shiftMetrics
-                        const courierName = (
-                          item.courier.name ||
-                          item.courier.email ||
-                          'Entregador'
-                        ).split(' ')[0]
-
-                        return (
-                          <div
-                            key={`canvas-top-shift-${item.courier.id}`}
-                            onClick={() => setSelectedCourier(item.courier)}
-                            className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-[#1E2B58] hover:border-blue-500/60 transition cursor-pointer shadow-md text-[11px] flex flex-col gap-1"
-                            title="Clique para ver detalhes do entregador"
-                          >
-                            <div className="flex items-center justify-between gap-1 text-slate-200">
-                              <span className="font-bold text-white flex items-center gap-1 truncate">
-                                <span>🛵 {courierName}</span>
-                              </span>
-                              <span className="text-blue-300 font-mono font-semibold shrink-0">
-                                ⏱ {metrics.remainingFormatted} • Término:{' '}
-                                {metrics.projectedEndTimeFormatted}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-1">
-                              {metrics.isOvertime ? (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
-                                  {metrics.badgeText}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
-                                  {metrics.badgeText}
-                                </span>
-                              )}
-                              <span className="text-[9.5px] text-slate-400 font-mono">
-                                ({item.inTransitCount} entrega{item.inTransitCount === 1 ? '' : 's'}
-                                )
-                              </span>
-                            </div>
+                    {mapDisplayMode === 'delivered' ? (
+                      <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
+                        <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                        <span className="font-semibold text-white truncate text-[11px]">
+                          {metrics.delivered} entregas concluídas
+                        </span>
+                      </div>
+                    ) : activeRouteCouriers.length === 0 ? (
+                      <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
+                        <span className="flex h-2 w-2 rounded-full bg-blue-400" />
+                        <span className="font-semibold text-white truncate text-[11px]">
+                          0 entregadores em rota
+                        </span>
+                      </div>
+                    ) : (
+                      /* Pílula com o total + lista detalhada de cada entregador em rota (nome, tempo para terminar e voltar à base) */
+                      <div className="bg-[#0A1128]/95 backdrop-blur-sm rounded-lg border border-[#1E2B58] shadow-lg text-xs overflow-hidden flex flex-col">
+                        <div className="px-2.5 py-1 border-b border-[#1E2B58]/70 flex items-center justify-between gap-2 bg-[#0E1738]/60">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
+                            <span className="font-bold text-white text-[11px]">
+                              {activeRouteCouriers.length}{' '}
+                              {activeRouteCouriers.length === 1
+                                ? 'entregador em rota'
+                                : 'entregadores em rota'}
+                            </span>
                           </div>
-                        )
-                      })}
+                          <span className="text-[9.5px] text-slate-400 font-mono">
+                            Toque para detalhes
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col divide-y divide-[#1E2B58]/50">
+                          {activeRouteCouriers.map((item) => {
+                            const rInfo = activeRoutesData.find(
+                              (r) => r.courierId === item.courier.id,
+                            )
+                            const shift = rInfo?.shiftMetrics
+                            const courierName =
+                              item.courier.name || item.courier.email || 'Entregador'
+                            const vehicleEmoji = getVehicleEmoji(item.vehicle)
+
+                            return (
+                              <button
+                                key={`canvas-top-shift-${item.courier.id}`}
+                                type="button"
+                                onClick={() => setSelectedCourier(item.courier)}
+                                className="w-full text-left px-2.5 py-1.5 hover:bg-blue-950/40 transition flex flex-col gap-0.5 focus:outline-none"
+                                title="Clique para ver detalhes do entregador"
+                              >
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-bold text-white text-[11px] truncate flex items-center gap-1">
+                                    <span>{vehicleEmoji}</span>
+                                    <span className="truncate">{courierName}</span>
+                                  </span>
+                                  <span className="text-[9.5px] text-slate-400 font-mono shrink-0">
+                                    ({item.inTransitCount} entrega
+                                    {item.inTransitCount === 1 ? '' : 's'})
+                                  </span>
+                                </div>
+
+                                <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
+                                  {shift ? (
+                                    <>
+                                      <span className="font-semibold truncate">
+                                        ⏱ {shift.remainingFormatted}
+                                      </span>
+                                      <span className="text-slate-300 shrink-0 font-medium">
+                                        Volta: ~{shift.projectedEndTimeFormatted}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-400 italic text-[10px]">
+                                      Calculando tempo de rota...
+                                    </span>
+                                  )}
+                                </div>
+
+                                {shift && (
+                                  <div className="pt-0.5">
+                                    {shift.isOvertime ? (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
+                                        {shift.badgeText}
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
+                                        {shift.badgeText}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
 
                     {mapDisplayMode === 'in_transit' &&
                       !isDeviationBannerDismissed &&
