@@ -47,6 +47,7 @@ export interface MapMarkerItem {
   battery_level?: number
   location_timestamp?: string | number | Date
   gps_status?: 'active' | 'disabled' | 'offline'
+  gps_reason?: string
   offline_buffered?: boolean
 }
 
@@ -418,12 +419,20 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       let gpsBadgeBorder = '#a7f3d0'
 
       if (isGpsDisabled) {
-        gpsBadgeText = '📡 GPS off'
+        if (item.gps_reason === 'permission_denied') {
+          gpsBadgeText = '🚫 Permissão negada no aparelho'
+        } else {
+          gpsBadgeText = '📡 GPS desligado'
+        }
         gpsBadgeBg = '#fef2f2'
         gpsBadgeColor = '#b91c1c'
         gpsBadgeBorder = '#fecaca'
       } else if (isSignalLost) {
-        gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
+        if (item.gps_reason === 'weak_signal') {
+          gpsBadgeText = `📶 Sinal fraco (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
+        } else {
+          gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
+        }
         gpsBadgeBg = '#fffbeb'
         gpsBadgeColor = '#b45309'
         gpsBadgeBorder = '#fde68a'

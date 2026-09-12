@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T12:34:24.789Z",
+  "generatedAt": "2026-09-12T13:00:59.689Z",
   "collections": [
     {
       "name": "users",
@@ -592,6 +592,12 @@
         {
           "name": "accuracy",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gps_reason",
+          "type": "text",
           "required": false,
           "system": false
         }

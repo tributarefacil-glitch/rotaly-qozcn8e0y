@@ -29,6 +29,8 @@ export interface OfflineTelemetryPoint {
     | 'send_failed'
     | 'gps_disabled'
     | 'gps_unavailable'
+    | 'permission_denied'
+    | 'weak_signal'
     | 'cached_while_offline'
   synced?: boolean
   error?: string
@@ -201,7 +203,11 @@ class OfflineTelemetryBufferService {
             pt.heading ?? 0,
             pt.batteryLevel,
             {
-              gps_status: pt.reason.startsWith('gps') ? 'disabled' : 'offline',
+              gps_status:
+                pt.reason === 'permission_denied' || pt.reason.startsWith('gps')
+                  ? 'disabled'
+                  : 'offline',
+              gps_reason: pt.reason,
               offline_buffered: true,
               accuracy: pt.accuracy,
             },

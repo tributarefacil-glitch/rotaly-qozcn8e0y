@@ -482,6 +482,7 @@ export const deliveryService = {
     batteryLevel?: number | null,
     extra?: {
       gps_status?: 'active' | 'disabled' | 'offline' | string
+      gps_reason?: string
       offline_buffered?: boolean
       accuracy?: number
     },
@@ -498,6 +499,9 @@ export const deliveryService = {
     }
     if (extra?.gps_status) {
       payload.gps_status = extra.gps_status
+    }
+    if (extra?.gps_reason !== undefined) {
+      payload.gps_reason = extra.gps_reason
     }
     if (extra?.offline_buffered !== undefined) {
       payload.offline_buffered = extra.offline_buffered

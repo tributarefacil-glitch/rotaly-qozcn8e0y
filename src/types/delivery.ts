@@ -225,6 +225,13 @@ export interface CourierFuelAccount {
   advances?: FuelAdvanceRecord[]
 }
 
+export type GpsFailureReason =
+  | 'permission_denied'
+  | 'weak_signal'
+  | 'position_unavailable'
+  | 'unsupported'
+  | 'network_offline'
+
 export interface LocationRecord extends RecordModel {
   user_id: string
   lat: number
@@ -233,6 +240,7 @@ export interface LocationRecord extends RecordModel {
   heading?: number
   battery_level?: number
   gps_status?: 'active' | 'disabled' | 'offline' | string
+  gps_reason?: GpsFailureReason | string
   offline_buffered?: boolean
   accuracy?: number
   created?: string

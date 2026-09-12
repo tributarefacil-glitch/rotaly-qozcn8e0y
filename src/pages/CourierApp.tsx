@@ -11,11 +11,17 @@ import {
   Navigation,
   XCircle,
   Clock,
+  Smartphone,
+  HelpCircle,
+  Sun,
+  Radio,
+  AlertTriangle,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { CourierBottomNav } from '@/components/CourierBottomNav'
 import { DeliveryConfirmationModal } from '@/components/DeliveryConfirmationModal'
 import { CancelDeliveryModal } from '@/components/CancelDeliveryModal'
+import { IPhoneGpsGuideModal } from '@/components/IPhoneGpsGuideModal'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { useAuth } from '@/contexts/AuthContext'
@@ -53,13 +59,19 @@ export default function CourierApp() {
   const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<OrderRecord | null>(null)
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
 
-  // Status de GPS e rede em tempo real
+  // Status de GPS e rede em tempo real com distinção de motivo
   const [gpsStatus, setGpsStatus] = useState<'active' | 'disabled' | 'offline'>('active')
+  const [gpsFailureDetail, setGpsFailureDetail] = useState<
+    'none' | 'permission_denied' | 'weak_signal' | 'position_unavailable' | 'unsupported'
+  >('none')
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   )
   const [pendingBufferedPoints, setPendingBufferedPoints] = useState<number>(0)
   const [isFlushingBuffer, setIsFlushingBuffer] = useState<boolean>(false)
+  const [isIPhoneGuideOpen, setIsIPhoneGuideOpen] = useState(false)
+  const [wakeLockSupported, setWakeLockSupported] = useState<boolean>(true)
+  const [isWakeLockActive, setIsWakeLockActive] = useState<boolean>(false)
 
   const [isGpsActive] = useState(true)
 
@@ -294,6 +306,9 @@ export default function CourierApp() {
   // Só grava na coleção locations se passaram > 30s OU se moveu > 20 metros.
   const lastRecordedGpsRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
   const isSendingLocationRef = useRef<boolean>(false)
+  const isFetchingPositionRef = useRef<boolean>(false)
+  const triggerImmediateGpsRef = useRef<(() => void) | null>(null)
+  const wakeLockSentinelRef = useRef<any>(null)
 
   // Assinatura reativa da contagem do buffer offline e listeners de conectividade online/offline
   useEffect(() => {
@@ -341,18 +356,97 @@ export default function CourierApp() {
     }
   }, [user?.id])
 
-  // Telemetria GPS com dedupe, lock, buffer offline e detecção de status de GPS
+  // Gerenciamento de Wake Lock para manter a tela ativa e o Safari iOS executando durante a rota ativa
+  useEffect(() => {
+    let released = false
+
+    const requestWakeLock = async () => {
+      if (typeof navigator === 'undefined' || !('wakeLock' in navigator)) {
+        setWakeLockSupported(false)
+        return
+      }
+      // Solicitar apenas se estiver em rota ativa
+      if (!hasActiveStartedRoute) {
+        if (wakeLockSentinelRef.current) {
+          try {
+            await wakeLockSentinelRef.current.release()
+          } catch {
+            /* ignore */
+          }
+          wakeLockSentinelRef.current = null
+          setIsWakeLockActive(false)
+        }
+        return
+      }
+
+      try {
+        if (!wakeLockSentinelRef.current || wakeLockSentinelRef.current.released) {
+          const sentinel = await (navigator as any).wakeLock.request('screen')
+          if (released) {
+            sentinel.release().catch(() => {})
+            return
+          }
+          wakeLockSentinelRef.current = sentinel
+          setIsWakeLockActive(true)
+          sentinel.addEventListener('release', () => {
+            if (wakeLockSentinelRef.current === sentinel) {
+              wakeLockSentinelRef.current = null
+              setIsWakeLockActive(false)
+            }
+          })
+        }
+      } catch (err) {
+        console.warn('Wake Lock request falhou ou não permitido no navegador:', err)
+        setWakeLockSupported(false)
+        setIsWakeLockActive(false)
+      }
+    }
+
+    requestWakeLock()
+
+    return () => {
+      released = true
+      if (wakeLockSentinelRef.current) {
+        wakeLockSentinelRef.current.release().catch(() => {})
+        wakeLockSentinelRef.current = null
+        setIsWakeLockActive(false)
+      }
+    }
+  }, [hasActiveStartedRoute])
+
+  // Telemetria GPS com dedupe, lock, buffer offline, timeout de ~20s, retry curto e reavaliação ao voltar
   useEffect(() => {
     if (!user || !isGpsActive) return
+
+    let isEffectActive = true
+    let nextScheduledTimer: any = null
+
+    const clearScheduledTimer = () => {
+      if (nextScheduledTimer) {
+        clearTimeout(nextScheduledTimer)
+        nextScheduledTimer = null
+      }
+    }
+
+    const scheduleNextCheck = (delayMs: number) => {
+      clearScheduledTimer()
+      if (!isEffectActive) return
+      nextScheduledTimer = setTimeout(() => {
+        checkCurrentLocation(false)
+      }, delayMs)
+    }
 
     const processAndSendGps = async (
       lat: number,
       lng: number,
       speedVal?: number | null,
       accuracyVal?: number,
+      forceSend = false,
     ) => {
       setCurrentCourierLocation({ lat, lng })
+      // Se conseguiu ler o GPS com sucesso, restaura imediatamente para ativo
       setGpsStatus('active')
+      setGpsFailureDetail('none')
 
       // Se outra gravação já estiver em voo, não enviar simultaneamente
       if (isSendingLocationRef.current) return
@@ -360,7 +454,7 @@ export default function CourierApp() {
       const now = Date.now()
       const last = lastRecordedGpsRef.current
 
-      if (last) {
+      if (last && !forceSend) {
         const timeDiffSeconds = (now - last.timestamp) / 1000
         const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
 
@@ -390,6 +484,7 @@ export default function CourierApp() {
         // Tentar envio normal online
         await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90, batteryLevel, {
           gps_status: 'active',
+          gps_reason: '',
           offline_buffered: false,
           accuracy: accuracyVal,
         })
@@ -401,9 +496,6 @@ export default function CourierApp() {
         }
       } catch (e) {
         console.error('Failed to post live location (salvando no buffer offline se em rota):', e)
-        // Bloco catch de falha de rede do deliveryService.updateCourierLocation:
-        // Enfileira no offlineTelemetryBuffer com reason 'network_offline'
-        // APENAS se houver rota ativa iniciada e não finalizada na base
         if (hasActiveStartedRoute) {
           offlineTelemetryBuffer.enqueuePoint({
             userId: user.id,
@@ -422,75 +514,171 @@ export default function CourierApp() {
       }
     }
 
-    const checkCurrentLocation = () => {
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            processAndSendGps(
-              pos.coords.latitude,
-              pos.coords.longitude,
-              pos.coords.speed,
-              pos.coords.accuracy,
-            )
-          },
-          async (err) => {
-            console.warn('Geolocation getCurrentPosition falhou ou permissão negada:', err)
-            const isGpsDisabled =
-              err.code === err.PERMISSION_DENIED || err.code === err.POSITION_UNAVAILABLE
-            const newStatus: 'disabled' | 'offline' = isGpsDisabled ? 'disabled' : 'offline'
-            setGpsStatus(newStatus)
+    const checkCurrentLocation = (isImmediate = false) => {
+      if (!isEffectActive) return
 
-            // Se o entregador estiver em rota ativa, registramos o status e enfileiramos no buffer
-            if (hasActiveStartedRoute) {
-              const now = Date.now()
-              const last = lastRecordedGpsRef.current
-              const fallbackLat = last ? last.lat : currentCourierLocation?.lat || 0
-              const fallbackLng = last ? last.lng : currentCourierLocation?.lng || 0
+      if (typeof navigator === 'undefined' || !navigator.geolocation) {
+        setGpsStatus('disabled')
+        setGpsFailureDetail('unsupported')
+        scheduleNextCheck(30000)
+        return
+      }
 
-              // Notificar a Torre imediatamente sobre o GPS desligado/indisponível se tivermos coordenadas de referência e rede
-              if (fallbackLat && fallbackLng) {
-                try {
-                  const bLevel = await getBatteryLevel().catch(() => 90)
-                  await deliveryService.updateCourierLocation(
-                    user.id,
-                    fallbackLat,
-                    fallbackLng,
-                    0,
-                    0,
-                    bLevel,
-                    {
-                      gps_status: newStatus,
-                      offline_buffered: false,
-                    },
-                  )
-                } catch {
-                  // Se falhou rede ao avisar GPS desligado, guarda no buffer
-                  offlineTelemetryBuffer.enqueuePoint({
-                    userId: user.id,
-                    lat: fallbackLat,
-                    lng: fallbackLng,
-                    speed: 0,
-                    heading: 0,
-                    accuracy: undefined,
-                    batteryLevel: 90,
-                    timestamp: now,
-                    reason: 'gps_disabled',
-                  })
-                }
+      // Evitar chamadas simultâneas de getCurrentPosition
+      if (isFetchingPositionRef.current) return
+      isFetchingPositionRef.current = true
+
+      // Timeout aumentado para 20s (item 2: área urbana no iOS)
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          isFetchingPositionRef.current = false
+          if (!isEffectActive) return
+          processAndSendGps(
+            pos.coords.latitude,
+            pos.coords.longitude,
+            pos.coords.speed,
+            pos.coords.accuracy,
+            isImmediate,
+          )
+          // Se deu certo, ciclo padrão de 30s
+          scheduleNextCheck(30000)
+        },
+        async (err) => {
+          isFetchingPositionRef.current = false
+          if (!isEffectActive) return
+
+          console.warn('Geolocation getCurrentPosition falhou com código:', err?.code, err?.message)
+
+          // 1. DISTINGUIR O MOTIVO DA FALHA
+          // Erro de permissão: code 1 / PERMISSION_DENIED
+          if (err.code === err.PERMISSION_DENIED) {
+            setGpsStatus('disabled')
+            setGpsFailureDetail('permission_denied')
+          } else if (err.code === err.TIMEOUT) {
+            // Timeout: code 3 -> âmbar "Sinal GPS fraco — tentando novamente..."
+            setGpsStatus('offline')
+            setGpsFailureDetail('weak_signal')
+          } else if (err.code === err.POSITION_UNAVAILABLE) {
+            // Posição indisponível temporária: code 2 -> âmbar
+            setGpsStatus('offline')
+            setGpsFailureDetail('position_unavailable')
+          } else {
+            setGpsStatus('offline')
+            setGpsFailureDetail('weak_signal')
+          }
+
+          // Se estiver em rota ativa, notifica Torre com o status e gps_reason correspondente
+          if (hasActiveStartedRoute) {
+            const now = Date.now()
+            const last = lastRecordedGpsRef.current
+            const fallbackLat = last ? last.lat : currentCourierLocation?.lat || 0
+            const fallbackLng = last ? last.lng : currentCourierLocation?.lng || 0
+
+            const pbStatus: 'disabled' | 'offline' =
+              err.code === err.PERMISSION_DENIED ? 'disabled' : 'offline'
+            const pbReason =
+              err.code === err.PERMISSION_DENIED ? 'permission_denied' : 'weak_signal'
+
+            if (fallbackLat && fallbackLng) {
+              try {
+                const bLevel = await getBatteryLevel().catch(() => 90)
+                await deliveryService.updateCourierLocation(
+                  user.id,
+                  fallbackLat,
+                  fallbackLng,
+                  0,
+                  0,
+                  bLevel,
+                  {
+                    gps_status: pbStatus,
+                    gps_reason: pbReason,
+                    offline_buffered: false,
+                  },
+                )
+              } catch {
+                offlineTelemetryBuffer.enqueuePoint({
+                  userId: user.id,
+                  lat: fallbackLat,
+                  lng: fallbackLng,
+                  speed: 0,
+                  heading: 0,
+                  accuracy: undefined,
+                  batteryLevel: 90,
+                  timestamp: now,
+                  reason: pbReason as any,
+                })
               }
             }
-          },
-          { enableHighAccuracy: true, timeout: 10000 },
-        )
-      } else {
-        setGpsStatus('disabled')
+          }
+
+          // Ciclo curto de retry: 12s se for timeout ou posição indisponível (tentar novamente sem spam)
+          // Se for permissão negada, espera 20s para re-verificar caso o usuário tenha ido aos Ajustes
+          const retryDelay = err.code === err.PERMISSION_DENIED ? 20000 : 12000
+          scheduleNextCheck(retryDelay)
+        },
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 },
+      )
+    }
+
+    // Expor função de disparo imediato para listeners de visibilidade e botão de retry
+    triggerImmediateGpsRef.current = () => {
+      checkCurrentLocation(true)
+    }
+
+    // Disparo inicial
+    checkCurrentLocation(false)
+
+    // REAVALIAÇÃO QUANDO A TELA VOLTA (item 3: visibilitychange e pageshow)
+    const handleResume = () => {
+      // Se a aba/tela voltou a ficar visível
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return
+      }
+
+      // Re-adquirir wakeLock se estiver em rota ativa
+      if (hasActiveStartedRoute && typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+        ;(navigator as any).wakeLock
+          ?.request('screen')
+          .then((sentinel: any) => {
+            wakeLockSentinelRef.current = sentinel
+            setIsWakeLockActive(true)
+          })
+          .catch(() => {})
+      }
+
+      toast.info('Retomando rastreamento após pausa...', {
+        duration: 3000,
+        id: 'gps-resuming-toast',
+      })
+
+      // Limpar timer que pode ter "derretido" ou ficado pendente e disparar leitura de GPS imediata
+      clearScheduledTimer()
+      checkCurrentLocation(true)
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        handleResume()
       }
     }
 
-    // Disparo imediato e intervalo a cada 30 segundos
-    checkCurrentLocation()
-    const interval = setInterval(checkCurrentLocation, 30000)
-    return () => clearInterval(interval)
+    const handlePageShow = (e: PageTransitionEvent) => {
+      // Quando a página é restaurada pelo bfcache do Safari iOS
+      if (e.persisted || document.visibilityState === 'visible') {
+        handleResume()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('pageshow', handlePageShow)
+
+    return () => {
+      isEffectActive = false
+      clearScheduledTimer()
+      triggerImmediateGpsRef.current = null
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pageshow', handlePageShow)
+    }
   }, [user, isGpsActive, hasActiveStartedRoute, isFlushingBuffer, currentCourierLocation])
 
   // Se todas as entregas individuais da rota ativa já foram concluídas (ou não há mais activeDeliveries pendentes)
@@ -657,34 +845,60 @@ export default function CourierApp() {
 
             <div className="flex items-center gap-2">
               {gpsStatus === 'active' && isOnline ? (
-                <>
+                <div className="flex items-center gap-2">
                   <span className="relative flex h-2.5 w-2.5">
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                     <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
                   </span>
                   <span className="text-xs font-semibold text-emerald-400">GPS Ativo</span>
-                </>
-              ) : gpsStatus === 'disabled' ? (
-                <>
+                </div>
+              ) : gpsFailureDetail === 'permission_denied' ? (
+                <div className="flex items-center gap-1.5">
                   <span className="relative flex h-2.5 w-2.5">
                     <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
                   </span>
-                  <span className="text-xs font-semibold text-rose-400">GPS Desligado</span>
-                </>
+                  <span className="text-xs font-semibold text-rose-400 truncate max-w-[170px] sm:max-w-none">
+                    Permissão Negada
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsIPhoneGuideOpen(true)}
+                    className="ml-1 text-[11px] font-bold text-rose-300 underline hover:text-white"
+                  >
+                    Como liberar
+                  </button>
+                </div>
               ) : !isOnline ? (
-                <>
+                <div className="flex items-center gap-2">
                   <span className="relative flex h-2.5 w-2.5">
                     <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
                   </span>
                   <span className="text-xs font-semibold text-amber-400">Sem Internet</span>
-                </>
+                </div>
+              ) : gpsFailureDetail === 'weak_signal' ||
+                gpsFailureDetail === 'position_unavailable' ? (
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
+                  </span>
+                  <span className="text-xs font-semibold text-amber-400">
+                    Sinal GPS fraco — tentando novamente...
+                  </span>
+                </div>
+              ) : gpsFailureDetail === 'unsupported' ? (
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+                  </span>
+                  <span className="text-xs font-semibold text-rose-400">GPS Desligado</span>
+                </div>
               ) : (
-                <>
+                <div className="flex items-center gap-2">
                   <span className="relative flex h-2.5 w-2.5">
                     <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
                   </span>
                   <span className="text-xs font-semibold text-amber-400">Aguardando Sinal</span>
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -715,19 +929,93 @@ export default function CourierApp() {
           </div>
         )}
 
-        {/* ALERTA SE GPS ESTIVER DESLIGADO EM ROTA ATIVA */}
-        {hasActiveStartedRoute && gpsStatus === 'disabled' && (
-          <div className="rounded-xl border border-rose-500/40 bg-rose-950/50 p-3.5 flex items-center gap-3 text-xs text-rose-200 shadow-lg">
-            <span className="text-lg shrink-0">📡</span>
-            <div className="min-w-0 flex-1">
-              <p className="font-bold text-white text-xs">
-                Atenção: GPS Desligado ou Sem Permissão
-              </p>
-              <p className="text-[11px] text-rose-300/90 mt-0.5">
-                Por favor, ative a localização do seu dispositivo para continuar registrando o km
-                rodado e a rota na Torre de Controle.
-              </p>
+        {/* BANNER DISTINTO DE PERMISSÃO NEGADA */}
+        {gpsFailureDetail === 'permission_denied' && (
+          <div className="rounded-xl border border-rose-500/50 bg-rose-950/60 p-3.5 space-y-2.5 text-xs text-rose-200 shadow-xl">
+            <div className="flex items-start justify-between gap-2.5">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <span className="text-xl shrink-0 mt-0.5">🚫</span>
+                <div className="min-w-0">
+                  <p className="font-bold text-white text-xs">
+                    Permissão de Localização Negada no Navegador
+                  </p>
+                  <p className="text-[11px] text-rose-300/90 mt-0.5 leading-relaxed">
+                    O Safari/navegador está bloqueando o acesso ao GPS. A Torre de Controle não
+                    consegue receber seus pontos e o cálculo de km rodado fica suspenso.
+                  </p>
+                </div>
+              </div>
             </div>
+
+            <div className="flex items-center gap-2 pt-1 flex-wrap">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setIsIPhoneGuideOpen(true)}
+                className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs h-9 px-3 rounded-lg flex items-center gap-1.5 shadow"
+              >
+                <Smartphone className="h-3.5 w-3.5" />
+                Como liberar no iPhone
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (triggerImmediateGpsRef.current) {
+                    triggerImmediateGpsRef.current()
+                  }
+                }}
+                className="border-rose-400/40 text-rose-200 hover:bg-rose-900/40 text-xs h-9 px-3 rounded-lg flex items-center gap-1.5"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Tentar novamente
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* BANNER DE SINAL FRACO / TIMEOUT (AMBAR, SEM MARCAR COMO GPS DESLIGADO) */}
+        {gpsFailureDetail === 'weak_signal' || gpsFailureDetail === 'position_unavailable' ? (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-950/40 p-3.5 flex items-center justify-between gap-3 text-xs text-amber-200 shadow-lg">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Radio className="h-5 w-5 text-amber-400 shrink-0 animate-pulse" />
+              <div className="min-w-0">
+                <p className="font-bold text-white text-xs">
+                  Sinal GPS fraco — tentando novamente em ciclo curto...
+                </p>
+                <p className="text-[11px] text-amber-300/80 mt-0.5">
+                  Em áreas com prédios altos o sinal pode oscilar. Mantenha o aparelho próximo ao
+                  suporte ou com visão aberta do céu.
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (triggerImmediateGpsRef.current) {
+                  triggerImmediateGpsRef.current()
+                }
+              }}
+              className="border-amber-400/40 text-amber-200 hover:bg-amber-900/40 text-[11px] h-8 px-2 shrink-0"
+            >
+              Forçar Leitura
+            </Button>
+          </div>
+        ) : null}
+
+        {/* DICA DE TELA LIGADA / WAKE LOCK CASO NÃO SUPORTADO PELO BROWSER EM ROTA ATIVA */}
+        {hasActiveStartedRoute && !wakeLockSupported && (
+          <div className="rounded-xl border border-blue-500/30 bg-blue-950/40 p-3 flex items-start gap-2.5 text-xs text-blue-200">
+            <Sun className="h-4 w-4 text-[#60A5FA] shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-300 leading-relaxed">
+              <strong className="text-white font-semibold">Dica para iPhone:</strong> mantenha o app
+              aberto com a tela ligada no suporte do veículo durante a entrega para evitar que o iOS
+              suspenda o rastreamento.
+            </p>
           </div>
         )}
 
@@ -1104,8 +1392,31 @@ export default function CourierApp() {
         )}
       </main>
 
+      {/* Link de ajuda no rodapé para o entregador resolver GPS sozinho a qualquer momento */}
+      <div className="max-w-xl mx-auto w-full px-4 pt-1 pb-2 flex items-center justify-center">
+        <button
+          type="button"
+          onClick={() => setIsIPhoneGuideOpen(true)}
+          className="text-[11px] text-slate-400 hover:text-[#60A5FA] flex items-center gap-1.5 transition underline decoration-dotted"
+        >
+          <HelpCircle className="h-3.5 w-3.5" />
+          <span>Problemas com GPS no iPhone? Veja como liberar</span>
+        </button>
+      </div>
+
       {/* Navegação Inferior Mobile Mantida Intacta */}
       <CourierBottomNav />
+
+      {/* Guia Modal Interativo de Liberação de GPS no iPhone */}
+      <IPhoneGpsGuideModal
+        open={isIPhoneGuideOpen}
+        onOpenChange={setIsIPhoneGuideOpen}
+        onRetry={() => {
+          if (triggerImmediateGpsRef.current) {
+            triggerImmediateGpsRef.current()
+          }
+        }}
+      />
 
       {/* Modal de Conclusão com Foto e Assinatura (Fluxo de Comprovante) */}
       <DeliveryConfirmationModal

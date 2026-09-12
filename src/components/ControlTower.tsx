@@ -786,6 +786,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         battery_level: latestLoc?.battery_level,
         location_timestamp: latestLoc?.updated || latestLoc?.created,
         gps_status: latestLoc?.gps_status,
+        gps_reason: (latestLoc as any)?.gps_reason,
         offline_buffered: latestLoc?.offline_buffered,
         accuracy: latestLoc?.accuracy,
         hasRouteStarted,
@@ -1113,6 +1114,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             ? new Date(courierItem.location_timestamp).getTime()
             : 0
           const isGpsDisabled = courierItem.gps_status === 'disabled'
+          const isPermissionDenied =
+            courierItem.gps_reason === 'permission_denied' ||
+            (isGpsDisabled && courierItem.gps_reason !== 'unsupported')
           const isSignalLost =
             courierItem.gps_status === 'offline' ||
             (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
@@ -1124,8 +1128,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               notifiedEventsRef.current.add(gpsKey)
               playOffRouteWarningSound()
               toast({
-                title: '📡 GPS DESLIGADO NA ROTA',
-                description: `${courierName} desligou o GPS ou negou permissão durante a rota!`,
+                title: isPermissionDenied
+                  ? '🚫 PERMISSÃO DE GPS NEGADA'
+                  : '📡 GPS DESLIGADO NA ROTA',
+                description: isPermissionDenied
+                  ? `${courierName}: permissão de localização negada no aparelho/Safari!`
+                  : `${courierName} está com o GPS desligado no aparelho!`,
                 variant: 'destructive',
               })
             }
@@ -1251,6 +1259,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         battery_level: item.battery_level,
         location_timestamp: item.location_timestamp,
         gps_status: item.gps_status as 'active' | 'disabled' | 'offline' | undefined,
+        gps_reason: item.gps_reason,
         offline_buffered: item.offline_buffered,
       })
     }) // 2. Destinos de entregas em trânsito e pendentes (marcador laranja com nome e número de sequência)
@@ -1719,12 +1728,20 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           let gpsBadgeBorder = '#a7f3d0'
 
           if (isGpsDisabled) {
-            gpsBadgeText = '📡 GPS off'
+            if (item.gps_reason === 'permission_denied') {
+              gpsBadgeText = '🚫 Permissão negada no aparelho'
+            } else {
+              gpsBadgeText = '📡 GPS desligado'
+            }
             gpsBadgeBg = '#fef2f2'
             gpsBadgeColor = '#b91c1c'
             gpsBadgeBorder = '#fecaca'
           } else if (isSignalLost) {
-            gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
+            if (item.gps_reason === 'weak_signal') {
+              gpsBadgeText = `📶 Sinal GPS fraco (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
+            } else {
+              gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
+            }
             gpsBadgeBg = '#fffbeb'
             gpsBadgeColor = '#b45309'
             gpsBadgeBorder = '#fde68a'
@@ -2947,7 +2964,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                         </div>
                       )}
 
-                    {/* Alertas de GPS desligado na Torre */}
+                    {/* Alertas de GPS desligado ou Permissão negada na Torre */}
                     {mapDisplayMode === 'in_transit' &&
                       activeRouteCouriers
                         .filter(
@@ -2955,29 +2972,39 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                             c.gps_status === 'disabled' &&
                             !dismissedGpsAlertIds.includes(`gps-${c.courier.id}`),
                         )
-                        .map((c) => (
-                          <div
-                            key={`gps-banner-${c.courier.id}`}
-                            className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/70 shadow-md text-[10.5px] font-bold text-rose-200 flex items-center justify-between gap-2 animate-pulse"
-                          >
-                            <div className="flex items-center gap-1.5 truncate">
-                              <span className="text-sm shrink-0">📡</span>
-                              <span className="truncate">
-                                GPS desligado: {c.courier.name || c.courier.email}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setDismissedGpsAlertIds((prev) => [...prev, `gps-${c.courier.id}`])
-                              }
-                              className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
-                              title="Dispensar alerta"
+                        .map((c) => {
+                          const isPermDenied = c.gps_reason === 'permission_denied'
+                          return (
+                            <div
+                              key={`gps-banner-${c.courier.id}`}
+                              className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/70 shadow-md text-[10.5px] font-bold text-rose-200 flex items-center justify-between gap-2 animate-pulse"
                             >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
+                              <div className="flex items-center gap-1.5 truncate">
+                                <span className="text-sm shrink-0">
+                                  {isPermDenied ? '🚫' : '📡'}
+                                </span>
+                                <span className="truncate">
+                                  {isPermDenied
+                                    ? `Permissão negada no aparelho: ${c.courier.name || c.courier.email}`
+                                    : `GPS desligado: ${c.courier.name || c.courier.email}`}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDismissedGpsAlertIds((prev) => [
+                                    ...prev,
+                                    `gps-${c.courier.id}`,
+                                  ])
+                                }
+                                className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
+                                title="Dispensar alerta"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )
+                        })}
 
                     {/* Alertas de Perda de sinal (>2 min) na Torre */}
                     {mapDisplayMode === 'in_transit' &&
@@ -3177,29 +3204,39 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                             c.gps_status === 'disabled' &&
                             !dismissedGpsAlertIds.includes(`gps-${c.courier.id}`),
                         )
-                        .map((c) => (
-                          <div
-                            key={`canvas-gps-banner-${c.courier.id}`}
-                            className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/70 shadow-md text-[10.5px] font-bold text-rose-200 flex items-center justify-between gap-2 animate-pulse"
-                          >
-                            <div className="flex items-center gap-1.5 truncate">
-                              <span className="text-sm shrink-0">📡</span>
-                              <span className="truncate">
-                                GPS desligado: {c.courier.name || c.courier.email}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setDismissedGpsAlertIds((prev) => [...prev, `gps-${c.courier.id}`])
-                              }
-                              className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
-                              title="Dispensar alerta"
+                        .map((c) => {
+                          const isPermDenied = c.gps_reason === 'permission_denied'
+                          return (
+                            <div
+                              key={`canvas-gps-banner-${c.courier.id}`}
+                              className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/70 shadow-md text-[10.5px] font-bold text-rose-200 flex items-center justify-between gap-2 animate-pulse"
                             >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
+                              <div className="flex items-center gap-1.5 truncate">
+                                <span className="text-sm shrink-0">
+                                  {isPermDenied ? '🚫' : '📡'}
+                                </span>
+                                <span className="truncate">
+                                  {isPermDenied
+                                    ? `Permissão negada no aparelho: ${c.courier.name || c.courier.email}`
+                                    : `GPS desligado: ${c.courier.name || c.courier.email}`}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDismissedGpsAlertIds((prev) => [
+                                    ...prev,
+                                    `gps-${c.courier.id}`,
+                                  ])
+                                }
+                                className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
+                                title="Dispensar alerta"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )
+                        })}
 
                     {/* Alertas de Perda de sinal (>2 min) no canvas */}
                     {mapDisplayMode === 'in_transit' &&
