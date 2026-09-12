@@ -30,6 +30,63 @@ import {
 
 export { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS, haversineDistanceMeters }
 
+/**
+ * Retorna a distância rodoviária estimada entre a base de saída e o destino do cliente da entrega.
+ * Usa distância Haversine base->cliente x 1.3 (fator mínimo viário) ou a coordenada expandida, com piso de 0.8 km.
+ */
+export function getOrderRoadDistanceFromBase(order: OrderRecord): number {
+  const baseLat = order.start_base_lat || -22.7001402
+  const baseLng = order.start_base_lng || -43.2982834
+  const custLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
+  const custLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
+
+  if (custLat !== 0 && custLng !== 0) {
+    const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
+    const directKm = directMeters / 1000
+    // Fator mínimo de rota urbana/rodoviária 1.3x
+    const roadKm = directKm * 1.3
+    return Math.max(roadKm, 0.8)
+  }
+
+  // Fallback para distance_km existente caso não haja coordenadas válidas
+  const fallbackKm =
+    typeof order.distance_km === 'number' && order.distance_km > 0 ? order.distance_km : 0.8
+  return Math.max(fallbackKm, 0.8)
+}
+
+/**
+ * Retorna o peso de atribuição de uma entrega em uma rota compartilhada:
+ * per-delivery weight = max(roadDistFromBase, 0.8) + returnToBase
+ */
+export function calculateDeliveryRouteWeight(order: OrderRecord): number {
+  // Se a ordem já tem distance_km registrado de forma consistente (ex.: corrigido na base)
+  // ou se distance_km representa a distância direta/viária
+  const baseLat = order.start_base_lat || -22.7001402
+  const baseLng = order.start_base_lng || -43.2982834
+  const custLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
+  const custLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
+
+  let roadDist = 0.8
+  if (custLat !== 0 && custLng !== 0) {
+    const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
+    const directKm = directMeters / 1000
+    roadDist = Math.max(directKm * 1.3, 0.8)
+  }
+
+  // Se distance_km foi informado e é maior que roadDist, respeitamos a distância viária real salva
+  if (typeof order.distance_km === 'number' && order.distance_km > 0) {
+    roadDist = Math.max(roadDist, order.distance_km)
+  }
+
+  let returnKm =
+    typeof order.return_trip_km === 'number' && order.return_trip_km > 0 ? order.return_trip_km : 0
+  if (returnKm === 0 && roadDist > 0) {
+    returnKm = roadDist
+  }
+
+  return Math.max(roadDist, 0.8) + returnKm
+}
+
 export interface RealKmCalculationResult {
   /** KM Real rodado dentro da rota oficial (utilizado para reembolso e custo operacional oficial) */
   officialRealKm: number

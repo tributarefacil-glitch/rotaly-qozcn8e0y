@@ -389,6 +389,30 @@ export function CreateCustomerModal({
 
     const phonesToValidate = [mainPhone, phone2.trim() || undefined, phone3.trim() || undefined]
 
+    let finalLat = lat || -22.906847
+    let finalLng = lng || -43.172896
+
+    // Sanity check: se coordenadas foram capturadas/coladas do GPS do dispositivo,
+    // validar contra o endereço textual geocodificado; se distar > 2 km, preferir o endereço oficial
+    if (fullAddress && finalLat && finalLng) {
+      try {
+        const geocoded = await fallbackGeocodeAddress(fullAddress)
+        if (geocoded && typeof geocoded.lat === 'number' && typeof geocoded.lng === 'number') {
+          const distMeters = haversineDistanceMeters(finalLat, finalLng, geocoded.lat, geocoded.lng)
+          if (distMeters > 2000) {
+            toast.warning(
+              'Atenção: A coordenada capturada dista mais de 2 km do endereço digitado. Utilizando coordenadas oficiais do logradouro.',
+              { duration: 6000 },
+            )
+            finalLat = geocoded.lat
+            finalLng = geocoded.lng
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao verificar sanidade de coordenadas vs endereço:', err)
+      }
+    }
+
     const payload: Partial<CustomerRecord> = {
       name: trimmedName,
       document: document.trim() || undefined,
@@ -402,8 +426,8 @@ export function CreateCustomerModal({
       state: ufState.trim(),
       postal_code: postalCode.trim(),
       complement: complement.trim(),
-      lat: lat || -22.906847,
-      lng: lng || -43.172896,
+      lat: finalLat,
+      lng: finalLng,
     }
 
     setIsSubmitting(true)

@@ -244,6 +244,47 @@ export function calculateCourierFuelMetrics(params: {
   // ou atribuímos a cada pedido de modo que a soma do lote corresponda exatamente ao KM real da rota inteira (Base -> Entregas -> Base).
   const isBicycle = category === 'bicicleta'
 
+  // Helper para peso individual da entrega:
+  // per-delivery weight = max(roadDistFromBase(i), 0.8) + returnToBase(i)
+  const computeOrderWeight = (ord: OrderRecord): number => {
+    const baseLat = ord.start_base_lat || -22.7001402
+    const baseLng = ord.start_base_lng || -43.2982834
+    const custLat = ord.expand?.customer_id?.lat || ord.end_address_lat || 0
+    const custLng = ord.expand?.customer_id?.lng || ord.end_address_lng || 0
+
+    let roadDist = 0.8
+    if (custLat !== 0 && custLng !== 0) {
+      // Distância Haversine direta * 1.3 fator viário mínimo saneado
+      const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
+      roadDist = Math.max((directMeters / 1000) * 1.3, 0.8)
+    }
+
+    // Se distance_km da ordem for válido e maior (já computado no asfalto), utiliza
+    if (typeof ord.distance_km === 'number' && ord.distance_km > 0) {
+      roadDist = Math.max(roadDist, ord.distance_km)
+    }
+
+    const returnKm =
+      typeof ord.return_trip_km === 'number' && ord.return_trip_km > 0
+        ? ord.return_trip_km
+        : roadDist
+
+    return Math.max(roadDist, 0.8) + returnKm
+  }
+
+  // Mapa de controle para acumular os valores rateados por lote de rota
+  // permitindo que o último pedido absorva o delta de arredondamento tanto para KM quanto para Combustível (R$)
+  const batchAllocationAccumulators = new Map<
+    string,
+    {
+      allocatedOfficialKm: number
+      allocatedDeviationKm: number
+      allocatedGpsKm: number
+      allocatedFuelCost: number
+      allocatedLiters: number
+    }
+  >()
+
   const orderCalculations: CourierOrderTelemetryCalculation[] = eligibleOrders.map((order) => {
     const key = order.route_started_at
       ? `batch_${Math.floor(new Date(order.route_started_at).getTime() / (10 * 60 * 1000))}`
@@ -253,57 +294,72 @@ export function calculateCourierFuelMetrics(params: {
     const batchOrders = routeBatches.get(key) || [order]
     const batchCount = batchOrders.length
 
-    // Se houver mais de uma entrega na mesma rota, rateia o KM total da rota entre elas
-    // proporcionalmente (ou igualmente se não houver distâncias planejadas individuais)
+    let acc = batchAllocationAccumulators.get(key)
+    if (!acc) {
+      acc = {
+        allocatedOfficialKm: 0,
+        allocatedDeviationKm: 0,
+        allocatedGpsKm: 0,
+        allocatedFuelCost: 0,
+        allocatedLiters: 0,
+      }
+      batchAllocationAccumulators.set(key, acc)
+    }
+
+    // Totais calculados para este lote de rota completa
+    const batchTotalOfficialKm = batchTelemetry.officialRealKm
+    const batchTotalLiters =
+      !isBicycle && consumptionKml > 0
+        ? Number((batchTotalOfficialKm / consumptionKml).toFixed(2))
+        : 0
+    const batchTotalFuelCost = !isBicycle
+      ? Number((batchTotalLiters * pricePerLiter).toFixed(2))
+      : 0
+
     let officialKm = batchTelemetry.officialRealKm
     let deviationKm = batchTelemetry.deviationKm
     let totalGpsKm = batchTelemetry.totalGpsKm
+    let fuelCost = batchTotalFuelCost
+    let litersSpent = batchTotalLiters
 
     if (batchCount > 1) {
-      // Rateio proporcional: km da entrega = km da rota × distância planejada da entrega ÷ Σ distâncias planejadas do lote
-      const totalPlannedInBatch = batchOrders.reduce((sum, b) => {
-        const baseKm = b.distance_km || 0.5
-        const returnKm = b.return_trip_km || 0
-        return sum + (baseKm + returnKm)
-      }, 0)
-      const thisOrderWeight = (order.distance_km || 0.5) + (order.return_trip_km || 0)
-      const ratio = totalPlannedInBatch > 0 ? thisOrderWeight / totalPlannedInBatch : 1 / batchCount
+      // Rateio pro-rata: peso = max(roadDistFromBase(i), 0.8) + returnToBase(i)
+      const totalBatchWeight = batchOrders.reduce((sum, b) => sum + computeOrderWeight(b), 0)
+      const thisWeight = computeOrderWeight(order)
+      const ratio = totalBatchWeight > 0 ? thisWeight / totalBatchWeight : 1 / batchCount
 
       const orderIndex = batchOrders.findIndex((b) => b.id === order.id)
       const isLastOrderInBatch = orderIndex === batchCount - 1
 
       if (isLastOrderInBatch) {
-        // Compensar resíduo de arredondamento no último item para que a soma da coluna
-        // resulte rigorosamente idêntica ao total oficial do lote
-        let allocatedOfficialKm = 0
-        let allocatedDeviationKm = 0
-        let allocatedGpsKm = 0
-
-        for (let i = 0; i < batchCount - 1; i++) {
-          const bOrder = batchOrders[i]
-          const bWeight = (bOrder.distance_km || 0.5) + (bOrder.return_trip_km || 0)
-          const bRatio = totalPlannedInBatch > 0 ? bWeight / totalPlannedInBatch : 1 / batchCount
-          allocatedOfficialKm += Number((batchTelemetry.officialRealKm * bRatio).toFixed(1))
-          allocatedDeviationKm += Number((batchTelemetry.deviationKm * bRatio).toFixed(1))
-          allocatedGpsKm += Number((batchTelemetry.totalGpsKm * bRatio).toFixed(1))
-        }
-
+        // O último item do lote absorve exatamente o resíduo de arredondamento
+        // garantindo que Σ km = total do lote e Σ fuel = total do lote
         officialKm = Number(
-          Math.max(0, batchTelemetry.officialRealKm - allocatedOfficialKm).toFixed(1),
+          Math.max(0, batchTelemetry.officialRealKm - acc.allocatedOfficialKm).toFixed(1),
         )
         deviationKm = Number(
-          Math.max(0, batchTelemetry.deviationKm - allocatedDeviationKm).toFixed(1),
+          Math.max(0, batchTelemetry.deviationKm - acc.allocatedDeviationKm).toFixed(1),
         )
-        totalGpsKm = Number(Math.max(0, batchTelemetry.totalGpsKm - allocatedGpsKm).toFixed(1))
+        totalGpsKm = Number(Math.max(0, batchTelemetry.totalGpsKm - acc.allocatedGpsKm).toFixed(1))
+
+        fuelCost = Number(Math.max(0, batchTotalFuelCost - acc.allocatedFuelCost).toFixed(2))
+        litersSpent = Number(Math.max(0, batchTotalLiters - acc.allocatedLiters).toFixed(2))
       } else {
         officialKm = Number((batchTelemetry.officialRealKm * ratio).toFixed(1))
         deviationKm = Number((batchTelemetry.deviationKm * ratio).toFixed(1))
         totalGpsKm = Number((batchTelemetry.totalGpsKm * ratio).toFixed(1))
+
+        litersSpent =
+          !isBicycle && consumptionKml > 0 ? Number((officialKm / consumptionKml).toFixed(2)) : 0
+        fuelCost = !isBicycle ? Number((litersSpent * pricePerLiter).toFixed(2)) : 0
+
+        acc.allocatedOfficialKm += officialKm
+        acc.allocatedDeviationKm += deviationKm
+        acc.allocatedGpsKm += totalGpsKm
+        acc.allocatedFuelCost += fuelCost
+        acc.allocatedLiters += litersSpent
       }
     }
-
-    const litersSpent = !isBicycle && consumptionKml > 0 ? officialKm / consumptionKml : 0
-    const fuelCost = !isBicycle ? litersSpent * pricePerLiter : 0
 
     return {
       order,

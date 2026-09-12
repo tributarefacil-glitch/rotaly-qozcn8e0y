@@ -962,12 +962,38 @@ export const deliveryService = {
       const stepDistMeters = R * c
       const stepDistKm = Number((stepDistMeters / 1000).toFixed(2))
 
+      // Distância de retorno viária saneada (da parada de volta à base)
+      const baseLat = lastOrder?.start_base_lat || -22.7001402
+      const baseLng = lastOrder?.start_base_lng || -43.2982834
+      const dBaseMeters =
+        R *
+        2 *
+        Math.atan2(
+          Math.sqrt(
+            Math.sin(((custLat - baseLat) * Math.PI) / 360) ** 2 +
+              Math.cos((baseLat * Math.PI) / 180) *
+                Math.cos((custLat * Math.PI) / 180) *
+                Math.sin(((custLng - baseLng) * Math.PI) / 360) ** 2,
+          ),
+          Math.sqrt(
+            1 -
+              (Math.sin(((custLat - baseLat) * Math.PI) / 360) ** 2 +
+                Math.cos((baseLat * Math.PI) / 180) *
+                  Math.cos((custLat * Math.PI) / 180) *
+                  Math.sin(((custLng - baseLng) * Math.PI) / 360) ** 2),
+          ),
+        )
+      const returnTripKm = Number(((dBaseMeters / 1000) * 1.3).toFixed(2))
+
       const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
         settings,
         courier.vehicle_type,
       )
+      const totalAllocatedKm = stepDistKm + returnTripKm
       const fuelCost =
-        consumptionKml > 0 ? Number(((stepDistKm * pricePerLiter) / consumptionKml).toFixed(2)) : 0
+        consumptionKml > 0
+          ? Number(((totalAllocatedKm * pricePerLiter) / consumptionKml).toFixed(2))
+          : 0
 
       const now = new Date()
       const etaTime = new Date(now.getTime() + (20 + nextSequence * 15) * 60 * 1000).toISOString()
@@ -978,6 +1004,7 @@ export const deliveryService = {
         route_released: true,
         route_released_at: now.toISOString(),
         distance_km: stepDistKm > 0 ? stepDistKm : 1.5,
+        return_trip_km: returnTripKm > 0 ? returnTripKm : 1.5,
         fuel_cost: fuelCost,
         estimated_duration_minutes: Math.round(stepDistKm * 3.5 + 8),
         estimated_arrival: etaTime,

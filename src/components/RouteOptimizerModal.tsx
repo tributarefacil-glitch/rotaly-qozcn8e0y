@@ -2358,29 +2358,27 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           const etaTimestamp = new Date(now + (20 + i * 15) * 60 * 1000).toISOString()
           const stopDistanceKm = Number((stop.step_distance_meters / 1000).toFixed(2))
 
-          // Distância direta entre a base e esta parada
+          // Distância real entre a base e esta parada (Haversine × 1.3 fator rodoviário mínimo saneado)
           const baseLat = plan.start_base?.lat || -22.7001402
           const baseLng = plan.start_base?.lng || -43.2982834
           const distToBaseMeters = haversineDistance(baseLat, baseLng, stop.lat, stop.lng)
+          const minRoadDistKm = Number(((distToBaseMeters / 1000) * 1.3).toFixed(2))
 
           let stopReturnKm = 0
           if (distToBaseMeters < 100) {
             // Malote / Destino = Base: sem retorno
             stopReturnKm = 0
           } else if (plan.stops.length === 1) {
-            // Entrega única: o retorno é exatamente a volta da entrega
-            stopReturnKm = totalReturnKm
-          } else if (distToBaseMeters < 1000) {
-            // Entrega vizinha à base (< 1 km): o retorno dela à base é no máximo a sua própria distância à base
-            stopReturnKm = Number(
-              Math.min(totalReturnKm / plan.stops.length, distToBaseMeters / 1000).toFixed(2),
-            )
-          } else if (totalOutboundPlanMeters > 0) {
-            // Rateio proporcional ao percurso da entrega
-            const ratio = (stop.step_distance_meters || 1) / totalOutboundPlanMeters
-            stopReturnKm = Number((totalReturnKm * ratio).toFixed(2))
+            // Entrega única: o retorno é exatamente a volta da entrega (mínimo real viário)
+            stopReturnKm = Math.max(totalReturnKm, minRoadDistKm)
           } else {
-            stopReturnKm = Number((totalReturnKm / plan.stops.length).toFixed(2))
+            // Retorno viário real da parada até a base: haversine x 1.3 fator viário mínimo saneado,
+            // nunca valores ínfimos espúrios (como 0.13 km para uma parada a 2.9 km da base)
+            const sharedReturnAlloc =
+              totalOutboundPlanMeters > 0
+                ? (totalReturnKm * (stop.step_distance_meters || 1)) / totalOutboundPlanMeters
+                : totalReturnKm / plan.stops.length
+            stopReturnKm = Number(Math.max(minRoadDistKm, sharedReturnAlloc).toFixed(2))
           }
 
           const { pricePerLiter: courierFuelPrice, consumptionKml: courierFuelCons } =
