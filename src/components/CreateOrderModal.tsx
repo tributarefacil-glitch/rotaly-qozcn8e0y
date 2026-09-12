@@ -873,7 +873,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           ? suggestionState
           : 'none'
 
-      await deliveryService.createOrder({
+      const createdOrder = await deliveryService.createOrder({
         tracking_code: trackingCode,
         seller_id: user?.id,
         customer_id: finalCustomerId,
@@ -891,6 +891,18 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           ? new Date(now.getTime() + 45 * 60 * 1000).toISOString()
           : undefined,
       })
+
+      // Se atribuído diretamente a um entregador, disparar resequenciamento viário automático da rota ativa
+      if (assignedCourier && createdOrder?.id) {
+        try {
+          await deliveryService.resequenceActiveRouteForCourier(assignedCourier)
+        } catch (reseqErr) {
+          console.warn(
+            'Erro ao resequenciar rota ativa após criação com entregador atribuído:',
+            reseqErr,
+          )
+        }
+      }
 
       // Trigger automatic in-app notification
       await deliveryService.createNotification({

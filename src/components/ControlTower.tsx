@@ -340,14 +340,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             )
             .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
 
-          for (let i = 0; i < remainingOrders.length; i++) {
-            const nextSeq = i + 1
-            if (remainingOrders[i].sequence !== nextSeq) {
-              await deliveryService.updateOrder(remainingOrders[i].id, {
-                sequence: nextSeq,
-              })
-            }
-          }
+          // Resequenciar a rota restante viariamente pelo menor trajeto
+          await deliveryService.resequenceActiveRouteForCourier(courierId, appSettings)
 
           // Notificar o entregador via push/notificação em tempo real
           await deliveryService.createNotification({
@@ -4977,6 +4971,50 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                         </div>
                       )
                     })()}
+
+                    {/* Botão de Resequenciamento Instantâneo da Rota Ativa */}
+                    <div className="pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            toast({
+                              title: '🔄 Otimizando Rota Viária...',
+                              description: `Recalculando menor trajeto para ${selectedCourier.name || 'Entregador'}...`,
+                            })
+                            const res = await deliveryService.resequenceActiveRouteForCourier(
+                              selectedCourier.id,
+                              appSettings,
+                            )
+                            if (res.success) {
+                              toast({
+                                title: '✨ Rota Otimizada com Sucesso!',
+                                description: `${res.sequencedCount} paradas reordenadas viariamente (${res.totalDistanceKm} km total com retorno à base).`,
+                              })
+                              fetchData()
+                              if (onRefresh) onRefresh()
+                            } else {
+                              toast({
+                                title: 'Aviso',
+                                description: 'Nenhuma parada ativa pendente para resequenciar.',
+                              })
+                            }
+                          } catch (err) {
+                            console.error('Erro ao resequenciar rota na Torre:', err)
+                            toast({
+                              title: 'Erro na Otimização',
+                              description: 'Não foi possível resequenciar a rota agora.',
+                              variant: 'destructive',
+                            })
+                          }
+                        }}
+                        className="w-full bg-gradient-to-r from-indigo-900/60 to-purple-900/60 hover:from-indigo-800 hover:to-purple-800 text-indigo-200 border-indigo-500/40 font-bold text-xs gap-1.5 rounded-xl h-8 shadow-sm"
+                      >
+                        <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                        Otimizar e Resequenciar Rota Agora (Menor Trajeto)
+                      </Button>
+                    </div>
 
                     {/* Contato Direto */}
                     <div className="pt-2 flex gap-2">

@@ -592,14 +592,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             )
             .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
 
-          for (let i = 0; i < remainingOrders.length; i++) {
-            const nextSeq = i + 1
-            if (remainingOrders[i].sequence !== nextSeq) {
-              await deliveryService.updateOrder(remainingOrders[i].id, {
-                sequence: nextSeq,
-              })
-            }
-          }
+          // Resequenciar a rota restante viariamente pelo menor trajeto
+          await deliveryService.resequenceActiveRouteForCourier(courierId, settings)
 
           await deliveryService.createNotification({
             user_id: courierId,
@@ -621,7 +615,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   }
 
-  // 3. Adicionar cliente/entrega a uma rota JÁ INICIADA (Entra no FIM da fila do entregador)
+  // 3. Adicionar cliente/entrega a uma rota JÁ INICIADA (Resequenciada automaticamente pelo motor viário)
   const handleConfirmAddToActiveRoute = async () => {
     if (!selectedOrderForAddToRoute || !targetCourierId) {
       toast.error('Selecione um entregador.')
@@ -630,33 +624,15 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
     setIsAddingToRoute(true)
     try {
-      // Find maximum sequence among current in_transit orders for this courier
-      const courierOrders = orders.filter(
-        (o) => o.courier_id === targetCourierId && o.status === 'in_transit',
-      )
-      const nextSequence = courierOrders.reduce((max, o) => Math.max(max, o.sequence || 0), 0) + 1
-
-      await deliveryService.updateOrder(selectedOrderForAddToRoute.id, {
-        courier_id: targetCourierId,
-        status: 'in_transit',
-        sequence: nextSequence,
-        route_released: true,
-        route_released_at: new Date().toISOString(),
-        estimated_arrival: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      })
-
-      // Send realtime notification to courier
-      await deliveryService.createNotification({
-        user_id: targetCourierId,
-        title: '📦 Nova Entrega Adicionada à sua Rota!',
-        message: `O pedido ${selectedOrderForAddToRoute.tracking_code} foi adicionado ao fim da sua fila de entregas.`,
-        type: 'order',
-        read: false,
-        order_id: selectedOrderForAddToRoute.id,
+      const orderTracking = selectedOrderForAddToRoute.tracking_code
+      await deliveryService.addOrderToActiveRoute({
+        orderId: selectedOrderForAddToRoute.id,
+        courierId: targetCourierId,
+        settings,
       })
 
       toast.success(
-        `Entrega ${selectedOrderForAddToRoute.tracking_code} adicionada ao fim da rota do entregador com sucesso!`,
+        `✨ Entrega ${orderTracking} adicionada e rota inteira resequenciada viariamente pelo menor trajeto!`,
       )
       setIsAddToRouteModalOpen(false)
       setSelectedOrderForAddToRoute(null)
@@ -2015,8 +1991,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               Adicionar Entrega à Rota em Andamento
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500 font-sans">
-              A nova entrega entrará automaticamente no <strong>FIM da fila</strong> do entregador
-              selecionado e ele receberá um alerta sonoro e notificação push instantânea.
+              A entrega será{' '}
+              <strong>resequenciada automaticamente pelo menor trajeto viário</strong> na rota ativa
+              do entregador e ele receberá um alerta sonoro e notificação push instantânea.
             </DialogDescription>
           </DialogHeader>
 
@@ -2323,7 +2300,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               onClick={handleConfirmAddToActiveRoute}
               className="bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs rounded-input shadow-brand"
             >
-              {isAddingToRoute ? 'Enviando...' : 'Despachar para o Fim da Fila'}
+              {isAddingToRoute ? 'Otimizando e Enviando...' : 'Otimizar e Incluir na Rota'}
             </Button>
           </DialogFooter>
         </DialogContent>

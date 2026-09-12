@@ -1197,12 +1197,148 @@ export const deliveryService = {
   },
 
   /**
+   * Resequenciar e Otimizar Viariamente a Rota Inteira de um Entregador
+   * Executa o motor viário inteligente (Google Directions + trava de mesma rua + 2-Opt)
+   * e persiste os valores atualizados de sequence (1, 2, 3...) e métricas viárias
+   * recalculadas em cada pedido (distance_km, return_trip_km, total_route_with_return_km, fuel_cost, ETA).
+   */
+  async resequenceActiveRouteForCourier(
+    courierId: string,
+    settings?: Partial<AppSettingsRecord> | null,
+  ): Promise<{ success: boolean; sequencedCount: number; totalDistanceKm: number }> {
+    try {
+      const { optimizeRouteSequence } = await import('@/services/intelligentRoadRouter')
+
+      // 1. Obter entregador
+      const courier = await pb.collection<UserRecord>('users').getOne(courierId)
+
+      // 2. Obter pedidos ativos desse entregador
+      const courierOrders = await pb.collection<OrderRecord>('orders').getFullList({
+        filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished=false && tracking_code!='TRK-2026-622'`,
+        sort: 'sequence,created',
+        expand: 'customer_id',
+        requestKey: null,
+      })
+
+      if (courierOrders.length === 0) {
+        return { success: true, sequencedCount: 0, totalDistanceKm: 0 }
+      }
+
+      // 3. Obter base ativa padrão ou primeira configurada
+      const bases = await this.getBaseAddresses()
+      const defaultBase = bases.find((b) => b.is_default) || bases[0]
+      const originPoint = {
+        lat: courierOrders[0]?.start_base_lat || defaultBase?.lat || -22.7001402,
+        lng: courierOrders[0]?.start_base_lng || defaultBase?.lng || -43.2982834,
+      }
+      const destinationPoint = {
+        lat: courierOrders[0]?.end_address_lat || originPoint.lat,
+        lng: courierOrders[0]?.end_address_lng || originPoint.lng,
+      }
+
+      const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
+        settings,
+        courier.vehicle_type,
+      )
+
+      // 4. Montar paradas candidatas para o motor viário
+      const candidates = courierOrders.map((ord) => {
+        const cust = ord.expand?.customer_id as CustomerRecord | undefined
+        const lat = cust?.lat || ord.end_address_lat || originPoint.lat
+        const lng = cust?.lng || ord.end_address_lng || originPoint.lng
+        const address = cust?.address || ord.end_address_text || ''
+        const name = cust?.name || ord.end_address_name || 'Cliente'
+
+        return {
+          id: ord.id,
+          tracking_code: ord.tracking_code,
+          priority: ord.priority || 'normal',
+          status: ord.status,
+          customer_name: name,
+          address: address,
+          lat: Number(lat),
+          lng: Number(lng),
+          rawOrder: ord,
+          rawCustomer: cust,
+        }
+      })
+
+      // 5. Executar o motor viário inteligente
+      const roadResult = await optimizeRouteSequence({
+        origin: originPoint,
+        destination: destinationPoint,
+        stops: candidates,
+        vehicleType: courier.vehicle_type,
+        pricePerLiter,
+        consumptionKml,
+      })
+
+      // 6. Persistir novos valores de sequência e métricas em cada pedido
+      const nowIso = new Date().toISOString()
+      let cumulativeMins = 0
+
+      for (let i = 0; i < roadResult.stops.length; i++) {
+        const stop = roadResult.stops[i]
+        const legDurationMin = Math.max(5, Math.round(stop.step_duration_seconds / 60))
+        cumulativeMins += legDurationMin
+        const etaIso = new Date(Date.now() + cumulativeMins * 60 * 1000).toISOString()
+        const stepDistKm = Number((stop.step_distance_meters / 1000).toFixed(2))
+
+        const legFuelCost =
+          consumptionKml > 0
+            ? Number(((stepDistKm * pricePerLiter) / consumptionKml).toFixed(2))
+            : 0
+
+        const updatePayload: Partial<OrderRecord> = {
+          sequence: i + 1,
+          distance_km: stepDistKm > 0 ? stepDistKm : 0.8,
+          return_trip_km: roadResult.return_distance_km,
+          total_route_with_return_km: roadResult.total_distance_km,
+          total_route_fuel_cost: roadResult.estimated_fuel_cost,
+          fuel_cost: legFuelCost,
+          estimated_duration_minutes: legDurationMin,
+          estimated_arrival: etaIso,
+          start_base_name:
+            defaultBase?.name || courierOrders[0]?.start_base_name || 'Mais Saudavel',
+          start_base_address: defaultBase?.address || courierOrders[0]?.start_base_address,
+          start_base_lat: originPoint.lat,
+          start_base_lng: originPoint.lng,
+          end_address_name: stop.customer_name,
+          end_address_text: stop.address,
+          end_address_lat: stop.lat,
+          end_address_lng: stop.lng,
+          route_released: true,
+          route_released_at: courierOrders[0]?.route_released_at || nowIso,
+        }
+
+        const isRouteStarted = courierOrders.some((o) => o.route_started === true)
+        if (isRouteStarted) {
+          updatePayload.route_started = true
+          updatePayload.route_started_at = courierOrders[0]?.route_started_at || nowIso
+          updatePayload.status = 'in_transit'
+        }
+
+        await pb.collection('orders').update(stop.id, updatePayload)
+      }
+
+      return {
+        success: true,
+        sequencedCount: roadResult.stops.length,
+        totalDistanceKm: roadResult.total_distance_km,
+      }
+    } catch (err) {
+      console.error('Error resequencing active route for courier:', err)
+      return { success: false, sequencedCount: 0, totalDistanceKm: 0 }
+    }
+  },
+
+  /**
    * Incluir Cliente / Pedido em Rota Já Iniciada ou Liberada
    * - Atribui courier_id
-   * - Sequência = max+1
    * - route_released = true
    * - Se rota já iniciada (route_started=true na rota do entregador), marca route_started=true e status='in_transit'
-   * - Recalcula distance_km, fuel_cost (consumo do veículo) e ETA
+   * - Dispara RESEQUENCIAMENTO AUTOMÁTICO da rota inteira com motor viário inteligente (Google Directions + mesma rua + 2-Opt)
+   * - Garante sequência sempre no menor trajeto possível viariamente
    * - Dispara notificação push/realtime ao entregador
    */
   async addOrderToActiveRoute(params: {
@@ -1224,119 +1360,50 @@ export const deliveryService = {
 
       // Verificar se a rota já está iniciada pelo entregador
       const isRouteStarted = courierOrders.some((o) => o.route_started === true)
-      const maxSequence = courierOrders.reduce((max, o) => Math.max(max, o.sequence || 0), 0)
-      const nextSequence = maxSequence + 1
-
-      // 3. Obter dados do pedido e cliente para cálculo de distância
-      const order = await pb.collection<OrderRecord>('orders').getOne(orderId, {
-        expand: 'customer_id',
-      })
-      const customer = order.expand?.customer_id as CustomerRecord | undefined
-
-      // Referência anterior (última parada da rota ou base)
       const lastOrder = courierOrders[courierOrders.length - 1]
-      let prevLat: number | undefined
-      let prevLng: number | undefined
-
-      if (lastOrder) {
-        const lastCust = lastOrder.expand?.customer_id as CustomerRecord | undefined
-        prevLat = lastCust?.lat || lastOrder.end_address_lat || lastOrder.start_base_lat
-        prevLng = lastCust?.lng || lastOrder.end_address_lng || lastOrder.start_base_lng
-      }
-
-      if (!prevLat || !prevLng) {
-        prevLat = lastOrder?.start_base_lat || -22.7001402
-        prevLng = lastOrder?.start_base_lng || -43.2982834
-      }
-
-      const custLat = customer?.lat || prevLat
-      const custLng = customer?.lng || prevLng
-
-      // Distância estimada até o novo cliente
-      const R = 6371e3
-      const φ1 = (prevLat * Math.PI) / 180
-      const φ2 = (custLat * Math.PI) / 180
-      const Δφ = ((custLat - prevLat) * Math.PI) / 180
-      const Δλ = ((custLng - prevLng) * Math.PI) / 180
-      const a =
-        Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-      const stepDistMeters = R * c
-      const stepDistKm = Number((stepDistMeters / 1000).toFixed(2))
-
-      // Distância de retorno viária saneada (da parada de volta à base)
-      const baseLat = lastOrder?.start_base_lat || -22.7001402
-      const baseLng = lastOrder?.start_base_lng || -43.2982834
-      const dBaseMeters =
-        R *
-        2 *
-        Math.atan2(
-          Math.sqrt(
-            Math.sin(((custLat - baseLat) * Math.PI) / 360) ** 2 +
-              Math.cos((baseLat * Math.PI) / 180) *
-                Math.cos((custLat * Math.PI) / 180) *
-                Math.sin(((custLng - baseLng) * Math.PI) / 360) ** 2,
-          ),
-          Math.sqrt(
-            1 -
-              (Math.sin(((custLat - baseLat) * Math.PI) / 360) ** 2 +
-                Math.cos((baseLat * Math.PI) / 180) *
-                  Math.cos((custLat * Math.PI) / 180) *
-                  Math.sin(((custLng - baseLng) * Math.PI) / 360) ** 2),
-          ),
-        )
-      const returnTripKm = Number(((dBaseMeters / 1000) * 1.3).toFixed(2))
-
-      const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
-        settings,
-        courier.vehicle_type,
-      )
-      const totalAllocatedKm = stepDistKm + returnTripKm
-      const fuelCost =
-        consumptionKml > 0
-          ? Number(((totalAllocatedKm * pricePerLiter) / consumptionKml).toFixed(2))
-          : 0
-
       const now = new Date()
-      const etaTime = new Date(now.getTime() + (20 + nextSequence * 15) * 60 * 1000).toISOString()
 
-      const updateData: Partial<OrderRecord> = {
+      // 3. Atualizar o pedido para vincular ao entregador e à rota ativa
+      const initialUpdateData: Partial<OrderRecord> = {
         courier_id: courierId,
-        sequence: nextSequence,
         route_released: true,
         route_released_at: now.toISOString(),
-        distance_km: stepDistKm > 0 ? stepDistKm : 1.5,
-        return_trip_km: returnTripKm > 0 ? returnTripKm : 1.5,
-        fuel_cost: fuelCost,
-        estimated_duration_minutes: Math.round(stepDistKm * 3.5 + 8),
-        estimated_arrival: etaTime,
         start_base_name: lastOrder?.start_base_name || 'Base Operacional',
         start_base_address: lastOrder?.start_base_address,
         start_base_lat: lastOrder?.start_base_lat,
         start_base_lng: lastOrder?.start_base_lng,
-        end_address_name: lastOrder?.end_address_name,
-        end_address_text: lastOrder?.end_address_text,
-        end_address_lat: lastOrder?.end_address_lat,
-        end_address_lng: lastOrder?.end_address_lng,
       }
 
       if (isRouteStarted) {
-        updateData.route_started = true
-        updateData.route_started_at = lastOrder?.route_started_at || now.toISOString()
-        updateData.status = 'in_transit'
+        initialUpdateData.route_started = true
+        initialUpdateData.route_started_at = lastOrder?.route_started_at || now.toISOString()
+        initialUpdateData.status = 'in_transit'
       } else {
-        updateData.status = 'assigned'
+        initialUpdateData.status = 'assigned'
       }
 
-      const updated = await pb.collection<OrderRecord>('orders').update(orderId, updateData)
+      const updated = await pb.collection<OrderRecord>('orders').update(orderId, initialUpdateData)
 
-      // Criar notificação realtime ao entregador
+      // 4. RESEQUENCIAMENTO AUTOMÁTICO VIÁRIO DA ROTA INTEIRA
+      // Roda o motor viário e recalcula sequences (1..N) e quilometragens de toda a rota ativa
+      try {
+        await this.resequenceActiveRouteForCourier(courierId, settings)
+      } catch (reseqErr) {
+        console.warn('Erro ao resequenciar rota inteira após inclusão de pedido:', reseqErr)
+      }
+
+      // 5. Obter pedido atualizado com sua sequência otimizada final
+      const finalOrder = await pb.collection<OrderRecord>('orders').getOne(orderId, {
+        expand: 'customer_id',
+      })
+      const customer = finalOrder.expand?.customer_id as CustomerRecord | undefined
+
+      // Criar notificação realtime ao entregador informando a parada otimizada
       try {
         await this.createNotification({
           user_id: courierId,
-          title: '📦 Nova Entrega Incluída na sua Rota!',
-          message: `O pedido ${order.tracking_code || ''} para ${customer?.name || 'Cliente'} foi adicionado como parada #${nextSequence} na sua rota!`,
+          title: '📦 Nova Entrega Otimizada na sua Rota!',
+          message: `O pedido ${finalOrder.tracking_code || ''} para ${customer?.name || 'Cliente'} foi incorporado e otimizado na sua rota (Parada #${finalOrder.sequence || 1}).`,
           type: 'order',
           read: false,
           order_id: orderId,
@@ -1345,7 +1412,7 @@ export const deliveryService = {
         console.warn('Erro ao notificar entregador sobre inclusão de cliente:', notifErr)
       }
 
-      return { success: true, order: updated }
+      return { success: true, order: finalOrder }
     } catch (err) {
       console.error('Error adding order to active route:', err)
       throw err
