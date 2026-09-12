@@ -249,8 +249,8 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
 
     const distMeters = haversineDistanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
 
-    // (c) Duplicados (< 2 s e < 5 m) ou sem movimento relevante
-    if (distMeters < 5 && dtSeconds < 2) {
+    // (c) Duplicados (< 10 s e < 5 m) ou coordenadas idênticas consecutivas sem movimento
+    if (distMeters < 5 && (dtSeconds < 10 || distMeters === 0)) {
       noiseCount++
       continue
     }

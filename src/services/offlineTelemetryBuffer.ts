@@ -12,6 +12,7 @@
  * 3. Notifica ouvintes/UI sobre o número de pontos pendentes para aviso discreto no app do entregador.
  */
 
+import { haversineDistanceMeters } from '@/lib/geo'
 import { deliveryService } from './deliveryService'
 
 export interface OfflineTelemetryPoint {
@@ -38,6 +39,12 @@ export interface OfflineTelemetryPoint {
 
 const STORAGE_PREFIX = 'rotaly_offline_telemetry_'
 const MAX_BUFFER_POINTS = 500
+
+// Limiares de deduplicação no buffer offline
+// Se o novo ponto tiver distância < 5 metros E intervalo de tempo < 10 segundos,
+// não adiciona uma nova cópia duplicada (atualiza timestamp e mantém o buffer enxuto).
+const DEDUPLICATION_MAX_DISTANCE_METERS = 5
+const DEDUPLICATION_MIN_INTERVAL_MS = 10 * 1000
 
 class OfflineTelemetryBufferService {
   private syncInProgress = false
@@ -89,6 +96,40 @@ class OfflineTelemetryBufferService {
   }
 
   enqueue(point: Omit<OfflineTelemetryPoint, 'id' | 'synced'>): OfflineTelemetryPoint {
+    const current = this.getBuffer(point.userId)
+
+    // Ordenar cronologicamente para avaliar o último ponto registrado
+    current.sort((a, b) => a.timestamp - b.timestamp)
+
+    if (current.length > 0) {
+      const last = current[current.length - 1]
+      const timeDiff = Math.abs(point.timestamp - last.timestamp)
+      const distMeters = haversineDistanceMeters(last.lat, last.lng, point.lat, point.lng)
+
+      // Regra 1: Deduplicação no enfileiramento:
+      // Se a coordenada é idêntica ou distância < 5m E o intervalo é inferior a 10s:
+      // NÃO enfileirar mais uma cópia repetida. Apenas atualizamos o timestamp do ponto existente
+      // (e campos complementares se forem mais recentes/precisos), evitando inflar o banco e trajetos.
+      if (
+        distMeters < DEDUPLICATION_MAX_DISTANCE_METERS &&
+        timeDiff < DEDUPLICATION_MIN_INTERVAL_MS
+      ) {
+        last.timestamp = Math.max(last.timestamp, point.timestamp)
+        if (typeof point.speed === 'number' && !isNaN(point.speed)) {
+          last.speed = point.speed
+        }
+        if (typeof point.batteryLevel === 'number') {
+          last.batteryLevel = point.batteryLevel
+        }
+        if (typeof point.accuracy === 'number') {
+          last.accuracy = point.accuracy
+        }
+        last.reason = point.reason
+        this.setBuffer(point.userId, current)
+        return last
+      }
+    }
+
     const id = `pt_${point.timestamp}_${Math.random().toString(36).slice(2, 7)}`
     const fullPoint: OfflineTelemetryPoint = {
       ...point,
@@ -96,9 +137,8 @@ class OfflineTelemetryBufferService {
       synced: false,
     }
 
-    const current = this.getBuffer(point.userId)
     current.push(fullPoint)
-    // Garantir ordenação cronológica
+    // Garantir ordenação cronológica rigorosa
     current.sort((a, b) => a.timestamp - b.timestamp)
     this.setBuffer(point.userId, current)
     return fullPoint
@@ -193,7 +233,35 @@ class OfflineTelemetryBufferService {
       // Ordenação cronológica rigorosa: do mais antigo para o mais recente
       points.sort((a, b) => a.timestamp - b.timestamp)
 
+      // Regra 2: Deduplicação defensiva no envio ao sincronizar o buffer.
+      // Caso existam cópias acumuladas anteriormente na fila (ex.: mesma coordenada em janela <10s),
+      // filtra e envia apenas uma cópia representativa em ordem cronológica.
+      const deduplicatedPoints: OfflineTelemetryPoint[] = []
       for (const pt of points) {
+        if (deduplicatedPoints.length === 0) {
+          deduplicatedPoints.push(pt)
+          continue
+        }
+        const lastSentOrQueued = deduplicatedPoints[deduplicatedPoints.length - 1]
+        const dt = Math.abs(pt.timestamp - lastSentOrQueued.timestamp)
+        const dist = haversineDistanceMeters(
+          lastSentOrQueued.lat,
+          lastSentOrQueued.lng,
+          pt.lat,
+          pt.lng,
+        )
+
+        // Se for o mesmo ponto (<5m e <10s), descarta a cópia redundante
+        if (dist < DEDUPLICATION_MAX_DISTANCE_METERS && dt < DEDUPLICATION_MIN_INTERVAL_MS) {
+          // Atualiza timestamp para o mais recente do grupo
+          lastSentOrQueued.timestamp = Math.max(lastSentOrQueued.timestamp, pt.timestamp)
+          continue
+        }
+        deduplicatedPoints.push(pt)
+      }
+
+      for (let i = 0; i < deduplicatedPoints.length; i++) {
+        const pt = deduplicatedPoints[i]
         try {
           await deliveryService.updateCourierLocation(
             pt.userId,
@@ -221,6 +289,8 @@ class OfflineTelemetryBufferService {
             error: err?.message || 'Falha de rede ao descarregar buffer',
           })
           // Interrompe o loop para não inundar o servidor se perdeu a rede novamente
+          const unattempted = deduplicatedPoints.slice(i)
+          this.setBuffer(userId, unattempted)
           break
         }
       }
