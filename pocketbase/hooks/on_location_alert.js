@@ -1,32 +1,50 @@
-// Hook on location creation to detect off-route deviations (>600m) and unexpected stops (>600m from destination and base with speed <= 2 km/h)
-// Regra 1: Alertas de desvio/parada só devem ser gerados quando o pedido estiver com rota iniciada (route_started = true e status 'in_transit')
-// Regra 2: Limiar unificado de 600 metros conforme src/lib/geo.ts (DEVIATION_THRESHOLD_METERS = 600, UNEXPECTED_STOP_THRESHOLD_METERS = 600)
-// PocketBase JSVM: todas as variáveis e constantes devem estar inline dentro do callback do hook
+// Hook on location creation to detect off-route deviations (>600m) and unexpected stops (>600m from planned route with speed <= 2 km/h and duration >= 180s)
+// PocketBase JSVM (goja): todas as variáveis, funções e constantes devem estar estritamente inline dentro do callback do hook.
 
 onRecordAfterCreateSuccess((e) => {
-  // Constantes de limiar geográfico sincronizadas com src/lib/geo.ts
   const DEVIATION_THRESHOLD_METERS = 600
   const UNEXPECTED_STOP_THRESHOLD_METERS = 600
+  const MIN_STOP_DURATION_SECONDS = 180 // 3 minutos mínimos para caracterizar parada não programada
 
   const loc = e.record
   const courierId = loc.getString('user_id')
   const lat = loc.getFloat('lat')
   const lng = loc.getFloat('lng')
   const speedKmh = loc.getFloat('speed') || 0
+  const accuracy = loc.getFloat('accuracy') || 0
+  const gpsStatus = loc.getString('gps_status') || ''
+  const gpsReason = loc.getString('gps_reason') || ''
 
   if (!courierId || !lat || !lng) {
     e.next()
     return
   }
 
-  // Find active orders for this courier strictly with route_started = true and status = 'in_transit'
+  // B. Ignorar pontos inválidos na detecção:
+  // Pontos com accuracy 0/ausente ou status offline com falha de sinal não devem gerar evento nem quebrar episódios
+  const isWeakOrOfflineSignal =
+    gpsStatus === 'offline' || gpsReason === 'weak_signal' || gpsReason === 'gps_unavailable'
+  if (isWeakOrOfflineSignal && accuracy <= 0) {
+    e.next()
+    return
+  }
+  if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) {
+    e.next()
+    return
+  }
+  if (accuracy > 100) {
+    e.next()
+    return
+  }
+
+  // Encontrar pedidos ativos deste entregador: rota iniciada e em trânsito
   let activeOrders = []
   try {
     activeOrders = $app.findRecordsByFilter(
       'orders',
       `courier_id = '${courierId}' && route_started = true && status = 'in_transit'`,
       '-updated',
-      1,
+      10,
       0,
     )
   } catch (err) {
@@ -40,12 +58,103 @@ onRecordAfterCreateSuccess((e) => {
     return
   }
 
-  const activeOrder = activeOrders[0]
-  const customerId = activeOrder.getString('customer_id')
-  const trackingCode = activeOrder.getString('tracking_code')
-  const sellerId = activeOrder.getString('seller_id')
+  // Auxiliar Haversine
+  const R = 6371e3
+  const calcHaversineMeters = (lat1, lon1, lat2, lon2) => {
+    const φ1 = (lat1 * Math.PI) / 180
+    const φ2 = (lat2 * Math.PI) / 180
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c
+  }
 
-  // Find courier user name
+  // Distância ponto até segmento de reta
+  const calcPointToSegmentMeters = (pLat, pLng, aLat, aLng, bLat, bLng) => {
+    const dAB = calcHaversineMeters(aLat, aLng, bLat, bLng)
+    if (dAB === 0) return calcHaversineMeters(pLat, pLng, aLat, aLng)
+    const x = (bLng - aLng) * Math.cos((((aLat + bLat) / 2) * Math.PI) / 180)
+    const y = bLat - aLat
+    const px = (pLng - aLng) * Math.cos((((aLat + pLat) / 2) * Math.PI) / 180)
+    const py = pLat - aLat
+    const dot = px * x + py * y
+    const lenSq = x * x + y * y
+    const param = lenSq !== 0 ? Math.max(0, Math.min(1, dot / lenSq)) : -1
+    const projLat = aLat + param * (bLat - aLat)
+    const projLng = aLng + param * (bLng - aLng)
+    return calcHaversineMeters(pLat, pLng, projLat, projLng)
+  }
+
+  // Obter pontos de interesse da rota ativa inteira:
+  // 1. Base de partida (start_base)
+  // 2. Destinos de todos os clientes da rota ativa / em trânsito
+  // 3. Base/destino final (end_address)
+  const anchorOrder = activeOrders[0]
+  const sellerId = anchorOrder.getString('seller_id')
+  const trackingCode = anchorOrder.getString('tracking_code')
+
+  let baseLat = anchorOrder.getFloat('start_base_lat') || null
+  let baseLng = anchorOrder.getFloat('start_base_lng') || null
+  let endBaseLat = anchorOrder.getFloat('end_address_lat') || baseLat
+  let endBaseLng = anchorOrder.getFloat('end_address_lng') || baseLng
+
+  // Coletar coordenadas de clientes da rota
+  const routeWaypoints = []
+  if (baseLat !== null && baseLng !== null) {
+    routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
+  }
+
+  for (let i = 0; i < activeOrders.length; i++) {
+    const o = activeOrders[i]
+    const cId = o.getString('customer_id')
+    if (cId) {
+      try {
+        const cust = $app.findRecordById('customers', cId)
+        if (cust) {
+          const cLat = cust.getFloat('lat')
+          const cLng = cust.getFloat('lng')
+          if (cLat && cLng) {
+            routeWaypoints.push({ lat: cLat, lng: cLng, label: 'customer', orderId: o.id })
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  if (endBaseLat !== null && endBaseLng !== null) {
+    routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
+  }
+
+  // Calcular menor distância do ponto atual a qualquer parada programada ou corredor da rota planejada
+  let minDistanceToRouteWaypoints = Infinity
+  for (let w = 0; w < routeWaypoints.length; w++) {
+    const distW = calcHaversineMeters(lat, lng, routeWaypoints[w].lat, routeWaypoints[w].lng)
+    if (distW < minDistanceToRouteWaypoints) {
+      minDistanceToRouteWaypoints = distW
+    }
+  }
+
+  let minDistanceToRouteCorridor = minDistanceToRouteWaypoints
+  if (routeWaypoints.length >= 2) {
+    for (let w = 0; w < routeWaypoints.length - 1; w++) {
+      const segDist = calcPointToSegmentMeters(
+        lat,
+        lng,
+        routeWaypoints[w].lat,
+        routeWaypoints[w].lng,
+        routeWaypoints[w + 1].lat,
+        routeWaypoints[w + 1].lng,
+      )
+      if (segDist < minDistanceToRouteCorridor) {
+        minDistanceToRouteCorridor = segDist
+      }
+    }
+  }
+
+  // Nome do entregador para notificações
   let courierName = 'Entregador'
   try {
     const courierUser = $app.findRecordById('users', courierId)
@@ -54,244 +163,224 @@ onRecordAfterCreateSuccess((e) => {
     }
   } catch (_) {}
 
-  // Find customer to get destination coordinates
-  let custLat = null
-  let custLng = null
-  let custAddress = ''
-  if (customerId) {
-    try {
-      const cust = $app.findRecordById('customers', customerId)
-      if (cust) {
-        custLat = cust.getFloat('lat')
-        custLng = cust.getFloat('lng')
-        custAddress = cust.getString('address')
-      }
-    } catch (errCust) {
-      console.log('Error finding customer:', errCust)
-    }
-  }
-
-  if (custLat === null || custLng === null) {
-    e.next()
-    return
-  }
-
-  // Calculate Haversine distance in meters to customer destination
-  const R = 6371e3
-  const φ1 = (lat * Math.PI) / 180
-  const φ2 = (custLat * Math.PI) / 180
-  const Δφ = ((custLat - lat) * Math.PI) / 180
-  const Δλ = ((custLng - lng) * Math.PI) / 180
-  const a =
-    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-  const distToCustomerMeters = R * c
-
-  // Base coordinates (if set on the order, else fallback to null)
-  let baseLat = activeOrder.getFloat('start_base_lat') || null
-  let baseLng = activeOrder.getFloat('start_base_lng') || null
-  let distToBaseMeters = null
-  if (baseLat !== null && baseLng !== null) {
-    const bφ2 = (baseLat * Math.PI) / 180
-    const bΔφ = ((baseLat - lat) * Math.PI) / 180
-    const bΔλ = ((baseLng - lng) * Math.PI) / 180
-    const ba =
-      Math.sin(bΔφ / 2) * Math.sin(bΔφ / 2) +
-      Math.cos(φ1) * Math.cos(bφ2) * Math.sin(bΔλ / 2) * Math.sin(bΔλ / 2)
-    distToBaseMeters = R * 2 * Math.atan2(Math.sqrt(ba), Math.sqrt(1 - ba))
-  }
-
-  // Fetch previous location for this courier to detect stop or deviation
+  // Buscar pontos GPS recentes para detectar velocidade, deslocamento e duração de parada
   let prevLocations = []
   try {
     prevLocations = $app.findRecordsByFilter(
       'locations',
       `user_id = '${courierId}' && id != '${loc.id}'`,
       '-created',
-      2,
+      5,
       0,
     )
   } catch (_) {}
 
-  let prevDistanceToCustomer = null
   let prevLat = null
   let prevLng = null
+  let prevTime = null
 
   if (prevLocations.length > 0) {
     prevLat = prevLocations[0].getFloat('lat')
     prevLng = prevLocations[0].getFloat('lng')
-
-    if (prevLat && prevLng) {
-      const pφ1 = (prevLat * Math.PI) / 180
-      const pΔφ = ((custLat - prevLat) * Math.PI) / 180
-      const pΔλ = ((custLng - prevLng) * Math.PI) / 180
-      const pa =
-        Math.sin(pΔφ / 2) * Math.sin(pΔφ / 2) +
-        Math.cos(pφ1) * Math.cos(φ2) * Math.sin(pΔλ / 2) * Math.sin(pΔλ / 2)
-      const pc = 2 * Math.atan2(Math.sqrt(pa), Math.sqrt(1 - pa))
-      prevDistanceToCustomer = R * pc
-    }
+    prevTime = new Date(prevLocations[0].getString('created')).getTime()
   }
 
-  // 1. Check for Unexpected Stop (Parada fora do local):
-  // Velocidade <= 2 km/h, distância > 600m do cliente de destino E > 600m da base (se conhecida)
-  // e entregador parado no mesmo local em relação ao ponto anterior
-  const isFarFromCustomer = distToCustomerMeters > UNEXPECTED_STOP_THRESHOLD_METERS
-  const isFarFromBase =
-    distToBaseMeters === null || distToBaseMeters > UNEXPECTED_STOP_THRESHOLD_METERS
+  const currentLocTime = new Date(loc.getString('created')).getTime()
 
-  if (speedKmh <= 2 && isFarFromCustomer && isFarFromBase && prevLat && prevLng) {
-    const pΔφ = ((lat - prevLat) * Math.PI) / 180
-    const pΔλ = ((lng - prevLng) * Math.PI) / 180
-    const pa =
-      Math.sin(pΔφ / 2) * Math.sin(pΔφ / 2) +
-      Math.cos((prevLat * Math.PI) / 180) *
-        Math.cos((lat * Math.PI) / 180) *
-        Math.sin(pΔλ / 2) *
-        Math.sin(pΔλ / 2)
-    const moveDistanceMeters = R * 2 * Math.atan2(Math.sqrt(pa), Math.sqrt(1 - pa))
+  // 1. CHECAGEM E DEDUPLICAÇÃO DE PARADAS FORA DA ROTA (A & C)
+  // Regra:
+  // - Velocidade <= 2 km/h
+  // - Desvio real da rota planejada (pontos de parada/corredor) > 600m
+  // - Tolerância espacial de ~50 m para agrupar leituras paradas consecutivas num ÚNICO episódio
+  // - Só registrar/manter se stop_duration_seconds >= 180s (3 minutos)
+  const isFarFromRoute = minDistanceToRouteCorridor > UNEXPECTED_STOP_THRESHOLD_METERS
 
-    if (moveDistanceMeters < 30) {
-      // Only trigger alert once every 10 minutes per courier
-      let recentStopAlerts = []
+  if (speedKmh <= 2 && isFarFromRoute) {
+    // Buscar se já existe um episódio de parada recente (criado ou atualizado nas últimas 2 horas)
+    // na mesma posição geográfica (tolerância <= 50m) para este courier
+    let existingStopEvents = []
+    try {
+      const twoHoursAgo = new Date(currentLocTime - 2 * 60 * 60 * 1000).toISOString()
+      existingStopEvents = $app.findRecordsByFilter(
+        'off_route_events',
+        `courier_id = '${courierId}' && event_type = 'unexpected_stop' && updated >= '${twoHoursAgo}'`,
+        '-updated',
+        5,
+        0,
+      )
+    } catch (errFindStop) {
+      console.log('Error finding existing stop event:', errFindStop)
+    }
+
+    let matchingEpisode = null
+    for (let s = 0; s < existingStopEvents.length; s++) {
+      const ev = existingStopEvents[s]
+      const evLat = ev.getFloat('lat')
+      const evLng = ev.getFloat('lng')
+      const distToEpisode = calcHaversineMeters(lat, lng, evLat, evLng)
+      if (distToEpisode <= 50) {
+        matchingEpisode = ev
+        break
+      }
+    }
+
+    if (matchingEpisode) {
+      // Já existe um episódio em andamento para esta parada:
+      // Atualizar a duração final do episódio (timestamp deste ping - timestamp de criação do episódio)
+      const episodeStartTime = new Date(matchingEpisode.getString('created')).getTime()
+      const totalDurationSec = Math.max(1, Math.round((currentLocTime - episodeStartTime) / 1000))
+
       try {
-        const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-        recentStopAlerts = $app.findRecordsByFilter(
-          'notifications',
-          `user_id = '${courierId}' && type = 'off_route' && created >= '${tenMinAgo}'`,
-          '-created',
-          1,
-          0,
+        matchingEpisode.set('stop_duration_seconds', totalDurationSec)
+        matchingEpisode.set('distance_deviation_meters', Math.round(minDistanceToRouteCorridor))
+        matchingEpisode.set(
+          'notes',
+          `Parada não planejada fora da rota a ${Math.round(minDistanceToRouteCorridor)}m do trajeto (>600m). Duração acumulada: ${Math.round(totalDurationSec / 60)} min (${totalDurationSec}s).`,
         )
-      } catch (_) {}
+        $app.save(matchingEpisode)
+      } catch (errUp) {
+        console.log('Error updating existing stop episode:', errUp)
+      }
 
-      if (recentStopAlerts.length === 0) {
-        // Log off_route_events
+      // Se a parada acabou de atingir ou ultrapassar 180s e ainda não alertou nos últimos 15 min, enviar notificação
+      if (totalDurationSec >= MIN_STOP_DURATION_SECONDS) {
+        let recentAlerts = []
         try {
-          const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
-          const ev = new Record(offRouteCol)
-          ev.set('courier_id', courierId)
-          ev.set('order_id', activeOrder.id)
-          ev.set('event_type', 'unexpected_stop')
-          ev.set('lat', lat)
-          ev.set('lng', lng)
-          ev.set(
-            'notes',
-            `Parada não planejada fora do local a ${Math.round(distToCustomerMeters)}m do destino (>600m).`,
+          const fifteenMinAgo = new Date(currentLocTime - 15 * 60 * 1000).toISOString()
+          recentAlerts = $app.findRecordsByFilter(
+            'notifications',
+            `user_id = '${courierId}' && type = 'off_route' && created >= '${fifteenMinAgo}'`,
+            '-created',
+            1,
+            0,
           )
-          $app.save(ev)
-        } catch (errEv) {
-          console.log('Error saving off_route event:', errEv)
-        }
+        } catch (_) {}
 
-        // Create notification for Courier
-        try {
-          const notifCol = $app.findCollectionByNameOrId('notifications')
-          const notif = new Record(notifCol)
-          notif.set('user_id', courierId)
-          notif.set('order_id', activeOrder.id)
-          notif.set('type', 'warning')
-          notif.set('title', '⚠️ Alerta de Parada Inesperada')
-          notif.set(
-            'message',
-            `Você está parado a ${Math.round(distToCustomerMeters)}m da entrega ${trackingCode}. Caso precise de ajuda, contate a central.`,
-          )
-          notif.set('is_read', false)
-          $app.save(notif)
-        } catch (errNotif) {
-          console.log('Error creating courier notification:', errNotif)
-        }
-
-        // Create notification for Seller
-        if (sellerId) {
+        if (recentAlerts.length === 0) {
           try {
             const notifCol = $app.findCollectionByNameOrId('notifications')
             const notif = new Record(notifCol)
-            notif.set('user_id', sellerId)
-            notif.set('order_id', activeOrder.id)
-            notif.set('type', 'off_route')
-            notif.set('title', '⚠️ Parada Suspeita de Entregador (>600m)')
+            notif.set('user_id', courierId)
+            notif.set('order_id', anchorOrder.id)
+            notif.set('type', 'warning')
+            notif.set('title', '⚠️ Alerta de Parada Fora da Rota')
             notif.set(
               'message',
-              `O entregador ${courierName} está parado a ${Math.round(distToCustomerMeters)}m do pedido ${trackingCode}.`,
+              `Você está parado fora da rota há ${Math.round(totalDurationSec / 60)} min a ${Math.round(minDistanceToRouteCorridor)}m da rota da entrega ${trackingCode}.`,
             )
             notif.set('is_read', false)
             $app.save(notif)
-          } catch (errNotif) {
-            console.log('Error creating seller notification:', errNotif)
+          } catch (_) {}
+
+          if (sellerId) {
+            try {
+              const notifCol = $app.findCollectionByNameOrId('notifications')
+              const notif = new Record(notifCol)
+              notif.set('user_id', sellerId)
+              notif.set('order_id', anchorOrder.id)
+              notif.set('type', 'off_route')
+              notif.set('title', '⚠️ Parada Suspeita de Entregador (>600m)')
+              notif.set(
+                'message',
+                `O entregador ${courierName} está parado fora da rota há ${Math.round(totalDurationSec / 60)} min a ${Math.round(minDistanceToRouteCorridor)}m do pedido ${trackingCode}.`,
+              )
+              notif.set('is_read', false)
+              $app.save(notif)
+            } catch (_) {}
           }
         }
+      }
+    } else {
+      // Início de um NOVO episódio de parada.
+      // Calculamos a duração inicial com base no ponto anterior se já estava parado no mesmo local
+      let initialDurationSec = 0
+      if (prevLat && prevLng && prevTime) {
+        const moveFromPrev = calcHaversineMeters(lat, lng, prevLat, prevLng)
+        if (moveFromPrev <= 30) {
+          initialDurationSec = Math.max(1, Math.round((currentLocTime - prevTime) / 1000))
+        }
+      }
+
+      try {
+        const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
+        const ev = new Record(offRouteCol)
+        ev.set('courier_id', courierId)
+        ev.set('order_id', anchorOrder.id)
+        ev.set('event_type', 'unexpected_stop')
+        ev.set('lat', lat)
+        ev.set('lng', lng)
+        ev.set('distance_deviation_meters', Math.round(minDistanceToRouteCorridor))
+        ev.set('stop_duration_seconds', initialDurationSec)
+        ev.set(
+          'notes',
+          `Parada não planejada fora da rota a ${Math.round(minDistanceToRouteCorridor)}m do trajeto (>600m).`,
+        )
+        $app.save(ev)
+      } catch (errEv) {
+        console.log('Error creating initial off_route stop episode:', errEv)
       }
     }
   }
 
-  // 2. Check for Route Deviation (> 600 meters moving away from target or unusual trajectory)
-  // Regra unificada: limiar de desvio DEVIATION_THRESHOLD_METERS = 600m
-  // Se houver desvio de rota superior a 600 metros, o trecho não deve ser contabilizado no combustível
-  if (speedKmh > 10 && prevDistanceToCustomer !== null) {
-    const deviationDelta = distToCustomerMeters - prevDistanceToCustomer
-
-    // If courier moved significantly further from destination (>= 600m increase)
-    if (deviationDelta >= DEVIATION_THRESHOLD_METERS) {
-      // Check cooldown: avoid spamming alerts if one was created in last 5 min
-      let recentAlerts = []
+  // 2. CHECAGEM DE DESVIO DE ROTA EM DESLOCAMENTO (> 600 metros fora do corredor da rota)
+  if (speedKmh > 10 && prevLat && prevLng) {
+    if (minDistanceToRouteCorridor >= DEVIATION_THRESHOLD_METERS) {
+      // Cooldown de 5 minutos para alertas de desvio de rota do mesmo entregador
+      let recentDevAlerts = []
       try {
-        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-        recentAlerts = $app.findRecordsByFilter(
-          'notifications',
-          `user_id = '${courierId}' && type = 'off_route' && created >= '${fiveMinAgo}'`,
+        const fiveMinAgo = new Date(currentLocTime - 5 * 60 * 1000).toISOString()
+        recentDevAlerts = $app.findRecordsByFilter(
+          'off_route_events',
+          `courier_id = '${courierId}' && event_type = 'route_deviation' && created >= '${fiveMinAgo}'`,
           '-created',
           1,
           0,
         )
       } catch (_) {}
 
-      if (recentAlerts.length === 0) {
-        // Log off_route_events
+      if (recentDevAlerts.length === 0) {
         try {
           const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
           const ev = new Record(offRouteCol)
           ev.set('courier_id', courierId)
-          ev.set('order_id', activeOrder.id)
+          ev.set('order_id', anchorOrder.id)
           ev.set('event_type', 'route_deviation')
-          ev.set('distance_deviation_meters', Math.round(deviationDelta))
+          ev.set('distance_deviation_meters', Math.round(minDistanceToRouteCorridor))
+          ev.set('stop_duration_seconds', 0)
           ev.set('lat', lat)
           ev.set('lng', lng)
           ev.set(
             'notes',
-            `Desvio de rota superior a 600m detectado (+${Math.round(deviationDelta)}m). Trecho não contabilizado no consumo de combustível.`,
+            `Desvio de rota superior a 600m detectado (+${Math.round(minDistanceToRouteCorridor)}m fora do corredor viário). Trecho não contabilizado no consumo de combustível.`,
           )
           $app.save(ev)
         } catch (errDev) {
           console.log('Error saving deviation event:', errDev)
         }
 
-        // Create notification for Courier
+        // Notificação entregador
         try {
           const notifCol = $app.findCollectionByNameOrId('notifications')
           const notif = new Record(notifCol)
           notif.set('user_id', courierId)
-          notif.set('order_id', activeOrder.id)
+          notif.set('order_id', anchorOrder.id)
           notif.set('type', 'off_route')
           notif.set('title', '🚨 Alerta de Desvio de Rota (>600m)')
           notif.set(
             'message',
-            `Você está se afastando da rota do pedido ${trackingCode} (+${Math.round(deviationDelta)}m). Trecho desconsiderado no cálculo de combustível.`,
+            `Você está fora da rota do pedido ${trackingCode} (+${Math.round(minDistanceToRouteCorridor)}m). Trecho desconsiderado no cálculo de combustível.`,
           )
           notif.set('is_read', false)
           $app.save(notif)
-        } catch (errNotif) {
-          console.log('Error creating courier notification:', errNotif)
-        }
+        } catch (_) {}
 
-        // Create notification for Seller
+        // Notificação vendedor
         if (sellerId) {
           try {
             const notifCol = $app.findCollectionByNameOrId('notifications')
             const notif = new Record(notifCol)
             notif.set('user_id', sellerId)
-            notif.set('order_id', activeOrder.id)
+            notif.set('order_id', anchorOrder.id)
             notif.set('type', 'off_route')
             notif.set('title', '🚨 Desvio de Rota do Entregador (>600m)')
             notif.set(
@@ -300,9 +389,7 @@ onRecordAfterCreateSuccess((e) => {
             )
             notif.set('is_read', false)
             $app.save(notif)
-          } catch (errNotif) {
-            console.log('Error creating seller notification:', errNotif)
-          }
+          } catch (_) {}
         }
       }
     }

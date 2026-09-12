@@ -187,14 +187,17 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
           return false
         }
       }
-      // Se for parada inesperada na base ou com duração insignificante (< 180s)
+      // Se for parada inesperada, só considerar com duração real >= 180s e fora da base (>600m)
       if (ev.event_type === 'unexpected_stop') {
         const stopSec = ev.stop_duration_seconds || 0
+        if (stopSec < 180) {
+          return false
+        }
         // Verificar se foi na base padrão (Pilar/Caxias ou start_base)
         const baseLat = -22.7001402
         const baseLng = -43.2982834
         const distToBase = haversineDistanceMeters(ev.lat, ev.lng, baseLat, baseLng)
-        if (distToBase < DEVIATION_THRESHOLD_METERS && stopSec < 180 && stopSec > 0) {
+        if (distToBase < DEVIATION_THRESHOLD_METERS) {
           return false
         }
       }

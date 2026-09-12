@@ -142,8 +142,10 @@ export function calculateCourierFuelMetrics(params: {
     }
     if (ev.event_type === 'unexpected_stop') {
       const stopSec = ev.stop_duration_seconds || 0
+      // Parada só é válida se durar ao menos 180s (3 min) e estiver fora da rota
+      if (stopSec < 180) return false
       const distToBase = haversineDistanceMeters(ev.lat, ev.lng, -22.7001402, -43.2982834)
-      if (distToBase < DEVIATION_THRESHOLD_METERS && stopSec < 180 && stopSec > 0) return false
+      if (distToBase < DEVIATION_THRESHOLD_METERS) return false
     }
     return true
   })
@@ -190,15 +192,32 @@ export function calculateCourierFuelMetrics(params: {
   // a telemetria GPS mede a rota completa do entregador (Base -> Entregas -> Retorno à Base).
   // O KM de combustível da rota é o percurso real completo, e para cada entrega exibimos a sua cota ou valor correspondente.
 
-  // Agrupamento por lote de rota (pedidos com mesmo route_started_at ou janela próxima)
+  // Agrupamento por lote de rota (pedidos com mesmo route_started_at ou janela próxima de despacho)
   const routeBatches = new Map<string, OrderRecord[]>()
   eligibleOrders.forEach((o) => {
-    const key = o.route_started_at
-      ? `batch_${Math.floor(new Date(o.route_started_at).getTime() / (10 * 60 * 1000))}`
-      : `single_${o.id}`
-    const list = routeBatches.get(key) || []
+    // Se pedidos tiverem route_started_at em horários próximos (<15min), pertencem à mesma rota
+    let assignedKey: string | null = null
+    if (o.route_started_at) {
+      const oTime = new Date(o.route_started_at).getTime()
+      for (const existingKey of routeBatches.keys()) {
+        if (existingKey.startsWith('batch_')) {
+          const batchTime = Number(existingKey.replace('batch_', '')) * (10 * 60 * 1000)
+          if (Math.abs(oTime - batchTime) <= 15 * 60 * 1000) {
+            assignedKey = existingKey
+            break
+          }
+        }
+      }
+      if (!assignedKey) {
+        assignedKey = `batch_${Math.floor(oTime / (10 * 60 * 1000))}`
+      }
+    } else {
+      assignedKey = `single_${o.id}`
+    }
+
+    const list = routeBatches.get(assignedKey) || []
     list.push(o)
-    routeBatches.set(key, list)
+    routeBatches.set(assignedKey, list)
   })
 
   // Pré-calcular métricas de telemetria por lote de rota completa
