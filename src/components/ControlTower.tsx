@@ -87,6 +87,7 @@ import {
 import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificationSound'
 import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCompany } from '@/contexts/CompanyContext'
 import {
   calculateRouteWorkShift,
   type RouteWorkShiftMetrics,
@@ -170,6 +171,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 }) => {
   const { toast } = useToast()
   const { user } = useAuth()
+  const { currentCompany } = useCompany()
   const userRole = user?.role || propUserRole
   const [orders, setOrders] = useState<OrderRecord[]>(initialOrders || [])
   const [couriers, setCouriers] = useState<UserRecord[]>(initialCouriers || [])
@@ -444,7 +446,17 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       fetchData()
     }, 30000) // 30s de segurança apenas para sincronização de fundo, sem chamar onRefresh do pai
     return () => clearInterval(interval)
-  }, [user?.id, user?.role])
+  }, [user?.id, user?.role, currentCompany?.id])
+
+  useEffect(() => {
+    const handleCompanyChange = () => {
+      fetchData()
+    }
+    window.addEventListener('rotaly_company_changed', handleCompanyChange)
+    return () => {
+      window.removeEventListener('rotaly_company_changed', handleCompanyChange)
+    }
+  }, [])
 
   // Sync with incoming props com comparação estável por conteúdo (IDs + timestamps)
   const prevOrdersHashRef = useRef<string>('')
@@ -502,6 +514,21 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       .subscribe('*', (e) => {
         if (!isSubscribed) return
         const rec = e.record as unknown as OrderRecord
+
+        // Filtro por empresa ativa: não processar eventos de outra empresa
+        if (currentCompany?.id && rec?.empresa_id !== undefined) {
+          const isMatriz = currentCompany.id === deliveryService.MATRIZ_EMPRESA_ID
+          const matches = isMatriz
+            ? !rec.empresa_id || rec.empresa_id === deliveryService.MATRIZ_EMPRESA_ID
+            : rec.empresa_id === currentCompany.id
+          if (!matches) {
+            if (e.action === 'delete' || e.action === 'update') {
+              setOrders((prev) => prev.filter((o) => o.id !== rec.id))
+              setGlobalInTransitOrders((prev) => prev.filter((o) => o.id !== rec.id))
+            }
+            return
+          }
+        }
 
         // ALTERAÇÃO 2: Ao receber update com route_finished === true ou status === 'delivered':
         // remover imediatamente o courier do cache de rotas ativas, remover polilinhas e expurgar de globalInTransitOrders

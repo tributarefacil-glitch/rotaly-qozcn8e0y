@@ -58,6 +58,7 @@ import { CreateSellerModal } from '@/components/CreateSellerModal'
 import { EditSellerModal } from '@/components/EditSellerModal'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
@@ -114,6 +115,7 @@ interface AdminDashboardProps {
 
 export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboardProps) {
   const { user } = useAuth()
+  const { currentCompany } = useCompany()
   const location = useLocation()
   const navigate = useNavigate()
   const [orders, setOrders] = useState<OrderRecord[]>([])
@@ -402,6 +404,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
   useEffect(() => {
     loadData()
+  }, [currentCompany?.id])
+
+  useEffect(() => {
+    const handleCompanyChange = () => {
+      loadData()
+    }
+    window.addEventListener('rotaly_company_changed', handleCompanyChange)
+    return () => {
+      window.removeEventListener('rotaly_company_changed', handleCompanyChange)
+    }
   }, [])
 
   // Sincronizar inputs controlados sempre que settings mudar do backend

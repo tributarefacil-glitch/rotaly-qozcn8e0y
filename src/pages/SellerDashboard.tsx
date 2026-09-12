@@ -57,6 +57,7 @@ import {
   type RouteWorkShiftMetrics,
 } from '@/lib/routeWorkShift'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCompany } from '@/contexts/CompanyContext'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -102,6 +103,7 @@ interface SellerDashboardProps {
 
 export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashboardProps) {
   const { user } = useAuth()
+  const { currentCompany } = useCompany()
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [couriers, setCouriers] = useState<UserRecord[]>([])
@@ -231,10 +233,37 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   useEffect(() => {
     loadData()
-  }, [user?.id, user?.role])
+  }, [user?.id, user?.role, currentCompany?.id])
+
+  useEffect(() => {
+    const handleCompanyChange = () => {
+      loadData()
+    }
+    window.addEventListener('rotaly_company_changed', handleCompanyChange)
+    return () => {
+      window.removeEventListener('rotaly_company_changed', handleCompanyChange)
+    }
+  }, [])
+
+  // Helper para verificar se um registro pertence à empresa ativa
+  const matchesCurrentCompany = (recEmpresaId?: string) => {
+    if (!currentCompany?.id) return true
+    if (currentCompany.id === deliveryService.MATRIZ_EMPRESA_ID) {
+      return !recEmpresaId || recEmpresaId === deliveryService.MATRIZ_EMPRESA_ID
+    }
+    return recEmpresaId === currentCompany.id
+  }
 
   // Realtime subscriptions for orders and courier locations
   useRealtime<OrderRecord>('orders', (e) => {
+    // Filtro por empresa ativa: não mesclar pedidos de outra empresa
+    if (e.record?.empresa_id !== undefined && !matchesCurrentCompany(e.record.empresa_id)) {
+      if (e.action === 'delete' || e.action === 'update') {
+        setOrders((prev) => prev.filter((o) => o.id !== e.record.id))
+      }
+      return
+    }
+
     const isSeller = user?.role === 'seller'
     if (isSeller && user?.id && e.record?.seller_id && e.record.seller_id !== user.id) {
       return
@@ -252,6 +281,14 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   // Realtime hook for customers (clientes novos criados no modal de venda chegam imediatamente)
   useRealtime<CustomerRecord>('customers', (e) => {
+    // Filtro por empresa ativa
+    if (e.record?.empresa_id !== undefined && !matchesCurrentCompany(e.record.empresa_id)) {
+      if (e.action === 'delete' || e.action === 'update') {
+        setCustomers((prev) => prev.filter((c) => c.id !== e.record.id))
+      }
+      return
+    }
+
     if (e.action === 'create') {
       setCustomers((prev) => [e.record, ...prev.filter((c) => c.id !== e.record.id)])
     } else if (e.action === 'update') {

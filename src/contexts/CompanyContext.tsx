@@ -159,6 +159,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setCurrentCompany = (company: EmpresaRecord) => {
     setCurrentCompanyState(company)
     localStorage.setItem(STORAGE_KEY, company.id)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('rotaly_company_changed', {
+          detail: { companyId: company.id, company },
+        }),
+      )
+    }
   }
 
   const hasMultiCompanyAccess = user?.role === 'admin' || allCompanies.length > 1

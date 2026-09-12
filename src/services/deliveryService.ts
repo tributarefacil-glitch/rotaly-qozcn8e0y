@@ -69,6 +69,23 @@ export const deliveryService = {
     return pb.collection<MembroRecord>('membros').delete(id)
   },
 
+  // ID da Empresa Matriz Rotaly (para retrocompatibilidade com dados legados sem empresa_id)
+  MATRIZ_EMPRESA_ID: '7wo05iyvfcfh01h',
+
+  /**
+   * Helper para montar cláusula multi-tenant consistente:
+   * Se a empresa ativa for a Matriz (7wo05iyvfcfh01h), mantém compatibilidade com legados (empresa_id = Matriz || empresa_id = '' || empresa_id = null)
+   * Para qualquer outra empresa, aplica filtro estrito `empresa_id = '<id>'`
+   */
+  getCompanyFilterClause(field = 'empresa_id'): string | null {
+    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
+    if (!activeCompanyId) return null
+    if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
+      return `(${field} = '${this.MATRIZ_EMPRESA_ID}' || ${field} = '' || ${field} = null)`
+    }
+    return `${field} = '${activeCompanyId}'`
+  },
+
   // Multi-tenant Colaboradores, Rotas, Entregas, Relatórios
   async getColaboradores(empresaId?: string) {
     const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
@@ -126,10 +143,11 @@ export const deliveryService = {
   async getOrders(filter = '', sort = '-created', expand = 'customer_id,courier_id,seller_id') {
     // Injeção automática e segura de empresa_id se disponível no storage e não filtrado explicitamente
     let finalFilter = filter
-    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
-    if (activeCompanyId && !filter.includes('empresa_id') && !filter.includes('tracking_code')) {
-      const companyClause = `(empresa_id = '${activeCompanyId}' || empresa_id = '' || empresa_id = null)`
-      finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
+    if (!filter.includes('empresa_id') && !filter.includes('tracking_code')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id')
+      if (companyClause) {
+        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
+      }
     }
 
     return pb.collection<OrderRecord>('orders').getFullList({
@@ -225,10 +243,11 @@ export const deliveryService = {
   // Customers
   async getCustomers(customFilter = '') {
     let finalFilter = customFilter
-    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
-    if (activeCompanyId && !customFilter.includes('empresa_id')) {
-      const companyClause = `(empresa_id = '${activeCompanyId}' || empresa_id = '' || empresa_id = null)`
-      finalFilter = customFilter ? `(${customFilter}) && ${companyClause}` : companyClause
+    if (!customFilter.includes('empresa_id')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id')
+      if (companyClause) {
+        finalFilter = customFilter ? `(${customFilter}) && ${companyClause}` : companyClause
+      }
     }
 
     return pb.collection<CustomerRecord>('customers').getFullList({
@@ -469,7 +488,39 @@ export const deliveryService = {
   },
 
   // Users / Couriers / Sellers
-  async getCouriers() {
+  // Filtrados pela empresa ativa através dos vínculos da coleção membros (ativo = true)
+  async getCouriers(empresaId?: string) {
+    const activeCompanyId = empresaId || localStorage.getItem('rotaly_active_empresa_id')
+
+    // Se há empresa ativa definida, buscar os usuários vinculados como entregador na coleção membros
+    if (activeCompanyId) {
+      try {
+        const membros = await pb.collection<MembroRecord>('membros').getFullList({
+          filter: `empresa_id = '${activeCompanyId}' && papel = 'entregador' && ativo = true`,
+          expand: 'user_id',
+          requestKey: null,
+        })
+        const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
+
+        if (usersFromMembers.length > 0) {
+          return usersFromMembers
+        }
+
+        // Se for a Matriz e não houver membros ainda com expand, manter fallback para legados
+        if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
+          return pb.collection<UserRecord>('users').getFullList({
+            filter: "role = 'courier'",
+            sort: '-created',
+            requestKey: null,
+          })
+        }
+
+        return []
+      } catch (err) {
+        console.warn('Erro ao filtrar couriers por membros da empresa:', err)
+      }
+    }
+
     return pb.collection<UserRecord>('users').getFullList({
       filter: "role = 'courier'",
       sort: '-created',
@@ -477,7 +528,36 @@ export const deliveryService = {
     })
   },
 
-  async getSellers() {
+  async getSellers(empresaId?: string) {
+    const activeCompanyId = empresaId || localStorage.getItem('rotaly_active_empresa_id')
+
+    if (activeCompanyId) {
+      try {
+        const membros = await pb.collection<MembroRecord>('membros').getFullList({
+          filter: `empresa_id = '${activeCompanyId}' && papel = 'vendedor' && ativo = true`,
+          expand: 'user_id',
+          requestKey: null,
+        })
+        const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
+
+        if (usersFromMembers.length > 0) {
+          return usersFromMembers
+        }
+
+        if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
+          return pb.collection<UserRecord>('users').getFullList({
+            filter: "role = 'seller'",
+            sort: '-created',
+            requestKey: null,
+          })
+        }
+
+        return []
+      } catch (err) {
+        console.warn('Erro ao filtrar sellers por membros da empresa:', err)
+      }
+    }
+
     return pb.collection<UserRecord>('users').getFullList({
       filter: "role = 'seller'",
       sort: '-created',
@@ -485,7 +565,35 @@ export const deliveryService = {
     })
   },
 
-  async getAllUsers() {
+  async getAllUsers(empresaId?: string) {
+    const activeCompanyId = empresaId || localStorage.getItem('rotaly_active_empresa_id')
+
+    if (activeCompanyId) {
+      try {
+        const membros = await pb.collection<MembroRecord>('membros').getFullList({
+          filter: `empresa_id = '${activeCompanyId}' && ativo = true`,
+          expand: 'user_id',
+          requestKey: null,
+        })
+        const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
+
+        if (usersFromMembers.length > 0) {
+          return usersFromMembers
+        }
+
+        if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
+          return pb.collection<UserRecord>('users').getFullList({
+            sort: '-created',
+            requestKey: null,
+          })
+        }
+
+        return []
+      } catch (err) {
+        console.warn('Erro ao filtrar allUsers por membros da empresa:', err)
+      }
+    }
+
     return pb.collection<UserRecord>('users').getFullList({
       sort: '-created',
       requestKey: null,
@@ -794,9 +902,20 @@ export const deliveryService = {
   },
 
   // Base Addresses Management (Cadastro de Base da Empresa / Loja e Endereço Final)
-  async getBaseAddresses(): Promise<BaseAddressRecord[]> {
+  async getBaseAddresses(empresaId?: string): Promise<BaseAddressRecord[]> {
+    const activeCompanyId = empresaId || localStorage.getItem('rotaly_active_empresa_id')
     try {
+      let filter = ''
+      if (activeCompanyId) {
+        if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
+          filter = `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
+        } else {
+          filter = `empresa_id = '${activeCompanyId}'`
+        }
+      }
+
       const records = await pb.collection<BaseAddressRecord>('base_addresses').getFullList({
+        filter,
         sort: '-is_default,name',
         requestKey: null,
       })
@@ -848,8 +967,10 @@ export const deliveryService = {
   },
 
   async createBaseAddress(data: Partial<BaseAddressRecord>): Promise<BaseAddressRecord> {
+    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
     return pb.collection<BaseAddressRecord>('base_addresses').create({
       ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
       created_by: pb.authStore.record?.id || '',
     })
   },

@@ -131,20 +131,21 @@ export const Header: React.FC = () => {
 
         {/* Multi-Tenant Active Company Switcher */}
         {currentCompany && (
-          <div className="hidden lg:flex items-center">
+          <div className="flex items-center">
             {hasMultiCompanyAccess && allCompanies.length > 1 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-8 gap-2 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2.5 text-xs text-white hover:bg-[#121E46]"
+                    className="h-8 gap-1.5 sm:gap-2 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2 sm:px-2.5 text-xs text-white hover:bg-[#121E46]"
+                    title={currentCompany.nome_fantasia || currentCompany.nome_razao_social}
                   >
-                    <Building2 className="h-3.5 w-3.5 text-[#FF6B35]" />
-                    <span className="max-w-[130px] truncate font-semibold">
+                    <Building2 className="h-3.5 w-3.5 text-[#FF6B35] shrink-0" />
+                    <span className="max-w-[85px] sm:max-w-[140px] md:max-w-[180px] truncate font-semibold">
                       {currentCompany.nome_fantasia || currentCompany.nome_razao_social}
                     </span>
-                    <ChevronDown className="h-3 w-3 text-slate-400" />
+                    <ChevronDown className="h-3 w-3 text-slate-400 shrink-0" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent
@@ -187,9 +188,9 @@ export const Header: React.FC = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <div className="flex items-center gap-1.5 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2.5 py-1 text-xs text-slate-300">
-                <Building2 className="h-3.5 w-3.5 text-[#FF6B35]" />
-                <span className="max-w-[140px] truncate font-medium">
+              <div className="flex items-center gap-1.5 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2 sm:px-2.5 py-1 text-xs text-slate-300">
+                <Building2 className="h-3.5 w-3.5 text-[#FF6B35] shrink-0" />
+                <span className="max-w-[85px] sm:max-w-[140px] truncate font-medium">
                   {currentCompany.nome_fantasia || currentCompany.nome_razao_social}
                 </span>
               </div>
@@ -358,6 +359,32 @@ export const Header: React.FC = () => {
                   <Building2 className="mr-2 h-4 w-4" />
                   <span>Gestão de Empresas</span>
                 </DropdownMenuItem>
+              </>
+            )}
+            {/* Quick company switch in mobile/profile menu if multi-company available */}
+            {hasMultiCompanyAccess && allCompanies.length > 1 && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-[10px] uppercase text-muted-foreground font-bold">
+                  Empresa Ativa
+                </DropdownMenuLabel>
+                {allCompanies.map((emp) => (
+                  <DropdownMenuItem
+                    key={`menu-emp-${emp.id}`}
+                    onClick={() => {
+                      setCurrentCompany(emp)
+                      toast.success(`Empresa ativa: ${emp.nome_fantasia || emp.nome_razao_social}`)
+                    }}
+                    className={`text-xs flex items-center justify-between cursor-pointer ${
+                      currentCompany?.id === emp.id ? 'bg-primary/10 text-primary font-bold' : ''
+                    }`}
+                  >
+                    <span className="truncate">{emp.nome_fantasia || emp.nome_razao_social}</span>
+                    {currentCompany?.id === emp.id && (
+                      <CheckCircle2 className="h-3 w-3 text-primary" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
               </>
             )}
             <DropdownMenuItem onClick={() => navigate('/track/TRK-2025-001')}>
