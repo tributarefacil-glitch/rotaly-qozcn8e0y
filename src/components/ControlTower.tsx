@@ -87,6 +87,7 @@ import {
 import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificationSound'
 import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
 import { useAuth } from '@/contexts/AuthContext'
+import { calculateRouteWorkShift, type RouteWorkShiftMetrics } from '@/lib/routeWorkShift'
 
 interface ControlTowerProps {
   orders?: OrderRecord[]
@@ -224,6 +225,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       etaNextDeliveryTime?: string
       etaReturnBaseMinutes?: number
       etaReturnBaseTime?: string
+      remainingRouteMinutes?: number
+      projectedEndTime?: Date
+      projectedEndTimeFormatted?: string
+      isOvertime?: boolean
+      overtimeMinutes?: number
+      shiftMetrics?: RouteWorkShiftMetrics
       order: OrderRecord
       courier: UserRecord
     }>
@@ -1083,6 +1090,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             minute: '2-digit',
           })
 
+          // Cálculo do tempo estimado da rota inteira e cruzamento com a carga horária
+          const shiftMetrics = calculateRouteWorkShift(
+            etaMinutesReturnBase,
+            primaryOrder.route_started_at || undefined,
+            nowTime,
+          )
+
           const routeResult = {
             courierId: item.courier.id,
             orderId: primaryOrder.id,
@@ -1101,6 +1115,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             etaNextDeliveryTime: pendingStopsList.length > 0 ? etaNextDeliveryTime : undefined,
             etaReturnBaseMinutes: etaMinutesReturnBase,
             etaReturnBaseTime,
+            remainingRouteMinutes: shiftMetrics.remainingRouteMinutes,
+            projectedEndTime: shiftMetrics.projectedEndTime,
+            projectedEndTimeFormatted: shiftMetrics.projectedEndTimeFormatted,
+            isOvertime: shiftMetrics.isOvertime,
+            overtimeMinutes: shiftMetrics.overtimeMinutes,
+            shiftMetrics,
             order: primaryOrder,
             courier: item.courier,
           }
@@ -1327,6 +1347,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         etaNextDeliveryTime: routeInfo?.etaNextDeliveryTime,
         etaReturnBaseMinutes: routeInfo?.etaReturnBaseMinutes,
         etaReturnBaseTime: routeInfo?.etaReturnBaseTime,
+        remainingRouteMinutes: routeInfo?.remainingRouteMinutes,
+        projectedEndTimeFormatted: routeInfo?.projectedEndTimeFormatted,
+        isOvertime: routeInfo?.isOvertime,
+        overtimeMinutes: routeInfo?.overtimeMinutes,
         battery_level: item.battery_level,
         location_timestamp: item.location_timestamp,
         gps_status: item.gps_status as 'active' | 'disabled' | 'offline' | undefined,
@@ -3013,7 +3037,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                   </div>
 
                   {/* Painel de status no canto superior esquerdo do Google Maps */}
-                  <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5 max-w-[280px]">
+                  <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5 max-w-[340px]">
                     <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
                       <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
                       <span className="font-semibold text-white truncate text-[11px]">
@@ -3022,6 +3046,53 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                           : `${activeRouteCouriers.length} entregadores em rota`}
                       </span>
                     </div>
+
+                    {/* Pílula no topo do mapa com o tempo estimado da rota inteira e badge de carga horária por entregador em rota */}
+                    {mapDisplayMode === 'in_transit' &&
+                      activeRouteCouriers.map((item) => {
+                        const rInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
+                        if (!rInfo || !rInfo.shiftMetrics) return null
+                        const metrics = rInfo.shiftMetrics
+                        const courierName = (
+                          item.courier.name ||
+                          item.courier.email ||
+                          'Entregador'
+                        ).split(' ')[0]
+
+                        return (
+                          <div
+                            key={`top-shift-${item.courier.id}`}
+                            onClick={() => setSelectedCourier(item.courier)}
+                            className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-[#1E2B58] hover:border-blue-500/60 transition cursor-pointer shadow-md text-[11px] flex flex-col gap-1"
+                            title="Clique para ver detalhes do entregador"
+                          >
+                            <div className="flex items-center justify-between gap-1 text-slate-200">
+                              <span className="font-bold text-white flex items-center gap-1 truncate">
+                                <span>🛵 {courierName}</span>
+                              </span>
+                              <span className="text-blue-300 font-mono font-semibold shrink-0">
+                                ⏱ {metrics.remainingFormatted} • Término:{' '}
+                                {metrics.projectedEndTimeFormatted}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-1">
+                              {metrics.isOvertime ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
+                                  {metrics.badgeText}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
+                                  {metrics.badgeText}
+                                </span>
+                              )}
+                              <span className="text-[9.5px] text-slate-400 font-mono">
+                                ({item.inTransitCount} entrega{item.inTransitCount === 1 ? '' : 's'}
+                                )
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })}
 
                     {/* Alertas ativos na Torre: Desvios ou Paradas detectadas (dispensáveis) */}
                     {mapDisplayMode === 'in_transit' &&
@@ -3246,7 +3317,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                   </div>
 
                   {/* Status e avisos no canto superior esquerdo também no Canvas vetorial */}
-                  <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-[280px] pointer-events-auto">
+                  <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-[340px] pointer-events-auto">
                     <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
                       <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
                       <span className="font-semibold text-white truncate text-[11px]">
@@ -3255,6 +3326,53 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                           : `${activeRouteCouriers.length} entregadores em rota`}
                       </span>
                     </div>
+
+                    {/* Pílula no topo do mapa vetorial com tempo total restante e carga horária */}
+                    {mapDisplayMode === 'in_transit' &&
+                      activeRouteCouriers.map((item) => {
+                        const rInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
+                        if (!rInfo || !rInfo.shiftMetrics) return null
+                        const metrics = rInfo.shiftMetrics
+                        const courierName = (
+                          item.courier.name ||
+                          item.courier.email ||
+                          'Entregador'
+                        ).split(' ')[0]
+
+                        return (
+                          <div
+                            key={`canvas-top-shift-${item.courier.id}`}
+                            onClick={() => setSelectedCourier(item.courier)}
+                            className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-[#1E2B58] hover:border-blue-500/60 transition cursor-pointer shadow-md text-[11px] flex flex-col gap-1"
+                            title="Clique para ver detalhes do entregador"
+                          >
+                            <div className="flex items-center justify-between gap-1 text-slate-200">
+                              <span className="font-bold text-white flex items-center gap-1 truncate">
+                                <span>🛵 {courierName}</span>
+                              </span>
+                              <span className="text-blue-300 font-mono font-semibold shrink-0">
+                                ⏱ {metrics.remainingFormatted} • Término:{' '}
+                                {metrics.projectedEndTimeFormatted}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-1">
+                              {metrics.isOvertime ? (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
+                                  {metrics.badgeText}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
+                                  {metrics.badgeText}
+                                </span>
+                              )}
+                              <span className="text-[9.5px] text-slate-400 font-mono">
+                                ({item.inTransitCount} entrega{item.inTransitCount === 1 ? '' : 's'}
+                                )
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })}
 
                     {mapDisplayMode === 'in_transit' &&
                       !isDeviationBannerDismissed &&
@@ -4519,6 +4637,62 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
                         </span>
                       </div>
                     </div>
+
+                    {/* Bloco Detalhado: Tempo Restante da Rota Inteira & Carga Horária */}
+                    {(() => {
+                      const courierRouteInfo = activeRoutesData.find(
+                        (r) => r.courierId === selectedCourier.id,
+                      )
+                      const shift = courierRouteInfo?.shiftMetrics
+                      if (!shift) return null
+
+                      return (
+                        <div className="border border-indigo-500/40 rounded-xl p-3 space-y-2 bg-[#0c163b]/70 shadow-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-indigo-300 flex items-center gap-1.5 text-xs">
+                              <Clock className="h-3.5 w-3.5 text-indigo-400" />
+                              Tempo Estimado da Rota Inteira:
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                shift.isOvertime
+                                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                              }`}
+                            >
+                              {shift.badgeText}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-xs">
+                            <div className="p-2 rounded-lg bg-[#070D1E] border border-[#1E2B58]">
+                              <span className="text-[10px] text-slate-400 block font-sans">
+                                Restante (Trânsito + Paradas):
+                              </span>
+                              <span className="font-bold text-white text-sm">
+                                {shift.remainingFormatted}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-[#070D1E] border border-[#1E2B58]">
+                              <span className="text-[10px] text-slate-400 block font-sans">
+                                Término Projetado (Base):
+                              </span>
+                              <span className="font-bold text-blue-300 text-sm">
+                                ~{shift.projectedEndTimeFormatted}
+                              </span>
+                            </div>
+                          </div>
+
+                          {shift.isOvertime && (
+                            <p className="text-[10.5px] text-amber-300 font-sans leading-tight">
+                              ⚠️ Atenção: A conclusão da rota ultrapassará o limite acordado de
+                              jornada (+{shift.overtimeMinutes} min). Evite atribuir novas entregas
+                              para este entregador hoje.
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })()}
 
                     {/* Próxima Entrega e Previsão de Volta à Base */}
                     {(() => {
