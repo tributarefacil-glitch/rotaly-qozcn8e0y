@@ -46,12 +46,8 @@ import type {
   LocationRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
-import {
-  calculateRealKmForOrder,
-  sanitizeGpsPoints,
-  DEVIATION_THRESHOLD_METERS,
-  haversineDistanceMeters,
-} from '@/lib/telemetryKmEngine'
+import { DEVIATION_THRESHOLD_METERS, haversineDistanceMeters } from '@/lib/telemetryKmEngine'
+import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 
 export interface CourierDeliveryHistoryItem {
   order: OrderRecord
@@ -113,12 +109,16 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   // Carregar locations caso não tenham sido passadas externamente
   React.useEffect(() => {
     if (!isOpen || !courier?.id) return
-    if (externalLocations && externalLocations.length > 0) return
+    if (externalLocations && externalLocations.length > 0) {
+      setFetchedLocations([])
+      return
+    }
 
     let isMounted = true
     setIsLoadingLocations(true)
+    // Buscar locations do entregador com limite suficiente para cobrir o histórico completo
     deliveryService
-      .getLatestLocations(`user_id = '${courier.id}'`)
+      .getLatestLocations(`user_id = '${courier.id}'`, 1500)
       .then((locs) => {
         if (isMounted) {
           setFetchedLocations(locs)
@@ -142,30 +142,40 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
   // Obter parâmetros de combustível específicos do entregador
   const fuelParams = useMemo(() => {
+    if (courier?.consumption_kml && courier.consumption_kml > 0) {
+      const defaultSettings = deliveryService.getVehicleFuelParams(settings, courier?.vehicle_type)
+      return {
+        consumptionKml: courier.consumption_kml,
+        pricePerLiter: defaultSettings.pricePerLiter,
+        category: defaultSettings.category,
+      }
+    }
     return deliveryService.getVehicleFuelParams(settings, courier?.vehicle_type)
   }, [settings, courier])
 
-  // Filtrar as ordens vinculadas ao entregador que tenham iniciado rota ou finalizado
+  // Filtrar as ordens vinculadas ao entregador
   // Cancelados NÃO entram na lista de pedidos válidos (não somam km, combustível nem contagem de telemetria)
   const courierOrders = useMemo(() => {
     if (!courier?.id) return []
-    return orders.filter(
-      (o) =>
-        o.courier_id === courier.id &&
-        o.status !== 'cancelled' &&
-        (o.route_started === true ||
-          o.status === 'delivered' ||
-          o.status === 'in_transit' ||
-          o.status === 'address_error' ||
-          o.status === 'client_absent' ||
-          o.status === 'assigned'),
-    )
+    return orders.filter((o) => o.courier_id === courier.id && o.status !== 'cancelled')
   }, [orders, courier])
 
-  // Eventos de desvio e paradas do entregador:
-  // Filtrar off_route_events espúrios:
-  // - desvios com desvio < 600m
-  // - paradas < 180s dentro do perímetro da base (< 600m da base)
+  // Executar o motor consolidado de telemetria e combustível (o mesmo motor do useCourierFuelMetrics)
+  // Agrupa por lotes de rota, desconta desvios/paradas de rota e rateia proporcionalmente sem duplicações
+  const consolidatedMetrics = useMemo(() => {
+    if (!courier) return null
+
+    return calculateCourierFuelMetrics({
+      courier,
+      orders: courierOrders,
+      locations: allLocations,
+      offRouteEvents,
+      advances: fuelAccount?.advances || [],
+      settings,
+    })
+  }, [courier, courierOrders, allLocations, offRouteEvents, fuelAccount, settings])
+
+  // Eventos de desvio e paradas do entregador para exibição na auditoria do modal:
   const courierEvents = useMemo(() => {
     if (!courier?.id) return []
     return offRouteEvents.filter((ev) => {
@@ -192,22 +202,16 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     })
   }, [offRouteEvents, courier])
 
-  // Processar itens detalhados de cada entrega utilizando o motor de telemetria GPS 100% REAL
+  // Processar itens detalhados de cada entrega utilizando o rateio consolidado do motor
   const historyItems: CourierDeliveryHistoryItem[] = useMemo(() => {
-    if (!courier) return []
+    if (!courier || !consolidatedMetrics) return []
 
-    return courierOrders.map((o) => {
-      // Cálculo de KM 100% Real por telemetria de GPS, com desconto de desvios e paradas fora da rota
-      const realTelemetry = calculateRealKmForOrder({
-        order: o,
-        allCourierLocations: allLocations,
-        courierEvents,
-        allCourierOrders: courierOrders,
-      })
-
-      const kmOficial = realTelemetry.officialRealKm
-      const liters = fuelParams.consumptionKml > 0 ? kmOficial / fuelParams.consumptionKml : 0
-      const cost = liters * fuelParams.pricePerLiter
+    // Mapear cada orderCalculation gerado pelo motor consolidado
+    return consolidatedMetrics.orderCalculations.map((calc) => {
+      const o = calc.order
+      const kmOficial = calc.officialKm
+      const liters = calc.litersSpent
+      const cost = calc.fuelCost
 
       // Eventos associados a esta entrega específica
       const associatedEvents = courierEvents.filter(
@@ -218,11 +222,11 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
             ev.created <= (o.actual_arrival || o.updated || o.created)),
       )
       const offRouteCount = Math.max(
-        realTelemetry.offRouteCount,
+        calc.offRouteCount,
         associatedEvents.filter((ev) => ev.event_type === 'route_deviation').length,
       )
       const unexpectedStopsCount = Math.max(
-        realTelemetry.unexpectedStopsCount,
+        calc.unexpectedStopsCount,
         associatedEvents.filter((ev) => ev.event_type === 'unexpected_stop').length,
       )
 
@@ -270,18 +274,18 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         statusLabel,
         statusColor,
         kmRodado: kmOficial,
-        isRealTelemetry: realTelemetry.isRealTelemetry,
-        deviationKm: realTelemetry.deviationKm,
-        totalGpsKm: realTelemetry.totalGpsKm,
-        discardedNoiseKm: realTelemetry.discardedNoiseKm,
-        samplingCurvatureFactor: realTelemetry.samplingCurvatureFactor,
-        auditNotes: realTelemetry.auditNotes,
-        plannedKm: realTelemetry.plannedKm,
-        gpsPointsCount: realTelemetry.gpsPointsCount,
-        filteredNoisePointsCount: realTelemetry.filteredNoisePointsCount,
-        hasReturnKm: realTelemetry.hasReturnKm,
-        fuelCost: Number(cost.toFixed(2)),
-        litersSpent: Number(liters.toFixed(2)),
+        isRealTelemetry: calc.isRealTelemetry,
+        deviationKm: calc.deviationKm,
+        totalGpsKm: calc.totalGpsKm,
+        discardedNoiseKm: calc.discardedNoiseKm,
+        samplingCurvatureFactor: undefined,
+        auditNotes: undefined,
+        plannedKm: Number(((o.distance_km || 0) + (o.return_trip_km || 0)).toFixed(1)),
+        gpsPointsCount: 0,
+        filteredNoisePointsCount: 0,
+        hasReturnKm: calc.hasReturnKm,
+        fuelCost: cost,
+        litersSpent: liters,
         offRouteCount,
         unexpectedStopsCount,
         events:
@@ -290,7 +294,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
             : courierEvents.filter((ev) => ev.order_id === o.id),
       }
     })
-  }, [courier, courierOrders, courierEvents, allLocations, fuelParams])
+  }, [courier, consolidatedMetrics, courierEvents])
 
   // Aplicar filtros de período, status e busca
   const filteredItems = useMemo(() => {
@@ -336,15 +340,36 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
   // Totais do período filtrado
   const metricsSummary = useMemo(() => {
+    const isFiltered =
+      periodFilter !== 'all' || statusFilter !== 'all' || searchQuery.trim().length > 0
+
+    // O adiantamento total da conta do entregador (ou métricas consolidadas)
+    const totalAdiantado = fuelAccount
+      ? fuelAccount.totalAdvances
+      : consolidatedMetrics
+        ? consolidatedMetrics.totalAdvances
+        : 0
+
+    if (!isFiltered && consolidatedMetrics) {
+      // Se não há filtro ativo, usar diretamente as métricas consolidadas do período completo
+      return {
+        totalKm: consolidatedMetrics.officialKm,
+        totalFuelCost: consolidatedMetrics.totalFuelCost,
+        totalLiters: consolidatedMetrics.litersSpent,
+        totalDeviations: consolidatedMetrics.offRouteCount,
+        totalStops: consolidatedMetrics.unexpectedStopsCount,
+        saldoContaCorrente: consolidatedMetrics.currentBalance,
+        totalAdiantado: Number(totalAdiantado.toFixed(2)),
+        totalDeliveries: consolidatedMetrics.orderCalculations.length,
+      }
+    }
+
+    // Caso o usuário aplique filtros (ex.: por data ou status), somamos os itens rateados proporcionalmente
     const totalKm = filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
     const totalFuelCost = filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
     const totalLiters = filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
-
-    // Os cards "KM REAL OFICIAL" e "COMBUSTÍVEL GASTO" exibem os km recalculados com o filtro anti-outlier
-    const totalAdiantado = fuelAccount ? fuelAccount.totalAdvances : 0
-    // Saldo atualizado com o combustível real recalculado
     const saldoContaCorrente = totalAdiantado - totalFuelCost
 
     return {
@@ -357,7 +382,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       totalAdiantado: Number(totalAdiantado.toFixed(2)),
       totalDeliveries: filteredItems.length,
     }
-  }, [filteredItems, fuelAccount])
+  }, [filteredItems, fuelAccount, consolidatedMetrics, periodFilter, statusFilter, searchQuery])
 
   // Exportar dados em CSV com KM Real e KM de Desvios em colunas separadas
   const handleExportCSV = () => {
@@ -374,7 +399,6 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       'KM Total Rodado (Odômetro Real)',
       'KM Descartado por Ruído',
       'Origem Telemetria (GPS Real vs Estimado)',
-      'Pontos GPS Válidos',
       'Combustível Oficial (R$)',
       'Litros Consumidos',
       'Desvios de Rota (>600m)',
@@ -392,7 +416,6 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       item.totalGpsKm.toFixed(1),
       item.discardedNoiseKm.toFixed(2),
       item.isRealTelemetry ? '100% Real (GPS)' : 'Estimado (Planejado)',
-      item.gpsPointsCount,
       item.fuelCost.toFixed(2),
       item.litersSpent.toFixed(2),
       item.offRouteCount,
@@ -681,7 +704,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 <tbody className="divide-y divide-[#1E2B58]/60 text-slate-200">
                   {filteredItems.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-8 text-center text-slate-400">
+                      <td colSpan={9} className="py-8 text-center text-slate-400">
                         Nenhuma entrega encontrada para os filtros selecionados.
                       </td>
                     </tr>
@@ -736,7 +759,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                             {item.isRealTelemetry && (
                               <span
                                 className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-[#60A5FA] font-sans border border-blue-500/30 font-bold"
-                                title={`KM 100% Real calculado por ${item.gpsPointsCount} pontos de GPS`}
+                                title="KM 100% Real calculado por telemetria GPS"
                               >
                                 100% real
                               </span>
@@ -878,7 +901,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                     </div>
                     <span className="text-[9px] text-slate-400 block mt-0.5">
                       {selectedItemForDetails.isRealTelemetry
-                        ? `${selectedItemForDetails.gpsPointsCount} pontos GPS analisados`
+                        ? 'Telemetria GPS consolidada do lote'
                         : `Planejado: ${selectedItemForDetails.plannedKm} km`}
                     </span>
                   </div>
@@ -954,33 +977,18 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                   </div>
                   <div className="text-[10px] text-slate-400 space-y-0.5 pt-1">
                     <div className="flex justify-between">
-                      <span>Pontos GPS Válidos:</span>
+                      <span>Rateio Proporcional do Lote:</span>
                       <span className="text-slate-200 font-mono">
-                        {selectedItemForDetails.gpsPointsCount} pontos
+                        Baseado na distância planejada da entrega
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Pontos Descartados (Filtro Ruído):</span>
-                      <span className="text-slate-200 font-mono">
-                        {selectedItemForDetails.filteredNoisePointsCount} pontos (
-                        {selectedItemForDetails.discardedNoiseKm.toFixed(2)} km)
-                      </span>
-                    </div>
-                    {selectedItemForDetails.samplingCurvatureFactor &&
-                      selectedItemForDetails.samplingCurvatureFactor > 1 && (
-                        <div className="flex justify-between">
-                          <span>Compensação Sinuosidade (Amostragem):</span>
-                          <span className="text-[#60A5FA] font-mono">
-                            +
-                            {Math.round((selectedItemForDetails.samplingCurvatureFactor - 1) * 100)}
-                            % (alinhado a odômetro)
-                          </span>
-                        </div>
-                      )}
-                    {selectedItemForDetails.auditNotes && (
-                      <p className="text-[10px] text-slate-400 italic pt-1 border-t border-[#1E2B58]/60 mt-1">
-                        ℹ️ {selectedItemForDetails.auditNotes}
-                      </p>
+                    {selectedItemForDetails.discardedNoiseKm > 0 && (
+                      <div className="flex justify-between">
+                        <span>KM Descartado por Ruído:</span>
+                        <span className="text-slate-200 font-mono">
+                          {selectedItemForDetails.discardedNoiseKm.toFixed(2)} km
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>

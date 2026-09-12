@@ -241,8 +241,7 @@ export function calculateCourierFuelMetrics(params: {
     let totalGpsKm = batchTelemetry.totalGpsKm
 
     if (batchCount > 1) {
-      // Rateio do lote considerando distância individual e proximidade da base
-      // Entregas vizinhas à base não podem herdar rateio excessivo
+      // Rateio proporcional: km da entrega = km da rota × distância planejada da entrega ÷ Σ distâncias planejadas do lote
       const totalPlannedInBatch = batchOrders.reduce((sum, b) => {
         const baseKm = b.distance_km || 0.5
         const returnKm = b.return_trip_km || 0
@@ -251,17 +250,37 @@ export function calculateCourierFuelMetrics(params: {
       const thisOrderWeight = (order.distance_km || 0.5) + (order.return_trip_km || 0)
       const ratio = totalPlannedInBatch > 0 ? thisOrderWeight / totalPlannedInBatch : 1 / batchCount
 
-      officialKm = Number((batchTelemetry.officialRealKm * ratio).toFixed(1))
-      // Se a entrega for muito curta (ex.: TRK-2026-233 com 0.31 km de ida), não permitir inflação desproporcional
-      if ((order.distance_km || 0) > 0 && (order.distance_km || 0) < 1.0) {
-        const maxExpected = ((order.distance_km || 0) + (order.return_trip_km || 0)) * 2.0
-        if (maxExpected > 0 && officialKm > maxExpected) {
-          officialKm = Number(Math.max(order.distance_km || 0, maxExpected).toFixed(1))
-        }
-      }
+      const orderIndex = batchOrders.findIndex((b) => b.id === order.id)
+      const isLastOrderInBatch = orderIndex === batchCount - 1
 
-      deviationKm = Number((batchTelemetry.deviationKm * ratio).toFixed(1))
-      totalGpsKm = Number((batchTelemetry.totalGpsKm * ratio).toFixed(1))
+      if (isLastOrderInBatch) {
+        // Compensar resíduo de arredondamento no último item para que a soma da coluna
+        // resulte rigorosamente idêntica ao total oficial do lote
+        let allocatedOfficialKm = 0
+        let allocatedDeviationKm = 0
+        let allocatedGpsKm = 0
+
+        for (let i = 0; i < batchCount - 1; i++) {
+          const bOrder = batchOrders[i]
+          const bWeight = (bOrder.distance_km || 0.5) + (bOrder.return_trip_km || 0)
+          const bRatio = totalPlannedInBatch > 0 ? bWeight / totalPlannedInBatch : 1 / batchCount
+          allocatedOfficialKm += Number((batchTelemetry.officialRealKm * bRatio).toFixed(1))
+          allocatedDeviationKm += Number((batchTelemetry.deviationKm * bRatio).toFixed(1))
+          allocatedGpsKm += Number((batchTelemetry.totalGpsKm * bRatio).toFixed(1))
+        }
+
+        officialKm = Number(
+          Math.max(0, batchTelemetry.officialRealKm - allocatedOfficialKm).toFixed(1),
+        )
+        deviationKm = Number(
+          Math.max(0, batchTelemetry.deviationKm - allocatedDeviationKm).toFixed(1),
+        )
+        totalGpsKm = Number(Math.max(0, batchTelemetry.totalGpsKm - allocatedGpsKm).toFixed(1))
+      } else {
+        officialKm = Number((batchTelemetry.officialRealKm * ratio).toFixed(1))
+        deviationKm = Number((batchTelemetry.deviationKm * ratio).toFixed(1))
+        totalGpsKm = Number((batchTelemetry.totalGpsKm * ratio).toFixed(1))
+      }
     }
 
     const litersSpent = !isBicycle && consumptionKml > 0 ? officialKm / consumptionKml : 0

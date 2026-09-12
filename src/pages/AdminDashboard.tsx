@@ -1085,7 +1085,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   acc.courier.vehicle_type,
                                 ) === 'bicicleta'
                                   ? 'Telemetria GPS apurada'
-                                  : `${acc.totalRouteKm.toFixed(1)} km roteirizados`}
+                                  : `${acc.totalRouteKm.toFixed(1)} km reais oficiais (GPS)`}
                               </span>
                             </div>
                           </div>
@@ -3008,7 +3008,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         courier={selectedCourierForHistory}
         fuelAccount={
           selectedCourierForHistory
-            ? currentFuelAccounts.find((a) => a.courier.id === selectedCourierForHistory.id) || null
+            ? currentFuelAccounts.find((a) => a.courier.id === selectedCourierForHistory.id) || {
+                courier: selectedCourierForHistory,
+                totalRouteKm: 0,
+                totalSpent: 0,
+                totalAdvances: fuelAdvances
+                  .filter((a) => a.courier_id === selectedCourierForHistory.id)
+                  .reduce((sum, a) => sum + (Number(a.amount) || 0), 0),
+                balance: 0,
+                advanceCount: fuelAdvances.filter(
+                  (a) => a.courier_id === selectedCourierForHistory.id,
+                ).length,
+                deliveriesCount: 0,
+                advances: fuelAdvances.filter((a) => a.courier_id === selectedCourierForHistory.id),
+              }
             : null
         }
         orders={orders}
