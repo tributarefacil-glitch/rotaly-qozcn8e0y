@@ -1816,7 +1816,7 @@ export const deliveryService = {
     }
   },
 
-  // Client-side intelligent TSP router using Google Maps Directions with trafficModel (departureTime=now)
+  // Client-side intelligent TSP router using Google Maps Directions with optimize:true and Same-Street Cohesion
   async clientSideOptimizeRoute(
     orderIds: string[],
     originLat = -22.906847,
@@ -1840,18 +1840,8 @@ export const deliveryService = {
       effectiveVehicleType,
     )
 
-    const calcDist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-      const R = 6371e3
-      const φ1 = (lat1 * Math.PI) / 180
-      const φ2 = (lat2 * Math.PI) / 180
-      const Δφ = ((lat2 - lat1) * Math.PI) / 180
-      const Δλ = ((lon2 - lon1) * Math.PI) / 180
-      const a =
-        Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-      return R * c
-    }
+    const finalDestLat = destLat !== undefined ? destLat : originLat
+    const finalDestLng = destLng !== undefined ? destLng : originLng
 
     const items = allOrders.map((o) => {
       const cust = o.expand?.customer_id
@@ -1867,163 +1857,39 @@ export const deliveryService = {
       }
     })
 
-    const unvisited = [...items]
-    const optimized: Array<{
-      id: string
-      tracking_code: string
-      priority: string
-      status: string
-      customer_name: string
-      address: string
-      lat: number
-      lng: number
-      step_distance_meters: number
-      cumulative_distance_meters: number
-      step_duration_seconds?: number
-    }> = []
+    // Importar dinamicamente ou usar o motor inteligente de roteamento viário
+    const { optimizeRouteSequence } = await import('@/services/intelligentRoadRouter')
 
-    let curLat = originLat
-    let curLng = originLng
-    let totalDistMeters = 0
+    const roadRouteResult = await optimizeRouteSequence({
+      origin: { lat: originLat, lng: originLng },
+      destination: { lat: finalDestLat, lng: finalDestLng },
+      stops: items,
+      vehicleType: effectiveVehicleType,
+      pricePerLiter,
+      consumptionKml,
+    })
 
-    while (unvisited.length > 0) {
-      let bestIdx = -1
-      let bestScore = Infinity
-
-      for (let i = 0; i < unvisited.length; i++) {
-        const item = unvisited[i]
-        const d = calcDist(curLat, curLng, item.lat, item.lng)
-        let weightMultiplier = 1.0
-        if (item.priority === 'urgent') weightMultiplier = 0.4
-        else if (item.priority === 'high') weightMultiplier = 0.7
-
-        const score = d * weightMultiplier
-        if (score < bestScore) {
-          bestScore = score
-          bestIdx = i
-        }
-      }
-
-      if (bestIdx >= 0) {
-        const next = unvisited.splice(bestIdx, 1)[0]
-        const actualD = calcDist(curLat, curLng, next.lat, next.lng)
-        totalDistMeters += actualD
-        curLat = next.lat
-        curLng = next.lng
-        optimized.push({
-          ...next,
-          step_distance_meters: Math.round(actualD),
-          cumulative_distance_meters: Math.round(totalDistMeters),
-        })
-      } else {
-        break
-      }
-    }
-
-    // Try Google Maps Directions for accurate driving time with live traffic if window.google is loaded
-    let durationMins = Math.round((totalDistMeters / 1000) * 3.5 + optimized.length * 5)
-    let finalDistMeters = totalDistMeters
-
-    if (typeof window !== 'undefined') {
-      const win = window as any
-      if (
-        win.google &&
-        win.google.maps &&
-        win.google.maps.DirectionsService &&
-        optimized.length > 0
-      ) {
-        try {
-          const directionsService = new win.google.maps.DirectionsService()
-          const origin = new win.google.maps.LatLng(originLat, originLng)
-          const destination = new win.google.maps.LatLng(
-            optimized[optimized.length - 1].lat,
-            optimized[optimized.length - 1].lng,
-          )
-
-          const waypoints = optimized.slice(0, -1).map((opt) => ({
-            location: new win.google.maps.LatLng(opt.lat, opt.lng),
-            stopover: true,
-          }))
-
-          // Request directions with live traffic (departureTime: now, trafficModel: BEST_GUESS)
-          const result = await new Promise<any>((resolve) => {
-            directionsService.route(
-              {
-                origin,
-                destination,
-                waypoints: waypoints.slice(0, 23), // Google maps limits waypoints to 25
-                optimizeWaypoints: false, // Already ordered by our TSP
-                travelMode: win.google.maps.TravelMode.DRIVING,
-                drivingOptions: {
-                  departureTime: new Date(),
-                  trafficModel: win.google.maps.TrafficModel.BEST_GUESS,
-                },
-              },
-              (res: any, status: any) => {
-                if (status === win.google.maps.DirectionsStatus.OK) {
-                  resolve(res)
-                } else {
-                  resolve(null)
-                }
-              },
-            )
-          })
-
-          if (result && result.routes && result.routes[0]) {
-            const legs = result.routes[0].legs || []
-            let legDistSum = 0
-            let legDurationSum = 0
-
-            legs.forEach((leg: any, idx: number) => {
-              legDistSum += leg.distance?.value || 0
-              const legDur = leg.duration_in_traffic?.value || leg.duration?.value || 0
-              legDurationSum += legDur
-              if (optimized[idx]) {
-                optimized[idx].step_duration_seconds = legDur
-                optimized[idx].step_distance_meters =
-                  leg.distance?.value || optimized[idx].step_distance_meters
-              }
-            })
-
-            if (legDistSum > 0) finalDistMeters = legDistSum
-            if (legDurationSum > 0) {
-              // Duration from traffic + 5 min per stop for delivery interaction
-              durationMins = Math.round(legDurationSum / 60 + optimized.length * 5)
-            }
-          }
-        } catch (trafficErr) {
-          console.warn('Traffic duration fetch fallback applied:', trafficErr)
-        }
-      }
-    }
-
-    const finalDestLat = destLat !== undefined ? destLat : originLat
-    const finalDestLng = destLng !== undefined ? destLng : originLng
-
-    // IDA E VOLTA: calcular percurso de retorno da última parada até a base ou endereço de finalização
-    let returnDistMeters = 0
-    if (optimized.length > 0) {
-      const lastStop = optimized[optimized.length - 1]
-      returnDistMeters = calcDist(lastStop.lat, lastStop.lng, finalDestLat, finalDestLng)
-    }
-
-    const outboundDistKm = finalDistMeters / 1000
-    const returnDistKm = returnDistMeters / 1000
-    const totalDistKm = outboundDistKm + returnDistKm
-
-    // Add return drive time
-    const returnMins = Math.round((returnDistKm / 25) * 60)
-    const totalDurationMins = durationMins + returnMins
-
-    const fuelCost = consumptionKml > 0 ? (totalDistKm * pricePerLiter) / consumptionKml : 0
+    const optimized = roadRouteResult.stops.map((s) => ({
+      id: s.id,
+      tracking_code: s.tracking_code,
+      priority: s.priority || 'normal',
+      status: s.status || 'pending',
+      customer_name: s.customer_name,
+      address: s.address,
+      lat: s.lat,
+      lng: s.lng,
+      step_distance_meters: s.step_distance_meters,
+      cumulative_distance_meters: s.cumulative_distance_meters,
+      step_duration_seconds: s.step_duration_seconds,
+    }))
 
     return {
       optimized_orders: optimized,
-      total_distance_km: totalDistKm.toFixed(2),
-      outbound_distance_km: parseFloat(outboundDistKm.toFixed(2)),
-      return_distance_km: parseFloat(returnDistKm.toFixed(2)),
-      estimated_duration_minutes: totalDurationMins,
-      estimated_fuel_cost: Number(fuelCost.toFixed(2)),
+      total_distance_km: roadRouteResult.total_distance_km.toFixed(2),
+      outbound_distance_km: roadRouteResult.outbound_distance_km,
+      return_distance_km: roadRouteResult.return_distance_km,
+      estimated_duration_minutes: roadRouteResult.estimated_duration_minutes,
+      estimated_fuel_cost: roadRouteResult.estimated_fuel_cost,
       stops_count: optimized.length,
     }
   },

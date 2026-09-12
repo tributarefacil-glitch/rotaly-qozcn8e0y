@@ -99,6 +99,12 @@ import {
   formatRemainingDuration,
   type RouteWorkShiftMetrics,
 } from '@/lib/routeWorkShift'
+import {
+  optimizeRouteSequence,
+  type StopCandidate,
+  areAddressesOnSameStreet,
+  calcDistanceMeters,
+} from '@/services/intelligentRoadRouter'
 import { toast } from 'sonner'
 
 interface RouteOptimizerModalProps {
@@ -1043,6 +1049,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }
 
   // Recompute plan distances and metrics when stops order changes (Drag or manual shift)
+  // Utiliza fator de malha viária urbana (1.28x) e identificação de mesma rua (1.05x)
   const recalculatePlanMetrics = useCallback(
     (
       stops: OptimizedStop[],
@@ -1063,24 +1070,29 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       let curLng = startLng
       let cumMeters = 0
 
-      const updatedStops: OptimizedStop[] = stops.map((stop) => {
-        const stepDist = haversineDistance(curLat, curLng, stop.lat, stop.lng)
+      const updatedStops: OptimizedStop[] = stops.map((stop, idx) => {
+        const directMeters = haversineDistance(curLat, curLng, stop.lat, stop.lng)
+        const prevAddr = idx === 0 ? '' : stops[idx - 1].address
+        const isSameStreet = prevAddr ? areAddressesOnSameStreet(prevAddr, stop.address) : false
+        const roadFactor = isSameStreet ? 1.05 : 1.28
+        const stepDist = Math.round(directMeters * roadFactor)
         cumMeters += stepDist
         curLat = stop.lat
         curLng = stop.lng
         return {
           ...stop,
-          step_distance_meters: Math.round(stepDist),
-          cumulative_distance_meters: Math.round(cumMeters),
+          step_distance_meters: stepDist,
+          cumulative_distance_meters: cumMeters,
         }
       })
 
-      const returnMeters = stops.length > 0 ? haversineDistance(curLat, curLng, endLat, endLng) : 0
+      const directReturn = stops.length > 0 ? haversineDistance(curLat, curLng, endLat, endLng) : 0
+      const returnMeters = Math.round(directReturn * 1.28)
       const totalMeters = cumMeters + returnMeters
       const outboundKm = Number((cumMeters / 1000).toFixed(2))
       const returnKm = Number((returnMeters / 1000).toFixed(2))
       const totalDistKmNum = Number((totalMeters / 1000).toFixed(2))
-      const durationMins = Math.round((totalMeters / 1000) * 3.2 + stops.length * 6)
+      const durationMins = Math.round((totalDistKmNum / 22) * 60 + stops.length * 5)
 
       const { pricePerLiter, consumptionKml } = deliveryService.getVehicleFuelParams(
         appSettings,
@@ -1674,7 +1686,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         }
       }
 
-      // 4. For each courier cluster, sequence stops via Nearest Neighbor TSP with priority weights
+      // 4. For each courier cluster, sequence stops via Intelligent Road Routing
+      // (Google Maps Directions optimize:true + 2-Opt Same-Street Cohesion)
       const plans: CourierOptimizationPlan[] = []
       let grandTotalDistanceMeters = 0
 
@@ -1683,85 +1696,67 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         const clusterOrders = clusters[ci]
         const colorItem = COURIER_PALETTE[ci % COURIER_PALETTE.length]
 
-        const unvisited = [...clusterOrders]
-        const stops: OptimizedStop[] = []
-        let curLat = courierData.lat
-        let curLng = courierData.lng
-        let clusterDistMeters = 0
-
-        while (unvisited.length > 0) {
-          let bestIdx = -1
-          let bestScore = Infinity
-
-          for (let i = 0; i < unvisited.length; i++) {
-            const candidate = unvisited[i]
-            const d = haversineDistance(curLat, curLng, candidate.lat, candidate.lng)
-
-            // Urgent weight bonus
-            let weight = 1.0
-            if (candidate.order.priority === 'urgent') weight = 0.35
-            else if (candidate.order.priority === 'high') weight = 0.7
-
-            const score = d * weight
-            if (score < bestScore) {
-              bestScore = score
-              bestIdx = i
-            }
-          }
-
-          if (bestIdx >= 0) {
-            const chosen = unvisited.splice(bestIdx, 1)[0]
-            const actualD = haversineDistance(curLat, curLng, chosen.lat, chosen.lng)
-            clusterDistMeters += actualD
-            curLat = chosen.lat
-            curLng = chosen.lng
-
-            stops.push({
-              id: chosen.order.id,
-              tracking_code: chosen.order.tracking_code,
-              priority: chosen.order.priority || 'normal',
-              status: chosen.order.status,
-              customer_name: chosen.customer?.name || 'Cliente',
-              address: chosen.customer?.address || 'Endereço a confirmar',
-              lat: chosen.lat,
-              lng: chosen.lng,
-              step_distance_meters: Math.round(actualD),
-              cumulative_distance_meters: Math.round(clusterDistMeters),
-            })
-          } else {
-            break
-          }
+        const originPoint = {
+          lat: startBase.lat || -22.906847,
+          lng: startBase.lng || -43.172896,
+        }
+        const destinationPoint = {
+          lat: endBase.lat || originPoint.lat,
+          lng: endBase.lng || originPoint.lng,
         }
 
-        // IDA E VOLTA: Percurso de retorno da última parada até a base ou endereço de finalização
-        const returnMeters =
-          stops.length > 0 && endBase.lat && endBase.lng
-            ? haversineDistance(curLat, curLng, endBase.lat, endBase.lng)
-            : 0
+        const candidates: StopCandidate[] = clusterOrders.map((co) => ({
+          id: co.order.id,
+          tracking_code: co.order.tracking_code,
+          priority: co.order.priority || 'normal',
+          status: co.order.status,
+          customer_name: co.customer?.name || 'Cliente',
+          address: co.customer?.address || 'Endereço a confirmar',
+          lat: co.lat,
+          lng: co.lng,
+          rawOrder: co.order,
+          rawCustomer: co.customer,
+        }))
 
-        const totalClusterMetersWithReturn = clusterDistMeters + returnMeters
-        grandTotalDistanceMeters += totalClusterMetersWithReturn
-
-        const estMinutes = Math.round(
-          (totalClusterMetersWithReturn / 1000) * 3.2 + stops.length * 6,
-        )
-        const totalDistKmNum = totalClusterMetersWithReturn / 1000
-        const outboundKmNum = clusterDistMeters / 1000
-        const returnKmNum = returnMeters / 1000
         const { pricePerLiter: planFuelPrice, consumptionKml: planFuelCons } =
           deliveryService.getVehicleFuelParams(appSettings, courierData.courier.vehicle_type)
-        const planFuelCost = planFuelCons > 0 ? (totalDistKmNum * planFuelPrice) / planFuelCons : 0
+
+        // Roteamento viário inteligente com Google Directions optimize:true e fallback determinístico de rua
+        const roadRouteResult = await optimizeRouteSequence({
+          origin: originPoint,
+          destination: destinationPoint,
+          stops: candidates,
+          vehicleType: courierData.courier.vehicle_type,
+          pricePerLiter: planFuelPrice,
+          consumptionKml: planFuelCons,
+        })
+
+        const stops: OptimizedStop[] = roadRouteResult.stops.map((s) => ({
+          id: s.id,
+          tracking_code: s.tracking_code,
+          priority: s.priority || 'normal',
+          status: s.status || 'pending',
+          customer_name: s.customer_name,
+          address: s.address,
+          lat: s.lat,
+          lng: s.lng,
+          step_distance_meters: s.step_distance_meters,
+          cumulative_distance_meters: s.cumulative_distance_meters,
+        }))
+
+        const totalClusterMetersWithReturn = Math.round(roadRouteResult.total_distance_km * 1000)
+        grandTotalDistanceMeters += totalClusterMetersWithReturn
 
         plans.push({
           courier: courierData.courier,
           color: colorItem.color,
           orders: clusterOrders.map((co) => co.order),
           stops,
-          total_distance_km: totalDistKmNum.toFixed(1),
-          outbound_distance_km: Number(outboundKmNum.toFixed(1)),
-          return_distance_km: Number(returnKmNum.toFixed(1)),
-          estimated_duration_minutes: estMinutes,
-          estimated_fuel_cost: Number(planFuelCost.toFixed(2)),
+          total_distance_km: roadRouteResult.total_distance_km.toFixed(1),
+          outbound_distance_km: roadRouteResult.outbound_distance_km,
+          return_distance_km: roadRouteResult.return_distance_km,
+          estimated_duration_minutes: roadRouteResult.estimated_duration_minutes,
+          estimated_fuel_cost: roadRouteResult.estimated_fuel_cost,
           start_base: {
             name: startBase.name,
             address: startBase.address,
