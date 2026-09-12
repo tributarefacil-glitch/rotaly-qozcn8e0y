@@ -47,6 +47,7 @@ import type {
   RouteSuggestionDetails,
 } from '@/types/delivery'
 import { useAuth } from '@/contexts/AuthContext'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { toast } from 'sonner'
 import {
   BRAZILIAN_STATES,
@@ -702,6 +703,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
     let finalCustomerId = customerId
 
+    // Helper para sanitizar telefones (remover máscaras e espaços)
+    const sanitizePhone = (val: string) => val.replace(/\D/g, '')
+
     // If using inline customer form (New or existing matched by phone/editing)
     if (isAddingCustomer) {
       if (!newCustName.trim()) {
@@ -709,9 +713,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         return
       }
 
-      const mainPhone = newCustPhone.trim()
-      if (!mainPhone) {
-        toast.error('Preencha ao menos um telefone de contato para o cliente.')
+      const rawMainPhone = newCustPhone.trim()
+      const cleanMainPhone = sanitizePhone(rawMainPhone)
+      if (!rawMainPhone || cleanMainPhone.length < 8) {
+        toast.error('Preencha ao menos um telefone de contato válido com DDD para o cliente.')
         return
       }
 
@@ -721,29 +726,46 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         return
       }
 
+      // Sanitizar coordenadas lat/lng
+      const parsedLat =
+        typeof selectedCoords.lat === 'number' && !isNaN(selectedCoords.lat)
+          ? selectedCoords.lat
+          : Number(selectedCoords.lat) || undefined
+      const parsedLng =
+        typeof selectedCoords.lng === 'number' && !isNaN(selectedCoords.lng)
+          ? selectedCoords.lng
+          : Number(selectedCoords.lng) || undefined
+
+      const cleanPhone2 = newCustPhone2.trim() ? sanitizePhone(newCustPhone2) : undefined
+      const cleanPhone3 = newCustPhone3.trim() ? sanitizePhone(newCustPhone3) : undefined
+
       const customerPayload: Partial<CustomerRecord> = {
         name: newCustName.trim(),
-        phone: mainPhone,
-        phone2: newCustPhone2.trim() || undefined,
-        phone3: newCustPhone3.trim() || undefined,
+        phone: cleanMainPhone,
+        phone2: cleanPhone2 || undefined,
+        phone3: cleanPhone3 || undefined,
         address: combinedAddress || streetAndNumber.trim(),
         street: streetAndNumber.trim(),
         neighborhood: neighborhood.trim(),
         city: city.trim(),
         state: ufState.trim(),
-        postal_code: postalCode.trim(),
+        postal_code: postalCode.trim()
+          ? postalCode
+              .trim()
+              .replace(/\D/g, '')
+              .replace(/^(\d{5})(\d{3})$/, '$1-$2')
+          : '',
         complement: complement.trim(),
-        lat: selectedCoords.lat,
-        lng: selectedCoords.lng,
+        lat: parsedLat,
+        lng: parsedLng,
       }
 
+      setIsSubmitting(true)
       try {
         // Validate phone uniqueness across all 3 phone fields against other customers
-        const phonesToValidate = [
-          mainPhone,
-          newCustPhone2.trim() || undefined,
-          newCustPhone3.trim() || undefined,
-        ]
+        const phonesToValidate = [cleanMainPhone, cleanPhone2, cleanPhone3].filter(
+          Boolean,
+        ) as string[]
 
         if (existingMatchedCustomerId) {
           // Check if any of the phones belong to ANOTHER customer (conflict)
@@ -755,20 +777,29 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             toast.error(
               `O telefone ${conflictCheck.duplicatePhone} já está cadastrado para o cliente "${conflictCheck.customer.name}". Não é permitido cadastrar o mesmo telefone para clientes diferentes.`,
             )
+            setIsSubmitting(false)
             return
           }
 
           // Update existing customer record directly
-          await deliveryService.updateCustomer(existingMatchedCustomerId, customerPayload)
-          finalCustomerId = existingMatchedCustomerId
+          const updatedCust = await deliveryService.updateCustomer(
+            existingMatchedCustomerId,
+            customerPayload,
+          )
+          finalCustomerId = updatedCust.id || existingMatchedCustomerId
+          setCustomerId(finalCustomerId)
           toast.success(`Cadastro do cliente "${newCustName.trim()}" atualizado com sucesso!`)
         } else {
           // Check if any of the phones already belongs to an existing customer
           const conflictCheck = await deliveryService.checkPhoneConflict(phonesToValidate)
           if (conflictCheck.conflict && conflictCheck.customer) {
             // Found existing customer by one of the phones -> update their record instead of duplicating
-            await deliveryService.updateCustomer(conflictCheck.customer.id, customerPayload)
-            finalCustomerId = conflictCheck.customer.id
+            const updatedCust = await deliveryService.updateCustomer(
+              conflictCheck.customer.id,
+              customerPayload,
+            )
+            finalCustomerId = updatedCust.id || conflictCheck.customer.id
+            setCustomerId(finalCustomerId)
             toast.info(
               `Telefone vinculado ao cliente "${conflictCheck.customer.name}". Cadastro atualizado sem duplicidade!`,
             )
@@ -776,24 +807,29 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             // Create new customer
             const created = await deliveryService.createCustomer(customerPayload)
             finalCustomerId = created.id
+            setCustomerId(created.id)
             toast.success(`Novo cliente "${created.name}" cadastrado com sucesso!`)
           }
         }
-      } catch (err) {
+      } catch (err: unknown) {
         console.error('Error saving customer:', err)
-        toast.error('Erro ao salvar dados do cliente.')
+        const detailedMsg = getErrorMessage(err, 'Erro ao salvar dados do cliente.')
+        toast.error(detailedMsg)
+        setIsSubmitting(false)
         return
       }
     }
 
     if (!finalCustomerId) {
       toast.error('Selecione ou cadastre um cliente.')
+      setIsSubmitting(false)
       return
     }
 
     const validItems = items.filter((i) => i.name.trim().length > 0)
     if (validItems.length === 0) {
       toast.error('Adicione pelo menos um item ao pedido.')
+      setIsSubmitting(false)
       return
     }
 
@@ -867,7 +903,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setSelectedCoords(DEFAULT_CENTER)
     } catch (err: unknown) {
       console.error('Error creating order:', err)
-      const message = err instanceof Error ? err.message : 'Falha ao registrar venda'
+      const message = getErrorMessage(err, 'Falha ao registrar venda')
       toast.error(message)
     } finally {
       setIsSubmitting(false)

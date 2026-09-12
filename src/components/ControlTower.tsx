@@ -257,6 +257,19 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     })
   }
 
+  // Cache de rotas ativas para evitar refetch viário (OSRM/Google) sem necessidade:
+  // courierId -> { courierPos, stopIdsHash, result }
+  const activeRoutesCacheRef = useRef<
+    Map<
+      string,
+      {
+        courierPos: LatLngPoint
+        stopIdsHash: string
+        result: any
+      }
+    >
+  >(new Map())
+
   // Drawer mini-map state
   const drawerMiniMapRef = useRef<HTMLDivElement | null>(null)
   const [drawerMapInstance, setDrawerMapInstance] = useState<any>(null)
@@ -403,23 +416,41 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     }
   }
 
-  // 10s auto-refresh
+  // Sincronização inicial e periódica:
+  // Como as subscrições Realtime já cobrem 'locations', 'orders' e 'off_route_events' sem duplicar,
+  // mantemos busca inicial e apenas atualização de dados estáticos/auxiliares.
+  // NÃO chamamos onRefresh() do pai no timer periódico de 10s para evitar ciclo de renderização.
   useEffect(() => {
     fetchData()
     const interval = setInterval(() => {
       fetchData()
-      if (onRefresh) onRefresh()
-    }, 10000)
+    }, 30000) // 30s de segurança apenas para sincronização de fundo, sem chamar onRefresh do pai
     return () => clearInterval(interval)
   }, [user?.id, user?.role])
 
-  // Sync with incoming props
+  // Sync with incoming props com comparação estável por conteúdo (IDs + timestamps)
+  const prevOrdersHashRef = useRef<string>('')
   useEffect(() => {
-    if (initialOrders) setOrders(initialOrders)
+    if (!initialOrders) return
+    const newHash = initialOrders
+      .map((o) => `${o.id}-${o.status}-${o.updated || o.created}-${o.route_started}-${o.sequence}`)
+      .join('|')
+    if (newHash !== prevOrdersHashRef.current) {
+      prevOrdersHashRef.current = newHash
+      setOrders(initialOrders)
+    }
   }, [initialOrders])
 
+  const prevCouriersHashRef = useRef<string>('')
   useEffect(() => {
-    if (initialCouriers) setCouriers(initialCouriers)
+    if (!initialCouriers) return
+    const newHash = initialCouriers
+      .map((c) => `${c.id}-${c.status}-${c.updated || c.created}`)
+      .join('|')
+    if (newHash !== prevCouriersHashRef.current) {
+      prevCouriersHashRef.current = newHash
+      setCouriers(initialCouriers)
+    }
   }, [initialCouriers])
 
   // Realtime PocketBase subscriptions: 'orders' and 'locations'
@@ -790,11 +821,11 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
     // Para cada entregador com rota iniciada, buscar/atualizar o trajeto oficial:
     // Base de partida → sequência de clientes da rota iniciada (route_started = true)
+    // OTIMIZAÇÃO: Cache e debounce inteligente. Só recalcular rota viária (OSRM/Google)
+    // se a posição do entregador mudou >50m OU a lista de pedidos da rota mudou.
     const computeActiveRoutes = async () => {
       const activePromises = activeRouteCouriers.map(async (item) => {
         // Obter todos os pedidos ativos da rota iniciada ordenados por sequência
-        // ITEM 1: Manter ativo quando houver pedido com route_started === true e route_finished !== true,
-        // MESMO que todos estejam status === 'delivered' (retornando à base)
         const activeRouteOrders = item.allAssignedOrders
           .filter(
             (o) =>
@@ -804,7 +835,10 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           )
           .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
 
-        if (activeRouteOrders.length === 0) return null
+        if (activeRouteOrders.length === 0) {
+          activeRoutesCacheRef.current.delete(item.courier.id)
+          return null
+        }
 
         // O primeiro pedido ativo define a base e o alvo primário de telemetria
         const primaryOrder =
@@ -840,8 +874,28 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           }
         })
 
-        // Mesmo se todas as paradas foram entregues, ainda temos o trecho até a base de retorno
         if (stops.length === 0 && !returnBasePos) return null
+
+        // Hash para verificar se a composição de pedidos/paradas mudou
+        const stopIdsHash = activeRouteOrders
+          .map((o) => `${o.id}:${o.status}:${o.sequence}`)
+          .join(',')
+        const cached = activeRoutesCacheRef.current.get(item.courier.id)
+
+        // Se cache existente for válido e posição mudou <= 50 metros e pedidos não mudaram:
+        // reutilizar a geometria calculada (evita chamadas de rede e re-criação de linhas)
+        if (
+          cached &&
+          cached.stopIdsHash === stopIdsHash &&
+          distanceMeters(cached.courierPos, courierPos) < 50
+        ) {
+          // Atualiza apenas dados leves de telemetria instantânea (velocidade/posição/status do entregador)
+          return {
+            ...cached.result,
+            courierPos,
+            courier: item.courier,
+          }
+        }
 
         try {
           // Traçar trajeto viário:
@@ -857,7 +911,6 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
               const segRes = await fetchStreetRoute(prevPoint, targetPoint)
               if (segRes.coordinates.length >= 2) {
                 if (forwardSegments.length > 0) {
-                  // Evitar duplicar o ponto de junção
                   forwardSegments.push(...segRes.coordinates.slice(1))
                 } else {
                   forwardSegments.push(...segRes.coordinates)
@@ -887,20 +940,15 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             returnPoints = [lastDeliveryPoint, returnBasePos]
           }
 
-          // Segway completo para projeção e desvio
-          const allWaypoints: LatLngPoint[] = [origin, ...stops, returnBasePos]
           const points = [...forwardPoints, ...returnPoints.slice(1)]
 
-          // Cálculo da projeção do entregador sobre a linha azul oficial
+          // Projeção e desvio
           const nearest = findNearestPointOnRoute(courierPos, points)
           const nextTargetPos = pendingStopsList[0] || returnBasePos
           const distToClientMeters = distanceMeters(courierPos, nextTargetPos)
 
-          // REQUISITO ESTRITO: Desvio e parada fora do local exigem rota iniciada (route_started === true)
           const hasActiveRouteStarted = Boolean(primaryOrder.route_started) && item.hasRouteStarted
 
-          // 1. DESVIO DE ROTA:
-          // Se o entregador está a mais de DEVIATION_THRESHOLD_METERS (600m) da rota azul, OU há evento off_route_events não resolvido
           const routeStartTime = primaryOrder.route_started_at
             ? new Date(primaryOrder.route_started_at).getTime()
             : 0
@@ -920,7 +968,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             hasActiveRouteStarted &&
             (hasDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
 
-          // 2. PARADA FORA DO LOCAL:
+          // Parada fora do local
           const distToBaseMeters = distanceMeters(courierPos, origin)
           const isStopped = typeof item.speed === 'number' && item.speed <= 2
           const isFarFromClient = distToClientMeters > UNEXPECTED_STOP_THRESHOLD_METERS
@@ -928,8 +976,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           const isUnexpectedStop =
             hasActiveRouteStarted && isStopped && isFarFromClient && isFarFromBase
 
-          // 3. PRAZO DE ENTREGA (ETA DO PRÓXIMO CLIENTE) & PREVISÃO DE VOLTA À BASE
-          // Usar velocidade real do GPS (km/h) convertida para m/s; fallback 25 km/h se <= 5 km/h
+          // ETA
           const effectiveSpeedKmh =
             typeof item.speed === 'number' && item.speed > 5 ? item.speed : 25
           const speedMps = effectiveSpeedKmh * (1000 / 3600)
@@ -939,7 +986,6 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             Math.round(remainingDistNextClient / speedMps / 60),
           )
 
-          // Cálculo da soma viária/distância da posição atual passando pelas pendentes até a base de retorno
           let totalDistToReturnBase = 0
           let currentLegPoint = courierPos
           for (const pStop of pendingStopsList) {
@@ -947,7 +993,6 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             currentLegPoint = pStop
           }
           totalDistToReturnBase += distanceMeters(currentLegPoint, returnBasePos)
-          // Adiciona 5 min de tempo de atendimento em cada parada pendente
           const serviceTimeMinutes = pendingStopsList.length * 5
           const etaMinutesReturnBase = Math.max(
             etaMinutesNextClient,
@@ -966,7 +1011,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             minute: '2-digit',
           })
 
-          return {
+          const routeResult = {
             courierId: item.courier.id,
             orderId: primaryOrder.id,
             points,
@@ -987,6 +1032,15 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             order: primaryOrder,
             courier: item.courier,
           }
+
+          // Salvar em cache
+          activeRoutesCacheRef.current.set(item.courier.id, {
+            courierPos,
+            stopIdsHash,
+            result: routeResult,
+          })
+
+          return routeResult
         } catch {
           return null
         }

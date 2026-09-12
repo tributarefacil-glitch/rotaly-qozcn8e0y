@@ -212,10 +212,28 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const liveCourierAnimFramesRef = useRef<Map<string, number>>(new Map())
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googleAccuracyCircleRef = useRef<any>(null)
+  // Keyed diffing maps: ID -> Google Maps instance / state cache
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const googleMarkersRef = useRef<any[]>([])
+  const googleMarkerMapRef = useRef<
+    Map<
+      string,
+      {
+        marker: any
+        clickInfoWindow: any
+        prevLat: number
+        prevLng: number
+        prevType: string
+        prevSeq?: number
+        prevTitle?: string
+        prevName?: string
+        prevDev?: boolean
+      }
+    >
+  >(new Map())
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const googlePolylinesRef = useRef<any[]>([])
+  const hoverInfoWindowRef = useRef<any>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const googlePolylineMapRef = useRef<Map<string, any>>(new Map())
   const getGoogle = () =>
     typeof window !== 'undefined' ? (window as unknown as { google?: any }).google : undefined
   const isGoogleLoaded = !!getGoogle()?.maps
@@ -538,31 +556,61 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     `
   }
 
+  const getMarkerIcon = (item: MapMarkerItem) => {
+    if (item.type === 'courier') {
+      const pinColor = item.isDeviated ? '#EF4444' : item.isUnexpectedStop ? '#F59E0B' : '#0052CC'
+      return makeCourierSvgIcon(item.vehicle_type, pinColor)
+    } else if (item.type === 'order_delivered') {
+      return makeCustomerSvgIcon(
+        item.customer_name,
+        item.delivery_sequence,
+        false,
+        72,
+        42,
+        '#10B981',
+        false,
+      )
+    } else {
+      const isTransit = item.type === 'order_transit'
+      return makeCustomerSvgIcon(
+        item.customer_name,
+        item.delivery_sequence,
+        isTransit,
+        72,
+        42,
+        '#0f172a',
+        false,
+      )
+    }
+  }
+
   const renderGoogleMarkers = () => {
     const google = getGoogle()
     if (!mapInstanceRef.current || !google?.maps) return
 
-    // Clear old non-courier markers
-    googleMarkersRef.current.forEach((m) => {
-      const isManagedCourier = Array.from(liveCourierMarkersRef.current.values()).includes(m)
-      if (!isManagedCourier) {
-        m.setMap(null)
-      }
-    })
-    googleMarkersRef.current = []
+    // Ensure single shared hover infoWindow
+    if (!hoverInfoWindowRef.current) {
+      hoverInfoWindowRef.current = new google.maps.InfoWindow({
+        disableAutoPan: true,
+      })
+    }
 
-    // Clear old polylines on native map
-    googlePolylinesRef.current.forEach((p) => p.setMap(null))
-    googlePolylinesRef.current = []
+    // --- 1. KEYED DIFFING DE POLILINHAS ---
+    const activePolylineKeys = new Set<string>()
 
-    // Render route polylines on native Google Map
-    routeLines.forEach((r) => {
+    routeLines.forEach((r, idx) => {
       const coords = r.streetCoordinates || [r.origin, r.destination]
-      if (coords.length >= 2) {
+      if (coords.length < 2) return
+
+      const pathArray = coords.map((c) => ({ lat: c.lat, lng: c.lng }))
+      const baseKey = `route-${idx}-${r.isReturnLeg ? 'return' : 'main'}`
+      activePolylineKeys.add(baseKey)
+
+      let existing = googlePolylineMapRef.current.get(baseKey)
+      if (!existing) {
         if (r.isReturnLeg) {
-          // LINHA TRACEJADA AZUL CLARO (#60A5FA): Volta à Base
-          const returnPolyline = new google.maps.Polyline({
-            path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
+          existing = new google.maps.Polyline({
+            path: pathArray,
             geodesic: true,
             strokeColor: '#60A5FA',
             strokeOpacity: 0,
@@ -575,65 +623,65 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             ],
             map: mapInstanceRef.current,
           })
-          googlePolylinesRef.current.push(returnPolyline)
         } else {
-          // LINHA AZUL: Trajeto de ruas indicado pelo sistema
-          const polyline = new google.maps.Polyline({
-            path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
+          existing = new google.maps.Polyline({
+            path: pathArray,
             geodesic: true,
             strokeColor: '#2563EB',
             strokeOpacity: 0.9,
             strokeWeight: 5,
             map: mapInstanceRef.current,
           })
-          googlePolylinesRef.current.push(polyline)
+        }
+        googlePolylineMapRef.current.set(baseKey, existing)
+      } else {
+        // Apenas atualizar o caminho se já existe (sem recriar)
+        existing.setPath(pathArray)
+      }
 
-          // Linha interna mais clara para destaque visual
-          const innerPolyline = new google.maps.Polyline({
-            path: coords.map((c) => ({ lat: c.lat, lng: c.lng })),
+      // Linha de desvio (vermelha)
+      if (r.isDeviated && r.courierPosition) {
+        const devKey = `dev-${idx}`
+        activePolylineKeys.add(devKey)
+        const refPoint = coords[0] || r.origin
+        const devPath = [
+          { lat: r.courierPosition.lat, lng: r.courierPosition.lng },
+          { lat: refPoint.lat, lng: refPoint.lng },
+        ]
+
+        let existingDev = googlePolylineMapRef.current.get(devKey)
+        if (!existingDev) {
+          existingDev = new google.maps.Polyline({
+            path: devPath,
             geodesic: true,
-            strokeColor: '#93C5FD',
-            strokeOpacity: 0.9,
-            strokeWeight: 2,
+            strokeColor: '#EF4444',
+            strokeOpacity: 1,
+            strokeWeight: 4,
+            icons: [
+              {
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                offset: '0',
+                repeat: '10px',
+              },
+            ],
             map: mapInstanceRef.current,
           })
-          googlePolylinesRef.current.push(innerPolyline)
+          googlePolylineMapRef.current.set(devKey, existingDev)
+        } else {
+          existingDev.setPath(devPath)
         }
       }
+    })
 
-      // LINHA VERMELHA DE DESVIO: do entregador até o ponto de retorno da rota
-      if (r.isDeviated && r.courierPosition) {
-        const refPoint = coords[0] || r.origin
-        const devPolyline = new google.maps.Polyline({
-          path: [
-            { lat: r.courierPosition.lat, lng: r.courierPosition.lng },
-            { lat: refPoint.lat, lng: refPoint.lng },
-          ],
-          geodesic: true,
-          strokeColor: '#EF4444',
-          strokeOpacity: 1,
-          strokeWeight: 4,
-          icons: [
-            {
-              icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-              offset: '0',
-              repeat: '10px',
-            },
-          ],
-          map: mapInstanceRef.current,
-        })
-        googlePolylinesRef.current.push(devPolyline)
+    // Remover apenas as polilinhas que não existem mais
+    for (const [key, polyline] of googlePolylineMapRef.current.entries()) {
+      if (!activePolylineKeys.has(key)) {
+        polyline.setMap(null)
+        googlePolylineMapRef.current.delete(key)
       }
-    })
+    }
 
-    // Single hover infoWindow instance to follow mouse hover smoothly
-    const hoverInfoWindow = new google.maps.InfoWindow({
-      disableAutoPan: true,
-    })
-
-    // Usar os geradores unificados makeCourierSvgIcon e makeCustomerSvgIcon
-
-    // Se ativado círculo de precisão ao redor do entregador
+    // --- 2. CÍRCULO DE PRECISÃO ---
     const courierItem = markers.find((m) => m.type === 'courier' && m.lat && m.lng)
     if (showAccuracyCircle && courierItem) {
       if (!googleAccuracyCircleRef.current) {
@@ -657,51 +705,34 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       googleAccuracyCircleRef.current.setMap(null)
     }
 
-    markers.forEach((item) => {
-      if (!item.lat || !item.lng) return
+    // --- 3. KEYED DIFFING DE MARCADORES (markerMapRef por ID) ---
+    const currentMarkerIds = new Set<string>()
 
-      let markerIcon: any = 'https://maps.google.com/mapfiles/ms/icons/orange-dot.png'
-      if (item.type === 'courier') {
-        const pinColor = item.isDeviated ? '#EF4444' : item.isUnexpectedStop ? '#F59E0B' : '#0052CC'
-        markerIcon = makeCourierSvgIcon(item.vehicle_type, pinColor)
-      } else if (item.type === 'order_delivered') {
-        markerIcon = makeCustomerSvgIcon(
-          item.customer_name,
-          item.delivery_sequence,
-          false,
-          72,
-          42,
-          '#10B981',
-          false,
-        )
-      } else {
-        const isTransit = item.type === 'order_transit'
-        markerIcon = makeCustomerSvgIcon(
-          item.customer_name,
-          item.delivery_sequence,
-          isTransit,
-          72,
-          42,
-          // Se for destino em trânsito com pin preto estilo print de referência
-          '#0f172a',
-          false,
-        )
+    markers.forEach((item) => {
+      if (
+        typeof item.lat !== 'number' ||
+        typeof item.lng !== 'number' ||
+        isNaN(item.lat) ||
+        isNaN(item.lng)
+      ) {
+        return
       }
 
-      let marker: any
+      currentMarkerIds.add(item.id)
+      const targetPos = { lat: item.lat, lng: item.lng }
+      const markerIcon = getMarkerIcon(item)
+      const isSelected = item.id === selectedMarkerId
 
-      if (item.type === 'courier') {
-        const courierId = item.id
-        const targetPos = { lat: item.lat, lng: item.lng }
-        const existing = liveCourierMarkersRef.current.get(courierId)
+      const entry = googleMarkerMapRef.current.get(item.id)
 
-        if (existing) {
-          marker = existing
-          marker.setMap(mapInstanceRef.current)
-          marker.setTitle(item.title)
-          marker.setIcon(markerIcon)
+      if (entry) {
+        // Marcador já existe: atualizar apenas propriedades modificadas (sem recriar nem piscar)
+        const marker = entry.marker
+        marker.setMap(mapInstanceRef.current)
 
-          // Interpolação e transição suave (~2.5s)
+        // Se for entregador: interpolação suave se moveu
+        if (item.type === 'courier') {
+          const courierId = item.id
           const prevPos = marker.getPosition()
           if (prevPos) {
             const startLat = prevPos.lat()
@@ -744,78 +775,148 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             marker.setPosition(targetPos)
           }
         } else {
-          marker = new google.maps.Marker({
-            position: targetPos,
-            map: mapInstanceRef.current,
-            title: item.title,
-            icon: markerIcon,
-          })
-          liveCourierMarkersRef.current.set(courierId, marker)
+          // Marcador de cliente/pedido: atualizar posição apenas se mudou
+          if (
+            Math.abs(entry.prevLat - item.lat) > 0.00001 ||
+            Math.abs(entry.prevLng - item.lng) > 0.00001
+          ) {
+            marker.setPosition(targetPos)
+          }
         }
+
+        // Atualizar ícone caso status, desvio, tipo ou sequência tenham mudado
+        if (
+          entry.prevType !== item.type ||
+          entry.prevDev !== item.isDeviated ||
+          entry.prevSeq !== item.delivery_sequence ||
+          entry.prevName !== item.customer_name
+        ) {
+          marker.setIcon(markerIcon)
+        }
+
+        if (entry.prevTitle !== item.title) {
+          marker.setTitle(item.title)
+        }
+
+        // Animação de seleção (bounce)
+        if (item.type !== 'courier') {
+          marker.setAnimation(isSelected ? google.maps.Animation.BOUNCE : null)
+        }
+
+        // Atualizar conteúdo da clickInfoWindow
+        if (entry.clickInfoWindow) {
+          entry.clickInfoWindow.setContent(buildInfoWindowHtml(item))
+        }
+
+        // Atualizar cache de estado do marcador
+        entry.prevLat = item.lat
+        entry.prevLng = item.lng
+        entry.prevType = item.type
+        entry.prevSeq = item.delivery_sequence
+        entry.prevTitle = item.title
+        entry.prevName = item.customer_name
+        entry.prevDev = item.isDeviated
       } else {
-        marker = new google.maps.Marker({
-          position: { lat: item.lat, lng: item.lng },
+        // Criar NOVO marcador apenas se não existir ainda no mapa
+        const marker = new google.maps.Marker({
+          position: targetPos,
           map: mapInstanceRef.current,
           title: item.title,
           icon: markerIcon,
-          animation: item.id === selectedMarkerId ? google.maps.Animation.BOUNCE : undefined,
+          animation:
+            isSelected && item.type !== 'courier' ? google.maps.Animation.BOUNCE : undefined,
+        })
+
+        if (item.type === 'courier') {
+          liveCourierMarkersRef.current.set(item.id, marker)
+        }
+
+        const clickInfoWindow = new google.maps.InfoWindow({
+          content: buildInfoWindowHtml(item),
+        })
+
+        // Hover handlers
+        marker.addListener('mouseover', () => {
+          handleMarkerHover(item)
+          const currentAddr = getMarkerAddress(item)
+          if (hoverInfoWindowRef.current) {
+            hoverInfoWindowRef.current.setContent(buildInfoWindowHtml(item, currentAddr))
+            hoverInfoWindowRef.current.open(mapInstanceRef.current, marker)
+          }
+
+          if (!currentAddr || currentAddr === 'Localizando endereço...') {
+            const checkTimer = setTimeout(() => {
+              const updatedAddr = getMarkerAddress(item)
+              if (hoverInfoWindowRef.current) {
+                hoverInfoWindowRef.current.setContent(buildInfoWindowHtml(item, updatedAddr))
+              }
+            }, 600)
+            ;(marker as any).__hoverTimer = checkTimer
+          }
+        })
+
+        marker.addListener('mouseout', () => {
+          if ((marker as any).__hoverTimer) clearTimeout((marker as any).__hoverTimer)
+          if (hoverInfoWindowRef.current) {
+            hoverInfoWindowRef.current.close()
+          }
+        })
+
+        marker.addListener('click', () => {
+          if (hoverInfoWindowRef.current) {
+            hoverInfoWindowRef.current.close()
+          }
+          const markerPos = marker.getPosition ? marker.getPosition() : null
+          const currentLat = markerPos ? markerPos.lat() : item.lat
+          const currentLng = markerPos ? markerPos.lng() : item.lng
+
+          const currentExactItem: MapMarkerItem = {
+            ...item,
+            lat: currentLat,
+            lng: currentLng,
+          }
+
+          const currentAddr = getMarkerAddress(currentExactItem)
+          clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, currentAddr))
+          clickInfoWindow.open(mapInstanceRef.current, marker)
+          setActivePopupMarker(currentExactItem)
+          if (onSelectMarker) onSelectMarker(currentExactItem)
+
+          handleMarkerHover(currentExactItem, (freshAddr) => {
+            clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, freshAddr))
+          })
+        })
+
+        googleMarkerMapRef.current.set(item.id, {
+          marker,
+          clickInfoWindow,
+          prevLat: item.lat,
+          prevLng: item.lng,
+          prevType: item.type,
+          prevSeq: item.delivery_sequence,
+          prevTitle: item.title,
+          prevName: item.customer_name,
+          prevDev: item.isDeviated,
         })
       }
-
-      // Click InfoWindow for persistent popup
-      const clickInfoWindow = new google.maps.InfoWindow({
-        content: buildInfoWindowHtml(item),
-      })
-
-      // Hover handler: resolve real-time reverse geocoded address and update tooltip
-      marker.addListener('mouseover', () => {
-        handleMarkerHover(item)
-        const currentAddr = getMarkerAddress(item)
-        hoverInfoWindow.setContent(buildInfoWindowHtml(item, currentAddr))
-        hoverInfoWindow.open(mapInstanceRef.current, marker)
-
-        // If address is still resolving, poll/update when ready
-        if (!currentAddr || currentAddr === 'Localizando endereço...') {
-          const checkTimer = setTimeout(() => {
-            const updatedAddr = getMarkerAddress(item)
-            hoverInfoWindow.setContent(buildInfoWindowHtml(item, updatedAddr))
-          }, 600)
-          ;(marker as any).__hoverTimer = checkTimer
-        }
-      })
-
-      marker.addListener('mouseout', () => {
-        if ((marker as any).__hoverTimer) clearTimeout((marker as any).__hoverTimer)
-        hoverInfoWindow.close()
-      })
-
-      marker.addListener('click', () => {
-        hoverInfoWindow.close()
-        // Obter posição exata atual do marcador na hora do clique para evitar estado defasado
-        const markerPos = marker.getPosition ? marker.getPosition() : null
-        const currentLat = markerPos ? markerPos.lat() : item.lat
-        const currentLng = markerPos ? markerPos.lng() : item.lng
-
-        const currentExactItem: MapMarkerItem = {
-          ...item,
-          lat: currentLat,
-          lng: currentLng,
-        }
-
-        const currentAddr = getMarkerAddress(currentExactItem)
-        clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, currentAddr))
-        clickInfoWindow.open(mapInstanceRef.current, marker)
-        setActivePopupMarker(currentExactItem)
-        if (onSelectMarker) onSelectMarker(currentExactItem)
-
-        // Forçar resolução com callback imediato para atualizar o HTML da infoWindow
-        handleMarkerHover(currentExactItem, (freshAddr) => {
-          clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, freshAddr))
-        })
-      })
-
-      googleMarkersRef.current.push(marker)
     })
+
+    // Remover marcadores que deixaram de existir
+    for (const [id, entry] of googleMarkerMapRef.current.entries()) {
+      if (!currentMarkerIds.has(id)) {
+        entry.marker.setMap(null)
+        if (entry.clickInfoWindow) {
+          entry.clickInfoWindow.close()
+        }
+        liveCourierMarkersRef.current.delete(id)
+        const frame = liveCourierAnimFramesRef.current.get(id)
+        if (frame) {
+          cancelAnimationFrame(frame)
+          liveCourierAnimFramesRef.current.delete(id)
+        }
+        googleMarkerMapRef.current.delete(id)
+      }
+    }
   }
 
   useEffect(() => {
