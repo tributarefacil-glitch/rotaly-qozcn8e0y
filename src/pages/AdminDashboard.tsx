@@ -120,6 +120,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [locations, setLocations] = useState<LocationRecord[]>([])
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedCourierId, setSelectedCourierId] = useState<string | null>(null)
   const [selectedCourierForHistory, setSelectedCourierForHistory] = useState<UserRecord | null>(
     null,
@@ -237,6 +238,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const loadData = async () => {
     try {
       setIsLoading(true)
+      setLoadError(null)
       const [
         ordersData,
         usersData,
@@ -303,6 +305,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setCaminhaoConsInput(String(appSettings.caminhao_consumption_kml ?? 7.0))
     } catch (err) {
       console.error('Error loading admin data:', err)
+      setLoadError('Não foi possível carregar os dados desta seção')
     } finally {
       setIsLoading(false)
     }
@@ -800,6 +803,24 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         <Sidebar />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 overflow-y-auto max-w-[1600px] mx-auto w-full">
+          {loadError && (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 text-rose-400 shrink-0" />
+                <span className="text-sm font-medium">{loadError}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={loadData}
+                className="h-8 text-xs border-rose-500/40 text-rose-200 hover:bg-rose-500/20"
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                Tentar novamente
+              </Button>
+            </div>
+          )}
+
           {/* Header Title & Actions */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
