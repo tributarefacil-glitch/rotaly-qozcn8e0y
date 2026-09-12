@@ -137,7 +137,7 @@ export async function fetchStreetRoute(
 
   try {
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 6000) // 6s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 2500) // 2.5s timeout para pernas viárias não bloquearem a rede
 
     const response = await fetch(url, {
       signal: controller.signal,
