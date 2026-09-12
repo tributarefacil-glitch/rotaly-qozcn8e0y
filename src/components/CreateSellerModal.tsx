@@ -62,7 +62,7 @@ export function CreateSellerModal({ open, onOpenChange, onSellerCreated }: Creat
 
     setIsSubmitting(true)
     try {
-      await deliveryService.createUser({
+      const createdUser = await deliveryService.createUser({
         name: trimmedName,
         email: trimmedEmail,
         phone: trimmedPhone,
@@ -71,6 +71,21 @@ export function CreateSellerModal({ open, onOpenChange, onSellerCreated }: Creat
         role: 'seller',
         status: 'active',
       })
+
+      // Vincular o vendedor à empresa ativa em membros
+      try {
+        const activeCompanyId = deliveryService.getActiveCompanyId()
+        if (activeCompanyId && createdUser?.id) {
+          await deliveryService.createMembro({
+            empresa_id: activeCompanyId,
+            user_id: createdUser.id,
+            papel: 'vendedor',
+            ativo: true,
+          })
+        }
+      } catch (mErr) {
+        console.warn('Aviso ao vincular vendedor à empresa ativa:', mErr)
+      }
 
       toast.success(`Vendedor/Estabelecimento "${trimmedName}" cadastrado com sucesso!`)
       resetForm()

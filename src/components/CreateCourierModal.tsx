@@ -110,9 +110,23 @@ export function CreateCourierModal({
         }
         formData.append('documents', documentFile)
 
-        await deliveryService.createUser(formData)
+        const createdUser = await deliveryService.createUser(formData)
+        // Vincular entregador à empresa ativa em membros
+        try {
+          const activeCompanyId = deliveryService.getActiveCompanyId()
+          if (activeCompanyId && createdUser?.id) {
+            await deliveryService.createMembro({
+              empresa_id: activeCompanyId,
+              user_id: createdUser.id,
+              papel: 'entregador',
+              ativo: true,
+            })
+          }
+        } catch (mErr) {
+          console.warn('Aviso ao vincular entregador à empresa ativa:', mErr)
+        }
       } else {
-        await deliveryService.createUser({
+        const createdUser = await deliveryService.createUser({
           name: trimmedName,
           email: trimmedEmail,
           phone: trimmedPhone,
@@ -125,6 +139,20 @@ export function CreateCourierModal({
           vehicle_plate: vehiclePlate.trim().toUpperCase(),
           vehicle_year: vehicleYear ? parseInt(vehicleYear, 10) : undefined,
         })
+        // Vincular entregador à empresa ativa em membros
+        try {
+          const activeCompanyId = deliveryService.getActiveCompanyId()
+          if (activeCompanyId && createdUser?.id) {
+            await deliveryService.createMembro({
+              empresa_id: activeCompanyId,
+              user_id: createdUser.id,
+              papel: 'entregador',
+              ativo: true,
+            })
+          }
+        } catch (mErr) {
+          console.warn('Aviso ao vincular entregador à empresa ativa:', mErr)
+        }
       }
 
       toast.success(`Entregador ${trimmedName} cadastrado com sucesso!`)

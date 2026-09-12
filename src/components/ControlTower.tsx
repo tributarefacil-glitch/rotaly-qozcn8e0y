@@ -515,11 +515,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         if (!isSubscribed) return
         const rec = e.record as unknown as OrderRecord
 
-        // Filtro por empresa ativa: não processar eventos de outra empresa
+        // Filtro por empresa ativa: não processar eventos de outra empresa (fail-safe)
         if (currentCompany?.id && rec?.empresa_id !== undefined) {
           const isMatriz = currentCompany.id === deliveryService.MATRIZ_EMPRESA_ID
           const matches = isMatriz
-            ? !rec.empresa_id || rec.empresa_id === deliveryService.MATRIZ_EMPRESA_ID
+            ? !rec.empresa_id ||
+              rec.empresa_id === '' ||
+              rec.empresa_id === deliveryService.MATRIZ_EMPRESA_ID
             : rec.empresa_id === currentCompany.id
           if (!matches) {
             if (e.action === 'delete' || e.action === 'update') {

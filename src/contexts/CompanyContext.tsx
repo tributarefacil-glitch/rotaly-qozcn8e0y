@@ -73,13 +73,23 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       let resolvedCompany: EmpresaRecord | null = null
       let resolvedMember: MembroRecord | null = null
 
-      if (savedCompanyId) {
-        resolvedCompany = companiesList.find((c) => c.id === savedCompanyId) || null
+      // Validar contra a lista de empresas existentes e ativas
+      if (savedCompanyId && savedCompanyId !== 'undefined' && savedCompanyId !== 'null') {
+        resolvedCompany =
+          companiesList.find((c) => c.id === savedCompanyId && c.ativa !== false) || null
       }
 
-      // Se não encontrou pelo storage, pegar a primeira empresa vinculada em membros
+      // Se o ID salvo for inválido ou não existir na lista, limpar o storage imediatamente
+      if (savedCompanyId && !resolvedCompany) {
+        localStorage.removeItem(STORAGE_KEY)
+      }
+
+      // Se não encontrou pelo storage, priorizar a empresa vinculada via membros
+      // Para admin, priorizar a Matriz se disponível, ou o primeiro membro ativo
       if (!resolvedCompany && memberRecords.length > 0) {
-        resolvedMember = memberRecords[0]
+        // Tentar encontrar membro com a Matriz primeiro
+        const matrizMember = memberRecords.find((m) => m.empresa_id === '7wo05iyvfcfh01h')
+        resolvedMember = matrizMember || memberRecords[0]
         if (resolvedMember.expand?.empresa_id) {
           resolvedCompany = resolvedMember.expand.empresa_id
         } else {
@@ -94,9 +104,10 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
 
-      // Se ainda não encontrou e for admin, pegar a primeira de companiesList
+      // Se ainda não encontrou e for admin, priorizar a Matriz em companiesList
       if (!resolvedCompany && companiesList.length > 0) {
-        resolvedCompany = companiesList[0]
+        const matriz = companiesList.find((c) => c.id === '7wo05iyvfcfh01h')
+        resolvedCompany = matriz || companiesList[0]
       }
 
       // 4. FALLBACK SEGURO: se o usuário não tiver NENHUM membro nem empresa cadastrada,

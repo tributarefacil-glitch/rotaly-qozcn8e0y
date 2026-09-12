@@ -247,9 +247,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   // Helper para verificar se um registro pertence à empresa ativa
   const matchesCurrentCompany = (recEmpresaId?: string) => {
-    if (!currentCompany?.id) return true
-    if (currentCompany.id === deliveryService.MATRIZ_EMPRESA_ID) {
-      return !recEmpresaId || recEmpresaId === deliveryService.MATRIZ_EMPRESA_ID
+    // Fail-safe: se não houver empresa selecionada ou se a empresa ativa for a Matriz,
+    // aceita pedidos da Matriz E pedidos com empresa_id vazio/nulo (legados e transição)
+    if (!currentCompany?.id || currentCompany.id === deliveryService.MATRIZ_EMPRESA_ID) {
+      return (
+        !recEmpresaId || recEmpresaId === '' || recEmpresaId === deliveryService.MATRIZ_EMPRESA_ID
+      )
     }
     return recEmpresaId === currentCompany.id
   }

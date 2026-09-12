@@ -73,14 +73,27 @@ export const deliveryService = {
   MATRIZ_EMPRESA_ID: '7wo05iyvfcfh01h',
 
   /**
-   * Helper para montar cláusula multi-tenant consistente:
-   * Se a empresa ativa for a Matriz (7wo05iyvfcfh01h), mantém compatibilidade com legados (empresa_id = Matriz || empresa_id = '' || empresa_id = null)
-   * Para qualquer outra empresa, aplica filtro estrito `empresa_id = '<id>'`
+   * Helper para obter o ID da empresa ativa de forma fail-safe.
+   * Se vazio, nulo ou inválido, retorna a Matriz como default seguro.
+   */
+  getActiveCompanyId(): string {
+    const active =
+      typeof window !== 'undefined' ? localStorage.getItem('rotaly_active_empresa_id') : null
+    if (!active || active === 'undefined' || active === 'null' || active.trim() === '') {
+      return this.MATRIZ_EMPRESA_ID
+    }
+    return active.trim()
+  },
+
+  /**
+   * Helper para montar cláusula multi-tenant consistente e FAIL-SAFE:
+   * 1. Se a empresa ativa for a Matriz (7wo05iyvfcfh01h) OU se não houver empresa válida no storage,
+   *    aceita registros vinculados à Matriz E registros legados/vazios (`field = '7wo05iyvfcfh01h' || field = '' || field = null`).
+   * 2. Para qualquer outra empresa filial, aplica filtro estrito `field = '<id>'`.
    */
   getCompanyFilterClause(field = 'empresa_id'): string | null {
-    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
-    if (!activeCompanyId) return null
-    if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
+    const activeCompanyId = this.getActiveCompanyId()
+    if (!activeCompanyId || activeCompanyId === this.MATRIZ_EMPRESA_ID) {
       return `(${field} = '${this.MATRIZ_EMPRESA_ID}' || ${field} = '' || ${field} = null)`
     }
     return `${field} = '${activeCompanyId}'`
@@ -88,7 +101,11 @@ export const deliveryService = {
 
   // Multi-tenant Colaboradores, Rotas, Entregas, Relatórios
   async getColaboradores(empresaId?: string) {
-    const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
+    const targetId = empresaId || this.getActiveCompanyId()
+    const filter =
+      targetId === this.MATRIZ_EMPRESA_ID
+        ? `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
+        : `empresa_id = '${targetId}'`
     return pb.collection<ColaboradorRecord>('colaboradores').getFullList({
       filter,
       sort: 'nome',
@@ -97,11 +114,20 @@ export const deliveryService = {
   },
 
   async createColaborador(data: Partial<ColaboradorRecord>) {
-    return pb.collection<ColaboradorRecord>('colaboradores').create(data)
+    const activeCompanyId = this.getActiveCompanyId()
+    const payload = {
+      ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+    }
+    return pb.collection<ColaboradorRecord>('colaboradores').create(payload)
   },
 
   async getRotas(empresaId?: string) {
-    const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
+    const targetId = empresaId || this.getActiveCompanyId()
+    const filter =
+      targetId === this.MATRIZ_EMPRESA_ID
+        ? `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
+        : `empresa_id = '${targetId}'`
     return pb.collection<RotaRecord>('rotas').getFullList({
       filter,
       sort: '-created',
@@ -110,11 +136,20 @@ export const deliveryService = {
   },
 
   async createRota(data: Partial<RotaRecord>) {
-    return pb.collection<RotaRecord>('rotas').create(data)
+    const activeCompanyId = this.getActiveCompanyId()
+    const payload = {
+      ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+    }
+    return pb.collection<RotaRecord>('rotas').create(payload)
   },
 
   async getEntregas(empresaId?: string) {
-    const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
+    const targetId = empresaId || this.getActiveCompanyId()
+    const filter =
+      targetId === this.MATRIZ_EMPRESA_ID
+        ? `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
+        : `empresa_id = '${targetId}'`
     return pb.collection<EntregaRecord>('entregas').getFullList({
       filter,
       sort: '-created',
@@ -123,11 +158,20 @@ export const deliveryService = {
   },
 
   async createEntrega(data: Partial<EntregaRecord>) {
-    return pb.collection<EntregaRecord>('entregas').create(data)
+    const activeCompanyId = this.getActiveCompanyId()
+    const payload = {
+      ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+    }
+    return pb.collection<EntregaRecord>('entregas').create(payload)
   },
 
   async getRelatorios(empresaId?: string) {
-    const filter = empresaId ? `empresa_id = '${empresaId}'` : ''
+    const targetId = empresaId || this.getActiveCompanyId()
+    const filter =
+      targetId === this.MATRIZ_EMPRESA_ID
+        ? `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
+        : `empresa_id = '${targetId}'`
     return pb.collection<RelatorioRecord>('relatorios').getFullList({
       filter,
       sort: '-created',
@@ -136,7 +180,12 @@ export const deliveryService = {
   },
 
   async createRelatorio(data: Partial<RelatorioRecord>) {
-    return pb.collection<RelatorioRecord>('relatorios').create(data)
+    const activeCompanyId = this.getActiveCompanyId()
+    const payload = {
+      ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+    }
+    return pb.collection<RelatorioRecord>('relatorios').create(payload)
   },
 
   // Orders
@@ -224,7 +273,7 @@ export const deliveryService = {
   },
 
   async createOrder(data: Partial<OrderRecord>) {
-    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
+    const activeCompanyId = this.getActiveCompanyId()
     const payload = {
       ...data,
       ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
@@ -379,7 +428,7 @@ export const deliveryService = {
   },
 
   async createCustomer(data: Partial<CustomerRecord>) {
-    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
+    const activeCompanyId = this.getActiveCompanyId()
     const payload = {
       ...data,
       ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
@@ -490,7 +539,7 @@ export const deliveryService = {
   // Users / Couriers / Sellers
   // Filtrados pela empresa ativa através dos vínculos da coleção membros (ativo = true)
   async getCouriers(empresaId?: string) {
-    const activeCompanyId = empresaId || localStorage.getItem('rotaly_active_empresa_id')
+    const activeCompanyId = empresaId || this.getActiveCompanyId()
 
     // Se há empresa ativa definida, buscar os usuários vinculados como entregador na coleção membros
     if (activeCompanyId) {
@@ -529,7 +578,7 @@ export const deliveryService = {
   },
 
   async getSellers(empresaId?: string) {
-    const activeCompanyId = empresaId || localStorage.getItem('rotaly_active_empresa_id')
+    const activeCompanyId = empresaId || this.getActiveCompanyId()
 
     if (activeCompanyId) {
       try {
@@ -566,7 +615,7 @@ export const deliveryService = {
   },
 
   async getAllUsers(empresaId?: string) {
-    const activeCompanyId = empresaId || localStorage.getItem('rotaly_active_empresa_id')
+    const activeCompanyId = empresaId || this.getActiveCompanyId()
 
     if (activeCompanyId) {
       try {
@@ -903,7 +952,7 @@ export const deliveryService = {
 
   // Base Addresses Management (Cadastro de Base da Empresa / Loja e Endereço Final)
   async getBaseAddresses(empresaId?: string): Promise<BaseAddressRecord[]> {
-    const activeCompanyId = empresaId || localStorage.getItem('rotaly_active_empresa_id')
+    const activeCompanyId = empresaId || this.getActiveCompanyId()
     try {
       let filter = ''
       if (activeCompanyId) {
@@ -967,7 +1016,7 @@ export const deliveryService = {
   },
 
   async createBaseAddress(data: Partial<BaseAddressRecord>): Promise<BaseAddressRecord> {
-    const activeCompanyId = localStorage.getItem('rotaly_active_empresa_id')
+    const activeCompanyId = this.getActiveCompanyId()
     return pb.collection<BaseAddressRecord>('base_addresses').create({
       ...data,
       ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),

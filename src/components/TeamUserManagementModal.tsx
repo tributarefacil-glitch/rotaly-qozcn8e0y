@@ -454,7 +454,7 @@ export function TeamUserManagementModal({
           return
         }
 
-        await deliveryService.createUser({
+        const createdUser = await deliveryService.createUser({
           name: trimmedName,
           email: trimmedEmail,
           phone: cleanPhone || formPhone.trim(),
@@ -471,6 +471,26 @@ export function TeamUserManagementModal({
               }
             : {}),
         })
+
+        // Vincular usuário cadastrado à empresa ativa
+        try {
+          const activeCompanyId = deliveryService.getActiveCompanyId()
+          if (activeCompanyId && createdUser?.id) {
+            await deliveryService.createMembro({
+              empresa_id: activeCompanyId,
+              user_id: createdUser.id,
+              papel:
+                formRole === 'courier'
+                  ? 'entregador'
+                  : formRole === 'seller'
+                    ? 'vendedor'
+                    : 'admin',
+              ativo: true,
+            })
+          }
+        } catch (mErr) {
+          console.warn('Aviso ao vincular usuário à empresa ativa em membros:', mErr)
+        }
 
         const roleLabel =
           formRole === 'courier'
