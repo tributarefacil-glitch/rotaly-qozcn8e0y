@@ -1094,14 +1094,14 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                       Buscar Endereço (Autocompletar Google Maps / CEP)
                     </Label>
                     <span className="text-[10px] text-slate-400">
-                      Digite rua, CEP ou local para preencher tudo
+                      Selecione uma opção na lista para preencher os dados
                     </span>
                   </div>
                   <BaseAddressAutocomplete
                     value={addressSearchQuery}
                     onChange={(val) => setAddressSearchQuery(val)}
                     onAddressSelect={handleAddressSelectFromAutocomplete}
-                    placeholder="Comece a digitar o endereço ou CEP, ex: Rua das Laranjeiras, 100..."
+                    placeholder="Digite o endereço ou CEP, ex: Rua Diogo Gulart ou Duque de Caxias..."
                     className="w-full"
                     inputClassName="bg-white dark:bg-slate-800 text-xs border-blue-200 focus-visible:ring-blue-500 text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
                     biasCoordinates={hasLocationPinned ? selectedCoords : null}

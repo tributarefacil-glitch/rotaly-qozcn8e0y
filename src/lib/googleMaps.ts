@@ -304,8 +304,9 @@ export function parseGoogleAddressComponents(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     components.forEach((comp: any) => {
       const types: string[] = comp?.types || []
-      const longName = (comp?.long_name || '').trim()
-      const shortName = (comp?.short_name || '').trim()
+      // Suporta tanto a API legada (long_name / short_name) quanto a nova Places API (longText / shortText)
+      const longName = (comp?.long_name || comp?.longText || '').trim()
+      const shortName = (comp?.short_name || comp?.shortText || '').trim()
 
       if (types.includes('route')) {
         streetName = longName

@@ -9,7 +9,7 @@ import {
   isGoogleMapsAuthError,
   ParsedAddress,
 } from '@/lib/googleMaps'
-import { MapPin, Search, Loader2, Building2 } from 'lucide-react'
+import { MapPin, Search, Loader2, Building2, Check, AlertCircle, X } from 'lucide-react'
 
 export interface BaseAddressResult {
   name?: string
@@ -37,7 +37,7 @@ interface BaseAddressAutocompleteProps {
   showSearchButton?: boolean
 }
 
-// Cache de geolocalização do usuário em memória na sessão (executado uma única vez por sessão do app)
+// Cache de geolocalização do usuário em memória na sessão
 let cachedUserPosition: BiasCoordinates | null = null
 let userPositionPromise: Promise<BiasCoordinates | null> | null = null
 
@@ -68,13 +68,12 @@ export function getUserGeolocation(): Promise<BiasCoordinates | null> {
           resolve(coords)
         },
         () => {
-          // Permissão negada ou erro de timeout; resolve silenciosamente com null sem travar a UI
           resolve(null)
         },
         {
           enableHighAccuracy: false,
           timeout: 7000,
-          maximumAge: 10 * 60 * 1000, // aceita posição de até 10 minutos
+          maximumAge: 10 * 60 * 1000,
         },
       )
     } catch {
@@ -85,18 +84,52 @@ export function getUserGeolocation(): Promise<BiasCoordinates | null> {
   return userPositionPromise
 }
 
-interface PlaceSuggestion {
+export interface PlaceSuggestion {
   placeId: string
   mainText: string
   secondaryText: string
   fullText: string
+  source: 'google-new' | 'google-legacy' | 'viacep' | 'osm'
+  // Referência para o objeto de predição da Places API (New) se disponível
+  rawPrediction?: any
+  // Dados de CEP pré-resolvidos se for resultado de busca direta por CEP
+  preloadedParsed?: ParsedAddress
+  lat?: number
+  lng?: number
+}
+
+// Utilitário para destacar substrings no texto da sugestão
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!text) return null
+  const cleanQ = query.trim()
+  if (!cleanQ) return <span>{text}</span>
+
+  const regex = new RegExp(`(${cleanQ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+  const parts = text.split(regex)
+
+  return (
+    <span>
+      {parts.map((part, i) =>
+        part.toLowerCase() === cleanQ.toLowerCase() ? (
+          <mark
+            key={i}
+            className="bg-amber-100 text-amber-950 font-bold px-0.5 rounded-sm dark:bg-amber-500/30 dark:text-amber-200"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </span>
+  )
 }
 
 export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = ({
   value,
   onChange,
   onAddressSelect,
-  placeholder = 'Buscar endereço da base no Maps (Rua, Número, Bairro, Cidade)...',
+  placeholder = 'Comece a digitar o endereço ou CEP, ex: Rua das Laranjeiras, 100...',
   className = '',
   inputClassName = '',
   buttonClassName = '',
@@ -113,16 +146,19 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   const isSelectedRef = useRef<boolean>(false)
   const activeAbortControllerRef = useRef<AbortController | null>(null)
 
+  // Token de sessão do Google Places Autocomplete
+  const sessionTokenRef = useRef<any>(null)
+
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
   const [isOpen, setIsOpen] = useState(false)
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
   const [isResolvingPlace, setIsResolvingPlace] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState<number>(-1)
-  const [isManualSearching, setIsManualSearching] = useState(false)
+  const [emptyMessage, setEmptyMessage] = useState<string | null>(null)
   const [userCoords, setUserCoords] = useState<BiasCoordinates | null>(cachedUserPosition)
   const userCoordsRef = useRef<BiasCoordinates | null>(cachedUserPosition)
 
-  // Carregar geolocalização do usuário de forma silenciosa e não-bloqueante uma única vez por sessão
+  // Carregar geolocalização do usuário silenciosamente
   const triggerGeolocation = useCallback(() => {
     getUserGeolocation().then((coords) => {
       if (coords) {
@@ -136,9 +172,6 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
     triggerGeolocation()
   }, [triggerGeolocation])
 
-  // Determinar a coordenada de referência atual:
-  // GPS do dispositivo prevalece sempre sobre qualquer fallback (ou prop externa de bias)
-  // Caso o GPS ainda não esteja pronto ou não concedido, usa biasCoordinates (base cadastrada) -> RJ
   const activeBias: BiasCoordinates = userCoordsRef.current ||
     userCoords ||
     cachedUserPosition ||
@@ -146,11 +179,38 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
       lat: -22.906847,
       lng: -43.172896,
     }
-  // Pre-carregar Google Maps Script silenciosamente
+
+  // Pre-carregar Google Maps Script
   useEffect(() => {
     loadGoogleMapsScript().catch(() => {
-      // Ignorar se falhar; os fallbacks cuidarão da busca
+      // Ignorar; fallbacks assumirão
     })
+  }, [])
+
+  // Criar ou renovar session token do Places
+  const getOrCreateSessionToken = useCallback(async () => {
+    if (sessionTokenRef.current) return sessionTokenRef.current
+    try {
+      const win = typeof window !== 'undefined' ? (window as any) : null
+      if (win?.google?.maps?.places?.AutocompleteSessionToken) {
+        sessionTokenRef.current = new win.google.maps.places.AutocompleteSessionToken()
+        return sessionTokenRef.current
+      }
+      if (win?.google?.maps?.importLibrary) {
+        const { AutocompleteSessionToken } = await win.google.maps.importLibrary('places')
+        if (AutocompleteSessionToken) {
+          sessionTokenRef.current = new AutocompleteSessionToken()
+          return sessionTokenRef.current
+        }
+      }
+    } catch {
+      // Sem suporte a session token nativo
+    }
+    return null
+  }, [])
+
+  const resetSessionToken = useCallback(() => {
+    sessionTokenRef.current = null
   }, [])
 
   // Fechar dropdown ao clicar fora
@@ -166,158 +226,295 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
     }
   }, [])
 
-  // Função para buscar predições programáticas (com Google AutocompleteService ou fallback)
+  // Garantir que item selecionado pelo teclado fique visível
+  useEffect(() => {
+    if (isOpen && listRef.current && selectedIndex >= 0) {
+      const activeEl = listRef.current.querySelector(
+        `[data-index="${selectedIndex}"]`,
+      ) as HTMLElement | null
+      if (activeEl) {
+        activeEl.scrollIntoView({ block: 'nearest' })
+      }
+    }
+  }, [selectedIndex, isOpen])
+
+  // Busca de predições com múltiplos provedores em cascata (Places API New -> Legacy -> ViaCEP/OSM)
   const fetchPredictions = useCallback(
     async (queryText: string, requestId: number) => {
       const trimmed = queryText.trim()
-      // Não buscar se for muito curto ou se for URL
+
       if (trimmed.length < 3 || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
         if (requestId === activeRequestIdRef.current) {
           setSuggestions([])
           setIsOpen(false)
           setIsLoadingSuggestions(false)
+          setEmptyMessage(null)
         }
         return
       }
 
       setIsLoadingSuggestions(true)
+      setEmptyMessage(null)
+
+      const effectiveBias =
+        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
+
+      const collectedSuggestions: PlaceSuggestion[] = []
+
+      // 1. Verificar se a busca é por CEP (8 dígitos numéricos)
+      const cepDigits = trimmed.replace(/\D/g, '')
+      if (cepDigits.length === 8 && /^\d{5}-?\d{3}$|^\d{8}$/.test(trimmed)) {
+        try {
+          const viaCepData = await lookupViaCep(cepDigits)
+          if (viaCepData && viaCepData.street) {
+            collectedSuggestions.push({
+              placeId: `viacep_${cepDigits}`,
+              mainText: `${viaCepData.street}`,
+              secondaryText: `${viaCepData.neighborhood ? `${viaCepData.neighborhood}, ` : ''}${viaCepData.city} - ${viaCepData.state} • CEP ${viaCepData.postalCode}`,
+              fullText:
+                viaCepData.formattedAddress ||
+                `${viaCepData.street}, ${viaCepData.neighborhood}, ${viaCepData.city} - ${viaCepData.state}`,
+              source: 'viacep',
+              preloadedParsed: viaCepData,
+            })
+          }
+        } catch {
+          // segue para busca de places
+        }
+      }
 
       try {
         const mapsLoaded = await loadGoogleMapsScript()
-        const win = window as unknown as { google?: any }
+        const win = typeof window !== 'undefined' ? (window as any) : null
 
-        // 1. Tentar AutocompleteService nativo da API JS
+        // 2. Google Places API (New): AutocompleteSuggestion.fetchAutocompleteSuggestions
+        let placesNewSucceeded = false
+        if (mapsLoaded && !isGoogleMapsAuthError() && win?.google?.maps) {
+          try {
+            let AutocompleteSuggestionClass = win.google.maps.places?.AutocompleteSuggestion
+            if (
+              !AutocompleteSuggestionClass &&
+              typeof win.google.maps.importLibrary === 'function'
+            ) {
+              const placesLib = await win.google.maps.importLibrary('places')
+              AutocompleteSuggestionClass = placesLib?.AutocompleteSuggestion
+            }
+
+            if (AutocompleteSuggestionClass?.fetchAutocompleteSuggestions) {
+              const sessionToken = await getOrCreateSessionToken()
+
+              const requestPayload: any = {
+                input: trimmed,
+                includedRegionCodes: ['br'],
+                language: 'pt-BR',
+                region: 'br',
+              }
+
+              if (sessionToken) {
+                requestPayload.sessionToken = sessionToken
+              }
+
+              if (effectiveBias && typeof effectiveBias.lat === 'number') {
+                requestPayload.locationBias = {
+                  circle: {
+                    center: { latitude: effectiveBias.lat, longitude: effectiveBias.lng },
+                    radius: 50000.0, // 50km
+                  },
+                }
+                requestPayload.origin = {
+                  latitude: effectiveBias.lat,
+                  longitude: effectiveBias.lng,
+                }
+              }
+
+              const response =
+                await AutocompleteSuggestionClass.fetchAutocompleteSuggestions(requestPayload)
+
+              if (requestId !== activeRequestIdRef.current) return
+
+              if (
+                response &&
+                Array.isArray(response.suggestions) &&
+                response.suggestions.length > 0
+              ) {
+                for (const item of response.suggestions) {
+                  const pred = item?.placePrediction
+                  if (!pred) continue
+
+                  const main =
+                    pred.structuredFormat?.mainText?.text ||
+                    pred.text?.text ||
+                    pred.displayName ||
+                    ''
+                  const secondary = pred.structuredFormat?.secondaryText?.text || ''
+                  const full = pred.text?.text || `${main} - ${secondary}`
+
+                  collectedSuggestions.push({
+                    placeId: pred.placeId || pred.place || `places_new_${Math.random()}`,
+                    mainText: main || full,
+                    secondaryText: secondary,
+                    fullText: full,
+                    source: 'google-new',
+                    rawPrediction: pred,
+                  })
+                }
+                placesNewSucceeded = true
+              }
+            }
+          } catch (errPlacesNew) {
+            // Se Places (New) falhar, tenta o fallback AutocompleteService legado
+          }
+        }
+
+        // 3. Fallback: Google Places AutocompleteService (Legacy)
         if (
+          !placesNewSucceeded &&
           mapsLoaded &&
           !isGoogleMapsAuthError() &&
-          win.google?.maps?.places?.AutocompleteService
+          win?.google?.maps?.places?.AutocompleteService
         ) {
           const service = new win.google.maps.places.AutocompleteService()
+          const sessionToken = await getOrCreateSessionToken()
 
-          // Montar requisição com restrição de país e enviesamento por localização se disponível
           const requestOptions: any = {
             input: trimmed,
             componentRestrictions: { country: 'br' },
           }
 
-          // Prioridade absoluta: GPS do dispositivo detectado > biasCoordinates (base/pin) > activeBias
-          const currentBias =
-            userCoordsRef.current ||
-            userCoords ||
-            cachedUserPosition ||
-            biasCoordinates ||
-            activeBias
-          if (
-            currentBias &&
-            typeof currentBias.lat === 'number' &&
-            typeof currentBias.lng === 'number'
-          ) {
+          if (sessionToken) {
+            requestOptions.sessionToken = sessionToken
+          }
+
+          if (effectiveBias && typeof effectiveBias.lat === 'number') {
             if (win.google.maps.LatLng) {
-              requestOptions.location = new win.google.maps.LatLng(currentBias.lat, currentBias.lng)
+              requestOptions.location = new win.google.maps.LatLng(
+                effectiveBias.lat,
+                effectiveBias.lng,
+              )
             } else {
-              requestOptions.location = { lat: currentBias.lat, lng: currentBias.lng }
+              requestOptions.location = { lat: effectiveBias.lat, lng: effectiveBias.lng }
             }
-            // Raio de 50.000m (50km) para priorizar a região metropolitana mais próxima do usuário/dispositivo
             requestOptions.radius = 50000
           }
 
-          service.getPlacePredictions(requestOptions, (predictions: any[], status: string) => {
-            if (requestId !== activeRequestIdRef.current) return
-            setIsLoadingSuggestions(false)
+          const legacyResult = await new Promise<any[]>((resolve) => {
+            try {
+              service.getPlacePredictions(requestOptions, (predictions: any[], status: string) => {
+                if (
+                  status === win.google.maps.places.PlacesServiceStatus.OK &&
+                  Array.isArray(predictions)
+                ) {
+                  resolve(predictions)
+                } else {
+                  resolve([])
+                }
+              })
+            } catch {
+              resolve([])
+            }
+          })
 
-            if (
-              status === win.google.maps.places.PlacesServiceStatus.OK &&
-              Array.isArray(predictions) &&
-              predictions.length > 0
-            ) {
-              const items: PlaceSuggestion[] = predictions.map((p) => ({
+          if (requestId !== activeRequestIdRef.current) return
+
+          if (legacyResult.length > 0) {
+            for (const p of legacyResult) {
+              collectedSuggestions.push({
                 placeId: p.place_id,
                 mainText: p.structured_formatting?.main_text || p.description,
                 secondaryText: p.structured_formatting?.secondary_text || '',
                 fullText: p.description,
-              }))
-              setSuggestions(items)
-              setIsOpen(true)
-              setSelectedIndex(-1)
-            } else {
-              setSuggestions([])
-              setIsOpen(false)
+                source: 'google-legacy',
+              })
             }
+          }
+        }
+
+        // 4. Fallback OpenStreetMap Nominatim se nenhuma sugestão do Google foi retornada
+        if (collectedSuggestions.length === 0) {
+          let nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=br&limit=6&q=${encodeURIComponent(
+            trimmed,
+          )}`
+
+          if (effectiveBias && typeof effectiveBias.lat === 'number') {
+            const delta = 0.45
+            const minLon = (effectiveBias.lng - delta).toFixed(5)
+            const maxLon = (effectiveBias.lng + delta).toFixed(5)
+            const minLat = (effectiveBias.lat - delta).toFixed(5)
+            const maxLat = (effectiveBias.lat + delta).toFixed(5)
+            nominatimUrl += `&viewbox=${minLon},${maxLat},${maxLon},${minLat}&bounded=0`
+          }
+
+          if (activeAbortControllerRef.current) {
+            activeAbortControllerRef.current.abort()
+          }
+          const controller = new AbortController()
+          activeAbortControllerRef.current = controller
+          const timeoutTimer = setTimeout(() => controller.abort(), 4500)
+
+          const res = await fetch(nominatimUrl, {
+            signal: controller.signal,
+            headers: { 'Accept-Language': 'pt-BR,pt;q=0.9' },
+          }).finally(() => {
+            clearTimeout(timeoutTimer)
           })
-          return
+
+          if (requestId !== activeRequestIdRef.current) return
+
+          if (res.ok) {
+            const data = await res.json()
+            if (Array.isArray(data) && data.length > 0) {
+              for (const item of data) {
+                const displayName: string = item.display_name || ''
+                const parts = displayName.split(', ')
+                const main = parts[0] || displayName
+                const secondary = parts.slice(1, 4).join(', ')
+                collectedSuggestions.push({
+                  placeId: `osm_${item.osm_type || 'node'}_${item.osm_id || Math.random()}`,
+                  mainText: main,
+                  secondaryText: secondary,
+                  fullText: displayName,
+                  source: 'osm',
+                  lat: parseFloat(item.lat),
+                  lng: parseFloat(item.lon),
+                })
+              }
+            }
+          }
         }
-
-        // 2. Se o Google Maps não estiver disponível ou autenticado, usar Nominatim OpenStreetMap como busca preditiva de endereços no Brasil
-        // Se houver coordenadas de bias (GPS ou base de saída), adiciona viewbox para priorizar a região (bounded=0 apenas enviesa os resultados)
-        let nominatimUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=br&limit=5&q=${encodeURIComponent(
-          trimmed,
-        )}`
-
-        const currentBias =
-          userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
-        if (
-          currentBias &&
-          typeof currentBias.lat === 'number' &&
-          typeof currentBias.lng === 'number'
-        ) {
-          // Caixa de ~0.45 graus em torno da coordenada (~50km) para priorizar a localização do dispositivo
-          const delta = 0.45
-          const minLon = (currentBias.lng - delta).toFixed(5)
-          const maxLon = (currentBias.lng + delta).toFixed(5)
-          const minLat = (currentBias.lat - delta).toFixed(5)
-          const maxLat = (currentBias.lat + delta).toFixed(5)
-          nominatimUrl += `&viewbox=${minLon},${maxLat},${maxLon},${minLat}&bounded=0`
-        }
-
-        // Cancelar requisição em voo anterior
-        if (activeAbortControllerRef.current) {
-          activeAbortControllerRef.current.abort()
-        }
-        const controller = new AbortController()
-        activeAbortControllerRef.current = controller
-        const timeoutTimer = setTimeout(() => controller.abort(), 4500)
-
-        const res = await fetch(nominatimUrl, {
-          signal: controller.signal,
-          headers: {
-            'Accept-Language': 'pt-BR,pt;q=0.9',
-          },
-        }).finally(() => {
-          clearTimeout(timeoutTimer)
-        })
 
         if (requestId !== activeRequestIdRef.current) return
 
-        if (res.ok) {
-          const data = await res.json()
-          if (Array.isArray(data) && data.length > 0) {
-            const items: PlaceSuggestion[] = data.map((item: any) => {
-              const displayName: string = item.display_name || ''
-              const parts = displayName.split(', ')
-              const main = parts[0] || displayName
-              const secondary = parts.slice(1, 4).join(', ')
-              return {
-                placeId: `osm_${item.osm_type || 'node'}_${item.osm_id || Math.random()}`,
-                mainText: main,
-                secondaryText: secondary,
-                fullText: displayName,
-              }
-            })
-            setSuggestions(items)
-            setIsOpen(true)
-            setSelectedIndex(-1)
-          } else {
-            setSuggestions([])
-            setIsOpen(false)
+        // Deduplicar por fullText / placeId
+        const seen = new Set<string>()
+        const deduped: PlaceSuggestion[] = []
+        for (const s of collectedSuggestions) {
+          const key = (s.mainText + '|' + s.secondaryText).toLowerCase()
+          if (!seen.has(key)) {
+            seen.add(key)
+            deduped.push(s)
           }
+        }
+
+        if (deduped.length > 0) {
+          setSuggestions(deduped)
+          setIsOpen(true)
+          setSelectedIndex(-1)
+          setEmptyMessage(null)
         } else {
           setSuggestions([])
-          setIsOpen(false)
+          setIsOpen(true)
+          setSelectedIndex(-1)
+          setEmptyMessage(
+            `Nenhum endereço encontrado para "${trimmed}" — verifique o CEP ou digite mais detalhes.`,
+          )
         }
       } catch (err) {
         if (requestId === activeRequestIdRef.current) {
           setSuggestions([])
-          setIsOpen(false)
+          setIsOpen(true)
+          setEmptyMessage(
+            `Nenhum endereço encontrado para "${trimmed}" — verifique o CEP ou digite mais detalhes.`,
+          )
         }
       } finally {
         if (requestId === activeRequestIdRef.current) {
@@ -325,7 +522,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
         }
       }
     },
-    [activeBias],
+    [activeBias, getOrCreateSessionToken],
   )
 
   // Gerenciar digitação com debounce
@@ -344,128 +541,177 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
       setSuggestions([])
       setIsOpen(false)
       setIsLoadingSuggestions(false)
+      setEmptyMessage(null)
       return
     }
 
     debounceTimerRef.current = setTimeout(() => {
       fetchPredictions(text, currentId)
-    }, 300)
+    }, 280)
   }
 
-  // Resolver detalhes do Place quando uma sugestão é selecionada
+  // Resolver detalhes completos ao selecionar uma opção do dropdown
   const handleSelectSuggestion = async (suggestion: PlaceSuggestion) => {
     isSelectedRef.current = true
     setIsOpen(false)
     setSuggestions([])
+    setEmptyMessage(null)
     setIsResolvingPlace(true)
 
     // Atualiza texto visível para endereço selecionado
     onChange(suggestion.fullText)
 
-    try {
-      const mapsLoaded = await loadGoogleMapsScript()
-      const win = window as unknown as { google?: any }
+    const effectiveBias =
+      userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
+    const defaultLat = effectiveBias?.lat ?? -22.906847
+    const defaultLng = effectiveBias?.lng ?? -43.172896
 
-      // Se for um placeId do Google e PlacesService estiver disponível
+    try {
+      // Caso 1: Sugestão de CEP já pré-resolvida pelo ViaCEP
+      if (suggestion.source === 'viacep' && suggestion.preloadedParsed) {
+        const fullAddr = suggestion.fullText
+        const geo = await fallbackGeocodeAddress(fullAddr, effectiveBias)
+        const lat = geo?.lat ?? defaultLat
+        const lng = geo?.lng ?? defaultLng
+        onAddressSelect({
+          name: suggestion.mainText,
+          address: suggestion.fullText,
+          lat,
+          lng,
+          parsed: geo?.parsed || suggestion.preloadedParsed,
+        })
+        resetSessionToken()
+        return
+      }
+
+      // Caso 2: Sugestão originada da Places API (New) com toPlace()
+      if (suggestion.source === 'google-new' && suggestion.rawPrediction?.toPlace) {
+        try {
+          const place = suggestion.rawPrediction.toPlace()
+          await place.fetchFields({
+            fields: ['formattedAddress', 'location', 'addressComponents', 'displayName'],
+          })
+
+          const formattedAddress =
+            place.formattedAddress || place.displayName || suggestion.fullText
+          let lat: number | undefined = undefined
+          let lng: number | undefined = undefined
+
+          if (place.location) {
+            lat =
+              typeof place.location.lat === 'function' ? place.location.lat() : place.location.lat
+            lng =
+              typeof place.location.lng === 'function' ? place.location.lng() : place.location.lng
+          }
+
+          let parsed: ParsedAddress | undefined = undefined
+          if (Array.isArray(place.addressComponents) && place.addressComponents.length > 0) {
+            parsed = parseGoogleAddressComponents(place.addressComponents, formattedAddress)
+          }
+
+          onChange(formattedAddress)
+          onAddressSelect({
+            name: place.displayName || suggestion.mainText,
+            address: formattedAddress,
+            lat: lat ?? defaultLat,
+            lng: lng ?? defaultLng,
+            parsed,
+          })
+          resetSessionToken()
+          return
+        } catch (errNewPlace) {
+          console.warn(
+            'Erro ao resolver toPlace() do Places (New), tentando fallback:',
+            errNewPlace,
+          )
+        }
+      }
+
+      // Caso 3: Sugestão do Google Places Legado ou fallback de PlaceId
+      const mapsLoaded = await loadGoogleMapsScript()
+      const win = typeof window !== 'undefined' ? (window as any) : null
+
       if (
         mapsLoaded &&
         !isGoogleMapsAuthError() &&
         !suggestion.placeId.startsWith('osm_') &&
-        win.google?.maps?.places?.PlacesService
+        !suggestion.placeId.startsWith('viacep_') &&
+        win?.google?.maps?.places?.PlacesService
       ) {
         const dummyDiv = document.createElement('div')
         const service = new win.google.maps.places.PlacesService(dummyDiv)
 
-        service.getDetails(
-          {
-            placeId: suggestion.placeId,
-            fields: ['formatted_address', 'geometry', 'address_components', 'name'],
-          },
-          (place: any, status: string) => {
-            setIsResolvingPlace(false)
-            if (status === win.google.maps.places.PlacesServiceStatus.OK && place) {
-              const formattedAddress = place.formatted_address || place.name || suggestion.fullText
-              let lat: number | undefined = undefined
-              let lng: number | undefined = undefined
+        const detailsResult = await new Promise<{
+          place: any
+          status: string
+        }>((resolve) => {
+          service.getDetails(
+            {
+              placeId: suggestion.placeId,
+              fields: ['formatted_address', 'geometry', 'address_components', 'name'],
+              sessionToken: sessionTokenRef.current || undefined,
+            },
+            (place: any, status: string) => {
+              resolve({ place, status })
+            },
+          )
+        })
 
-              if (place.geometry?.location) {
-                lat =
-                  typeof place.geometry.location.lat === 'function'
-                    ? place.geometry.location.lat()
-                    : place.geometry.location.lat
-                lng =
-                  typeof place.geometry.location.lng === 'function'
-                    ? place.geometry.location.lng()
-                    : place.geometry.location.lng
-              }
+        if (
+          detailsResult.status === win.google.maps.places.PlacesServiceStatus.OK &&
+          detailsResult.place
+        ) {
+          const place = detailsResult.place
+          const formattedAddress = place.formatted_address || place.name || suggestion.fullText
+          let lat: number | undefined = undefined
+          let lng: number | undefined = undefined
 
-              const parsed = place.address_components
-                ? parseGoogleAddressComponents(place.address_components)
-                : undefined
+          if (place.geometry?.location) {
+            lat =
+              typeof place.geometry.location.lat === 'function'
+                ? place.geometry.location.lat()
+                : place.geometry.location.lat
+            lng =
+              typeof place.geometry.location.lng === 'function'
+                ? place.geometry.location.lng()
+                : place.geometry.location.lng
+          }
 
-              if (formattedAddress) {
-                onChange(formattedAddress)
-              }
+          const parsed = place.address_components
+            ? parseGoogleAddressComponents(place.address_components, formattedAddress)
+            : undefined
 
-              // Coordenadas default calibradas com o bias ativo (GPS do dispositivo > base de saída > RJ)
-              const effectiveBias =
-                userCoordsRef.current ||
-                userCoords ||
-                cachedUserPosition ||
-                biasCoordinates ||
-                activeBias
-              const defaultLat = effectiveBias?.lat ?? -22.906847
-              const defaultLng = effectiveBias?.lng ?? -43.172896
+          if (formattedAddress) {
+            onChange(formattedAddress)
+          }
 
-              onAddressSelect({
-                name: place.name || suggestion.mainText,
-                address: formattedAddress,
-                lat: lat ?? defaultLat,
-                lng: lng ?? defaultLng,
-                parsed,
-              })
-              return
-            }
+          onAddressSelect({
+            name: place.name || suggestion.mainText,
+            address: formattedAddress,
+            lat: lat ?? defaultLat,
+            lng: lng ?? defaultLng,
+            parsed,
+          })
+          resetSessionToken()
+          return
+        }
+      }
 
-            // Fallback caso getDetails falhe
-            const effectiveBias =
-              userCoordsRef.current ||
-              userCoords ||
-              cachedUserPosition ||
-              biasCoordinates ||
-              activeBias
-            const fallbackDefaultLat = effectiveBias?.lat ?? -22.906847
-            const fallbackDefaultLng = effectiveBias?.lng ?? -43.172896
-
-            fallbackGeocodeAddress(suggestion.fullText, activeBias).then((geo) => {
-              if (geo) {
-                onAddressSelect({
-                  name: suggestion.mainText,
-                  address: geo.parsed?.formattedAddress || suggestion.fullText,
-                  lat: geo.lat,
-                  lng: geo.lng,
-                  parsed: geo.parsed,
-                })
-              } else {
-                onAddressSelect({
-                  name: suggestion.mainText,
-                  address: suggestion.fullText,
-                  lat: fallbackDefaultLat,
-                  lng: fallbackDefaultLng,
-                })
-              }
-            })
-          },
-        )
+      // Caso 4: OSM / Geocoding Fallback
+      if (suggestion.lat && suggestion.lng) {
+        const geo = await fallbackGeocodeAddress(suggestion.fullText, effectiveBias)
+        onAddressSelect({
+          name: suggestion.mainText,
+          address: geo?.parsed?.formattedAddress || suggestion.fullText,
+          lat: suggestion.lat,
+          lng: suggestion.lng,
+          parsed: geo?.parsed,
+        })
+        resetSessionToken()
         return
       }
 
-      // Se for do OpenStreetMap ou Google Maps não disponível
-      const geo = await fallbackGeocodeAddress(suggestion.fullText, activeBias)
-      const effectiveBias =
-        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
-      const defaultLat = effectiveBias?.lat ?? -22.906847
-      const defaultLng = effectiveBias?.lng ?? -43.172896
+      const geo = await fallbackGeocodeAddress(suggestion.fullText, effectiveBias)
       if (geo) {
         onAddressSelect({
           name: suggestion.mainText,
@@ -482,107 +728,30 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
           lng: defaultLng,
         })
       }
+      resetSessionToken()
     } catch (err) {
-      console.warn('Erro ao resolver detalhes do endereço:', err)
-      const effectiveBias =
-        userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
-      const defaultLat = effectiveBias?.lat ?? -22.906847
-      const defaultLng = effectiveBias?.lng ?? -43.172896
+      console.warn('Erro ao resolver detalhes da sugestão:', err)
       onAddressSelect({
         name: suggestion.mainText,
         address: suggestion.fullText,
         lat: defaultLat,
         lng: defaultLng,
       })
+      resetSessionToken()
     } finally {
       setIsResolvingPlace(false)
     }
   }
 
-  // Fallback geocode via ViaCEP / OpenStreetMap quando Google Maps Places não estiver disponível ou usuário pressionar Enter/botão
-  const handleManualSearch = async () => {
+  // O botão "Buscar" APENAS consulta/atualiza as sugestões — NUNCA autopreenche sem escolha explícita do usuário
+  const handleExplicitSearch = () => {
     const query = value.trim()
     if (!query) return
-
-    setIsOpen(false)
-    setIsManualSearching(true)
-    const effectiveBias =
-      userCoordsRef.current || userCoords || cachedUserPosition || biasCoordinates || activeBias
-    const defaultLat = effectiveBias?.lat ?? -22.906847
-    const defaultLng = effectiveBias?.lng ?? -43.172896
-
-    // Cancelar requisição de predição em voo se houver
-    if (activeAbortControllerRef.current) {
-      activeAbortControllerRef.current.abort()
-    }
-    const manualController = new AbortController()
-    activeAbortControllerRef.current = manualController
-
-    try {
-      // 1. Tentar CEP se houver padrão de CEP ou 8 dígitos
-      const cepDigits = query.replace(/\D/g, '')
-      const cepMatch = query.match(/\d{5}-?\d{3}/) || (cepDigits.length === 8 ? [cepDigits] : null)
-      if (cepMatch) {
-        const cepResult = await lookupViaCep(cepMatch[0], {
-          signal: manualController.signal,
-          timeoutMs: 4500,
-        })
-        if (cepResult) {
-          const formatted =
-            cepResult.formattedAddress ||
-            `${cepResult.street || ''}, ${cepResult.neighborhood || ''}, ${cepResult.city || ''} - ${cepResult.state || ''}`.replace(
-              /^,\s*/,
-              '',
-            )
-          onChange(formatted || query)
-
-          // Tentar geocodificar o endereço do CEP para obter lat/lng precisas
-          const fullQuery = `${cepResult.street || ''}, ${cepResult.neighborhood || ''}, ${cepResult.city || ''} - ${cepResult.state || ''}, Brasil`
-          const geoCep = await fallbackGeocodeAddress(fullQuery, activeBias, {
-            signal: manualController.signal,
-            timeoutMs: 4500,
-          })
-
-          onAddressSelect({
-            address: formatted || query,
-            lat: geoCep?.lat ?? defaultLat,
-            lng: geoCep?.lng ?? defaultLng,
-            parsed: geoCep?.parsed || cepResult,
-          })
-          setIsManualSearching(false)
-          return
-        }
-      }
-
-      // 2. Geocodificação OpenStreetMap / Nominatim fallback
-      const geo = await fallbackGeocodeAddress(query, activeBias, {
-        signal: manualController.signal,
-        timeoutMs: 5000,
-      })
-      if (geo) {
-        onAddressSelect({
-          address: geo.parsed?.formattedAddress || query,
-          lat: geo.lat,
-          lng: geo.lng,
-          parsed: geo.parsed,
-        })
-      } else {
-        onAddressSelect({
-          address: query,
-          lat: defaultLat,
-          lng: defaultLng,
-        })
-      }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        console.warn('Manual address search error:', err)
-      }
-    } finally {
-      setIsManualSearching(false)
-    }
+    const currentId = ++activeRequestIdRef.current
+    fetchPredictions(query, currentId)
   }
 
-  // Suporte à navegação pelo teclado no dropdown
+  // Navegação pelo teclado no dropdown de sugestões (estilo CustomerSearchCombobox)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (isOpen && suggestions.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -601,7 +770,8 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
           handleSelectSuggestion(suggestions[selectedIndex])
           return
         }
-        handleManualSearch()
+        // Se deu Enter sem focar item, atualiza a lista de opções
+        handleExplicitSearch()
         return
       }
       if (e.key === 'Escape') {
@@ -613,11 +783,9 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
 
     if (e.key === 'Enter') {
       e.preventDefault()
-      handleManualSearch()
+      handleExplicitSearch()
     }
   }
-
-  const isBusy = isManualSearching || isResolvingPlace
 
   return (
     <div ref={containerRef} className={`relative flex items-center gap-1.5 ${className}`}>
@@ -630,73 +798,155 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           onFocus={() => {
-            // Disparar/acelerar geolocalização no foco para que esteja pronta nas primeiras digitações
             triggerGeolocation()
             if (suggestions.length > 0 && !isSelectedRef.current) {
               setIsOpen(true)
             }
           }}
           placeholder={placeholder}
-          className={`pl-8 ${isLoadingSuggestions ? 'pr-8' : ''} text-xs ${inputClassName}`}
+          className={`pl-8 pr-16 text-xs transition-colors focus-visible:ring-1 focus-visible:ring-blue-500 ${inputClassName}`}
           autoComplete="off"
           data-form-type="other"
           data-lpignore="true"
           spellCheck={false}
+          role="combobox"
+          aria-expanded={isOpen}
+          aria-haspopup="listbox"
         />
 
-        {isLoadingSuggestions && (
-          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
-          </div>
-        )}
+        {/* Indicadores de estado na direita do input */}
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {isLoadingSuggestions && (
+            <span title="Buscando opções de endereço...">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />
+            </span>
+          )}
+          {isResolvingPlace && (
+            <div className="flex items-center gap-1 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium dark:bg-blue-950/60 dark:text-blue-300">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Preenchendo...</span>
+            </div>
+          )}
+          {value && !isLoadingSuggestions && !isResolvingPlace && (
+            <button
+              type="button"
+              onClick={() => {
+                onChange('')
+                setSuggestions([])
+                setIsOpen(false)
+                setEmptyMessage(null)
+                inputRef.current?.focus()
+              }}
+              className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              title="Limpar busca"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
 
-        {/* Dropdown de sugestões customizado */}
-        {isOpen && suggestions.length > 0 && (
-          <ul
-            ref={listRef}
-            className={`absolute left-0 right-0 top-full mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 text-xs shadow-2xl z-50 divide-y divide-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:divide-slate-800 ${dropdownClassName}`}
+        {/* Dropdown de sugestões estruturadas */}
+        {isOpen && (suggestions.length > 0 || emptyMessage) && (
+          <div
+            className={`absolute left-0 right-0 top-full mt-1.5 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 text-xs shadow-2xl z-50 dark:border-slate-800 dark:bg-slate-900 ${dropdownClassName}`}
           >
-            {suggestions.map((suggestion, idx) => {
-              const isSelected = idx === selectedIndex
-              return (
-                <li
-                  key={`${suggestion.placeId}-${idx}`}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    handleSelectSuggestion(suggestion)
-                  }}
-                  onMouseEnter={() => setSelectedIndex(idx)}
-                  className={`flex items-start gap-2.5 px-3 py-2 cursor-pointer transition-colors ${
-                    isSelected
-                      ? 'bg-blue-50 text-blue-900 dark:bg-orange-500/20 dark:text-white dark:hover:bg-orange-500/30'
-                      : 'text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <Building2 className="h-3.5 w-3.5 text-blue-600 dark:text-orange-400 shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold truncate">{suggestion.mainText}</p>
-                    {suggestion.secondaryText && (
-                      <p className="text-[11px] opacity-75 truncate">{suggestion.secondaryText}</p>
-                    )}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+            {/* Header explicativo do dropdown */}
+            {suggestions.length > 0 && (
+              <div className="flex items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                <span>Escolha o endereço correto:</span>
+                <span className="text-slate-400 font-normal normal-case">
+                  {suggestions.length} {suggestions.length === 1 ? 'opção' : 'opções'}
+                </span>
+              </div>
+            )}
+
+            {/* Lista de sugestões com navegação por teclado e clique */}
+            {suggestions.length > 0 && (
+              <ul
+                ref={listRef}
+                role="listbox"
+                className="divide-y divide-slate-100 dark:divide-slate-800"
+              >
+                {suggestions.map((suggestion, idx) => {
+                  const isSelected = idx === selectedIndex
+                  return (
+                    <li
+                      key={`${suggestion.placeId}-${idx}`}
+                      data-index={idx}
+                      role="option"
+                      aria-selected={isSelected}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        handleSelectSuggestion(suggestion)
+                      }}
+                      onMouseEnter={() => setSelectedIndex(idx)}
+                      className={`flex items-start gap-2.5 px-3 py-2.5 cursor-pointer rounded-lg transition-colors ${
+                        isSelected
+                          ? 'bg-blue-50 text-blue-900 dark:bg-blue-950/60 dark:text-blue-100 ring-1 ring-blue-300 dark:ring-blue-800'
+                          : 'text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800/80'
+                      }`}
+                    >
+                      <div className="shrink-0 mt-0.5">
+                        <div
+                          className={`w-6 h-6 rounded-md flex items-center justify-center ${
+                            isSelected
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                          }`}
+                        >
+                          <Building2 className="h-3.5 w-3.5" />
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-xs leading-snug">
+                          <HighlightMatch text={suggestion.mainText} query={value} />
+                        </p>
+                        {suggestion.secondaryText && (
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight truncate">
+                            {suggestion.secondaryText}
+                          </p>
+                        )}
+                      </div>
+                      {isSelected && (
+                        <div className="shrink-0 mt-1">
+                          <Check className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                        </div>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+
+            {/* Estado vazio amigável quando nada é encontrado */}
+            {!isLoadingSuggestions && suggestions.length === 0 && emptyMessage && (
+              <div className="flex items-start gap-2.5 p-3 text-slate-600 dark:text-slate-400 bg-amber-50/60 dark:bg-amber-950/20 rounded-lg border border-amber-200/60 dark:border-amber-900/40">
+                <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <p className="font-medium text-slate-800 dark:text-slate-200">{emptyMessage}</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                    Dica: informe o nome da rua junto com o bairro, cidade ou digite o CEP com 8
+                    dígitos para preencher os campos.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
+      {/* Botão Buscar: APENAS busca/atualiza sugestões, sem preencher nada direto */}
       {showSearchButton && (
         <Button
           type="button"
           size="sm"
           variant="outline"
-          disabled={isBusy || !value.trim()}
-          onClick={handleManualSearch}
+          disabled={isLoadingSuggestions || isResolvingPlace || !value.trim()}
+          onClick={handleExplicitSearch}
           className={`h-9 px-3 text-xs font-semibold gap-1 whitespace-nowrap bg-white hover:bg-slate-100 dark:bg-slate-800 shrink-0 ${buttonClassName}`}
-          title="Buscar endereço e preencher dados"
+          title="Buscar opções de endereço para escolher"
         >
-          {isBusy ? (
+          {isLoadingSuggestions ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Search className="h-3.5 w-3.5" />
