@@ -1797,7 +1797,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             isGpsActive = true
           }
 
-          const hasBattery = typeof item.battery_level === 'number' && !isNaN(item.battery_level)
+          // No iOS/iPhone e em aparelhos sem Battery API, battery_level reporta 0 ou undefined.
+          // Tratar 0 ou <= 0 como "desconhecida" (hasBattery = false) para não alarmar o operador com bateria 0% falsa.
+          const hasBattery =
+            typeof item.battery_level === 'number' &&
+            !isNaN(item.battery_level) &&
+            item.battery_level > 0
           const batteryVal = Math.round(item.battery_level || 0)
           const batteryColor =
             batteryVal <= 20 ? '#dc2626' : batteryVal <= 50 ? '#d97706' : '#16a34a'

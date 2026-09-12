@@ -206,7 +206,7 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
   let noiseCount = 0
   let discardedNoiseMeters = 0
 
-  // 1. Filtrar coordenadas inválidas (0,0, NaN, accuracy > 100m)
+  // 1. Filtrar coordenadas inválidas (0,0, NaN, accuracy > 100m, ou sem precisão aceitável)
   const initialValid = points.filter((p) => {
     if (typeof p.lat !== 'number' || typeof p.lng !== 'number' || isNaN(p.lat) || isNaN(p.lng)) {
       noiseCount++
@@ -222,6 +222,21 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
       noiseCount++
       return false
     }
+    // Pontos com status offline ou falha de sinal reportando accuracy 0 ou indefinida
+    // (ex.: gps_status='offline' ou gps_reason='weak_signal' ou accuracy <= 0 quando sem sinal)
+    // são coordenadas estimadas/imprecisas do fallback de erro do aparelho e NÃO devem passar
+    // no filtro de qualidade como "precisão perfeita de 0 metros".
+    const isWeakOrOfflineSignal =
+      p.gps_status === 'offline' ||
+      p.gps_reason === 'weak_signal' ||
+      p.gps_reason === 'gps_unavailable'
+    if (
+      isWeakOrOfflineSignal &&
+      (p.accuracy === undefined || p.accuracy === null || p.accuracy <= 0)
+    ) {
+      noiseCount++
+      return false
+    }
     return true
   })
 
@@ -234,64 +249,96 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
     return { validPoints: sorted, noiseCount, discardedNoiseKm: 0 }
   }
 
-  // Identificar ponto inicial que não seja outlier teleporte isolado no começo
-  // Se o primeiro ponto for um teleporte isolado (ex.: Centro do RJ a 23km da base),
-  // e os pontos seguintes estiverem agrupados na base, o primeiro ponto é ruído.
-  const validPoints: LocationRecord[] = [sorted[0]]
+  // Segmentação estrita entre pontos ao vivo (offline_buffered !== true) e pontos do buffer offline (offline_buffered === true).
+  // A sincronização em lote do buffer offline grava pontos com timestamps de inserção muito próximos
+  // intercalados com os pontos ao vivo mais recentes. Para nunca somar deslocamentos fantasmas de ida-e-volta
+  // entre o ponto ao vivo e os pontos do buffer, particionamos a lista em sequências contíguas por flag.
+  type Segment = { isOffline: boolean; points: LocationRecord[] }
+  const segments: Segment[] = []
+  let currentSegment: Segment | null = null
 
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = validPoints[validPoints.length - 1]
-    const curr = sorted[i]
-
-    const tPrev = new Date(prev.created).getTime()
-    const tCurr = new Date(curr.created).getTime()
-    const dtSeconds = Math.max(0.1, (tCurr - tPrev) / 1000)
-
-    const distMeters = haversineDistanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
-
-    // (c) Duplicados (< 10 s e < 5 m) ou coordenadas idênticas consecutivas sem movimento
-    if (distMeters < 5 && (dtSeconds < 10 || distMeters === 0)) {
-      noiseCount++
-      continue
+  for (const pt of sorted) {
+    const isOffline = Boolean(pt.offline_buffered)
+    if (!currentSegment || currentSegment.isOffline !== isOffline) {
+      currentSegment = { isOffline, points: [pt] }
+      segments.push(currentSegment)
+    } else {
+      currentSegment.points.push(pt)
     }
-
-    // (a) Filtro de velocidade implícita do segmento > 120 km/h:
-    // Pular o ponto anômalo SEM somar o km e sem atualizar o ponto anterior com ele.
-    // Acumular o km descartado em discardedNoiseKm.
-    const speedKmh = (distMeters / dtSeconds) * 3.6
-    if (speedKmh > 120) {
-      noiseCount++
-      discardedNoiseMeters += distMeters
-      continue
-    }
-
-    validPoints.push(curr)
   }
 
-  // Verificação de segurança: se o primeiro ponto ficou muito distante dos demais válidos
-  // (caso o primeiro ponto tenha sido um teleporte inicial antes da sequência real)
-  if (validPoints.length >= 3) {
-    const p0 = validPoints[0]
-    const p1 = validPoints[1]
-    const p2 = validPoints[2]
-    const d01 = haversineDistanceMeters(p0.lat, p0.lng, p1.lat, p1.lng)
-    const d12 = haversineDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
-    const t01 = Math.max(
-      0.1,
-      (new Date(p1.created).getTime() - new Date(p0.created).getTime()) / 1000,
-    )
-    const speed01 = (d01 / t01) * 3.6
+  // Filtrar ruído DENTRO de cada segmento contíguo individualmente
+  const cleanedPoints: LocationRecord[] = []
 
-    if (speed01 > 120 || (d01 > 15000 && d12 < 3000)) {
-      // O primeiro ponto era um outlier teleporte inicial isolado
-      validPoints.shift()
-      noiseCount++
-      discardedNoiseMeters += d01
+  for (const segment of segments) {
+    const segPts = segment.points
+    if (segPts.length === 0) continue
+
+    const segValid: LocationRecord[] = [segPts[0]]
+
+    for (let i = 1; i < segPts.length; i++) {
+      const prev = segValid[segValid.length - 1]
+      const curr = segPts[i]
+
+      const tPrev = new Date(prev.created).getTime()
+      const tCurr = new Date(curr.created).getTime()
+      const dtSeconds = Math.max(0.1, (tCurr - tPrev) / 1000)
+
+      const distMeters = haversineDistanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+
+      // (c) Duplicados (< 10 s e < 5 m) ou coordenadas idênticas consecutivas sem movimento
+      if (distMeters < 5 && (dtSeconds < 10 || distMeters === 0)) {
+        noiseCount++
+        continue
+      }
+
+      // Se for segmento offline sincronizado em lote, os timestamps criados são quase idênticos (dt < 1s).
+      // A ordem relativa dos pontos preserva a rota cronológica real de captura do entregador.
+      // Nesse caso (segment.isOffline), validamos apenas saltos anômalos por distância (> 15 km),
+      // enquanto para segmentos ao vivo aplicamos o filtro clássico de velocidade implícita > 120 km/h.
+      if (segment.isOffline) {
+        if (distMeters > 15000) {
+          noiseCount++
+          discardedNoiseMeters += distMeters
+          continue
+        }
+      } else {
+        const speedKmh = (distMeters / dtSeconds) * 3.6
+        if (speedKmh > 120) {
+          noiseCount++
+          discardedNoiseMeters += distMeters
+          continue
+        }
+      }
+
+      segValid.push(curr)
     }
+
+    // Verificação de teleporte inicial dentro do segmento
+    if (segValid.length >= 3 && !segment.isOffline) {
+      const p0 = segValid[0]
+      const p1 = segValid[1]
+      const p2 = segValid[2]
+      const d01 = haversineDistanceMeters(p0.lat, p0.lng, p1.lat, p1.lng)
+      const d12 = haversineDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
+      const t01 = Math.max(
+        0.1,
+        (new Date(p1.created).getTime() - new Date(p0.created).getTime()) / 1000,
+      )
+      const speed01 = (d01 / t01) * 3.6
+
+      if (speed01 > 120 || (d01 > 15000 && d12 < 3000)) {
+        segValid.shift()
+        noiseCount++
+        discardedNoiseMeters += d01
+      }
+    }
+
+    cleanedPoints.push(...segValid)
   }
 
   return {
-    validPoints,
+    validPoints: cleanedPoints,
     noiseCount,
     discardedNoiseKm: Number((discardedNoiseMeters / 1000).toFixed(2)),
   }
@@ -391,9 +438,19 @@ export function calculateRealKmForOrder(params: {
   let rawDeviationMeters = 0
 
   // 6. Percorrer os pontos de GPS consecutivos somando os deslocamentos reais (Haversine)
+  // REGRA CRÍTICA: Tratar o flush do buffer offline como QUEBRA DE SEGMENTO.
+  // Nunca somar distância entre um ponto offline_buffered=true e um ponto offline_buffered=false (nos dois sentidos).
+  // Somar distância apenas DENTRO de cada segmento contíguo (live com live; offline com offline).
   for (let i = 1; i < validPoints.length; i++) {
     const p1 = validPoints[i - 1]
     const p2 = validPoints[i]
+
+    // Quebra de segmento se houver transição live <-> buffer offline
+    const isP1Offline = Boolean(p1.offline_buffered)
+    const isP2Offline = Boolean(p2.offline_buffered)
+    if (isP1Offline !== isP2Offline) {
+      continue
+    }
 
     const stepDist = haversineDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
     if (stepDist <= 0) continue

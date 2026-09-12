@@ -438,7 +438,12 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         gpsBadgeBorder = '#fde68a'
       }
 
-      const hasBattery = typeof item.battery_level === 'number' && !isNaN(item.battery_level)
+      // No iOS/iPhone e em aparelhos sem Battery API, battery_level reporta 0 ou undefined.
+      // Tratar 0 ou <= 0 como "desconhecida" (hasBattery = false) para não alarmar o operador com bateria 0% falsa.
+      const hasBattery =
+        typeof item.battery_level === 'number' &&
+        !isNaN(item.battery_level) &&
+        item.battery_level > 0
       const batteryVal = Math.round(item.battery_level || 0)
       const batteryColor = batteryVal <= 20 ? '#dc2626' : batteryVal <= 50 ? '#d97706' : '#16a34a'
 
@@ -1228,11 +1233,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                                 </span>
                               )
                             })()}
-                            {typeof m.battery_level === 'number' && !isNaN(m.battery_level) && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-200 border-slate-700">
-                                <span>🔋</span> {Math.round(m.battery_level)}%
-                              </span>
-                            )}
+                            {typeof m.battery_level === 'number' &&
+                              !isNaN(m.battery_level) &&
+                              m.battery_level > 0 && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-200 border-slate-700">
+                                  <span>🔋</span> {Math.round(m.battery_level)}%
+                                </span>
+                              )}
                             {m.offline_buffered && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-blue-950/80 text-blue-300 border-blue-500/40 text-[9px]">
                                 🔄 Buffer sincronizado
