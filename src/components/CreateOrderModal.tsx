@@ -62,6 +62,7 @@ import {
   normalizeBrazilianUF,
 } from '@/lib/googleMaps'
 import { BaseAddressAutocomplete, BaseAddressResult } from '@/components/BaseAddressAutocomplete'
+import { CustomerSearchCombobox } from '@/components/CustomerSearchCombobox'
 
 interface CreateOrderModalProps {
   open: boolean
@@ -922,18 +923,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
             {!isAddingCustomer ? (
               <div className="space-y-3">
-                <Select value={customerId} onValueChange={handleSelectExistingCustomer}>
-                  <SelectTrigger className="w-full bg-white dark:bg-slate-800">
-                    <SelectValue placeholder="Selecione um cliente já cadastrado..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name} — {c.phone} ({c.address})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <CustomerSearchCombobox
+                  customers={customers}
+                  selectedCustomerId={customerId}
+                  onSelectCustomer={(c) => handleSelectExistingCustomer(c.id)}
+                  onOpenCreateNewCustomer={() => setIsAddingCustomer(true)}
+                  placeholder="Buscar cliente por nome, CPF, CNPJ ou telefone..."
+                />
 
                 {customerId && (
                   <div className="rounded-lg bg-white p-3 border border-slate-200 text-xs dark:bg-slate-800 dark:border-slate-700 flex items-start justify-between">
