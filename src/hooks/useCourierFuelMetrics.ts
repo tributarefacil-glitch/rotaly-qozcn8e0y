@@ -211,6 +211,21 @@ export function calculateCourierFuelMetrics(params: {
       if (!assignedKey) {
         assignedKey = `batch_${Math.floor(oTime / (10 * 60 * 1000))}`
       }
+    } else if (o.created) {
+      // Se pedidos sem route_started_at foram criados/despachados na mesma janela de 15min
+      const cTime = new Date(o.created).getTime()
+      for (const existingKey of routeBatches.keys()) {
+        if (existingKey.startsWith('batch_created_')) {
+          const batchTime = Number(existingKey.replace('batch_created_', '')) * (15 * 60 * 1000)
+          if (Math.abs(cTime - batchTime) <= 15 * 60 * 1000) {
+            assignedKey = existingKey
+            break
+          }
+        }
+      }
+      if (!assignedKey) {
+        assignedKey = `batch_created_${Math.floor(cTime / (15 * 60 * 1000))}`
+      }
     } else {
       assignedKey = `single_${o.id}`
     }
@@ -286,11 +301,45 @@ export function calculateCourierFuelMetrics(params: {
   >()
 
   const orderCalculations: CourierOrderTelemetryCalculation[] = eligibleOrders.map((order) => {
-    const key = order.route_started_at
-      ? `batch_${Math.floor(new Date(order.route_started_at).getTime() / (10 * 60 * 1000))}`
-      : `single_${order.id}`
+    let key: string
+    if (order.route_started_at) {
+      const oTime = new Date(order.route_started_at).getTime()
+      let matchedKey: string | null = null
+      for (const k of routeBatches.keys()) {
+        if (k.startsWith('batch_')) {
+          const batchTime = Number(k.replace('batch_', '')) * (10 * 60 * 1000)
+          if (Math.abs(oTime - batchTime) <= 15 * 60 * 1000) {
+            matchedKey = k
+            break
+          }
+        }
+      }
+      key = matchedKey || `batch_${Math.floor(oTime / (10 * 60 * 1000))}`
+    } else if (order.created) {
+      const cTime = new Date(order.created).getTime()
+      let matchedKey: string | null = null
+      for (const k of routeBatches.keys()) {
+        if (k.startsWith('batch_created_')) {
+          const batchTime = Number(k.replace('batch_created_', '')) * (15 * 60 * 1000)
+          if (Math.abs(cTime - batchTime) <= 15 * 60 * 1000) {
+            matchedKey = k
+            break
+          }
+        }
+      }
+      key = matchedKey || `batch_created_${Math.floor(cTime / (15 * 60 * 1000))}`
+    } else {
+      key = `single_${order.id}`
+    }
 
-    const batchTelemetry = batchTelemetryMap.get(key)!
+    const batchTelemetry =
+      batchTelemetryMap.get(key) ||
+      calculateRealKmForOrder({
+        order,
+        allCourierLocations: courierLocations,
+        courierEvents,
+        allCourierOrders: [order],
+      })
     const batchOrders = routeBatches.get(key) || [order]
     const batchCount = batchOrders.length
 
@@ -376,21 +425,15 @@ export function calculateCourierFuelMetrics(params: {
     }
   })
 
-  // Os totais consolidados somam diretamente os valores dos lotes de rotas
-  // para garantir exatidão sem erro de arredondamento:
-  // KM Rodado = soma das rotas (saída da base até volta à base)
-  batchTelemetryMap.forEach((batchTelemetry) => {
-    totalOfficialKm += batchTelemetry.officialRealKm
-    totalDeviationKm += batchTelemetry.deviationKm
-    totalOdometerKm += batchTelemetry.totalGpsKm
-  })
-
-  totalOfficialKm = Number(totalOfficialKm.toFixed(1))
-  totalDeviationKm = Number(totalDeviationKm.toFixed(1))
-  totalOdometerKm = Number(totalOdometerKm.toFixed(1))
-
-  totalLiters = !isBicycle && consumptionKml > 0 ? totalOfficialKm / consumptionKml : 0
-  totalSpent = !isBicycle ? totalLiters * pricePerLiter : 0
+  // Regra "linha = cabeçalho":
+  // Os totais consolidados somam diretamente a soma de cada linha calculada (orderCalculations)
+  // garantindo exatidão estrita e paridade 100% entre tabela e cabeçalho:
+  // totalKm = Σ kmRodado e totalFuelCost = Σ fuelCost
+  totalOfficialKm = Number(orderCalculations.reduce((acc, c) => acc + c.officialKm, 0).toFixed(1))
+  totalDeviationKm = Number(orderCalculations.reduce((acc, c) => acc + c.deviationKm, 0).toFixed(1))
+  totalOdometerKm = Number(orderCalculations.reduce((acc, c) => acc + c.totalGpsKm, 0).toFixed(1))
+  totalLiters = Number(orderCalculations.reduce((acc, c) => acc + c.litersSpent, 0).toFixed(2))
+  totalSpent = Number(orderCalculations.reduce((acc, c) => acc + c.fuelCost, 0).toFixed(2))
 
   const balance = totalAdvances - totalSpent
 
@@ -402,6 +445,7 @@ export function calculateCourierFuelMetrics(params: {
     balance: Number(balance.toFixed(2)),
     advanceCount: courierAdvances.length,
     deliveriesCount: eligibleOrders.length,
+    advances: courierAdvances,
   }
 
   return {

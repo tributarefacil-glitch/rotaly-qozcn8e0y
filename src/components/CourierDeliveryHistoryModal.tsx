@@ -165,12 +165,30 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   const consolidatedMetrics = useMemo(() => {
     if (!courier) return null
 
+    const advancesList =
+      fuelAccount?.advances && fuelAccount.advances.length > 0
+        ? fuelAccount.advances
+        : fuelAccount && fuelAccount.totalAdvances > 0
+          ? [
+              {
+                id: `synthetic_adv_${courier.id}`,
+                courier_id: courier.id,
+                amount: fuelAccount.totalAdvances,
+                date: new Date().toISOString(),
+                collectionId: 'fuel_advances',
+                collectionName: 'fuel_advances',
+                created: new Date().toISOString(),
+                updated: new Date().toISOString(),
+              } as any,
+            ]
+          : []
+
     return calculateCourierFuelMetrics({
       courier,
       orders: courierOrders,
       locations: allLocations,
       offRouteEvents,
-      advances: fuelAccount?.advances || [],
+      advances: advancesList,
       settings,
     })
   }, [courier, courierOrders, allLocations, offRouteEvents, fuelAccount, settings])
@@ -343,22 +361,27 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
   // Totais do período filtrado
   const metricsSummary = useMemo(() => {
-    const isFiltered =
-      periodFilter !== 'all' || statusFilter !== 'all' || searchQuery.trim().length > 0
+    // Adiantamentos: obtidos de fuelAccount ou consolidatedMetrics
+    let totalAdiantado = 0
+    if (
+      fuelAccount &&
+      typeof fuelAccount.totalAdvances === 'number' &&
+      fuelAccount.totalAdvances > 0
+    ) {
+      totalAdiantado = fuelAccount.totalAdvances
+    } else if (consolidatedMetrics && consolidatedMetrics.totalAdvances > 0) {
+      totalAdiantado = consolidatedMetrics.totalAdvances
+    } else if (fuelAccount?.advances && fuelAccount.advances.length > 0) {
+      totalAdiantado = fuelAccount.advances.reduce((s, a) => s + (Number(a.amount) || 0), 0)
+    }
 
-    // O adiantamento total da conta do entregador (ou métricas consolidadas)
-    const totalAdiantado = fuelAccount
-      ? fuelAccount.totalAdvances
-      : consolidatedMetrics
-        ? consolidatedMetrics.totalAdvances
-        : 0
-
-    // Garantir coerência matemática estrita: soma exata das linhas visíveis = total do cabeçalho
+    // Regra "linha = cabeçalho": soma exata das linhas da tabela
     const totalKm = filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
     const totalFuelCost = filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
     const totalLiters = filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
+    // Saldo = Total Adiantado - Combustível Gasto
     const saldoContaCorrente = totalAdiantado - totalFuelCost
 
     return {
@@ -371,7 +394,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       totalAdiantado: Number(totalAdiantado.toFixed(2)),
       totalDeliveries: filteredItems.length,
     }
-  }, [filteredItems, fuelAccount, consolidatedMetrics, periodFilter, statusFilter, searchQuery])
+  }, [filteredItems, fuelAccount, consolidatedMetrics])
 
   // Exportar dados em CSV com KM Real e KM de Desvios em colunas separadas
   const handleExportCSV = () => {

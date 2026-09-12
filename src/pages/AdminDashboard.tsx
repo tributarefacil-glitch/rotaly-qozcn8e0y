@@ -795,9 +795,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         settings,
         periodFilter: fuelPeriodFilter,
       })
-      return (
-        metrics.fuelAccount ||
-        deliveryService.getCourierFuelAccount(
+      let acc = metrics.fuelAccount
+      if (!acc) {
+        acc = deliveryService.getCourierFuelAccount(
           courier,
           fuelAdvances,
           orders,
@@ -806,7 +806,19 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
           locations,
           offRouteEvents,
         )
-      )
+      }
+      // Garantir que advances esteja preenchido e fórmula do saldo esteja consistente
+      if (acc) {
+        if (!acc.advances || acc.advances.length === 0) {
+          acc.advances = fuelAdvances.filter((a) => a.courier_id === courier.id)
+        }
+        if (acc.advances.length > 0 && acc.totalAdvances === 0) {
+          acc.totalAdvances = acc.advances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+        }
+        // Fórmula obrigatória: saldo = Total Adiantado - Combustível Gasto
+        acc.balance = Number((acc.totalAdvances - acc.totalSpent).toFixed(2))
+      }
+      return acc
     })
   }, [couriers, fuelAdvances, orders, settings, fuelPeriodFilter, locations, offRouteEvents])
 
@@ -3236,20 +3248,38 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         courier={selectedCourierForHistory}
         fuelAccount={
           selectedCourierForHistory
-            ? currentFuelAccounts.find((a) => a.courier.id === selectedCourierForHistory.id) || {
-                courier: selectedCourierForHistory,
-                totalRouteKm: 0,
-                totalSpent: 0,
-                totalAdvances: fuelAdvances
-                  .filter((a) => a.courier_id === selectedCourierForHistory.id)
-                  .reduce((sum, a) => sum + (Number(a.amount) || 0), 0),
-                balance: 0,
-                advanceCount: fuelAdvances.filter(
+            ? (() => {
+                const existing = currentFuelAccounts.find(
+                  (a) => a.courier.id === selectedCourierForHistory.id,
+                )
+                const courierAdv = fuelAdvances.filter(
                   (a) => a.courier_id === selectedCourierForHistory.id,
-                ).length,
-                deliveriesCount: 0,
-                advances: fuelAdvances.filter((a) => a.courier_id === selectedCourierForHistory.id),
-              }
+                )
+                const totalAdv = courierAdv.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+                if (existing) {
+                  return {
+                    ...existing,
+                    advances: existing.advances?.length ? existing.advances : courierAdv,
+                    totalAdvances: existing.totalAdvances > 0 ? existing.totalAdvances : totalAdv,
+                    balance: Number(
+                      (
+                        (existing.totalAdvances > 0 ? existing.totalAdvances : totalAdv) -
+                        existing.totalSpent
+                      ).toFixed(2),
+                    ),
+                  }
+                }
+                return {
+                  courier: selectedCourierForHistory,
+                  totalRouteKm: 0,
+                  totalSpent: 0,
+                  totalAdvances: totalAdv,
+                  balance: totalAdv,
+                  advanceCount: courierAdv.length,
+                  deliveriesCount: 0,
+                  advances: courierAdv,
+                }
+              })()
             : null
         }
         orders={orders}

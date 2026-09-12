@@ -206,8 +206,7 @@ export function getOrderTimeWindow(
   } else if (finishedAtTimes.length > 0) {
     endTimestamp = Math.max(...finishedAtTimes)
   } else {
-    // Se a rota ainda não tem route_finished_at mas tem entregas concluídas,
-    // verifica se todas as entregas do lote foram concluídas
+    // Se a rota ainda não tem route_finished_at explícito mas tem entregas concluídas
     const allCompleted =
       sameBatchOrders.length > 0 &&
       sameBatchOrders.every(
@@ -216,16 +215,22 @@ export function getOrderTimeWindow(
       )
     if (allCompleted) {
       const arrivals = sameBatchOrders
-        .map((o) =>
-          o.actual_arrival
-            ? new Date(o.actual_arrival).getTime()
-            : new Date(o.updated || o.created).getTime(),
-        )
+        .map((o) => {
+          if (o.actual_arrival) return new Date(o.actual_arrival).getTime()
+          return 0
+        })
         .filter((t) => t > 0)
       const lastArrival = arrivals.length > 0 ? Math.max(...arrivals) : 0
-      // Se tiver chegadas, a rota aguarda o retorno à base ou usa até o último ponto GPS disponível
-      endTimestamp = lastArrival > 0 ? Math.max(lastArrival, Date.now()) : Date.now()
+      if (lastArrival > 0) {
+        // Estimar retorno à base: ~30 a 45 minutos após a última entrega concluída
+        endTimestamp = lastArrival + 45 * 60 * 1000
+      } else {
+        // Se não houver actual_arrival gravado, usar created do lote + 2 horas no máximo
+        const createdT = new Date(order.created || Date.now()).getTime()
+        endTimestamp = createdT + 2 * 60 * 60 * 1000
+      }
     } else {
+      // Se a rota está ativa/em trânsito no dia de hoje
       endTimestamp = Date.now()
     }
   }
@@ -237,6 +242,26 @@ export function getOrderTimeWindow(
 
   if (!endTimestamp) {
     endTimestamp = Date.now()
+  }
+
+  // Trava de segurança viária: se o pedido já foi concluído (delivered / address_error / client_absent),
+  // a janela NUNCA pode ultrapassar 3 horas a partir do início da rota ou da criação do pedido
+  const isFinishedOrder =
+    order.status === 'delivered' ||
+    order.status === 'address_error' ||
+    order.status === 'client_absent' ||
+    order.route_finished === true
+
+  if (isFinishedOrder && endTimestamp - startTimestamp > 3.5 * 60 * 60 * 1000) {
+    // Se ultrapassou 3.5 horas, restringe a janela temporal ao trajeto viário real:
+    // Se tem actual_arrival ou route_finished_at, usa até o fim do trajeto de retorno (+30 min)
+    if (order.route_finished_at) {
+      endTimestamp = new Date(order.route_finished_at).getTime()
+    } else if (order.actual_arrival) {
+      endTimestamp = new Date(order.actual_arrival).getTime() + 30 * 60 * 1000
+    } else {
+      endTimestamp = startTimestamp + 2 * 60 * 60 * 1000
+    }
   }
 
   // Se há múltiplas entregas no mesmo lote e esta função está sendo chamada para rateio por entrega,
@@ -586,14 +611,15 @@ export function calculateRealKmForOrder(params: {
 
   // 8. Conciliação com Odômetro Real e Distância Mínima Viária Planejada:
   // Em trajetos reais urbanos/rodoviários onde a telemetria GPS comprova o percurso
-  // (ex.: Caxias ao Recreio dos Bandeirantes, onde a corda euclidiana GPS deu 30,4 km mas as vias
-  // reais como Linha Vermelha / Transolímpica totalizam ~39 a 40 km no odômetro do veículo):
-  // Se a rota foi concluída ('delivered') e o trajeto viário mínimo planejado for conhecido,
+  // Se a rota foi concluída ('delivered') e o trajeto viário planejado for conhecido,
   // garantimos que o cálculo oficial reflita fielmente o percurso rodado no asfalto com as curvas e acessos.
+  // IMPORTANTE: O fator 1.31x só se aplica quando a distância bruta está dentro da ordem de grandeza viária esperada
+  // (evita inflar se houver captura acidental de pings externos).
   if (order.status === 'delivered') {
-    if (plannedBaseKm > 0 && rawOfficialKm >= plannedBaseKm * 0.85) {
+    const isReasonableDistance = plannedBaseKm > 0 && rawOfficialKm <= plannedBaseKm * 2.5
+    if (plannedBaseKm > 0 && rawOfficialKm >= plannedBaseKm * 0.85 && isReasonableDistance) {
       // Quando a corda GPS reta foi registrada em amostragem esparsa (~30s) e a entrega foi realizada
-      // com sucesso ao cliente, o trajeto real rodado (odômetro) incorpora o traçado viário completo (+31% sobre a corda reta).
+      // com sucesso ao cliente dentro da rota planejada, incorpora o traçado viário completo (+31% sobre a corda reta).
       adjustedOfficialKm = Math.max(adjustedOfficialKm, rawOfficialKm * 1.31)
       if (rawDeviationKm > 0) {
         adjustedDeviationKm = rawDeviationKm * 1.31
@@ -604,7 +630,12 @@ export function calculateRealKmForOrder(params: {
   }
 
   // Garantir proporcionalidade para entregas concluídas com telemetria
-  if (order.status === 'delivered' && adjustedOfficialKm < 1.0 && rawTotalGpsKm >= 1.0) {
+  if (
+    order.status === 'delivered' &&
+    adjustedOfficialKm < 1.0 &&
+    rawTotalGpsKm >= 1.0 &&
+    rawTotalGpsKm < 5.0
+  ) {
     adjustedOfficialKm = rawTotalGpsKm * curvatureFactor * 0.85
     adjustedDeviationKm = rawTotalGpsKm * curvatureFactor * 0.15
   }
