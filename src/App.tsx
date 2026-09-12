@@ -278,6 +278,14 @@ const App = () => (
 
             {/* Protected Seller & Admin Routes */}
             <Route
+              path="/seller"
+              element={
+                <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                  <SellerDashboard defaultTab="overview" />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/control-tower"
               element={
                 <ProtectedRoute allowedRoles={['admin', 'seller']}>
@@ -338,6 +346,14 @@ const App = () => (
               element={
                 <ProtectedRoute allowedRoles={['admin', 'seller']}>
                   <SettingsRoute />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/invoices"
+              element={
+                <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                  <SellerDashboard defaultTab="reports" />
                 </ProtectedRoute>
               }
             />

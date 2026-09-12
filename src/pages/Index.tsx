@@ -47,6 +47,14 @@ export default function Index() {
     }
   }, [navigate])
 
+  // Se o usuário já estiver autenticado e acessar a raiz "/" ou "/login",
+  // redireciona diretamente para o painel correspondente ao seu papel
+  useEffect(() => {
+    if (isAuthenticated && role) {
+      redirectByRoleAndStatus(role)
+    }
+  }, [isAuthenticated, role])
+
   // Selected Profile for the dedicated login view: null means grid of 3 cards
   const [selectedProfile, setSelectedProfile] = useState<SelectedProfile>(null)
 
@@ -136,14 +144,15 @@ export default function Index() {
   const redirectByRoleAndStatus = (userRole: string, status?: string) => {
     if (userRole === 'courier') {
       if (status === 'pending' || status === 'inactive') {
-        navigate('/pending-approval')
+        navigate('/pending-approval', { replace: true })
       } else {
-        navigate('/courier')
+        navigate('/courier', { replace: true })
       }
     } else if (userRole === 'admin') {
-      navigate('/admin')
+      navigate('/admin', { replace: true })
     } else {
-      navigate('/seller')
+      // Perfil seller (lojista / vendedor) ou padrão logado
+      navigate('/seller', { replace: true })
     }
   }
 
