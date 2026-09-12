@@ -221,6 +221,7 @@ export interface CourierFuelAccount {
   balance: number // totalAdvances - totalSpent
   advanceCount: number
   deliveriesCount: number
+  advances?: FuelAdvanceRecord[]
 }
 
 export interface LocationRecord extends RecordModel {

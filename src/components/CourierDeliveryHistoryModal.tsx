@@ -118,7 +118,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     setIsLoadingLocations(true)
     // Buscar locations do entregador com limite suficiente para cobrir o histórico completo
     deliveryService
-      .getLatestLocations(`user_id = '${courier.id}'`, 1500)
+      .getLatestLocations(`user_id = '${courier.id}'`)
       .then((locs) => {
         if (isMounted) {
           setFetchedLocations(locs)
@@ -353,17 +353,22 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     if (!isFiltered && consolidatedMetrics) {
       // Se não há filtro ativo, usar diretamente as métricas consolidadas do período completo
       return {
-        totalKm: consolidatedMetrics.officialKm,
-        totalFuelCost: consolidatedMetrics.totalFuelCost,
-        totalLiters: consolidatedMetrics.litersSpent,
-        totalDeviations: consolidatedMetrics.offRouteCount,
-        totalStops: consolidatedMetrics.unexpectedStopsCount,
-        saldoContaCorrente: consolidatedMetrics.currentBalance,
+        totalKm: consolidatedMetrics.totalOfficialKm,
+        totalFuelCost: consolidatedMetrics.totalSpent,
+        totalLiters: consolidatedMetrics.totalLiters,
+        totalDeviations: consolidatedMetrics.orderCalculations.reduce(
+          (acc, c) => acc + c.offRouteCount,
+          0,
+        ),
+        totalStops: consolidatedMetrics.orderCalculations.reduce(
+          (acc, c) => acc + c.unexpectedStopsCount,
+          0,
+        ),
+        saldoContaCorrente: consolidatedMetrics.balance,
         totalAdiantado: Number(totalAdiantado.toFixed(2)),
         totalDeliveries: consolidatedMetrics.orderCalculations.length,
       }
     }
-
     // Caso o usuário aplique filtros (ex.: por data ou status), somamos os itens rateados proporcionalmente
     const totalKm = filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
     const totalFuelCost = filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)

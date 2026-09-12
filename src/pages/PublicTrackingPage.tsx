@@ -1,37 +1,50 @@
-import React, { useState, useEffect, useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   Truck,
   MapPin,
   Clock,
   CheckCircle2,
   Package,
-  Phone,
   ArrowLeft,
   RefreshCw,
-  ShieldCheck,
   AlertCircle,
   Navigation,
-  Compass,
   Star,
   MessageSquare,
   Check,
-  HeartHandshake,
+  ChevronDown,
+  ChevronUp,
+  Headphones,
+  Share2,
+  Calendar,
+  Home,
+  ThumbsUp,
+  Crosshair,
+  Store,
+  ExternalLink,
+  ShieldCheck,
+  X,
 } from 'lucide-react'
 import { LiveMap, type MapMarkerItem, type RouteGeometryItem } from '@/components/LiveMap'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
 import { fetchStreetRoute, distanceMeters, type LatLngPoint } from '@/services/osrmRoutingService'
 import type { OrderRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
-import { RotalyLogo } from '@/components/RotalyLogo'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog'
 import { toast } from 'sonner'
 
 export default function PublicTrackingPage() {
   const { tracking_code: rawTrackingCode } = useParams<{ tracking_code: string }>()
+  const navigate = useNavigate()
 
   // Extração resiliente do código de rastreamento (suporta useParams e window.location se montado por fallback)
   const resolvedTrackingCode = useMemo(() => {
@@ -65,13 +78,32 @@ export default function PublicTrackingPage() {
   const [estimatedArrivalDate, setEstimatedArrivalDate] = useState<Date | null>(null)
   const [calculatedRouteLines, setCalculatedRouteLines] = useState<RouteGeometryItem[]>([])
 
-  // Review states (REQUISITO 4: Avaliação do entregador e vendedor)
+  // Expansão do "Detalhe do envio"
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false)
+
+  // Modais dos 4 botões inferiores
+  const [isRescheduleModalOpen, setIsRescheduleModalOpen] = useState(false)
+  const [selectedRescheduleOption, setSelectedRescheduleOption] = useState<
+    'today' | 'next_business'
+  >('today')
+  const [rescheduleSavedNote, setRescheduleSavedNote] = useState<string | null>(null)
+
+  const [isRecipientModalOpen, setIsRecipientModalOpen] = useState(false)
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false)
+  const [isSupportModalOpen, setIsSupportModalOpen] = useState(false)
+
+  // Review states (Reutilizando a avaliação existente)
   const [existingReview, setExistingReview] = useState<ReviewRecord | null>(null)
   const [courierRating, setCourierRating] = useState<number>(5)
   const [sellerRating, setSellerRating] = useState<number>(5)
   const [reviewComment, setReviewComment] = useState('')
   const [isSubmittingReview, setIsSubmittingReview] = useState(false)
   const [hasSubmittedReview, setHasSubmittedReview] = useState(false)
+
+  // Referência da instância do mapa para recentralização suave
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const googleMapInstanceRef = useRef<any>(null)
+  const [recenterCount, setRecenterCount] = useState(0)
 
   const loadOrder = async () => {
     if (!resolvedTrackingCode) {
@@ -101,7 +133,7 @@ export default function PublicTrackingPage() {
           const loc = await deliveryService.getLatestLocationForCourier(orderData.courier_id)
           setCourierLocation(loc)
         }
-        // Load existing review if available
+        // Carrega review existente se já houver
         const rev = await deliveryService.getReviewByOrderId(orderData.id)
         if (rev) {
           setExistingReview(rev)
@@ -136,6 +168,7 @@ export default function PublicTrackingPage() {
       setExistingReview(rev)
       setHasSubmittedReview(true)
       toast.success('🎉 Avaliação enviada com sucesso! Muito obrigado pelo seu feedback.')
+      setIsReviewModalOpen(false)
     } catch (err) {
       console.error('Review submit error:', err)
       toast.error('Erro ao registrar avaliação. Tente novamente.')
@@ -163,6 +196,7 @@ export default function PublicTrackingPage() {
 
   const customer = order?.expand?.customer_id
   const courier = order?.expand?.courier_id
+  const seller = order?.expand?.seller_id
 
   // Recalcular ETA viária real sequencial (+ 3 min por parada anterior)
   useEffect(() => {
@@ -280,139 +314,271 @@ export default function PublicTrackingPage() {
     publicRouteData,
   ])
 
-  // Map markers: destination + courier current location
-  const mapMarkers: MapMarkerItem[] = []
+  // Map markers: destination (pin preto do cliente) + courier current location
+  const mapMarkers: MapMarkerItem[] = useMemo(() => {
+    const list: MapMarkerItem[] = []
 
-  if (customer && customer.lat && customer.lng) {
-    mapMarkers.push({
-      id: 'destination',
-      title: `📍 ${customer.name || 'Endereço de Entrega (Destino)'}`,
-      subtitle: customer.address,
-      lat: customer.lat,
-      lng: customer.lng,
-      type: 'order_transit',
-      customer_name: customer.name,
-      customer_address: customer.address,
-      delivery_sequence: order?.sequence,
-      estimated_arrival: estimatedArrivalDate
-        ? estimatedArrivalDate.toISOString()
-        : order?.estimated_arrival,
-      tracking_code: order?.tracking_code,
-    })
+    if (customer && customer.lat && customer.lng) {
+      list.push({
+        id: 'destination',
+        title: `📍 ${customer.name || 'Endereço de Entrega'}`,
+        subtitle: customer.address,
+        lat: customer.lat,
+        lng: customer.lng,
+        type: 'order_transit',
+        customer_name: customer.name,
+        customer_address: customer.address,
+        delivery_sequence: order?.sequence,
+        estimated_arrival: estimatedArrivalDate
+          ? estimatedArrivalDate.toISOString()
+          : order?.estimated_arrival,
+        tracking_code: order?.tracking_code,
+      })
+    }
+
+    if (courierLocation && courierLocation.lat && courierLocation.lng) {
+      const courierSpeed =
+        typeof courierLocation.speed === 'number' && !isNaN(courierLocation.speed)
+          ? Math.max(0, Math.round(courierLocation.speed))
+          : 0
+      list.push({
+        id: `courier-${order?.courier_id || 'live'}`,
+        title: courier?.name || 'Entregador em Rota',
+        subtitle: `Velocidade: ${courierSpeed} km/h`,
+        lat: courierLocation.lat,
+        lng: courierLocation.lng,
+        type: 'courier',
+        courier_name: courier?.name,
+        speed: courierSpeed,
+        vehicle_type: courier?.vehicle_type,
+        location_timestamp: courierLocation.created,
+        battery_level: (courierLocation as any).battery_level,
+      })
+    }
+
+    return list
+  }, [customer, courierLocation, order, courier, estimatedArrivalDate])
+
+  // Centro inicial do mapa (prioriza entregador, depois cliente, depois fallback)
+  const mapCenter = useMemo(() => {
+    if (courierLocation?.lat && courierLocation?.lng) {
+      return { lat: courierLocation.lat, lng: courierLocation.lng }
+    }
+    if (customer?.lat && customer?.lng) {
+      return { lat: customer.lat, lng: customer.lng }
+    }
+    return { lat: -22.906847, lng: -43.172896 }
+  }, [courierLocation?.lat, courierLocation?.lng, customer?.lat, customer?.lng, recenterCount])
+
+  // Função para recentralizar o mapa no entregador ou cliente
+  const handleRecenter = () => {
+    const target =
+      courierLocation?.lat && courierLocation?.lng
+        ? { lat: courierLocation.lat, lng: courierLocation.lng }
+        : customer?.lat && customer?.lng
+          ? { lat: customer.lat, lng: customer.lng }
+          : null
+
+    if (target && googleMapInstanceRef.current) {
+      googleMapInstanceRef.current.panTo(target)
+      googleMapInstanceRef.current.setZoom(15)
+    }
+    setRecenterCount((c) => c + 1)
+    toast.info('Mapa centralizado na localização atual')
   }
 
-  if (courierLocation && courierLocation.lat && courierLocation.lng) {
-    const courierSpeed =
-      typeof courierLocation.speed === 'number' && !isNaN(courierLocation.speed)
-        ? Math.max(0, Math.round(courierLocation.speed))
-        : 0
-    mapMarkers.push({
-      id: `courier-${order?.courier_id || 'live'}`,
-      title: `${courier?.name || 'Entregador em Rota'}`,
-      subtitle: `Velocidade: ${courierSpeed} km/h`,
-      lat: courierLocation.lat,
-      lng: courierLocation.lng,
-      type: 'courier',
-      courier_name: courier?.name,
-      speed: courierSpeed,
-      vehicle_type: courier?.vehicle_type,
-      location_timestamp: courierLocation.created,
-      battery_level: (courierLocation as any).battery_level,
-    })
-  }
-  // Previsão textual formatada
-  const getEtaString = () => {
-    if (order?.status === 'delivered') return 'Entregue com sucesso'
-    if (order?.status === 'cancelled') return 'Pedido Cancelado'
+  // Compartilhamento nativo com fallback para cópia
+  const handleShare = async () => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const trackUrl = `${origin}/track/${resolvedTrackingCode}`
+    const shareText = `Acompanhe minha entrega em tempo real pelo Rotaly: ${trackUrl}`
 
-    if (realEtaMinutes !== null) {
-      const stopsCount = publicRouteData?.total_stops_before || 0
-      const stopsText =
-        stopsCount > 0
-          ? ` (${stopsCount} ${stopsCount === 1 ? 'parada antes' : 'paradas antes'})`
-          : ''
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Rastreio do Pedido ${resolvedTrackingCode}`,
+          text: shareText,
+          url: trackUrl,
+        })
+        return
+      } catch (e) {
+        // Ignora cancelamento pelo usuário
+      }
+    }
+
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(trackUrl)
+      toast.success('Link de rastreio copiado!')
+    } else {
+      toast.info(`Link: ${trackUrl}`)
+    }
+  }
+
+  // Confirmar preferência de recebimento
+  const handleConfirmReschedule = () => {
+    const note =
+      selectedRescheduleOption === 'today'
+        ? 'Cliente confirmou que pode receber hoje até as 23h.'
+        : 'Cliente solicitou receber no próximo dia útil (segunda-feira).'
+    setRescheduleSavedNote(note)
+    setIsRescheduleModalOpen(false)
+    toast.success('Preferência registrada! A loja será avisada.')
+  }
+
+  // Determinar status amigável, título e subtítulo com base no print
+  const statusInfo = useMemo(() => {
+    if (!order) {
+      return {
+        type: 'pending' as const,
+        chipLabel: 'Aguardando',
+        chipClass: 'text-slate-600 bg-slate-100',
+        dotColor: 'bg-slate-400',
+        title: 'Preparando seu pedido',
+        subtitle: 'Aguardando despacho pela loja.',
+        stepperProgress: 0,
+        isDelayed: false,
+      }
+    }
+
+    if (order.status === 'delivered') {
+      const deliveredTime = order.actual_arrival
+        ? new Date(order.actual_arrival).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : new Date(order.updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      return {
+        type: 'delivered' as const,
+        chipLabel: 'Entregue',
+        chipClass: 'text-emerald-700 bg-emerald-50 border border-emerald-200',
+        dotColor: 'bg-emerald-500',
+        title: `Entregue hoje às ${deliveredTime}`,
+        subtitle: 'Obrigado pela preferência! Sua encomenda foi concluída.',
+        stepperProgress: 2, // Fim da linha do tempo
+        isDelayed: false,
+      }
+    }
+
+    if (order.status === 'cancelled') {
+      return {
+        type: 'cancelled' as const,
+        chipLabel: 'Cancelado',
+        chipClass: 'text-rose-700 bg-rose-50 border border-rose-200',
+        dotColor: 'bg-rose-500',
+        title: 'Pedido cancelado',
+        subtitle: order.notes || 'Entre em contato com a loja para mais informações.',
+        stepperProgress: 0,
+        isDelayed: false,
+      }
+    }
+
+    // Se a previsão original já passou (Atrasado - espelhando o print de referência)
+    const isPastOriginalEstimate =
+      order.estimated_arrival && new Date(order.estimated_arrival).getTime() < Date.now()
+
+    if (isPastOriginalEstimate) {
+      return {
+        type: 'delayed' as const,
+        chipLabel: 'Atrasado',
+        chipClass: 'text-[#E5531E] bg-orange-50 border border-orange-200/80',
+        dotColor: 'bg-[#FF6B35]',
+        title: 'Chegará hoje antes das 23 h.\nDesculpe pelo atraso',
+        subtitle: 'Sua compra ainda está a caminho. Se quiser, você pode receber na segunda-feira.',
+        stepperProgress: 1, // No meio da linha do tempo com o caminhão
+        isDelayed: true,
+      }
+    }
+
+    // Em trânsito normal dentro do prazo
+    if (order.status === 'in_transit') {
       const timeStr = estimatedArrivalDate
         ? estimatedArrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : null
 
-      if (timeStr) {
-        return `~${timeStr} (faltam ~${realEtaMinutes} min${stopsText})`
+      const title = timeStr
+        ? `Seu pedido chega por volta das ${timeStr}`
+        : 'Seu pedido está a caminho'
+
+      const subtitle =
+        realDistanceKm !== null && realEtaMinutes !== null
+          ? `Seu entregador está a ${realDistanceKm} km — chega em ~${realEtaMinutes} min`
+          : 'Sua compra está em rota com rastreamento ativo em tempo real.'
+
+      return {
+        type: 'in_transit' as const,
+        chipLabel: 'A caminho',
+        chipClass: 'text-sky-700 bg-sky-50 border border-sky-200/80',
+        dotColor: 'bg-sky-500',
+        title,
+        subtitle,
+        stepperProgress: 1,
+        isDelayed: false,
       }
-      return `~${realEtaMinutes} minutos${stopsText}`
     }
 
-    if (order?.status === 'pending') return 'Aguardando despacho'
-    return 'Calculando previsão viária...'
-  }
+    // Confirmado / Pendente
+    return {
+      type: 'confirmed' as const,
+      chipLabel: 'Confirmado',
+      chipClass: 'text-slate-700 bg-slate-100 border border-slate-200',
+      dotColor: 'bg-slate-400',
+      title: 'Seu pedido foi confirmado',
+      subtitle: 'A loja está separando os produtos para envio.',
+      stepperProgress: 0,
+      isDelayed: false,
+    }
+  }, [order, estimatedArrivalDate, realDistanceKm, realEtaMinutes])
+
+  // Formatar endereço parcial (Rua + Bairro)
+  const formattedAddress = useMemo(() => {
+    if (!customer?.address) return 'Endereço cadastrado'
+    const parts = customer.address.split(',')
+    if (parts.length >= 2) {
+      return `${parts[0].trim()}, ${parts[1].trim()}`
+    }
+    return customer.address
+  }, [customer?.address])
 
   return (
-    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-between font-sans">
-      {/* Public Header */}
-      <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between bg-[#0A1128] border-b border-[#1E2B58] text-white px-4 shadow-brand-dark sm:px-6">
-        <Link to="/" className="flex items-center hover:opacity-95">
-          <RotalyLogo size="md" theme="dark" showTagline={false} />
-        </Link>
-
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={loadOrder}
-            className="text-xs text-white/80 hover:text-white hover:bg-white/10 rounded-input"
-          >
-            <RefreshCw className="h-3.5 w-3.5 mr-1 text-white" />
-            Atualizar
-          </Button>
-          <Link to="/">
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-xs border-white/20 bg-white/10 text-white hover:bg-white/20 rounded-input"
-            >
-              <ArrowLeft className="h-3.5 w-3.5 mr-1" />
-              Início / Login
-            </Button>
-          </Link>
-        </div>
-      </header>
-
-      {/* Tracking Content */}
-      <main className="flex-1 max-w-4xl mx-auto w-full p-4 sm:p-6 space-y-6">
+    <div className="min-h-screen bg-[#F0F2F5] text-slate-800 flex flex-col justify-center items-center font-sans">
+      {/* Container responsivo: Mobile tela cheia, Desktop cartão estilo smartphone max-w-[440px] */}
+      <div className="w-full max-w-[440px] min-h-screen sm:min-h-[844px] sm:my-6 sm:rounded-[36px] bg-white sm:shadow-2xl overflow-hidden flex flex-col relative sm:border sm:border-slate-200/80">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-20 space-y-3">
-            <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-            <p className="text-sm text-slate-400">Localizando encomenda e telemetria...</p>
+          <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4">
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-sky-500 border-t-transparent" />
+            <p className="text-sm font-medium text-slate-500">Localizando entrega...</p>
           </div>
         ) : errorMsg || !order ? (
-          <div className="rounded-2xl border border-slate-700/60 bg-[#0E1738] p-8 text-center space-y-5 max-w-md mx-auto shadow-brand-dark">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+          /* Card de erro/não encontrado mantendo fallback limpo */
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-5">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 border border-amber-200 text-amber-600">
               <AlertCircle className="h-8 w-8" />
             </div>
             <div className="space-y-2">
-              <h2 className="text-xl font-bold font-heading text-white">
+              <h2 className="text-xl font-bold font-heading text-slate-900">
                 Rastreamento Não Encontrado
               </h2>
-              <p className="text-xs text-slate-300 leading-relaxed">
+              <p className="text-xs text-slate-600 leading-relaxed max-w-xs mx-auto">
                 {errorMsg || 'Não foi possível encontrar as informações deste pedido.'}
               </p>
               {resolvedTrackingCode && (
-                <div className="inline-block mt-2 px-3 py-1 rounded-md bg-slate-900/80 border border-slate-700 font-mono text-xs text-blue-400">
+                <div className="inline-block mt-2 px-3 py-1 rounded-md bg-slate-100 border border-slate-200 font-mono text-xs text-slate-700">
                   Código: {resolvedTrackingCode}
                 </div>
               )}
             </div>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <div className="flex flex-col w-full max-w-xs gap-2 pt-2">
               <Button
                 onClick={loadOrder}
-                className="w-full sm:w-auto bg-[#0052CC] hover:bg-blue-600 text-white text-xs font-bold h-9 px-4 rounded-input flex items-center justify-center gap-1.5"
+                className="w-full bg-[#0052CC] hover:bg-blue-600 text-white text-xs font-bold h-10 rounded-xl flex items-center justify-center gap-1.5 shadow-sm"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 Tentar novamente
               </Button>
-              <Link to="/" className="w-full sm:w-auto">
+              <Link to="/">
                 <Button
                   variant="outline"
-                  className="w-full sm:w-auto border-white/20 bg-white/10 text-white hover:bg-white/20 text-xs font-bold h-9 px-4 rounded-input"
+                  className="w-full text-xs font-semibold h-10 rounded-xl border-slate-200 text-slate-700 hover:bg-slate-50"
                 >
                   Ir para Início
                 </Button>
@@ -420,366 +586,629 @@ export default function PublicTrackingPage() {
             </div>
           </div>
         ) : (
-          <div className="space-y-6">
-            {/* Status Summary Banner */}
-            <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-6 shadow-brand-dark relative overflow-hidden text-white">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-bold text-[#60A5FA]">
-                      {order.tracking_code}
-                    </span>
-                    <Badge
-                      className={`text-xs font-bold ${
-                        order.status === 'delivered'
-                          ? 'bg-[#22C55E] text-slate-950'
-                          : order.status === 'in_transit'
-                            ? 'bg-[#FF6B35] text-white animate-pulse'
-                            : 'bg-[#0052CC] text-white'
-                      }`}
-                    >
-                      {order.status === 'delivered'
-                        ? 'ENTREGUE'
-                        : order.status === 'in_transit'
-                          ? 'EM TRÂNSITO'
-                          : 'PEDIDO CONFIRMADO'}
-                    </Badge>
-                  </div>
-                  <h1 className="font-heading text-2xl font-black text-white mt-1">
-                    {order.status === 'delivered'
-                      ? 'Sua encomenda foi entregue!'
-                      : order.status === 'in_transit'
-                        ? 'O entregador está a caminho do seu endereço.'
-                        : 'Seu pedido está sendo preparado para envio.'}
-                  </h1>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-sans text-xs text-slate-300 mt-2">
-                    <div className="flex items-center gap-1.5 bg-blue-950/60 border border-blue-500/30 px-2.5 py-1 rounded-lg">
-                      <Clock className="h-3.5 w-3.5 text-blue-400" />
-                      <span>Previsão de Chegada:</span>
-                      <span className="font-bold text-[#60A5FA]">{getEtaString()}</span>
-                    </div>
-
-                    {realDistanceKm !== null &&
-                      realDistanceKm > 0 &&
-                      order.status !== 'delivered' && (
-                        <div className="flex items-center gap-1.5 bg-slate-900/80 border border-slate-700/60 px-2.5 py-1 rounded-lg text-slate-300">
-                          <Navigation className="h-3.5 w-3.5 text-[#FF6B35]" />
-                          <span>Distância viária:</span>
-                          <strong className="text-white">{realDistanceKm} km</strong>
-                        </div>
-                      )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 self-start sm:self-center p-3 rounded-xl bg-[#0A1128] border border-[#1E2B58] shadow-sm">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0052CC]/30 text-[#60A5FA] border border-[#60A5FA]/30">
-                    <Truck className="h-5 w-5 text-[#FF6B35]" />
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-slate-400 font-sans">Entregador Responsável</p>
-                    <p className="text-xs font-bold text-white font-heading">
-                      {courier?.name || 'Equipe de Logística Rotaly'}
-                    </p>
-                    {courierLocation?.speed && (
-                      <p className="text-[10px] text-purple-400 font-semibold flex items-center gap-1 mt-0.5">
-                        <span>🚀</span> {Math.round(courierLocation.speed)} km/h em trânsito
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* VERTICAL / HORIZONTAL STEPPER TIMELINE */}
-              <div className="mt-8 pt-6 border-t border-[#1E2B58] grid grid-cols-3 gap-2 relative">
-                {/* Step 1 */}
-                <div className="flex flex-col items-center text-center space-y-1.5 font-sans">
-                  <div
-                    className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${
-                      order.status === 'pending' ||
-                      order.status === 'in_transit' ||
-                      order.status === 'delivered'
-                        ? 'bg-[#0052CC] text-white shadow-sm border border-blue-400/40'
-                        : 'bg-[#0A1128] text-slate-500 border border-[#1E2B58]'
-                    }`}
-                  >
-                    <Package className="h-4 w-4" />
-                  </div>
-                  <p className="text-xs font-bold text-white font-heading">1. Confirmado</p>
-                  <p className="text-[10px] text-slate-400">Pedido registrado</p>
-                </div>
-
-                {/* Step 2 */}
-                <div className="flex flex-col items-center text-center space-y-1.5 font-sans">
-                  <div
-                    className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${
-                      order.status === 'in_transit' || order.status === 'delivered'
-                        ? 'bg-[#FF6B35] text-white shadow-sm border border-orange-400/40'
-                        : 'bg-[#0A1128] text-slate-500 border border-[#1E2B58]'
-                    }`}
-                  >
-                    <Truck className="h-4 w-4" />
-                  </div>
-                  <p className="text-xs font-bold text-white font-heading">2. Em Rota</p>
-                  <p className="text-[10px] text-slate-400">Despachado com GPS</p>
-                </div>
-
-                {/* Step 3 */}
-                <div className="flex flex-col items-center text-center space-y-1.5 font-sans">
-                  <div
-                    className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${
-                      order.status === 'delivered'
-                        ? 'bg-[#22C55E] text-slate-950 shadow-sm border border-emerald-400/40'
-                        : 'bg-[#0A1128] text-slate-500 border border-[#1E2B58]'
-                    }`}
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                  </div>
-                  <p className="text-xs font-bold text-white font-heading">3. Entregue</p>
-                  <p className="text-[10px] text-slate-400">Comprovante OK</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Interactive Live Map (Courier position vs Destination) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Compass className="h-4 w-4 text-blue-400" />
-                  Mapa de Rastreamento em Tempo Real
-                </h3>
-                <span className="text-[11px] text-emerald-400 flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping"></span>
-                  Sinal GPS ativo
-                </span>
-              </div>
-
+          <div className="flex-1 flex flex-col relative pb-20">
+            {/* 1. MAPA NO TOPO (~55% da altura) com botões flutuantes */}
+            <div className="relative w-full h-[360px] sm:h-[400px] shrink-0 bg-[#e5e3df]">
               <LiveMap
                 markers={mapMarkers}
                 routeLines={calculatedRouteLines}
-                center={
-                  courierLocation?.lat && courierLocation?.lng
-                    ? { lat: courierLocation.lat, lng: courierLocation.lng }
-                    : customer?.lat && customer?.lng
-                      ? { lat: customer.lat, lng: customer.lng }
-                      : { lat: -22.906847, lng: -43.172896 }
-                }
+                center={mapCenter}
                 zoom={14}
-                height="420px"
+                height="100%"
+                showAccuracyCircle={true}
+                accuracyRadiusMeters={85}
+                onMapReady={(inst) => {
+                  googleMapInstanceRef.current = inst
+                }}
               />
-            </div>
 
-            {/* Delivery Destination & Package Details */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 space-y-2 text-xs shadow-brand-dark">
-                <div className="flex items-center justify-between">
-                  <span className="font-heading font-bold text-slate-400 uppercase tracking-wider text-[10px]">
-                    Local de Entrega
-                  </span>
-                  {typeof order.sequence === 'number' && order.sequence > 0 && (
-                    <Badge className="bg-orange-500/20 text-[#FF6B35] border border-orange-500/30 text-[10px] font-bold">
-                      Parada #{order.sequence} da Rota
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-sm font-semibold text-white">{customer?.name || 'Cliente'}</p>
-                <p className="text-slate-300">{customer?.address}</p>
-                {order.notes && (
-                  <p className="text-[#FF6B35] text-[11px] pt-1">Nota: {order.notes}</p>
-                )}
-                {publicRouteData &&
-                  publicRouteData.total_stops_before > 0 &&
-                  order.status !== 'delivered' && (
-                    <div className="mt-2 pt-2 border-t border-[#1E2B58] text-[11px] text-amber-300/90 flex items-center gap-1.5">
-                      <span>ℹ️</span>
-                      <span>
-                        Há{' '}
-                        <strong>
-                          {publicRouteData.total_stops_before}{' '}
-                          {publicRouteData.total_stops_before === 1
-                            ? 'entrega anterior'
-                            : 'entregas anteriores'}
-                        </strong>{' '}
-                        nesta rota (+3 min por parada já inclusos na previsão).
-                      </span>
-                    </div>
-                  )}
+              {/* Botão flutuante Voltar (‹) superior esquerdo */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.history.length > 1) {
+                    navigate(-1)
+                  } else {
+                    navigate('/')
+                  }
+                }}
+                className="absolute top-4 left-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-slate-800 shadow-md backdrop-blur border border-slate-200/80 hover:bg-white active:scale-95 transition"
+                aria-label="Voltar"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+
+              {/* Botões flutuantes superiores direitos: Suporte 🎧 e Compartilhar 🔗 */}
+              <div className="absolute top-4 right-4 z-20 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSupportModalOpen(true)}
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-slate-800 shadow-md backdrop-blur border border-slate-200/80 hover:bg-white active:scale-95 transition"
+                  aria-label="Suporte e ajuda"
+                  title="Falar com o suporte"
+                >
+                  <Headphones className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-slate-800 shadow-md backdrop-blur border border-slate-200/80 hover:bg-white active:scale-95 transition"
+                  aria-label="Compartilhar rastreio"
+                  title="Compartilhar"
+                >
+                  <Share2 className="h-4 w-4" />
+                </button>
               </div>
 
-              <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 space-y-2 text-xs shadow-brand-dark">
-                <span className="font-heading font-bold text-slate-400 uppercase tracking-wider text-[10px]">
-                  Resumo do Pedido
+              {/* Botão flutuante inferior direito: Recentralizar (crosshair) */}
+              <button
+                type="button"
+                onClick={handleRecenter}
+                className="absolute bottom-6 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-slate-800 shadow-md backdrop-blur border border-slate-200/80 hover:bg-white active:scale-95 transition"
+                aria-label="Recentralizar mapa"
+                title="Recentralizar no entregador"
+              >
+                <Crosshair className="h-4 w-4 text-slate-600" />
+              </button>
+            </div>
+
+            {/* 2. CARD DE STATUS SOBREPOSTO / INFERIOR (Branco, cantos arredondados, preenche o conteúdo) */}
+            <div className="relative -mt-4 bg-white rounded-t-[28px] shadow-[0_-8px_30px_rgba(0,0,0,0.08)] px-5 pt-4 pb-6 space-y-4 z-10 border-t border-slate-100 flex-1">
+              {/* Linha de pegada / indicador sutil */}
+              <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto -mt-1 mb-2" />
+
+              {/* Chip de Status colorido com bolinha (ex: 🟠 Atrasado) */}
+              <div className="flex items-center">
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusInfo.chipClass}`}
+                >
+                  <span className={`h-2 w-2 rounded-full ${statusInfo.dotColor}`} />
+                  {statusInfo.chipLabel}
                 </span>
-                <p className="text-slate-300">
-                  Data: {new Date(order.created).toLocaleDateString('pt-BR')} às{' '}
-                  {new Date(order.created).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </p>
-                <p className="text-sm font-bold text-[#22C55E] font-heading">
-                  Valor Total: R$ {Number(order.total_price || 0).toFixed(2)}
-                </p>
-                {realEtaMinutes !== null && order.status !== 'delivered' && (
-                  <p className="text-xs text-sky-400 pt-1 font-sans">
-                    ⏱️ Estimativa viária real: <strong>~{realEtaMinutes} min</strong> para chegada
-                  </p>
-                )}
               </div>
-            </div>
-            {/* REQUISITO 4: SEÇÃO DE AVALIAÇÃO DO CLIENTE (Entregador & Vendedor) */}
-            {order.status === 'delivered' && (
-              <div className="rounded-card border border-orange-200 bg-orange-50/40 p-6 shadow-brand space-y-5">
-                <div className="flex items-center gap-3 border-b border-orange-100 pb-4">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#FF6B35] text-white shadow-brand">
-                    <HeartHandshake className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <h3 className="font-heading text-base font-bold text-[#1a1a1a] flex items-center gap-2">
-                      Avalie sua Experiência de Entrega Rotaly
-                      <Badge className="bg-orange-100 text-[#FF6B35] border-orange-200 text-[10px] font-bold">
-                        Feedback do Cliente
-                      </Badge>
-                    </h3>
-                    <p className="font-sans text-xs text-slate-600">
-                      Sua opinião nos ajuda a melhorar a agilidade e atendimento da nossa equipe.
-                    </p>
-                  </div>
-                </div>
 
-                {hasSubmittedReview || existingReview ? (
-                  <div className="p-4 rounded-card bg-emerald-50 border border-emerald-200 text-[#00AA44] text-xs space-y-2 text-center">
-                    <div className="flex justify-center">
-                      <div className="h-10 w-10 rounded-full bg-[#00AA44] text-white flex items-center justify-center font-bold">
-                        <Check className="h-6 w-6" />
+              {/* Título grande em linguagem natural */}
+              <div>
+                <h1 className="text-[20px] font-bold text-slate-900 leading-tight whitespace-pre-line font-heading">
+                  {statusInfo.title}
+                </h1>
+                <p className="text-xs text-slate-600 mt-1.5 leading-relaxed font-sans">
+                  {statusInfo.subtitle}
+                </p>
+              </div>
+
+              {/* Nota de reagendamento / preferência salva caso exista */}
+              {rescheduleSavedNote && (
+                <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-900 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
+                  <span>{rescheduleSavedNote}</span>
+                </div>
+              )}
+
+              {/* Linha do tempo horizontal (stepper): bolinha → linha → caminhão → linha → círculo */}
+              <div className="pt-2 pb-1">
+                <div className="relative flex items-center justify-between px-3">
+                  {/* Linha base de fundo */}
+                  <div className="absolute left-6 right-6 top-1/2 -translate-y-1/2 h-[3px] bg-slate-200" />
+
+                  {/* Linha preenchida até o estágio ativo */}
+                  <div
+                    className="absolute left-6 top-1/2 -translate-y-1/2 h-[3px] bg-slate-900 transition-all duration-500"
+                    style={{
+                      width:
+                        statusInfo.stepperProgress === 0
+                          ? '0%'
+                          : statusInfo.stepperProgress === 1
+                            ? '50%'
+                            : 'calc(100% - 24px)',
+                    }}
+                  />
+
+                  {/* 1. Bolinha Confirmado */}
+                  <div className="relative z-10 flex flex-col items-center">
+                    <div
+                      className={`h-3 w-3 rounded-full border-2 border-white shadow-sm ${
+                        statusInfo.stepperProgress >= 0
+                          ? 'bg-slate-900 ring-2 ring-slate-900/20'
+                          : 'bg-slate-300'
+                      }`}
+                    />
+                  </div>
+
+                  {/* 2. Estágio intermediário: Caminhão no círculo escuro */}
+                  <div className="relative z-10 flex flex-col items-center">
+                    {statusInfo.stepperProgress >= 1 ? (
+                      <div className="h-8 w-8 rounded-full bg-slate-950 text-white flex items-center justify-center shadow-md ring-4 ring-white">
+                        <Truck className="h-4 w-4" />
                       </div>
-                    </div>
-                    <h4 className="font-heading font-bold text-sm text-[#1a1a1a]">
-                      Avaliação Registrada!
-                    </h4>
-                    <p className="text-slate-700 font-sans">
-                      Você avaliou o entregador com{' '}
-                      <strong>{existingReview?.courier_rating || courierRating} estrelas</strong> e
-                      o vendedor/atendimento com{' '}
-                      <strong>{existingReview?.seller_rating || sellerRating} estrelas</strong>.
-                    </p>
-                    {existingReview?.comment && (
-                      <p className="italic text-slate-500 text-[11px] pt-1 font-sans">
-                        &ldquo;{existingReview.comment}&rdquo;
-                      </p>
+                    ) : (
+                      <div className="h-3 w-3 rounded-full bg-slate-300 border-2 border-white" />
                     )}
                   </div>
-                ) : (
-                  <form onSubmit={handleSubmitReview} className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {/* Avaliação do Entregador */}
-                      <div className="p-4 rounded-card bg-white border border-slate-200 space-y-2 shadow-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="font-heading text-xs font-bold text-[#1a1a1a] flex items-center gap-1.5">
-                            <Truck className="h-4 w-4 text-[#FF6B35]" />
-                            Avaliar Entregador
-                          </span>
-                          <span className="text-xs font-bold text-[#FF6B35]">
-                            {courierRating} / 5
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 font-sans">
-                          {courier?.name
-                            ? `Como foi o atendimento de ${courier.name}?`
-                            : 'Pontualidade e cuidado com a entrega'}
-                        </p>
-                        <div className="flex items-center gap-2 pt-1">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <button
-                              key={star}
-                              type="button"
-                              onClick={() => setCourierRating(star)}
-                              className="focus:outline-none transition-transform hover:scale-125"
-                            >
-                              <Star
-                                className={`h-7 w-7 ${
-                                  star <= courierRating
-                                    ? 'fill-amber-400 text-amber-400'
-                                    : 'text-slate-300'
-                                }`}
-                              />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
 
-                      {/* Avaliação do Vendedor / Loja */}
-                      <div className="p-4 rounded-card bg-white border border-slate-200 space-y-2 shadow-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="font-heading text-xs font-bold text-[#1a1a1a] flex items-center gap-1.5">
-                            <Package className="h-4 w-4 text-[#0052CC]" />
-                            Avaliar Vendedor & Loja
-                          </span>
-                          <span className="text-xs font-bold text-[#0052CC]">
-                            {sellerRating} / 5
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 font-sans">
-                          {order.expand?.seller_id?.name
-                            ? `Como foi a experiência com ${order.expand.seller_id.name}?`
-                            : 'Agilidade de despacho e qualidade do produto'}
+                  {/* 3. Círculo vazio de destino / Check se entregue */}
+                  <div className="relative z-10 flex flex-col items-center">
+                    {statusInfo.stepperProgress === 2 ? (
+                      <div className="h-8 w-8 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-md ring-4 ring-white">
+                        <Check className="h-4 w-4 stroke-[3]" />
+                      </div>
+                    ) : (
+                      <div className="h-3 w-3 rounded-full border-2 border-slate-300 bg-white" />
+                    )}
+                  </div>
+                </div>
+
+                {/* Legendas curtas do stepper */}
+                <div className="flex justify-between text-[11px] font-medium text-slate-500 pt-2 px-1">
+                  <span>Confirmado</span>
+                  <span
+                    className={statusInfo.stepperProgress === 1 ? 'font-bold text-slate-900' : ''}
+                  >
+                    Saiu para entrega
+                  </span>
+                  <span
+                    className={statusInfo.stepperProgress === 2 ? 'font-bold text-emerald-700' : ''}
+                  >
+                    Entregue
+                  </span>
+                </div>
+              </div>
+
+              {/* "Detalhe do envio ⌄" em azul, expansível */}
+              <div className="pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsDetailsOpen((prev) => !prev)}
+                  className="flex items-center gap-1 text-xs font-semibold text-[#0052CC] hover:text-blue-700 active:underline py-1"
+                >
+                  <span>Detalhe do envio</span>
+                  {isDetailsOpen ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                </button>
+
+                {isDetailsOpen && (
+                  <div className="mt-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3 text-xs animate-in fade-in-50 duration-200">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+                      <span className="text-slate-500 font-medium">Código de rastreio</span>
+                      <span className="font-mono font-bold text-slate-900">
+                        {order.tracking_code}
+                      </span>
+                    </div>
+
+                    <div className="flex items-start justify-between pb-2 border-b border-slate-200/60">
+                      <span className="text-slate-500 font-medium">Destinatário</span>
+                      <div className="text-right">
+                        <p className="font-semibold text-slate-900">
+                          {customer?.name || 'Cliente'}
                         </p>
-                        <div className="flex items-center gap-2 pt-1">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <button
-                              key={star}
-                              type="button"
-                              onClick={() => setSellerRating(star)}
-                              className="focus:outline-none transition-transform hover:scale-125"
-                            >
-                              <Star
-                                className={`h-7 w-7 ${
-                                  star <= sellerRating
-                                    ? 'fill-amber-400 text-amber-400'
-                                    : 'text-slate-300'
-                                }`}
-                              />
-                            </button>
-                          ))}
-                        </div>
+                        <p className="text-[11px] text-slate-600 max-w-[200px]">
+                          {formattedAddress}
+                        </p>
                       </div>
                     </div>
 
-                    {/* Comentário Opcional */}
-                    <div className="space-y-1.5 font-sans">
-                      <label className="text-xs font-semibold text-slate-700 flex items-center gap-1 font-heading">
-                        <MessageSquare className="h-3.5 w-3.5 text-[#0052CC]" />
-                        Deixe um elogio ou observação (opcional)
-                      </label>
-                      <Textarea
-                        value={reviewComment}
-                        onChange={(e) => setReviewComment(e.target.value)}
-                        placeholder="Ex: Entrega super rápida, entregador muito educado e atencioso!"
-                        className="bg-[#F5F5F5] border-slate-200 text-xs text-[#1a1a1a] focus:bg-white resize-none rounded-input"
-                        rows={2}
-                      />
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+                      <span className="text-slate-500 font-medium">Entregador</span>
+                      <span className="font-semibold text-slate-900">
+                        {courier?.name || 'Equipe Rotaly'}
+                      </span>
                     </div>
 
-                    <div className="flex justify-end">
-                      <Button
-                        type="submit"
-                        disabled={isSubmittingReview}
-                        className="bg-[#FF6B35] hover:bg-[#E5531E] text-white font-black text-xs h-10 px-6 rounded-input shadow-brand"
+                    {/* Previsão dupla se houver */}
+                    {estimatedArrivalDate && (
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+                        <span className="text-slate-500 font-medium">Previsão estimada</span>
+                        <span className="font-bold text-[#0052CC]">
+                          {estimatedArrivalDate.toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                          {realEtaMinutes !== null && ` (~${realEtaMinutes} min)`}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Resumo do pedido / valor */}
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+                      <span className="text-slate-500 font-medium">Total do pedido</span>
+                      <span className="font-bold text-slate-900">
+                        R$ {Number(order.total_price || 0).toFixed(2)}
+                      </span>
+                    </div>
+
+                    {/* Paradas anteriores na rota se aplicável */}
+                    {publicRouteData &&
+                      publicRouteData.total_stops_before > 0 &&
+                      order.status !== 'delivered' && (
+                        <div className="text-[11px] text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200/70">
+                          ℹ️ Há <strong>{publicRouteData.total_stops_before}</strong> entrega(s)
+                          anterior(es) na rota. Tempo de parada já considerado no cálculo viário.
+                        </div>
+                      )}
+
+                    {/* Botão Falar com a loja (WhatsApp) */}
+                    {seller?.phone && (
+                      <a
+                        href={`https://wa.me/55${seller.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Olá! Gostaria de informações sobre meu pedido ${order.tracking_code}.`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition"
                       >
-                        {isSubmittingReview ? 'Enviando...' : 'Enviar Avaliação da Entrega'}
-                      </Button>
-                    </div>
-                  </form>
+                        <Store className="h-3.5 w-3.5" />
+                        Falar com a loja ({seller.name || 'Vendedor'})
+                      </a>
+                    )}
+                  </div>
                 )}
+              </div>
+            </div>
+
+            {/* 3. BARRA INFERIOR DE AÇÕES (4 botões circulares azul-claro com ícone + legenda) */}
+            <div className="fixed sm:absolute bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200/80 px-3 py-2.5 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+              <div className="grid grid-cols-4 gap-1 max-w-[440px] mx-auto">
+                {/* 1. Receber */}
+                <button
+                  type="button"
+                  onClick={() => setIsRescheduleModalOpen(true)}
+                  className="flex flex-col items-center justify-center py-1 group"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E0EFFF] text-[#0052CC] group-hover:bg-[#D0E5FF] group-active:scale-95 transition">
+                    <Calendar className="h-5 w-5" />
+                  </div>
+                  <span className="text-[10px] font-medium text-slate-700 mt-1">Receber</span>
+                </button>
+
+                {/* 2. Compartilhar */}
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  className="flex flex-col items-center justify-center py-1 group"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E0EFFF] text-[#0052CC] group-hover:bg-[#D0E5FF] group-active:scale-95 transition">
+                    <Share2 className="h-5 w-5" />
+                  </div>
+                  <span className="text-[10px] font-medium text-slate-700 mt-1">Compartilhar</span>
+                </button>
+
+                {/* 3. Entregar para */}
+                <button
+                  type="button"
+                  onClick={() => setIsRecipientModalOpen(true)}
+                  className="flex flex-col items-center justify-center py-1 group"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E0EFFF] text-[#0052CC] group-hover:bg-[#D0E5FF] group-active:scale-95 transition">
+                    <Home className="h-5 w-5" />
+                  </div>
+                  <span className="text-[10px] font-medium text-slate-700 mt-1">Entregar para</span>
+                </button>
+
+                {/* 4. Opinar sobre a entrega */}
+                <button
+                  type="button"
+                  onClick={() => setIsReviewModalOpen(true)}
+                  className="flex flex-col items-center justify-center py-1 group"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#E0EFFF] text-[#0052CC] group-hover:bg-[#D0E5FF] group-active:scale-95 transition">
+                    <ThumbsUp className="h-5 w-5" />
+                  </div>
+                  <span className="text-[10px] font-medium text-slate-700 mt-1">Opinar sobre</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* MODAL 1: RECEBER / PREFERÊNCIA DE HORÁRIO */}
+      <Dialog open={isRescheduleModalOpen} onOpenChange={setIsRescheduleModalOpen}>
+        <DialogContent className="max-w-sm rounded-3xl p-5 bg-white text-slate-900 border-slate-200">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-heading">
+              Preferência de Recebimento
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Escolha quando você prefere receber este pacote.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2.5 py-2 text-xs">
+            <label
+              className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
+                selectedRescheduleOption === 'today'
+                  ? 'border-[#0052CC] bg-blue-50/50'
+                  : 'border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <input
+                type="radio"
+                name="reschedule"
+                checked={selectedRescheduleOption === 'today'}
+                onChange={() => setSelectedRescheduleOption('today')}
+                className="mt-0.5 text-[#0052CC]"
+              />
+              <div>
+                <p className="font-bold text-slate-900">Receber hoje</p>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  Confirmar que haverá alguém disponível até o fim do dia para receber.
+                </p>
+              </div>
+            </label>
+
+            <label
+              className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
+                selectedRescheduleOption === 'next_business'
+                  ? 'border-[#0052CC] bg-blue-50/50'
+                  : 'border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <input
+                type="radio"
+                name="reschedule"
+                checked={selectedRescheduleOption === 'next_business'}
+                onChange={() => setSelectedRescheduleOption('next_business')}
+                className="mt-0.5 text-[#0052CC]"
+              />
+              <div>
+                <p className="font-bold text-slate-900">Receber na segunda-feira</p>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  Caso prefira que a entrega seja reagendada para o próximo dia útil.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsRescheduleModalOpen(false)}
+              className="flex-1 text-xs rounded-xl h-10 border-slate-200"
+            >
+              Voltar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmReschedule}
+              className="flex-1 text-xs font-bold rounded-xl h-10 bg-[#0052CC] hover:bg-blue-600 text-white"
+            >
+              Confirmar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL 2: ENTREGAR PARA (DESTINATÁRIO) */}
+      <Dialog open={isRecipientModalOpen} onOpenChange={setIsRecipientModalOpen}>
+        <DialogContent className="max-w-sm rounded-3xl p-5 bg-white text-slate-900 border-slate-200">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-heading flex items-center gap-2">
+              <Home className="h-4 w-4 text-[#0052CC]" />
+              Dados do Destinatário
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Endereço cadastrado para a entrega deste pacote.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
+              <span className="text-[10px] font-bold uppercase text-slate-500">
+                Nome do cliente
+              </span>
+              <p className="font-semibold text-slate-900 text-sm">{customer?.name || 'Cliente'}</p>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
+              <span className="text-[10px] font-bold uppercase text-slate-500">
+                Endereço de entrega
+              </span>
+              <p className="font-medium text-slate-800 leading-relaxed">
+                {customer?.address || 'Endereço não informado'}
+              </p>
+            </div>
+
+            {order?.notes && (
+              <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200/80 space-y-1">
+                <span className="text-[10px] font-bold uppercase text-amber-700">
+                  Observações de entrega
+                </span>
+                <p className="text-amber-900 font-medium">{order.notes}</p>
               </div>
             )}
           </div>
-        )}
-      </main>
 
-      {/* Footer */}
-      <footer className="border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
-        <p>Rotaly — Entrega rápida, confiança garantida • Rastreio em Tempo Real</p>
-      </footer>
+          <Button
+            type="button"
+            onClick={() => setIsRecipientModalOpen(false)}
+            className="w-full text-xs font-bold rounded-xl h-10 bg-slate-900 hover:bg-slate-800 text-white"
+          >
+            Fechar
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL 3: OPINAR SOBRE A ENTREGA (AVALIAÇÃO EXISTENTE) */}
+      <Dialog open={isReviewModalOpen} onOpenChange={setIsReviewModalOpen}>
+        <DialogContent className="max-w-sm rounded-3xl p-5 bg-white text-slate-900 border-slate-200 max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-heading flex items-center gap-2">
+              <ThumbsUp className="h-4 w-4 text-[#0052CC]" />
+              Opinar sobre a Entrega
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Sua opinião nos ajuda a aprimorar o atendimento e rapidez.
+            </DialogDescription>
+          </DialogHeader>
+
+          {hasSubmittedReview || existingReview ? (
+            <div className="py-4 space-y-3 text-center">
+              <div className="h-12 w-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+                <Check className="h-6 w-6 stroke-[3]" />
+              </div>
+              <h4 className="font-bold text-sm text-slate-900">Avaliação Registrada!</h4>
+              <p className="text-xs text-slate-600">
+                Você avaliou o entregador com{' '}
+                <strong>{existingReview?.courier_rating || courierRating} estrelas</strong> e a loja
+                com <strong>{existingReview?.seller_rating || sellerRating} estrelas</strong>.
+              </p>
+              {existingReview?.comment && (
+                <p className="text-xs italic text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                  &ldquo;{existingReview.comment}&rdquo;
+                </p>
+              )}
+              <Button
+                type="button"
+                onClick={() => setIsReviewModalOpen(false)}
+                className="w-full text-xs font-bold rounded-xl h-10 bg-slate-900 text-white"
+              >
+                Concluir
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmitReview} className="space-y-4 py-1 text-xs">
+              {/* Avaliar entregador */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <Truck className="h-3.5 w-3.5 text-[#FF6B35]" />
+                    {courier?.name ? `Entregador (${courier.name})` : 'Entregador'}
+                  </span>
+                  <span className="font-bold text-[#FF6B35]">{courierRating} / 5</span>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setCourierRating(star)}
+                      className="focus:outline-none transition-transform hover:scale-125"
+                    >
+                      <Star
+                        className={`h-6 w-6 ${
+                          star <= courierRating ? 'fill-amber-400 text-amber-400' : 'text-slate-300'
+                        }`}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Avaliar loja */}
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <Package className="h-3.5 w-3.5 text-[#0052CC]" />
+                    {seller?.name ? `Loja (${seller.name})` : 'Vendedor & Loja'}
+                  </span>
+                  <span className="font-bold text-[#0052CC]">{sellerRating} / 5</span>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setSellerRating(star)}
+                      className="focus:outline-none transition-transform hover:scale-125"
+                    >
+                      <Star
+                        className={`h-6 w-6 ${
+                          star <= sellerRating ? 'fill-amber-400 text-amber-400' : 'text-slate-300'
+                        }`}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Comentário opcional */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                  <MessageSquare className="h-3.5 w-3.5 text-slate-500" />
+                  Elogio ou observação (opcional)
+                </label>
+                <Textarea
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="Ex: Entrega super rápida, entregador muito educado!"
+                  className="bg-slate-50 border-slate-200 text-xs text-slate-900 resize-none rounded-xl"
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsReviewModalOpen(false)}
+                  className="flex-1 text-xs rounded-xl h-10 border-slate-200"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={isSubmittingReview}
+                  className="flex-1 text-xs font-bold rounded-xl h-10 bg-[#FF6B35] hover:bg-[#E5531E] text-white"
+                >
+                  {isSubmittingReview ? 'Enviando...' : 'Enviar Avaliação'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL 4: SUPORTE & AJUDA 🎧 */}
+      <Dialog open={isSupportModalOpen} onOpenChange={setIsSupportModalOpen}>
+        <DialogContent className="max-w-sm rounded-3xl p-5 bg-white text-slate-900 border-slate-200">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold font-heading flex items-center gap-2">
+              <Headphones className="h-4 w-4 text-[#0052CC]" />
+              Precisa de ajuda com sua entrega?
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Estamos disponíveis para tirar dúvidas e agilizar seu pedido.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2.5 py-2 text-xs">
+            {seller?.phone ? (
+              <a
+                href={`https://wa.me/55${seller.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Olá! Preciso de ajuda com o rastreamento do pedido ${order.tracking_code}.`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 hover:bg-emerald-100 transition"
+              >
+                <div>
+                  <p className="font-bold">Falar com a Loja no WhatsApp</p>
+                  <p className="text-[11px] text-emerald-700 mt-0.5">
+                    {seller.name || 'Atendimento'}
+                  </p>
+                </div>
+                <ExternalLink className="h-4 w-4 text-emerald-600" />
+              </a>
+            ) : null}
+
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
+              <p className="font-bold text-slate-900">Rastreamento Automatizado Rotaly</p>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                A telemetria do veículo é atualizada automaticamente a cada sinal de GPS. Em caso de
+                dúvidas, informe o código <strong>{order?.tracking_code}</strong>.
+              </p>
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            onClick={() => setIsSupportModalOpen(false)}
+            className="w-full text-xs font-bold rounded-xl h-10 bg-slate-900 hover:bg-slate-800 text-white"
+          >
+            Fechar
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

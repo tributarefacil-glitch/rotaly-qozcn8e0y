@@ -183,6 +183,10 @@ interface LiveMapProps {
   showTraffic?: boolean
   routeLines?: RouteGeometryItem[]
   customLegend?: React.ReactNode
+  showAccuracyCircle?: boolean
+  accuracyRadiusMeters?: number
+  onMapReady?: (mapInstance: any) => void
+  onRecenter?: () => void
 }
 
 export const LiveMap: React.FC<LiveMapProps> = ({
@@ -195,6 +199,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   showTraffic = false,
   routeLines = [],
   customLegend,
+  showAccuracyCircle = false,
+  accuracyRadiusMeters = 70,
+  onMapReady,
+  onRecenter,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -202,6 +210,8 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const liveCourierMarkersRef = useRef<Map<string, any>>(new Map())
   const liveCourierAnimFramesRef = useRef<Map<string, number>>(new Map())
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const googleAccuracyCircleRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googleMarkersRef = useRef<any[]>([])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -352,6 +362,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           fullscreenControl: true,
           styles: [],
         })
+        if (onMapReady) {
+          onMapReady(mapInstanceRef.current)
+        }
       } else {
         google.maps.event?.trigger(mapInstanceRef.current, 'resize')
         mapInstanceRef.current.setCenter({ lat: center.lat, lng: center.lng })
@@ -620,6 +633,30 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
     // Usar os geradores unificados makeCourierSvgIcon e makeCustomerSvgIcon
 
+    // Se ativado círculo de precisão ao redor do entregador
+    const courierItem = markers.find((m) => m.type === 'courier' && m.lat && m.lng)
+    if (showAccuracyCircle && courierItem) {
+      if (!googleAccuracyCircleRef.current) {
+        googleAccuracyCircleRef.current = new google.maps.Circle({
+          strokeColor: '#0052CC',
+          strokeOpacity: 0.65,
+          strokeWeight: 1.5,
+          fillColor: '#38BDF8',
+          fillOpacity: 0.18,
+          map: mapInstanceRef.current,
+          center: { lat: courierItem.lat, lng: courierItem.lng },
+          radius: accuracyRadiusMeters,
+          clickable: false,
+        })
+      } else {
+        googleAccuracyCircleRef.current.setMap(mapInstanceRef.current)
+        googleAccuracyCircleRef.current.setCenter({ lat: courierItem.lat, lng: courierItem.lng })
+        googleAccuracyCircleRef.current.setRadius(accuracyRadiusMeters)
+      }
+    } else if (googleAccuracyCircleRef.current) {
+      googleAccuracyCircleRef.current.setMap(null)
+    }
+
     markers.forEach((item) => {
       if (!item.lat || !item.lng) return
 
@@ -645,7 +682,8 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           isTransit,
           72,
           42,
-          undefined,
+          // Se for destino em trânsito com pin preto estilo print de referência
+          '#0f172a',
           false,
         )
       }
@@ -963,6 +1001,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                       : 'z-20 hover:scale-110 hover:z-30'
                   }`}
                 >
+                  {/* Círculo de precisão/aura para entregador (conforme print de referência) */}
+                  {m.type === 'courier' && showAccuracyCircle && (
+                    <span className="absolute -inset-10 rounded-full bg-sky-400/20 border border-sky-400/40 pointer-events-none animate-pulse" />
+                  )}
+
                   {/* Ping effect for couriers & urgent orders */}
                   {(m.type === 'courier' || m.type === 'order_transit') && (
                     <span className="absolute -inset-2 rounded-full animate-ping bg-[#FF6B35]/30 opacity-75 pointer-events-none" />
@@ -995,10 +1038,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                               ? 'bg-[#F59E0B] border-amber-200 text-white ring-2 ring-amber-500/50 text-sm'
                               : 'bg-[#0052CC] border-blue-200 text-white ring-2 ring-[#0052CC]/50 text-sm'
                           : m.type === 'order_transit'
-                            ? 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
+                            ? 'bg-[#0f172a] border-slate-700 text-white shadow-md'
                             : m.type === 'order_delivered'
                               ? 'bg-[#00AA44] border-emerald-200 text-white'
-                              : 'bg-[#FF6B35] border-orange-200 text-white shadow-brand-orange'
+                              : 'bg-[#0f172a] border-slate-700 text-white shadow-md'
                       }`}
                     >
                       {m.type === 'courier' ? (
@@ -1006,7 +1049,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                           {getVehicleEmoji(m.vehicle_type)}
                         </span>
                       ) : (
-                        <MapPin className="h-3.5 w-3.5" />
+                        <MapPin className="h-4 w-4 fill-white text-[#0f172a]" />
                       )}
                     </div>
                   </div>
@@ -1217,40 +1260,44 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             })}
           </div>
 
-          {/* Map Overlay Badge */}
-          <div className="absolute top-3 left-3 z-30 flex items-center gap-2 rounded-lg bg-white/95 px-3 py-1.5 backdrop-blur border border-[#dcdad6] text-xs text-slate-800 shadow-md">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75"></span>
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600"></span>
-            </span>
-            <span className="font-semibold">Rastreamento em Tempo Real (SP Hub)</span>
-          </div>
-
-          {/* Legend (compacta de 1 linha) */}
-          <div className="absolute bottom-2.5 left-2.5 z-30 flex items-center gap-2.5 rounded-lg bg-white/95 px-2.5 py-1.5 backdrop-blur border border-[#dcdad6] text-[10px] text-slate-800 shadow-lg font-sans">
-            <div className="flex items-center gap-1">
-              <span className="text-xs">🛵/🚗/🚛</span>
-              <span className="font-semibold text-slate-700">Entregador</span>
-            </div>
-            <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
-              <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-black text-white">
-                1
+          {/* Map Overlay Badge (oculto quando em modo app/simplificado com customLegend ou showAccuracyCircle) */}
+          {!showAccuracyCircle && (
+            <div className="absolute top-3 left-3 z-30 flex items-center gap-2 rounded-lg bg-white/95 px-3 py-1.5 backdrop-blur border border-[#dcdad6] text-xs text-slate-800 shadow-md">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-600"></span>
               </span>
-              <span className="font-semibold text-slate-700">Parada</span>
+              <span className="font-semibold">Rastreamento em Tempo Real (SP Hub)</span>
             </div>
-            <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
-              <span className="h-1.5 w-3 rounded-full bg-[#2563EB]"></span>
-              <span className="font-semibold text-blue-700">Rota</span>
+          )}
+
+          {/* Legend (compacta de 1 linha, oculta no layout mobile-first app para não poluir os botões e card) */}
+          {!showAccuracyCircle && (
+            <div className="absolute bottom-2.5 left-2.5 z-30 flex items-center gap-2.5 rounded-lg bg-white/95 px-2.5 py-1.5 backdrop-blur border border-[#dcdad6] text-[10px] text-slate-800 shadow-lg font-sans">
+              <div className="flex items-center gap-1">
+                <span className="text-xs">🛵/🚗/🚛</span>
+                <span className="font-semibold text-slate-700">Entregador</span>
+              </div>
+              <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[9px] font-black text-white">
+                  1
+                </span>
+                <span className="font-semibold text-slate-700">Parada</span>
+              </div>
+              <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
+                <span className="h-1.5 w-3 rounded-full bg-[#2563EB]"></span>
+                <span className="font-semibold text-blue-700">Rota</span>
+              </div>
+              <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
+                <span className="h-1.5 w-3 rounded-full bg-[#60A5FA] border border-dashed border-[#2563EB]"></span>
+                <span className="font-semibold text-sky-600">Volta à base</span>
+              </div>
+              <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
+                <span className="h-1.5 w-3 rounded-full bg-[#EF4444]"></span>
+                <span className="font-semibold text-rose-600">Desvio &gt;600m</span>
+              </div>
             </div>
-            <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
-              <span className="h-1.5 w-3 rounded-full bg-[#60A5FA] border border-dashed border-[#2563EB]"></span>
-              <span className="font-semibold text-sky-600">Volta à base</span>
-            </div>
-            <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
-              <span className="h-1.5 w-3 rounded-full bg-[#EF4444]"></span>
-              <span className="font-semibold text-rose-600">Desvio &gt;600m</span>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </div>
