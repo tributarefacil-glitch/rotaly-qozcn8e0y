@@ -26,6 +26,7 @@ import {
   parseCoordinatesFromGoogleLink,
   reverseGeocodeCoordinates,
 } from '@/lib/googleMaps'
+import { haversineDistanceMeters } from '@/lib/geo'
 import {
   BaseAddressAutocomplete,
   type BaseAddressResult,
