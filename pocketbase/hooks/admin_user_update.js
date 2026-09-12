@@ -85,6 +85,31 @@ routerAdd(
         targetRecord.set('phone', String(body.phone).trim())
       }
 
+      // Update document (CPF/CNPJ) if provided
+      if (body.document !== undefined && body.document !== null) {
+        targetRecord.set('document', String(body.document).trim())
+      }
+
+      // Update vehicle fields if provided
+      if (body.vehicle_type !== undefined && body.vehicle_type !== null) {
+        targetRecord.set('vehicle_type', String(body.vehicle_type).trim())
+      }
+      if (body.vehicle_model !== undefined && body.vehicle_model !== null) {
+        targetRecord.set('vehicle_model', String(body.vehicle_model).trim())
+      }
+      if (body.vehicle_plate !== undefined && body.vehicle_plate !== null) {
+        targetRecord.set('vehicle_plate', String(body.vehicle_plate).trim().toUpperCase())
+      }
+
+      // Update role if provided (admin, seller, courier)
+      if (body.role !== undefined && body.role !== null) {
+        const validRoles = ['admin', 'seller', 'courier']
+        const newRole = String(body.role).trim()
+        if (validRoles.indexOf(newRole) !== -1) {
+          targetRecord.set('role', newRole)
+        }
+      }
+
       // Update status if provided
       if (body.status !== undefined && body.status !== null) {
         const validStatuses = ['active', 'inactive', 'pending', 'idle', 'busy']
@@ -118,8 +143,12 @@ routerAdd(
         name: targetRecord.getString('name'),
         email: targetRecord.getString('email'),
         phone: targetRecord.getString('phone'),
+        document: targetRecord.getString('document'),
         status: targetRecord.getString('status'),
         role: targetRecord.getString('role'),
+        vehicle_type: targetRecord.getString('vehicle_type'),
+        vehicle_model: targetRecord.getString('vehicle_model'),
+        vehicle_plate: targetRecord.getString('vehicle_plate'),
         updated: targetRecord.getString('updated'),
       })
     } catch (err) {

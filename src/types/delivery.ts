@@ -20,6 +20,7 @@ export interface UserRecord extends RecordModel {
   status?: UserStatus
   avatar?: string
   phone?: string
+  document?: string
   vehicle_type?: VehicleType
   vehicle_model?: string
   vehicle_year?: number

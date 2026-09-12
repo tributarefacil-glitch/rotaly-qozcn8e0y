@@ -378,7 +378,12 @@ export const deliveryService = {
       name?: string
       email?: string
       phone?: string
+      document?: string
+      role?: 'admin' | 'seller' | 'courier'
       status?: string
+      vehicle_type?: string
+      vehicle_model?: string
+      vehicle_plate?: string
       password?: string
     },
   ) {
@@ -387,8 +392,12 @@ export const deliveryService = {
       name: string
       email: string
       phone: string
+      document?: string
       status: string
       role: string
+      vehicle_type?: string
+      vehicle_model?: string
+      vehicle_plate?: string
       updated: string
     }>(`/backend/v1/admin/users/${id}`, {
       method: 'POST',
@@ -410,6 +419,7 @@ export const deliveryService = {
           role?: 'admin' | 'seller' | 'courier'
           status?: 'active' | 'inactive' | 'pending' | 'idle' | 'busy'
           phone?: string
+          document?: string
           vehicle_type?: string
           vehicle_model?: string
           vehicle_year?: number
