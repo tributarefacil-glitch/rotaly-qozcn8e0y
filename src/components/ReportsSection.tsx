@@ -435,7 +435,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
               </Badge>
             </div>
             <p className="font-sans text-xs text-amber-800 mt-0.5">
-              Acesse a auditoria completa de trechos fora de rota (&gt;300m) e rotas parciais de
+              Acesse a auditoria completa de trechos fora de rota (&gt;600m) e rotas parciais de
               retorno com 1 clique.
             </p>
           </div>

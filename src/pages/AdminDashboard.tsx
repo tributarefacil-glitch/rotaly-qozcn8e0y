@@ -1248,7 +1248,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     <SelectContent>
                       <SelectItem value="all">Todas as Ocorrências</SelectItem>
                       <SelectItem value="route_deviation">
-                        🚨 Desvio de Rota (&gt;300m - Sem KM)
+                        🚨 Desvio de Rota (&gt;600m - Sem KM)
                       </SelectItem>
                       <SelectItem value="unexpected_stop">🛑 Parada Não Prevista</SelectItem>
                     </SelectContent>
@@ -1293,7 +1293,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </div>
                     <div>
                       <p className="text-xs text-slate-500 font-medium">
-                        Desvios &gt; 300m (Sem KM)
+                        Desvios &gt; 600m (Sem KM)
                       </p>
                       <h4 className="text-2xl font-black text-rose-600">
                         {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}
@@ -1879,7 +1879,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </div>
                     <p className="font-sans text-xs text-slate-300 mt-0.5">
                       {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}{' '}
-                      desvio(s) &gt;300m e{' '}
+                      desvio(s) &gt;600m e{' '}
                       {offRouteEvents.filter((e) => e.event_type === 'unexpected_stop').length}{' '}
                       parada(s) não previstas registradas via telemetria (rotas ativas e parciais).
                     </p>

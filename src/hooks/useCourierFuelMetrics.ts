@@ -10,7 +10,11 @@ import type {
 } from '@/types/delivery'
 // Telemetry engine and delivery service for courier fuel calculation
 import { deliveryService } from '@/services/deliveryService'
-import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
+import {
+  calculateRealKmForOrder,
+  DEVIATION_THRESHOLD_METERS,
+  haversineDistanceMeters,
+} from '@/lib/telemetryKmEngine'
 
 export interface CourierOrderTelemetryCalculation {
   order: OrderRecord
@@ -129,19 +133,35 @@ export function calculateCourierFuelMetrics(params: {
 
   // 2. Filtrar telemetria e ocorrências do entregador
   const courierLocations = locations.filter((l) => l.user_id === courier.id)
-  const courierEvents = offRouteEvents.filter((ev) => ev.courier_id === courier.id)
+  const courierEvents = offRouteEvents.filter((ev) => {
+    if (ev.courier_id !== courier.id) return false
+    // Filtro anti-outlier de desvios (< 600m) e paradas espúrias na base
+    if (ev.event_type === 'route_deviation') {
+      const devDist = ev.distance_deviation_meters || 0
+      if (devDist > 0 && devDist < DEVIATION_THRESHOLD_METERS) return false
+    }
+    if (ev.event_type === 'unexpected_stop') {
+      const stopSec = ev.stop_duration_seconds || 0
+      const distToBase = haversineDistanceMeters(ev.lat, ev.lng, -22.7001402, -43.2982834)
+      if (distToBase < DEVIATION_THRESHOLD_METERS && stopSec < 180 && stopSec > 0) return false
+    }
+    return true
+  })
 
   // 3. Filtrar ordens atribuídas ao entregador que tenham iniciado rota ou finalizado
-  // (mesma regra de elegibilidade do backend getCourierFuelAccounts e AdminDashboard)
-  const allCourierOrders = orders.filter((o) => o.courier_id === courier.id)
+  // (IMPORTANTE: pedidos cancelados o.status === 'cancelled' NUNCA somam km nem combustível)
+  const allCourierOrders = orders.filter(
+    (o) => o.courier_id === courier.id && o.status !== 'cancelled',
+  )
 
   const eligibleOrders = allCourierOrders.filter((o) => {
     const isStartedOrDelivered =
-      o.route_started === true ||
-      o.status === 'delivered' ||
-      o.status === 'in_transit' ||
-      o.status === 'address_error' ||
-      o.status === 'client_absent'
+      o.status !== 'cancelled' &&
+      (o.route_started === true ||
+        o.status === 'delivered' ||
+        o.status === 'in_transit' ||
+        o.status === 'address_error' ||
+        o.status === 'client_absent')
 
     if (!isStartedOrDelivered) return false
     if (periodFilter === 'all') return true
@@ -221,11 +241,25 @@ export function calculateCourierFuelMetrics(params: {
     let totalGpsKm = batchTelemetry.totalGpsKm
 
     if (batchCount > 1) {
-      const totalPlannedInBatch = batchOrders.reduce((sum, b) => sum + (b.distance_km || 1), 0)
-      const orderPlanned = order.distance_km || 1
-      const ratio = totalPlannedInBatch > 0 ? orderPlanned / totalPlannedInBatch : 1 / batchCount
+      // Rateio do lote considerando distância individual e proximidade da base
+      // Entregas vizinhas à base não podem herdar rateio excessivo
+      const totalPlannedInBatch = batchOrders.reduce((sum, b) => {
+        const baseKm = b.distance_km || 0.5
+        const returnKm = b.return_trip_km || 0
+        return sum + (baseKm + returnKm)
+      }, 0)
+      const thisOrderWeight = (order.distance_km || 0.5) + (order.return_trip_km || 0)
+      const ratio = totalPlannedInBatch > 0 ? thisOrderWeight / totalPlannedInBatch : 1 / batchCount
 
       officialKm = Number((batchTelemetry.officialRealKm * ratio).toFixed(1))
+      // Se a entrega for muito curta (ex.: TRK-2026-233 com 0.31 km de ida), não permitir inflação desproporcional
+      if ((order.distance_km || 0) > 0 && (order.distance_km || 0) < 1.0) {
+        const maxExpected = ((order.distance_km || 0) + (order.return_trip_km || 0)) * 2.0
+        if (maxExpected > 0 && officialKm > maxExpected) {
+          officialKm = Number(Math.max(order.distance_km || 0, maxExpected).toFixed(1))
+        }
+      }
+
       deviationKm = Number((batchTelemetry.deviationKm * ratio).toFixed(1))
       totalGpsKm = Number((batchTelemetry.totalGpsKm * ratio).toFixed(1))
     }

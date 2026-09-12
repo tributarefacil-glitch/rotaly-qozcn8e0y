@@ -46,7 +46,12 @@ import type {
   LocationRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
-import { calculateRealKmForOrder, sanitizeGpsPoints } from '@/lib/telemetryKmEngine'
+import {
+  calculateRealKmForOrder,
+  sanitizeGpsPoints,
+  DEVIATION_THRESHOLD_METERS,
+  haversineDistanceMeters,
+} from '@/lib/telemetryKmEngine'
 
 export interface CourierDeliveryHistoryItem {
   order: OrderRecord
@@ -141,25 +146,50 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   }, [settings, courier])
 
   // Filtrar as ordens vinculadas ao entregador que tenham iniciado rota ou finalizado
+  // Cancelados NÃO entram na lista de pedidos válidos (não somam km, combustível nem contagem de telemetria)
   const courierOrders = useMemo(() => {
     if (!courier?.id) return []
     return orders.filter(
       (o) =>
         o.courier_id === courier.id &&
+        o.status !== 'cancelled' &&
         (o.route_started === true ||
           o.status === 'delivered' ||
           o.status === 'in_transit' ||
           o.status === 'address_error' ||
           o.status === 'client_absent' ||
-          o.status === 'assigned' ||
-          o.status === 'cancelled'),
+          o.status === 'assigned'),
     )
   }, [orders, courier])
 
-  // Eventos de desvio e paradas do entregador
+  // Eventos de desvio e paradas do entregador:
+  // Filtrar off_route_events espúrios:
+  // - desvios com desvio < 600m
+  // - paradas < 180s dentro do perímetro da base (< 600m da base)
   const courierEvents = useMemo(() => {
     if (!courier?.id) return []
-    return offRouteEvents.filter((ev) => ev.courier_id === courier.id)
+    return offRouteEvents.filter((ev) => {
+      if (ev.courier_id !== courier.id) return false
+      // Se for desvio de rota, verificar se a distância registrada é >= 600m
+      if (ev.event_type === 'route_deviation') {
+        const devDist = ev.distance_deviation_meters || 0
+        if (devDist > 0 && devDist < DEVIATION_THRESHOLD_METERS) {
+          return false
+        }
+      }
+      // Se for parada inesperada na base ou com duração insignificante (< 180s)
+      if (ev.event_type === 'unexpected_stop') {
+        const stopSec = ev.stop_duration_seconds || 0
+        // Verificar se foi na base padrão (Pilar/Caxias ou start_base)
+        const baseLat = -22.7001402
+        const baseLng = -43.2982834
+        const distToBase = haversineDistanceMeters(ev.lat, ev.lng, baseLat, baseLng)
+        if (distToBase < DEVIATION_THRESHOLD_METERS && stopSec < 180 && stopSec > 0) {
+          return false
+        }
+      }
+      return true
+    })
   }, [offRouteEvents, courier])
 
   // Processar itens detalhados de cada entrega utilizando o motor de telemetria GPS 100% REAL
@@ -312,9 +342,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
 
-    // Se houver fuelAccount e o período for "all", usamos os valores oficiais consolidados da conta corrente
-    const saldoContaCorrente = fuelAccount ? fuelAccount.balance : -totalFuelCost
+    // Os cards "KM REAL OFICIAL" e "COMBUSTÍVEL GASTO" exibem os km recalculados com o filtro anti-outlier
     const totalAdiantado = fuelAccount ? fuelAccount.totalAdvances : 0
+    // Saldo atualizado com o combustível real recalculado
+    const saldoContaCorrente = totalAdiantado - totalFuelCost
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
@@ -322,8 +353,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       totalLiters: Number(totalLiters.toFixed(2)),
       totalDeviations,
       totalStops,
-      saldoContaCorrente,
-      totalAdiantado,
+      saldoContaCorrente: Number(saldoContaCorrente.toFixed(2)),
+      totalAdiantado: Number(totalAdiantado.toFixed(2)),
       totalDeliveries: filteredItems.length,
     }
   }, [filteredItems, fuelAccount])
@@ -346,7 +377,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       'Pontos GPS Válidos',
       'Combustível Oficial (R$)',
       'Litros Consumidos',
-      'Desvios de Rota (>300m)',
+      'Desvios de Rota (>600m)',
       'Paradas Fora da Rota',
     ]
 
@@ -569,7 +600,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 </div>
                 <div>
                   <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                    Desvios (&gt;300m)
+                    Desvios (&gt;600m)
                   </h4>
                   <p className="text-[11px] text-slate-400">
                     KM separado (não entra no cálculo de combustível)
@@ -577,7 +608,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 </div>
               </div>
               <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/40 text-xs font-bold font-mono px-2.5 py-1">
-                {metricsSummary.totalDeviations} desvio(s)
+                {metricsSummary.totalDeviations} desvio(s) (&gt;600m)
               </Badge>
             </div>
           </div>
@@ -643,7 +674,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                     <th className="py-2.5 px-3 font-semibold text-right">Combustível</th>
                     <th className="py-2.5 px-3 font-semibold text-center">Parada Fora Rota</th>
                     <th className="py-2.5 px-3 font-semibold text-center">KM Desvios</th>
-                    <th className="py-2.5 px-3 font-semibold text-center">Desvio (&gt;300m)</th>
+                    <th className="py-2.5 px-3 font-semibold text-center">Desvio (&gt;600m)</th>
                     <th className="py-2.5 px-3 font-semibold text-right">Detalhes</th>
                   </tr>
                 </thead>
@@ -979,7 +1010,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                               }
                             >
                               {ev.event_type === 'route_deviation'
-                                ? '🚨 Desvio de Rota (>300m)'
+                                ? '🚨 Desvio de Rota (>600m)'
                                 : '🛑 Parada Não Prevista'}
                             </span>
                             <span className="text-slate-500 font-mono text-[10px]">

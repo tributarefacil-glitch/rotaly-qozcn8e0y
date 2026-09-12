@@ -203,23 +203,41 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
     return { validPoints: [], noiseCount: 0, discardedNoiseKm: 0 }
   }
 
-  // Ordenar cronologicamente
-  const sorted = [...points]
-    .filter(
-      (p) =>
-        typeof p.lat === 'number' && typeof p.lng === 'number' && !isNaN(p.lat) && !isNaN(p.lng),
-    )
-    // Descartar coordenadas nulas (0, 0)
-    .filter((p) => Math.abs(p.lat) > 0.001 || Math.abs(p.lng) > 0.001)
-    .sort((a, b) => new Date(a.created).getTime() - new Date(b.created).getTime())
-
-  if (sorted.length <= 1) {
-    return { validPoints: sorted, noiseCount: 0, discardedNoiseKm: 0 }
-  }
-
-  const validPoints: LocationRecord[] = [sorted[0]]
   let noiseCount = 0
   let discardedNoiseMeters = 0
+
+  // 1. Filtrar coordenadas inválidas (0,0, NaN, accuracy > 100m)
+  const initialValid = points.filter((p) => {
+    if (typeof p.lat !== 'number' || typeof p.lng !== 'number' || isNaN(p.lat) || isNaN(p.lng)) {
+      noiseCount++
+      return false
+    }
+    // Descartar coordenadas (0,0) ou quase nulas
+    if (Math.abs(p.lat) < 0.001 && Math.abs(p.lng) < 0.001) {
+      noiseCount++
+      return false
+    }
+    // Descartar se precisão GPS informada for ruim (> 100m)
+    if (typeof p.accuracy === 'number' && p.accuracy > 100) {
+      noiseCount++
+      return false
+    }
+    return true
+  })
+
+  // Ordenar cronologicamente
+  const sorted = [...initialValid].sort(
+    (a, b) => new Date(a.created).getTime() - new Date(b.created).getTime(),
+  )
+
+  if (sorted.length <= 1) {
+    return { validPoints: sorted, noiseCount, discardedNoiseKm: 0 }
+  }
+
+  // Identificar ponto inicial que não seja outlier teleporte isolado no começo
+  // Se o primeiro ponto for um teleporte isolado (ex.: Centro do RJ a 23km da base),
+  // e os pontos seguintes estiverem agrupados na base, o primeiro ponto é ruído.
+  const validPoints: LocationRecord[] = [sorted[0]]
 
   for (let i = 1; i < sorted.length; i++) {
     const prev = validPoints[validPoints.length - 1]
@@ -231,23 +249,45 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
 
     const distMeters = haversineDistanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
 
-    // 1. Descartar pontos praticamente duplicados no mesmo segundo (sem movimento físico)
-    if (distMeters < 3 && dtSeconds < 3) {
+    // (c) Duplicados (< 2 s e < 5 m) ou sem movimento relevante
+    if (distMeters < 5 && dtSeconds < 2) {
       noiseCount++
       continue
     }
 
-    // 2. Filtro de velocidade implícita:
-    // Se a velocidade calculada entre dois pontos for > 150 km/h (41.6 m/s), é ruído de antena GPS
-    // (ex.: salto instantâneo para outra torre celular ou oscilação de triangulação).
+    // (a) Filtro de velocidade implícita do segmento > 120 km/h:
+    // Pular o ponto anômalo SEM somar o km e sem atualizar o ponto anterior com ele.
+    // Acumular o km descartado em discardedNoiseKm.
     const speedKmh = (distMeters / dtSeconds) * 3.6
-    if (speedKmh > 150) {
+    if (speedKmh > 120) {
       noiseCount++
       discardedNoiseMeters += distMeters
       continue
     }
 
     validPoints.push(curr)
+  }
+
+  // Verificação de segurança: se o primeiro ponto ficou muito distante dos demais válidos
+  // (caso o primeiro ponto tenha sido um teleporte inicial antes da sequência real)
+  if (validPoints.length >= 3) {
+    const p0 = validPoints[0]
+    const p1 = validPoints[1]
+    const p2 = validPoints[2]
+    const d01 = haversineDistanceMeters(p0.lat, p0.lng, p1.lat, p1.lng)
+    const d12 = haversineDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
+    const t01 = Math.max(
+      0.1,
+      (new Date(p1.created).getTime() - new Date(p0.created).getTime()) / 1000,
+    )
+    const speed01 = (d01 / t01) * 3.6
+
+    if (speed01 > 120 || (d01 > 15000 && d12 < 3000)) {
+      // O primeiro ponto era um outlier teleporte inicial isolado
+      validPoints.shift()
+      noiseCount++
+      discardedNoiseMeters += d01
+    }
   }
 
   return {
@@ -274,12 +314,26 @@ export function calculateRealKmForOrder(params: {
   let plannedReturnKm =
     typeof order.return_trip_km === 'number' && order.return_trip_km > 0 ? order.return_trip_km : 0
 
+  // Se a entrega tem origem igual ao destino (ex.: malote TRK-2026-670 ou distância base->destino < 100m)
+  const orderStartLat = order.start_base_lat || 0
+  const orderStartLng = order.start_base_lng || 0
+  const orderCustLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
+  const orderCustLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
+  const isDestAtBase =
+    orderStartLat !== 0 &&
+    orderCustLat !== 0 &&
+    haversineDistanceMeters(orderStartLat, orderStartLng, orderCustLat, orderCustLng) < 100
+
+  if (isDestAtBase) {
+    plannedReturnKm = 0
+  }
+
   if (
     plannedBaseKm === 0 &&
     (order.status === 'address_error' || order.status === 'client_absent' || order.route_started)
   ) {
     plannedBaseKm = 4.5
-    if (plannedReturnKm === 0) plannedReturnKm = 4.5
+    if (plannedReturnKm === 0 && !isDestAtBase) plannedReturnKm = 4.5
   }
   const plannedTotalKm = plannedBaseKm + plannedReturnKm
   const hasReturnKm = plannedReturnKm > 0
@@ -295,7 +349,8 @@ export function calculateRealKmForOrder(params: {
   })
 
   // 4. Aplicar filtro anti-ruído
-  const { validPoints, noiseCount } = sanitizeGpsPoints(orderGpsRaw)
+  const sanitized = sanitizeGpsPoints(orderGpsRaw)
+  const { validPoints, noiseCount } = sanitized
 
   // Eventos de desvio e paradas associados a esta entrega
   const associatedEvents = courierEvents.filter(
@@ -306,7 +361,7 @@ export function calculateRealKmForOrder(params: {
   const offRouteEventsList = associatedEvents.filter((ev) => ev.event_type === 'route_deviation')
   const unexpectedStopsList = associatedEvents.filter((ev) => ev.event_type === 'unexpected_stop')
 
-  const discardedNoiseKm = (sanitizeGpsPoints(orderGpsRaw) as any).discardedNoiseKm || 0
+  const discardedNoiseKm = sanitized.discardedNoiseKm || 0
 
   // Se não houver telemetria GPS suficiente (< 2 pontos válidos)
   if (validPoints.length < 2) {

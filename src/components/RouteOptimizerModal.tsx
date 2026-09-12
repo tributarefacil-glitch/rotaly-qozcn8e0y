@@ -2330,18 +2330,55 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const isoNow = new Date(now).toISOString()
 
       for (const plan of optimizationResult.courierPlans) {
-        const returnKmPerStop =
-          plan.stops.length > 0 ? (plan.return_distance_km || 0) / plan.stops.length : 0
+        // Revisão de rateio do retorno:
+        // 1. Se a distância base->destino < 100m (malote / mesmo local), return_trip_km = 0.
+        // 2. Para entregas normais, o rateio do retorno deve ser proporcional à distância da parada
+        //    (ou ponderado) para que entregas vizinhas à base (< 1 km) não herdem km de volta inflado.
+        const totalOutboundPlanMeters = plan.stops.reduce(
+          (sum, s) => sum + (s.step_distance_meters || 0),
+          0,
+        )
+        const totalReturnKm = plan.return_distance_km || 0
 
         for (let i = 0; i < plan.stops.length; i++) {
           const stop = plan.stops[i]
           const etaTimestamp = new Date(now + (20 + i * 15) * 60 * 1000).toISOString()
           const stopDistanceKm = Number((stop.step_distance_meters / 1000).toFixed(2))
+
+          // Distância direta entre a base e esta parada
+          const baseLat = plan.start_base?.lat || -22.7001402
+          const baseLng = plan.start_base?.lng || -43.2982834
+          const distToBaseMeters = haversineDistance(baseLat, baseLng, stop.lat, stop.lng)
+
+          let stopReturnKm = 0
+          if (distToBaseMeters < 100) {
+            // Malote / Destino = Base: sem retorno
+            stopReturnKm = 0
+          } else if (plan.stops.length === 1) {
+            // Entrega única: o retorno é exatamente a volta da entrega
+            stopReturnKm = totalReturnKm
+          } else if (distToBaseMeters < 1000) {
+            // Entrega vizinha à base (< 1 km): o retorno dela à base é no máximo a sua própria distância à base
+            stopReturnKm = Number(
+              Math.min(totalReturnKm / plan.stops.length, distToBaseMeters / 1000).toFixed(2),
+            )
+          } else if (totalOutboundPlanMeters > 0) {
+            // Rateio proporcional ao percurso da entrega
+            const ratio = (stop.step_distance_meters || 1) / totalOutboundPlanMeters
+            stopReturnKm = Number((totalReturnKm * ratio).toFixed(2))
+          } else {
+            stopReturnKm = Number((totalReturnKm / plan.stops.length).toFixed(2))
+          }
+
           const { pricePerLiter: courierFuelPrice, consumptionKml: courierFuelCons } =
             deliveryService.getVehicleFuelParams(appSettings, plan.courier.vehicle_type)
           const stopFuelCost =
             courierFuelCons > 0
-              ? Number(((stopDistanceKm * courierFuelPrice) / courierFuelCons).toFixed(2))
+              ? Number(
+                  (((stopDistanceKm + stopReturnKm) * courierFuelPrice) / courierFuelCons).toFixed(
+                    2,
+                  ),
+                )
               : 0
 
           await deliveryService.updateOrder(stop.id, {
@@ -2349,7 +2386,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             status: 'assigned', // Permite que o entregador veja na fila e acione "Iniciar Rota"
             sequence: i + 1,
             distance_km: stopDistanceKm,
-            return_trip_km: Number(returnKmPerStop.toFixed(2)),
+            return_trip_km: Number(stopReturnKm.toFixed(2)),
             total_route_with_return_km: Number(plan.total_distance_km),
             total_route_fuel_cost: plan.estimated_fuel_cost,
             estimated_duration_minutes: Math.round((stop.step_distance_meters / 1000) * 3.5 + 5),
