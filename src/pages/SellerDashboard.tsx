@@ -245,6 +245,17 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   })
 
+  // Realtime hook for customers (clientes novos criados no modal de venda chegam imediatamente)
+  useRealtime<CustomerRecord>('customers', (e) => {
+    if (e.action === 'create') {
+      setCustomers((prev) => [e.record, ...prev.filter((c) => c.id !== e.record.id)])
+    } else if (e.action === 'update') {
+      setCustomers((prev) => prev.map((c) => (c.id === e.record.id ? e.record : c)))
+    } else if (e.action === 'delete') {
+      setCustomers((prev) => prev.filter((c) => c.id !== e.record.id))
+    }
+  })
+
   useRealtime<LocationRecord>('locations', (e) => {
     if (e.action === 'create') {
       setLocations((prev) => [e.record, ...prev.filter((l) => l.user_id !== e.record.user_id)])

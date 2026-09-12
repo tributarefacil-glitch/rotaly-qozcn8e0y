@@ -525,37 +525,41 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     )
   }
 
+  const wasOpenRef = useRef(false)
+
   // Initialize selected couriers and load app settings when opened
   useEffect(() => {
     if (open) {
-      // Regra: "não precisa bloquear o entregador para vendedor. apenas não deixar a rota entrar no app do entregador enquanto ele estiver na rota atual"
-      const availableIds = couriers.filter((c) => c.status !== 'inactive').map((c) => c.id)
+      if (!wasOpenRef.current) {
+        // Regra: "não precisa bloquear o entregador para vendedor. apenas não deixar a rota entrar no app do entregador enquanto ele estiver na rota atual"
+        const availableIds = couriers.filter((c) => c.status !== 'inactive').map((c) => c.id)
 
-      setSelectedCourierIds(
-        availableIds.length > 0 ? availableIds : couriers.slice(0, 3).map((c) => c.id),
-      )
-      // ETAPA 2: Abre vazia sem clientes pré-marcados; vendedor busca e marca os pedidos
-      setSelectedOrderIds([])
-      setSearchOrderFilter('')
-      setWizardStep('couriers')
-      setOptimizationResult(null)
-      deliveryService.getSettings().then((s) => setAppSettings(s))
-      deliveryService.getBaseAddresses().then((bases) => {
-        setBaseAddresses(bases)
-        const defaultStart = bases.find((b) => b.is_default) || bases[0]
-        const defaultEnd =
-          bases.find((b) => b.is_end_default || b.type === 'end_point') || defaultStart
-        if (defaultStart) setSelectedStartBaseId(defaultStart.id)
-        if (defaultEnd) setSelectedEndBaseId(defaultEnd.id)
-      })
-      setMapTilesLoaded(false)
-      setVectorFallbackActive(false)
-      loadGoogleMapsScript().then((success) => {
-        const isAuthErr = isGoogleMapsAuthError()
-        const ok = success && !isAuthErr
-        setIsMapsLoaded(ok)
-        setMapsAuthError(isAuthErr)
-      })
+        setSelectedCourierIds(
+          availableIds.length > 0 ? availableIds : couriers.slice(0, 3).map((c) => c.id),
+        )
+        // ETAPA 2: Abre vazia sem clientes pré-marcados; vendedor busca e marca os pedidos
+        setSelectedOrderIds([])
+        setSearchOrderFilter('')
+        setWizardStep('couriers')
+        setOptimizationResult(null)
+        deliveryService.getSettings().then((s) => setAppSettings(s))
+        deliveryService.getBaseAddresses().then((bases) => {
+          setBaseAddresses(bases)
+          const defaultStart = bases.find((b) => b.is_default) || bases[0]
+          const defaultEnd =
+            bases.find((b) => b.is_end_default || b.type === 'end_point') || defaultStart
+          if (defaultStart) setSelectedStartBaseId(defaultStart.id)
+          if (defaultEnd) setSelectedEndBaseId(defaultEnd.id)
+        })
+        setMapTilesLoaded(false)
+        setVectorFallbackActive(false)
+        loadGoogleMapsScript().then((success) => {
+          const isAuthErr = isGoogleMapsAuthError()
+          const ok = success && !isAuthErr
+          setIsMapsLoaded(ok)
+          setMapsAuthError(isAuthErr)
+        })
+      }
     } else {
       if (tilesLoadedTimeoutRef.current) {
         clearTimeout(tilesLoadedTimeoutRef.current)
@@ -563,6 +567,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
       setDraggingStop(null)
     }
+    wasOpenRef.current = open
   }, [open, couriers])
 
   useEffect(() => {
@@ -648,6 +653,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Filtered pending orders for Step 2
   // Regra Atualizada: Não abre mais vazia! Todas as entregas com venda pendente aparecem visíveis de cara.
   // O campo de busca funciona como filtro OPCIONAL em tempo real por Nome, CPF, CNPJ, Telefone e Rastreio.
+  // Entregas pendentes com cliente recém-criado ou com dados via expand aparecem normalmente.
   const filteredPendingOrders = useMemo(() => {
     const q = searchOrderFilter.toLowerCase().trim()
     if (!q) return pendingOrders
@@ -655,12 +661,17 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     const digits = searchOrderFilter.replace(/\D/g, '')
 
     return pendingOrders.filter((o) => {
-      const cust = localCustomers.find((c) => c.id === o.customer_id)
-
-      // 1. Código de rastreio
+      // 1. Código de rastreio ou id
       if (o.tracking_code && o.tracking_code.toLowerCase().includes(q)) return true
+      if (o.id && o.id.toLowerCase().includes(q)) return true
 
-      if (!cust) return false
+      // Localizar cliente local ou expand
+      const cust = localCustomers.find((c) => c.id === o.customer_id) || o.expand?.customer_id
+
+      if (!cust) {
+        // Se ainda não encontrou o cliente no array nem no expand, ainda permite buscar por rastreio (já checado acima)
+        return false
+      }
 
       // 2. Nome do cliente
       if (cust.name && cust.name.toLowerCase().includes(q)) return true
@@ -672,7 +683,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
 
       // 4. Telefones (phone, phone2, phone3) - com e sem máscara
-      const phones = [cust.phone, cust.phone2, cust.phone3].filter(Boolean) as string[]
+      const phones = [cust.phone, (cust as any).phone2, (cust as any).phone3].filter(
+        Boolean,
+      ) as string[]
       for (const p of phones) {
         if (p.toLowerCase().includes(q)) return true
         if (digits && p.replace(/\D/g, '').includes(digits)) return true
@@ -1254,7 +1267,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       // Coletar coordenadas válidas dos clientes selecionados para calcular o centróide
       const validPoints: Array<{ lat: number; lng: number }> = []
       for (const ord of ordersToOptimize) {
-        const cust = localCustomers.find((c) => c.id === ord.customer_id)
+        const cust = localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
         if (
           cust &&
           typeof cust.lat === 'number' &&
@@ -1332,7 +1345,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const unassignedWithoutCoords: OrderRecord[] = []
 
       for (const ord of ordersToOptimize) {
-        const cust = localCustomers.find((c) => c.id === ord.customer_id)
+        const cust = localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
         if (cust && cust.lat && cust.lng) {
           validOrdersWithCoords.push({
             order: ord,
@@ -2096,7 +2109,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         const ordersToShow = pendingOrders.filter((o) => selectedOrderIds.includes(o.id))
 
         ordersToShow.forEach((o, idx) => {
-          const cust = localCustomers.find((c) => c.id === o.customer_id)
+          const cust = localCustomers.find((c) => c.id === o.customer_id) || o.expand?.customer_id
           if (cust && cust.lat && cust.lng) {
             bounds.extend(new google.maps.LatLng(cust.lat, cust.lng))
             hasPoints = true
@@ -2104,7 +2117,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             const m = new google.maps.Marker({
               position: { lat: cust.lat, lng: cust.lng },
               map: mapInstanceRef.current,
-              title: `#${idx + 1} - ${cust.name} (${o.tracking_code})`,
+              title: `#${idx + 1} - ${cust.name || 'Cliente'} (${o.tracking_code})`,
               label: {
                 text: `${idx + 1}`,
                 color: '#ffffff',
@@ -2123,7 +2136,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             const info = new google.maps.InfoWindow({
               content: `
                 <div style="padding: 6px; font-family: sans-serif; color: #0f172a; max-width: 220px;">
-                  <strong style="font-size: 12px; color: #f97316;">Parada #${idx + 1}: ${cust.name}</strong>
+                  <strong style="font-size: 12px; color: #f97316;">Parada #${idx + 1}: ${cust.name || 'Cliente'}</strong>
                   <p style="font-size: 11px; margin: 2px 0; color: #475569;">📍 ${cust.address || 'Sem endereço'}</p>
                   <p style="font-size: 10px; margin: 0; color: #64748b;">Código: <b>${o.tracking_code}</b></p>
                 </div>
@@ -2696,7 +2709,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[94vh] overflow-y-auto p-4 sm:p-6">
+      <DialogContent
+        className="max-w-4xl max-h-[94vh] overflow-y-auto p-4 sm:p-6"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900 dark:text-white">
             <Sparkles className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
@@ -3766,7 +3783,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
                 {/* 2. LISTAGEM DIRETA DOS CLIENTES / ENTREGAS PENDENTES (com ou sem filtro de busca) */}
                 {filteredPendingOrders.map((ord) => {
-                  const cust = localCustomers.find((c) => c.id === ord.customer_id)
+                  const cust =
+                    localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
                   const isSelected = selectedOrderIds.includes(ord.id)
 
                   return (
@@ -3800,7 +3818,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                               variant="outline"
                               className="text-[9px] px-1.5 py-0 uppercase font-mono"
                             >
-                              {ord.tracking_code}
+                              {ord.tracking_code || ord.id.slice(0, 8)}
                             </Badge>
 
                             {/* Botões de Ação Rápida: Editar e Excluir Cliente */}
@@ -4116,7 +4134,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       })
                     } else {
                       selectedOrdersList.forEach((ord, oIdx) => {
-                        const cust = localCustomers.find((c) => c.id === ord.customer_id)
+                        const cust =
+                          localCustomers.find((c) => c.id === ord.customer_id) ||
+                          ord.expand?.customer_id
                         const lat =
                           cust?.lat ||
                           (fallbackStartBase.lat || -22.906847) + (((oIdx * 17) % 7) - 3) * 0.008
@@ -4858,7 +4878,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               ) : (
                 <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
                   {strictlyPendingOrders.map((ord) => {
-                    const cust = localCustomers.find((c) => c.id === ord.customer_id)
+                    const cust =
+                      localCustomers.find((c) => c.id === ord.customer_id) ||
+                      ord.expand?.customer_id
                     const isSelected = selectedIncludeOrderId === ord.id
                     const isInStep2 = selectedOrderIds.includes(ord.id)
 
