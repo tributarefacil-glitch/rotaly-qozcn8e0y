@@ -112,6 +112,8 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ open, 
   const isMinLength = newPassword.length >= 8
   const isMatch = newPassword.length > 0 && newPassword === confirmPassword
   const isDifferentFromCurrent = newPassword.length > 0 && newPassword !== currentPassword
+  const isFormValid =
+    currentPassword.trim().length > 0 && isMinLength && isMatch && isDifferentFromCurrent
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
