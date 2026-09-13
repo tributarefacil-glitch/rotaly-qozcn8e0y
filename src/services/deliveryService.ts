@@ -751,8 +751,16 @@ export const deliveryService = {
 
   // Locations
   async getLatestLocations(filter = '', sort = '-created') {
+    let finalFilter = filter
+    if (!filter.includes('empresa_id') && !filter.includes('user_id')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id')
+      if (companyClause) {
+        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
+      }
+    }
+
     return pb.collection<LocationRecord>('locations').getFullList({
-      filter,
+      filter: finalFilter,
       sort,
       expand: 'user_id',
       requestKey: null,
@@ -1636,8 +1644,16 @@ export const deliveryService = {
 
   // Fuel Advances & Current Account
   async getFuelAdvances(filter = '', sort = '-date,-created', expand = 'courier_id,created_by') {
+    let finalFilter = filter
+    if (!filter.includes('empresa_id')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id')
+      if (companyClause) {
+        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
+      }
+    }
+
     return pb.collection<FuelAdvanceRecord>('fuel_advances').getFullList({
-      filter,
+      filter: finalFilter,
       sort,
       expand,
       requestKey: null,
@@ -1645,7 +1661,12 @@ export const deliveryService = {
   },
 
   async createFuelAdvance(data: Partial<FuelAdvanceRecord>) {
-    return pb.collection<FuelAdvanceRecord>('fuel_advances').create(data)
+    const activeCompanyId = this.getActiveCompanyId()
+    const payload = {
+      ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+    }
+    return pb.collection<FuelAdvanceRecord>('fuel_advances').create(payload)
   },
 
   async deleteFuelAdvance(id: string) {
@@ -1815,8 +1836,16 @@ export const deliveryService = {
 
   // Reviews (Avaliação de Entregador e Vendedor no Rastreio Público)
   async getReviews(filter = '', sort = '-created', expand = 'order_id,courier_id,seller_id') {
+    let finalFilter = filter
+    if (!filter.includes('empresa_id') && !filter.includes('order_id')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id')
+      if (companyClause) {
+        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
+      }
+    }
+
     return pb.collection<ReviewRecord>('reviews').getFullList({
-      filter,
+      filter: finalFilter,
       sort,
       expand,
       requestKey: null,
@@ -1841,8 +1870,16 @@ export const deliveryService = {
 
   // Off Route & Unexpected Stop Events
   async getOffRouteEvents(filter = '', sort = '-created', expand = 'courier_id,order_id') {
+    let finalFilter = filter
+    if (!filter.includes('empresa_id')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id')
+      if (companyClause) {
+        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
+      }
+    }
+
     return pb.collection<OffRouteEventRecord>('off_route_events').getFullList({
-      filter,
+      filter: finalFilter,
       sort,
       expand,
       requestKey: null,
@@ -1850,7 +1887,12 @@ export const deliveryService = {
   },
 
   async createOffRouteEvent(data: Partial<OffRouteEventRecord>) {
-    return pb.collection<OffRouteEventRecord>('off_route_events').create(data)
+    const activeCompanyId = this.getActiveCompanyId()
+    const payload = {
+      ...data,
+      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+    }
+    return pb.collection<OffRouteEventRecord>('off_route_events').create(payload)
   },
 
   // Route optimization with Google Maps Traffic or fallback
