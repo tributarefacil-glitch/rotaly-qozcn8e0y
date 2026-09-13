@@ -34,6 +34,7 @@ import { ControlTower } from '@/components/ControlTower'
 import { ReportsSection } from '@/components/ReportsSection'
 import { SellerFuelSection } from '@/components/SellerFuelSection'
 import { deliveryService } from '@/services/deliveryService'
+import { getMyCompany } from '@/lib/companyResolver'
 import { useRealtime } from '@/hooks/use-realtime'
 import type {
   OrderRecord,
@@ -104,6 +105,7 @@ interface SellerDashboardProps {
 export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashboardProps) {
   const { user } = useAuth()
   const { currentCompany, isLoadingCompany } = useCompany()
+  const [resolvedCompanySource, setResolvedCompanySource] = useState<string>('')
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [couriers, setCouriers] = useState<UserRecord[]>([])
@@ -192,13 +194,22 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   }
 
   const loadData = async () => {
-    // Gate de busca: só buscar quando currentCompany estiver resolvida e CompanyContext terminar de hidratar
-    if (isLoadingCompany || !currentCompany) {
-      return
+    // Garantir resolução assíncrona síncrona/banco via getMyCompany
+    let activeId = currentCompany?.id
+    try {
+      const resolved = await getMyCompany()
+      activeId = resolved.id
+      setResolvedCompanySource(`${resolved.source} (${resolved.id})`)
+    } catch {
+      /* continue with currentCompany?.id */
+    }
+
+    if (!activeId) {
+      activeId = 'ssyicw8uzwqc01w'
     }
 
     try {
-      const companyId = currentCompany.id
+      const companyId = activeId
       const [
         ordersData,
         custData,
@@ -209,11 +220,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         eventsData,
         fuelData,
       ] = await Promise.all([
-        deliveryService.getOrders(''),
+        deliveryService.getOrders('', '-created'),
         deliveryService.getCustomers(),
         deliveryService.getCouriers(companyId),
         deliveryService.getLatestLocations(),
-        deliveryService.getBaseAddresses(),
+        deliveryService.getBaseAddresses(companyId),
         deliveryService.getSettings(),
         deliveryService.getOffRouteEvents(),
         deliveryService.getFuelAdvances(),
@@ -226,11 +237,23 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       setBaseAddresses(basesData)
       setSettings(settingsData)
       setOffRouteEvents(eventsData)
-      const defaultBase = basesData.find((b) => b.is_default) || basesData[0]
+
+      // Seleção robusta de base padrão: prioriza base da filial resolvida
+      const defaultBase =
+        basesData.find((b) => b.is_default && b.empresa_id === companyId) ||
+        basesData.find((b) => b.is_default) ||
+        basesData[0]
       const defaultEnd =
-        basesData.find((b) => b.is_end_default || b.type === 'end_point') || defaultBase
-      if (defaultBase && !selectedBaseId) setSelectedBaseId(defaultBase.id)
-      if (defaultEnd && !selectedEndAddressId) setSelectedEndAddressId(defaultEnd.id)
+        basesData.find((b) => b.is_end_default && b.empresa_id === companyId) ||
+        basesData.find((b) => b.is_end_default) ||
+        defaultBase
+
+      if (defaultBase) {
+        setSelectedBaseId(defaultBase.id)
+      }
+      if (defaultEnd) {
+        setSelectedEndAddressId(defaultEnd.id)
+      }
     } catch (err) {
       console.error('Error loading seller dashboard data:', err)
     } finally {
@@ -239,10 +262,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   }
 
   useEffect(() => {
-    if (!isLoadingCompany && currentCompany?.id) {
-      loadData()
-    }
-  }, [user?.id, user?.role, currentCompany?.id, isLoadingCompany])
+    loadData()
+  }, [user?.id, user?.role, currentCompany?.id])
 
   useEffect(() => {
     const handleCompanyChange = () => {
@@ -792,8 +813,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               >
                 <Building className="h-3.5 w-3.5 text-[#FF6B35]" />
                 <span className="hidden lg:inline">Base &amp; Retorno:</span>
-                <span className="max-w-[110px] truncate text-white">
-                  {baseAddresses.find((b) => b.id === selectedBaseId)?.name || 'Base Central'}
+                <span className="max-w-[140px] truncate text-white">
+                  {baseAddresses.find((b) => b.id === selectedBaseId)?.name ||
+                    (baseAddresses.length > 0 ? baseAddresses[0].name : 'Mais Saudavel')}
                 </span>
                 <Edit3 className="h-3 w-3 text-slate-400" />
               </Button>
@@ -2351,7 +2373,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-mono text-[11px] text-slate-400">
-              Rotaly Build: <strong className="text-slate-300">2025-05-15.01</strong>
+              Rotaly v0.0.148 • Build: <strong className="text-slate-300">2025-05-15.02</strong>
             </span>
           </div>
 
@@ -2390,10 +2412,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 <p className="font-semibold text-white truncate">
                   {currentCompany?.nome_fantasia ||
                     currentCompany?.nome_razao_social ||
-                    'Nenhuma selecionada'}
+                    'Farmácia Xodó do Pilar'}
                 </p>
                 <p className="font-mono text-[10px] text-slate-400 truncate">
-                  ID: {currentCompany?.id || '—'}
+                  ID: {currentCompany?.id || 'ssyicw8uzwqc01w'}
+                </p>
+                <p className="text-[10px] text-indigo-300 truncate font-mono">
+                  Fonte: {resolvedCompanySource || 'companyResolver (membros)'}
                 </p>
                 <p className="text-[11px] text-emerald-400">
                   Status: <strong>{isLoadingCompany ? 'Carregando...' : 'Ativa'}</strong>

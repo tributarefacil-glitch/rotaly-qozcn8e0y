@@ -79,17 +79,41 @@ const DEFAULT_CENTER = { lat: -22.906847, lng: -43.172896 }
 export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   open,
   onOpenChange,
-  customers,
+  customers: initialCustomers,
   couriers,
   onOrderCreated,
 }) => {
   const { user } = useAuth()
+  const [localCustomers, setLocalCustomers] = useState<CustomerRecord[]>(initialCustomers)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [customerId, setCustomerId] = useState<string>('')
   const [courierId, setCourierId] = useState<string>('unassigned')
   const [priority, setPriority] = useState<OrderPriority>('normal')
   const [notes, setNotes] = useState<string>('')
   const [items, setItems] = useState<OrderItem[]>([{ name: '', qty: 1, price: 0 }])
+
+  // Sincronizar clientes recebidos por prop
+  useEffect(() => {
+    if (initialCustomers && initialCustomers.length > 0) {
+      setLocalCustomers(initialCustomers)
+    }
+  }, [initialCustomers])
+
+  // Ao abrir o modal, garantir que os clientes da empresa ativa estejam carregados
+  useEffect(() => {
+    if (open) {
+      deliveryService
+        .getCustomers()
+        .then((custs) => {
+          if (custs && custs.length > 0) {
+            setLocalCustomers(custs)
+          }
+        })
+        .catch((err) =>
+          console.warn('Erro ao atualizar lista de clientes no CreateOrderModal:', err),
+        )
+    }
+  }, [open])
 
   // Customer inline state
   const [isAddingCustomer, setIsAddingCustomer] = useState(true)
@@ -253,7 +277,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       if (cleanDigits.length < 8) return
 
       // 1. Check in loaded customers array first (search phone1, phone2, phone3)
-      const localMatch = customers.find((c) => {
+      const localMatch = localCustomers.find((c) => {
         const d1 = (c.phone || '').replace(/\D/g, '')
         const d2 = (c.phone2 || '').replace(/\D/g, '')
         const d3 = (c.phone3 || '').replace(/\D/g, '')
@@ -294,7 +318,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         setIsSearchingPhone(false)
       }
     },
-    [customers, populateCustomerForm],
+    [localCustomers, populateCustomerForm],
   )
 
   // Phone input handler with auto-search debounce
@@ -561,7 +585,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   // When selecting existing customer
   const handleSelectExistingCustomer = (id: string) => {
     setCustomerId(id)
-    const cust = customers.find((c) => c.id === id)
+    const cust = localCustomers.find((c) => c.id === id)
     if (cust && cust.lat && cust.lng) {
       setSelectedCoords({ lat: cust.lat, lng: cust.lng })
       setHasLocationPinned(true)
@@ -1026,7 +1050,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             {!isAddingCustomer ? (
               <div className="space-y-3">
                 <CustomerSearchCombobox
-                  customers={customers}
+                  customers={localCustomers}
                   selectedCustomerId={customerId}
                   onSelectCustomer={(c) => handleSelectExistingCustomer(c.id)}
                   onOpenCreateNewCustomer={() => setIsAddingCustomer(true)}
@@ -1036,7 +1060,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 {customerId && (
                   <div className="rounded-lg bg-white p-3 border border-slate-200 text-xs dark:bg-slate-800 dark:border-slate-700 flex items-start justify-between">
                     {(() => {
-                      const sel = customers.find((c) => c.id === customerId)
+                      const sel = localCustomers.find((c) => c.id === customerId)
                       if (!sel) return null
                       return (
                         <div className="space-y-1">
@@ -1062,7 +1086,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        const sel = customers.find((c) => c.id === customerId)
+                        const sel = localCustomers.find((c) => c.id === customerId)
                         if (sel) {
                           populateCustomerForm(sel)
                           setIsAddingCustomer(true)

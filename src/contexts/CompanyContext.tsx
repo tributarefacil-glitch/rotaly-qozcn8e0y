@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import pb from '@/lib/pocketbase/client'
 import type { EmpresaRecord, MembroRecord } from '@/types/delivery'
 import { useAuth } from './AuthContext'
+import { getMyCompany, clearCompanyCache } from '@/lib/companyResolver'
 
 interface CompanyContextType {
   currentCompany: EmpresaRecord | null
@@ -35,7 +36,10 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     setIsLoadingCompany(true)
     try {
-      // 1. Carregar lista de membros vinculados a este usuário
+      // 1. Fonte única de verdade síncrona/banco via getMyCompany
+      const resolved = await getMyCompany()
+
+      // 2. Carregar lista de membros vinculados a este usuário
       const memberRecords = await pb
         .collection<MembroRecord>('membros')
         .getFullList({
@@ -49,7 +53,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           return [] as MembroRecord[]
         })
 
-      // 2. Se for admin do sistema, buscar também todas as empresas cadastradas
+      // 3. Se for admin do sistema, buscar todas as empresas para o seletor
       let companiesList: EmpresaRecord[] = []
       if (user.role === 'admin') {
         companiesList = await pb
@@ -60,129 +64,54 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           })
           .catch(() => [])
       } else {
-        // Para seller ou courier, empresas são as que ele é membro ativo
         companiesList = memberRecords
           .map((m) => (m.expand?.empresa_id as EmpresaRecord) || null)
           .filter(Boolean) as EmpresaRecord[]
       }
 
-      setAllCompanies(companiesList)
+      // Buscar o registro completo da empresa resolvida
+      let resolvedCompany: EmpresaRecord | null =
+        companiesList.find((c) => c.id === resolved.id) || null
 
-      // 3. Resolução da empresa ativa
-      let resolvedCompany: EmpresaRecord | null = null
-      let resolvedMember: MembroRecord | null = null
-
-      const isNonAdminStaff = user.role === 'seller' || user.role === 'courier'
-
-      if (isNonAdminStaff) {
-        // Para perfis seller e courier:
-        // 1. Resolve a empresa EXCLUSIVAMENTE pelo vínculo ativo em membros (user_id = user.id && ativo = true)
-        // 2. Se houver mais de um vínculo ativo, prioriza estritamente a filial (não-Matriz: empresa_id !== '7wo05iyvfcfh01h')
-        // 3. NUNCA usar fallback de localStorage como fonte de empresa para seller/courier
-        const nonMatrizMember = memberRecords.find((m) => m.empresa_id !== '7wo05iyvfcfh01h')
-        resolvedMember = nonMatrizMember || memberRecords[0] || null
-
-        if (resolvedMember) {
-          if (resolvedMember.expand?.empresa_id) {
-            resolvedCompany = resolvedMember.expand.empresa_id
-          } else {
-            try {
-              resolvedCompany = await pb
-                .collection<EmpresaRecord>('empresas')
-                .getOne(resolvedMember.empresa_id)
-            } catch {
-              /* intentionally ignored */
-            }
-          }
-        }
-
-        // Se a consulta a membros não retornou empresa por falha transitória ou sem vínculos,
-        // não adotar localStorage legado que possa apontar para a Matriz.
-        if (!resolvedCompany) {
-          try {
-            // Tentar buscar diretamente a filial de vínculo ou primeira empresa não-matriz
-            const filialRecords = await pb.collection<EmpresaRecord>('empresas').getFullList({
-              filter: `id != '7wo05iyvfcfh01h' && ativa != false`,
-              sort: 'created',
-              requestKey: null,
-            })
-            if (filialRecords.length > 0) {
-              resolvedCompany =
-                filialRecords.find((f) => f.id === 'ssyicw8uzwqc01w') || filialRecords[0]
-            }
-          } catch {
-            /* intentionally ignored */
-          }
-        }
-      } else {
-        // Admin / Gestor mantém a liberdade de alternar e manter a escolha do localStorage
-        const savedCompanyId = localStorage.getItem(STORAGE_KEY)
-        if (savedCompanyId && savedCompanyId !== 'undefined' && savedCompanyId !== 'null') {
-          resolvedCompany =
-            companiesList.find((c) => c.id === savedCompanyId && c.ativa !== false) || null
-        }
-
-        if (!resolvedCompany && memberRecords.length > 0) {
-          const matrizMember = memberRecords.find((m) => m.empresa_id === '7wo05iyvfcfh01h')
-          resolvedMember = matrizMember || memberRecords[0]
-          if (resolvedMember.expand?.empresa_id) {
-            resolvedCompany = resolvedMember.expand.empresa_id
-          } else {
-            try {
-              resolvedCompany = await pb
-                .collection<EmpresaRecord>('empresas')
-                .getOne(resolvedMember.empresa_id)
-            } catch {
-              /* intentionally ignored */
-            }
-          }
-        }
-      }
-
-      // Se ainda não encontrou e for admin, priorizar a Matriz em companiesList
-      if (!resolvedCompany && companiesList.length > 0) {
-        const matriz = companiesList.find((c) => c.id === '7wo05iyvfcfh01h')
-        resolvedCompany = matriz || companiesList[0]
-      }
-
-      // 4. FALLBACK SEGURO: se o usuário não tiver NENHUM membro nem empresa cadastrada,
-      // busca a empresa cadastrada no banco para NUNCA travar a tela
       if (!resolvedCompany) {
         try {
-          const fallbackList = await pb.collection<EmpresaRecord>('empresas').getList(1, 1, {
-            sort: 'created',
+          resolvedCompany = await pb.collection<EmpresaRecord>('empresas').getOne(resolved.id, {
             requestKey: null,
           })
-          if (fallbackList.items.length > 0) {
-            resolvedCompany = fallbackList.items[0]
-            try {
-              const newMember = await pb.collection<MembroRecord>('membros').create({
-                empresa_id: resolvedCompany.id,
-                user_id: user.id,
-                papel:
-                  user.role === 'admin'
-                    ? 'admin'
-                    : user.role === 'courier'
-                      ? 'entregador'
-                      : 'vendedor',
-                ativo: true,
-              })
-              resolvedMember = newMember
-            } catch {
-              /* intentionally ignored */
-            }
+        } catch {
+          // Fallback mínimo para garantir objeto de empresa válido
+          resolvedCompany = {
+            id: resolved.id,
+            nome_razao_social: resolved.name,
+            nome_fantasia: resolved.name,
+            cnpj: '',
+            telefone: '',
+            email: '',
+            cep: '',
+            logradouro: '',
+            numero: '',
+            bairro: '',
+            cidade: 'Duque de Caxias',
+            estado: 'RJ',
+            ativa: true,
+            created: '',
+            updated: '',
+            collectionId: 'empresas',
+            collectionName: 'empresas',
           }
-        } catch (errFallback) {
-          console.warn('Fallback empresas lookup falhou:', errFallback)
         }
       }
 
-      // Resolver o membro correspondente à empresa ativa
-      if (resolvedCompany && !resolvedMember) {
-        resolvedMember = memberRecords.find((m) => m.empresa_id === resolvedCompany?.id) || null
+      if (!companiesList.some((c) => c.id === resolvedCompany?.id) && resolvedCompany) {
+        companiesList.unshift(resolvedCompany)
+      }
+      setAllCompanies(companiesList)
+
+      let resolvedMember = memberRecords.find((m) => m.empresa_id === resolvedCompany?.id) || null
+      if (!resolvedMember && memberRecords.length > 0) {
+        resolvedMember = memberRecords[0]
       }
 
-      // Ao resolver com SUCESSO via banco/membros, reidratar localStorage com a empresa resolvida
       if (resolvedCompany) {
         localStorage.setItem(STORAGE_KEY, resolvedCompany.id)
         if (typeof window !== 'undefined') {
@@ -210,6 +139,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [authLoading, loadCompanyContext])
 
   const setCurrentCompany = (company: EmpresaRecord) => {
+    clearCompanyCache()
     setCurrentCompanyState(company)
     localStorage.setItem(STORAGE_KEY, company.id)
     if (typeof window !== 'undefined') {

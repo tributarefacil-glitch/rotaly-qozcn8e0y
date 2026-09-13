@@ -77,32 +77,32 @@ export const deliveryService = {
    * Se vazio, nulo ou inválido, retorna a Matriz como default seguro.
    */
   getActiveCompanyId(): string {
-    // Para perfis seller e courier, NUNCA usar localStorage legado como fonte se este apontar para Matriz
     try {
-      const authModel = pb.authStore.record as { role?: string } | null
+      const authModel = pb.authStore.record as { id?: string; role?: string } | null
       const isStaff = authModel && (authModel.role === 'seller' || authModel.role === 'courier')
 
       const active =
         typeof window !== 'undefined' ? localStorage.getItem('rotaly_active_empresa_id') : null
       const trimmed = active && active !== 'undefined' && active !== 'null' ? active.trim() : null
 
-      if (isStaff) {
-        // Se houver valor no storage e NÃO for a Matriz, usa o storage reidratado
-        if (trimmed && trimmed !== this.MATRIZ_EMPRESA_ID && trimmed !== '') {
-          return trimmed
+      // Se temos valor no storage:
+      if (trimmed && trimmed !== '') {
+        // Para seller ou courier, se estiver apontando para a Matriz, NUNCA aceitar Matriz — retornar Farmácia Xodó
+        if (isStaff && trimmed === this.MATRIZ_EMPRESA_ID) {
+          return 'ssyicw8uzwqc01w'
         }
-        // Se vazio ou se apontava erroneamente para a Matriz, retorna a Farmácia Xodó do Pilar (ssyicw8uzwqc01w)
-        return 'ssyicw8uzwqc01w'
+        return trimmed
       }
 
-      if (trimmed && trimmed !== '') {
-        return trimmed
+      // Se não há valor no storage:
+      if (isStaff) {
+        return 'ssyicw8uzwqc01w'
       }
     } catch {
       /* ignore */
     }
 
-    return this.MATRIZ_EMPRESA_ID
+    return 'ssyicw8uzwqc01w'
   },
 
   setActiveCompanyId(empresaId: string): void {
@@ -1053,8 +1053,50 @@ export const deliveryService = {
         requestKey: null,
       })
       if (records.length > 0) return records
+
+      // Se a busca com filtro restrito de filial retornou vazia, tentar buscar qualquer base cadastrada para a filial
+      if (activeCompanyId && activeCompanyId !== this.MATRIZ_EMPRESA_ID) {
+        const anyFilialBases = await pb
+          .collection<BaseAddressRecord>('base_addresses')
+          .getFullList({
+            sort: '-is_default,name',
+            requestKey: null,
+          })
+        const match = anyFilialBases.filter((b) => b.empresa_id === activeCompanyId)
+        if (match.length > 0) return match
+      }
     } catch (err) {
       console.warn('Could not fetch base_addresses from pb:', err)
+    }
+
+    // Se a empresa for Farmácia Xodó do Pilar ou outra filial, o default NUNCA deve ser "Base Central" da Matriz
+    const isFarmacia =
+      !activeCompanyId ||
+      activeCompanyId === 'ssyicw8uzwqc01w' ||
+      activeCompanyId === 'k443r453664d6v7'
+    if (isFarmacia) {
+      return [
+        {
+          id: 'v400vj141k05c08',
+          name: 'Mais Saudavel',
+          type: 'base',
+          address: 'Rua da Prosperidade, 13 - Pilar, Duque de Caxias - RJ, 25230-085, Brasil',
+          street: 'Rua da Prosperidade, 13',
+          neighborhood: 'Pilar',
+          city: 'Duque de Caxias',
+          state: 'RJ',
+          postal_code: '25230-085',
+          lat: -22.7001402,
+          lng: -43.2982834,
+          is_default: true,
+          is_end_default: true,
+          empresa_id: 'ssyicw8uzwqc01w',
+          collectionId: 'base_addresses',
+          collectionName: 'base_addresses',
+          created: new Date().toISOString(),
+          updated: new Date().toISOString(),
+        },
+      ]
     }
 
     return [

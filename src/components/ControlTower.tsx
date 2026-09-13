@@ -89,6 +89,7 @@ import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificatio
 import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
+import { getMyCompany } from '@/lib/companyResolver'
 import {
   calculateRouteWorkShift,
   type RouteWorkShiftMetrics,
@@ -480,6 +481,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
 
     try {
+      // Resolver empresa de forma síncrona/banco via getMyCompany
+      let targetCompanyId = currentCompany?.id
+      try {
+        const resolved = await getMyCompany()
+        targetCompanyId = resolved.id
+      } catch {
+        /* ignore */
+      }
+
       // Pedidos carregados pelo escopo da empresa ativa da filial (sem restringir por seller_id)
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
 
@@ -499,7 +509,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           '-created',
           'customer_id,courier_id,seller_id',
         ),
-        !hasParentCouriers ? deliveryService.getCouriers() : Promise.resolve(couriers),
+        !hasParentCouriers
+          ? deliveryService.getCouriers(targetCompanyId)
+          : Promise.resolve(couriers),
         deliveryService.getLatestLocations(),
         deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
         deliveryService.getSettings().catch(() => null),
