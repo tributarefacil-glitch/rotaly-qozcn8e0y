@@ -308,14 +308,19 @@ export default function Index() {
       {/* ================= TOP NAVBAR ================= */}
       <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-[0_2px_12px_rgba(0,40,85,0.04)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[5.5rem] py-2 flex items-center justify-between gap-4">
-          {/* Logo brand */}
+          {/* Logo brand: 4x maior (~240-280px no desktop) com fundo coincidente com o cabeçalho */}
           <Link
             to="/"
             onClick={() => setSelectedProfile(null)}
             className="flex items-center group transition-opacity shrink-0 py-1"
             title="Rotaly — Página Inicial"
           >
-            <RotalyLogo size="lg" theme="light" showTagline={false} />
+            <RotalyLogo
+              size="header"
+              theme="light"
+              showTagline={false}
+              containerBgClassName="bg-white"
+            />
           </Link>
 
           {/* Center Navigation Links (desktop) */}
@@ -1332,9 +1337,14 @@ export default function Index() {
             {/* Column 1: Brand & Sobre */}
             <div className="space-y-4">
               <div className="flex items-center">
-                {/* Logo container para rodapé escuro - bem visível e proporcional */}
-                <div className="bg-white rounded-2xl px-4 py-2 inline-flex items-center justify-center shadow-md">
-                  <RotalyLogo size="lg" theme="light" showTagline={false} />
+                {/* Logo container para rodapé institucional - 4x maior e fundo unificado com o card branco */}
+                <div className="bg-white rounded-2xl px-5 py-3 inline-flex items-center justify-center shadow-lg border border-white/20">
+                  <RotalyLogo
+                    size="footer"
+                    theme="light"
+                    showTagline={false}
+                    containerBgClassName="bg-white"
+                  />
                 </div>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed font-sans">

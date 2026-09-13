@@ -3,12 +3,22 @@ import { rotalyLogoImg } from '@/assets/logo-rotaly'
 
 export interface RotalyLogoProps {
   className?: string
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'header'
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'header' | 'hero' | 'footer'
   variant?: 'full' | 'icon' | 'badge' | 'image'
   theme?: 'dark' | 'light'
   showTagline?: boolean
   withBadge?: boolean
   imgClassName?: string
+  /**
+   * Cor ou classe de fundo do container da logo para coincidir perfeitamente com a página.
+   * Ex: 'bg-white', 'bg-[#002855]', 'transparent'
+   */
+  containerBgClassName?: string
+  /**
+   * Ativa mix-blend-multiply para fundos claros eliminando qualquer borda branca da imagem.
+   * Padrão true.
+   */
+  blendMode?: boolean
 }
 
 // Stylized isolated "R" emblem of Rotaly with vehicles and chevron
@@ -96,6 +106,8 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
   showTagline = false,
   withBadge = false,
   imgClassName = '',
+  containerBgClassName,
+  blendMode = true,
 }) => {
   const sizeMap = {
     xs: { imgHeight: 'h-6', icon: 24, text: 'text-sm', tagline: 'text-[8px]', gap: 'gap-1.5' },
@@ -115,8 +127,24 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
       gap: 'gap-3',
     },
     header: {
-      imgHeight: 'h-12 sm:h-14 md:h-[66px] lg:h-[72px]',
-      icon: 64,
+      // 4x maior que a versão v0.0.161 (~68-72px) -> ~240-280px no desktop (h-40 sm:h-48 md:h-64 lg:h-72)
+      imgHeight: 'h-40 sm:h-48 md:h-64 lg:h-72',
+      icon: 96,
+      text: 'text-3xl sm:text-4xl',
+      tagline: 'text-xs',
+      gap: 'gap-3',
+    },
+    hero: {
+      imgHeight: 'h-48 sm:h-56 md:h-64 lg:h-72',
+      icon: 96,
+      text: 'text-3xl sm:text-4xl',
+      tagline: 'text-sm',
+      gap: 'gap-4',
+    },
+    footer: {
+      // Proporcionalmente 4x o tamanho original do rodapé (~120-140px no desktop)
+      imgHeight: 'h-24 sm:h-28 md:h-32 lg:h-36',
+      icon: 80,
       text: 'text-2xl sm:text-3xl',
       tagline: 'text-xs',
       gap: 'gap-3',
@@ -165,20 +193,27 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
   // Official uploaded image mode
   // Notice: when withBadge is false (default), the image displays directly without an artificial card wrapper
   // that squashes or shrinks the logo. When withBadge is true, a clean rounded card is used (e.g. for dark backgrounds).
+  // mix-blend-multiply garante que o fundo branco do JPEG se funda perfeitamente à cor de fundo da página.
+  // Pode ser desativado via blendMode={false} se necessário.
+  const blendStyle: React.CSSProperties = blendMode !== false ? { mixBlendMode: 'multiply' } : {}
+
   const imageElement = (
     <img
       src={rotalyLogoImg}
       alt="Rotaly — Sua rota, nossa entrega"
-      className={`${currentSize.imgHeight} w-auto object-contain select-none transition-transform duration-150 group-hover:scale-[1.02] ${imgClassName}`}
+      style={blendStyle}
+      className={`${currentSize.imgHeight} w-auto object-contain select-none transition-transform duration-150 group-hover:scale-[1.01] ${containerBgClassName || ''} ${imgClassName}`}
       draggable={false}
     />
   )
 
   return (
     <div className={`inline-flex items-center ${currentSize.gap} ${className}`}>
-      <div className="flex items-center">
+      <div
+        className={`flex items-center ${containerBgClassName ? `rounded-xl ${containerBgClassName}` : ''}`}
+      >
         {withBadge ? (
-          <div className="bg-white rounded-xl p-1.5 shadow-sm flex items-center justify-center transition-transform duration-150 hover:scale-[1.02]">
+          <div className="bg-white rounded-2xl p-2 sm:p-3 shadow-md flex items-center justify-center transition-transform duration-150 hover:scale-[1.01]">
             {imageElement}
           </div>
         ) : (
