@@ -36,6 +36,8 @@ import {
   Info,
   MapPin,
   Maximize2,
+  Package,
+  Layers,
 } from 'lucide-react'
 import type {
   UserRecord,
@@ -75,6 +77,13 @@ export interface CourierDeliveryHistoryItem {
   offRouteCount: number
   unexpectedStopsCount: number
   events: OffRouteEventRecord[]
+  // Metadados de entrega conjunta
+  isJointDelivery?: boolean
+  isJointPrimary?: boolean
+  isJointSecondary?: boolean
+  jointGroupSize?: number
+  jointPrimaryTrackingCode?: string
+  jointPartnerTrackingCodes?: string[]
 }
 
 interface CourierDeliveryHistoryModalProps {
@@ -309,6 +318,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         litersSpent: liters,
         offRouteCount,
         unexpectedStopsCount,
+        isJointDelivery: calc.isJointDelivery,
+        isJointPrimary: calc.isJointPrimary,
+        isJointSecondary: calc.isJointSecondary,
+        jointGroupSize: calc.jointGroupSize,
+        jointPrimaryTrackingCode: calc.jointPrimaryTrackingCode,
+        jointPartnerTrackingCodes: calc.jointPartnerTrackingCodes,
         events:
           associatedEvents.length > 0
             ? associatedEvents
@@ -415,6 +430,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       'Litros Consumidos',
       'Desvios de Rota (>600m)',
       'Paradas Fora da Rota',
+      'Entrega Conjunta',
+      'Obs Auditoria',
     ]
 
     const rows = filteredItems.map((item) => [
@@ -432,6 +449,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       item.litersSpent.toFixed(2),
       item.offRouteCount,
       item.unexpectedStopsCount,
+      item.isJointSecondary
+        ? `"Conjunta (km contabilizado no ${item.jointPrimaryTrackingCode})"`
+        : item.isJointPrimary
+          ? `"Principal (${item.jointGroupSize || 2} pedidos)"`
+          : '"Individual"',
+      item.isJointSecondary ? '"km já contabilizado na entrega conjunta"' : '""',
     ])
 
     const csvContent =
@@ -587,6 +610,34 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
             </div>
           </div>
 
+          {/* ALERTA INFORMATIVO DE ENTREGAS CONJUNTAS CONSOLIDADAS */}
+          {consolidatedMetrics && consolidatedMetrics.jointDeliveriesConsolidatedCount > 0 && (
+            <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/40 shrink-0">
+                  <Package className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>📦 Entregas Conjuntas Detectadas no Mesmo Ponto</span>
+                    <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[10px] font-mono">
+                      {consolidatedMetrics.jointDeliveriesConsolidatedCount} pedido(s) agrupado(s)
+                    </Badge>
+                  </h4>
+                  <p className="text-[11px] text-purple-200/80 mt-0.5">
+                    Pedidos múltiplos no mesmo endereço e horário foram consolidados em uma única
+                    viagem. O KM oficial e combustível foram cobrados uma só vez pelo grupo,
+                    economizando{' '}
+                    <strong className="text-white">
+                      {consolidatedMetrics.jointSavedKm.toFixed(1)} km
+                    </strong>{' '}
+                    (R$ {consolidatedMetrics.jointSavedFuelCost.toFixed(2)} reembolsáveis).
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TELEMETRIA & OCORRÊNCIAS DE ROTA (DESVIOS E PARADAS) */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-3 rounded-xl bg-[#0A1128] border border-blue-500/30 flex items-center justify-between">
@@ -739,10 +790,34 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
                         {/* Código / Cliente */}
                         <td className="py-2.5 px-3">
-                          <span className="font-mono font-bold text-[#60A5FA] block">
-                            {item.trackingCode}
-                          </span>
-                          <span className="text-[11px] text-slate-300 font-medium truncate max-w-[160px] block">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono font-bold text-[#60A5FA] block">
+                              {item.trackingCode}
+                            </span>
+                            {item.isJointDelivery && (
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] px-1.5 py-0 font-medium flex items-center gap-1 border ${
+                                  item.isJointPrimary
+                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                    : 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+                                }`}
+                                title={
+                                  item.isJointPrimary
+                                    ? `Entrega principal de grupo de ${item.jointGroupSize || 2} pedidos no mesmo ponto (${(item.jointPartnerTrackingCodes || []).join(', ')})`
+                                    : `Entrega conjunta agregada ao pedido ${item.jointPrimaryTrackingCode}. Viagem computada no pedido principal.`
+                                }
+                              >
+                                <Package className="h-2.5 w-2.5" />
+                                <span>
+                                  {item.isJointPrimary
+                                    ? `Conjunta (${item.jointGroupSize || 2})`
+                                    : 'Conjunta'}
+                                </span>
+                              </Badge>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-slate-300 font-medium truncate max-w-[180px] block">
                             {item.customerName}
                           </span>
                         </td>
@@ -760,26 +835,42 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                         {/* KM Real Rodado (Oficial) */}
                         <td className="py-2.5 px-3 text-right font-mono font-semibold text-white">
                           <div className="flex items-center justify-end gap-1.5">
-                            {!item.isRealTelemetry && (
+                            {item.isJointSecondary ? (
                               <span
-                                className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300 font-sans border border-slate-600"
-                                title="Sem pontos de GPS gravados. KM estimado do planejamento."
+                                className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-sans border border-purple-500/30 font-medium cursor-help"
+                                title={`km já contabilizado na entrega conjunta (${item.jointPrimaryTrackingCode})`}
                               >
-                                ~estimado
+                                km já contabilizado na entrega conjunta
                               </span>
-                            )}
-                            {item.isRealTelemetry && (
-                              <span
-                                className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-[#60A5FA] font-sans border border-blue-500/30 font-bold"
-                                title="KM 100% Real calculado por telemetria GPS"
-                              >
-                                100% real
-                              </span>
+                            ) : (
+                              <>
+                                {!item.isRealTelemetry && (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300 font-sans border border-slate-600"
+                                    title="Sem pontos de GPS gravados. KM estimado do planejamento."
+                                  >
+                                    ~estimado
+                                  </span>
+                                )}
+                                {item.isRealTelemetry && (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-[#60A5FA] font-sans border border-blue-500/30 font-bold"
+                                    title="KM 100% Real calculado por telemetria GPS"
+                                  >
+                                    100% real
+                                  </span>
+                                )}
+                              </>
                             )}
                             <span>{item.kmRodado.toFixed(1)} km</span>
                           </div>
-                          {item.hasReturnKm && (
+                          {item.hasReturnKm && !item.isJointSecondary && (
                             <span className="block text-[9px] text-[#22C55E]">c/ retorno</span>
+                          )}
+                          {item.isJointSecondary && (
+                            <span className="block text-[9px] text-purple-400">
+                              (ref: {item.jointPrimaryTrackingCode})
+                            </span>
                           )}
                         </td>
 
@@ -888,6 +979,48 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                   </p>
                 </div>
 
+                {/* Bloco de Entrega Conjunta se aplicável */}
+                {selectedItemForDetails.isJointDelivery && (
+                  <div className="p-3 rounded-lg bg-purple-950/30 border border-purple-500/30 text-xs space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Package className="h-4 w-4 text-purple-400" />
+                        <span className="font-bold text-purple-200">
+                          📦 Entrega conjunta ({selectedItemForDetails.jointGroupSize || 2} pedidos
+                          no mesmo ponto)
+                        </span>
+                      </div>
+                      <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[10px]">
+                        {selectedItemForDetails.isJointPrimary
+                          ? 'Pedido Principal'
+                          : 'Entrega Agregada'}
+                      </Badge>
+                    </div>
+                    {selectedItemForDetails.isJointSecondary ? (
+                      <p className="text-[11px] text-purple-200/90 leading-relaxed">
+                        <strong className="text-white">
+                          km já contabilizado na entrega conjunta:
+                        </strong>{' '}
+                        Este pedido foi entregue no mesmo endereço e viagem do pedido principal{' '}
+                        <strong className="text-purple-300 font-mono">
+                          {selectedItemForDetails.jointPrimaryTrackingCode}
+                        </strong>
+                        . O entregador realizou apenas um deslocamento físico até o cliente,
+                        evitando cobrança duplicada na telemetria.
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-purple-200/90 leading-relaxed">
+                        Este é o pedido principal que consolida a quilometragem da viagem ao
+                        endereço. Pedidos agregados no mesmo momento:{' '}
+                        <strong className="text-purple-300 font-mono">
+                          {(selectedItemForDetails.jointPartnerTrackingCodes || []).join(', ')}
+                        </strong>
+                        .
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Métricas de KM e Combustível */}
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="p-3 rounded-lg bg-[#0E1738] border border-[#1E2B58]">
@@ -898,7 +1031,11 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                       <span className="text-lg font-black text-white font-mono">
                         {selectedItemForDetails.kmRodado} km
                       </span>
-                      {selectedItemForDetails.isRealTelemetry ? (
+                      {selectedItemForDetails.isJointSecondary ? (
+                        <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[9px] px-1 font-bold">
+                          Conjunta
+                        </Badge>
+                      ) : selectedItemForDetails.isRealTelemetry ? (
                         <Badge className="bg-blue-500/20 text-[#60A5FA] border-blue-500/30 text-[9px] px-1 font-bold">
                           100% Real
                         </Badge>
@@ -912,9 +1049,11 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                       )}
                     </div>
                     <span className="text-[9px] text-slate-400 block mt-0.5">
-                      {selectedItemForDetails.isRealTelemetry
-                        ? 'Telemetria GPS consolidada do lote'
-                        : `Planejado: ${selectedItemForDetails.plannedKm} km`}
+                      {selectedItemForDetails.isJointSecondary
+                        ? `Consolidado no pedido ${selectedItemForDetails.jointPrimaryTrackingCode}`
+                        : selectedItemForDetails.isRealTelemetry
+                          ? 'Telemetria GPS consolidada do lote'
+                          : `Planejado: ${selectedItemForDetails.plannedKm} km`}
                     </span>
                   </div>
 
@@ -926,8 +1065,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                       R$ {selectedItemForDetails.fuelCost.toFixed(2)}
                     </span>
                     <span className="text-[9px] text-slate-400 block mt-0.5">
-                      ~{selectedItemForDetails.litersSpent} L @ R${' '}
-                      {fuelParams.pricePerLiter.toFixed(2)}/L
+                      {selectedItemForDetails.isJointSecondary
+                        ? 'R$ 0,00 (viagem já reembolsada no grupo)'
+                        : `~${selectedItemForDetails.litersSpent} L @ R$ ${fuelParams.pricePerLiter.toFixed(2)}/L`}
                     </span>
                   </div>
                 </div>

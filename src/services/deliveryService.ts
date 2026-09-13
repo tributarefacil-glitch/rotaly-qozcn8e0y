@@ -267,6 +267,29 @@ export const deliveryService = {
   },
 
   /**
+   * Busca pedidos recentes (<24h) de um cliente com status ativo ou em rota ('pending', 'in_transit', 'assigned')
+   * para prevenir vendas duplas acidentais pelo vendedor.
+   */
+  async getRecentActiveOrdersForCustomer(
+    customerId: string,
+    hoursWindow = 24,
+  ): Promise<OrderRecord[]> {
+    if (!customerId) return []
+    try {
+      const thresholdTime = new Date(Date.now() - hoursWindow * 60 * 60 * 1000).toISOString()
+      const filter = `customer_id = '${customerId}' && created >= '${thresholdTime}' && status != 'cancelled' && status != 'delivered'`
+      return await pb.collection<OrderRecord>('orders').getFullList({
+        filter,
+        sort: '-created',
+        requestKey: null,
+      })
+    } catch (err) {
+      console.warn('Erro ao verificar pedidos recentes do cliente:', err)
+      return []
+    }
+  },
+
+  /**
    * Search customers by name, phone (phone, phone2, phone3) or document (CPF/CNPJ)
    */
   /**

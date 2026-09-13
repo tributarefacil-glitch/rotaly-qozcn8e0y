@@ -15,6 +15,7 @@ import {
   DEVIATION_THRESHOLD_METERS,
   haversineDistanceMeters,
 } from '@/lib/telemetryKmEngine'
+import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
 
 export interface CourierOrderTelemetryCalculation {
   order: OrderRecord
@@ -30,6 +31,13 @@ export interface CourierOrderTelemetryCalculation {
   unexpectedStopsCount: number
   calculationSource?: 'odometro' | 'historico_viario' | 'gps'
   odometerKm?: number
+  // Metadados de entrega conjunta / múltipla no mesmo ponto
+  isJointDelivery?: boolean
+  isJointPrimary?: boolean
+  isJointSecondary?: boolean
+  jointGroupSize?: number
+  jointPrimaryTrackingCode?: string
+  jointPartnerTrackingCodes?: string[]
 }
 
 export interface CourierFuelCalculationResult {
@@ -55,6 +63,11 @@ export interface CourierFuelCalculationResult {
   // Fonte oficial do cálculo
   calculationSource: 'odometro' | 'historico_viario' | 'gps'
   calculationSourceLabel: string
+  // Métricas de consolidação de entrega conjunta
+  jointDeliveriesConsolidatedCount: number
+  jointDeliveriesOrdersCount: number
+  jointSavedKm: number
+  jointSavedFuelCost: number
 }
 
 export interface UseCourierFuelOptions {
@@ -105,6 +118,10 @@ export function calculateCourierFuelMetrics(params: {
       fuelAccount: null,
       calculationSource: 'historico_viario',
       calculationSourceLabel: 'Histórico Viário de Rotas',
+      jointDeliveriesConsolidatedCount: 0,
+      jointDeliveriesOrdersCount: 0,
+      jointSavedKm: 0,
+      jointSavedFuelCost: 0,
     }
   }
 
@@ -365,6 +382,13 @@ export function calculateCourierFuelMetrics(params: {
     }
   >()
 
+  // 4.1 Detectar entregas múltiplas/conjuntas no mesmo ponto (< 45 minutos no mesmo cliente)
+  const jointMetaMap = buildJointDeliveryMetaMap(eligibleOrders)
+  let jointDeliveriesConsolidatedCount = 0
+  let jointDeliveriesOrdersCount = 0
+  let jointSavedKm = 0
+  let jointSavedFuelCost = 0
+
   const orderCalculations: CourierOrderTelemetryCalculation[] = eligibleOrders.map((order) => {
     let key: string
     if (order.route_started_at) {
@@ -475,6 +499,39 @@ export function calculateCourierFuelMetrics(params: {
       }
     }
 
+    // APLICAR REGRA DE ENTREGA CONJUNTA NO MESMO PONTO:
+    // Se o pedido fizer parte de um grupo de entrega múltipla no mesmo ponto:
+    // O pedido primário (1º) mantém o KM/combustível da viagem.
+    // Os pedidos secundários (2º em diante) entram com officialKm = 0 e fuelCost = 0 (viagem já paga).
+    const jointMeta = jointMetaMap.get(order.id)
+    let isJointDelivery = false
+    let isJointPrimary = false
+    let isJointSecondary = false
+    let jointGroupSize: number | undefined
+    let jointPrimaryTrackingCode: string | undefined
+    let jointPartnerTrackingCodes: string[] | undefined
+
+    if (jointMeta?.isJointDelivery) {
+      isJointDelivery = true
+      isJointPrimary = jointMeta.isJointPrimary
+      isJointSecondary = jointMeta.isJointSecondary
+      jointGroupSize = jointMeta.groupSize
+      jointPrimaryTrackingCode = jointMeta.primaryTrackingCode
+      jointPartnerTrackingCodes = jointMeta.partnerTrackingCodes
+      jointDeliveriesOrdersCount++
+
+      if (jointMeta.isJointSecondary) {
+        jointDeliveriesConsolidatedCount++
+        jointSavedKm += officialKm
+        jointSavedFuelCost += fuelCost
+
+        // Zera o KM oficial e combustível reembolsável
+        officialKm = 0
+        fuelCost = 0
+        litersSpent = 0
+      }
+    }
+
     return {
       order,
       officialKm,
@@ -489,6 +546,12 @@ export function calculateCourierFuelMetrics(params: {
       unexpectedStopsCount: batchTelemetry.unexpectedStopsCount,
       calculationSource: batchTelemetry.calculationSource,
       odometerKm: batchTelemetry.odometerKm,
+      isJointDelivery,
+      isJointPrimary,
+      isJointSecondary,
+      jointGroupSize,
+      jointPrimaryTrackingCode,
+      jointPartnerTrackingCodes,
     }
   })
 
@@ -550,6 +613,10 @@ export function calculateCourierFuelMetrics(params: {
     fuelAccount,
     calculationSource,
     calculationSourceLabel,
+    jointDeliveriesConsolidatedCount,
+    jointDeliveriesOrdersCount,
+    jointSavedKm: Number(jointSavedKm.toFixed(1)),
+    jointSavedFuelCost: Number(jointSavedFuelCost.toFixed(2)),
   }
 }
 

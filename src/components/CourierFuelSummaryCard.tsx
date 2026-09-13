@@ -10,6 +10,7 @@ import {
   ChevronRight,
   TrendingUp,
   AlertTriangle,
+  Package,
 } from 'lucide-react'
 import type { CourierFuelCalculationResult } from '@/hooks/useCourierFuelMetrics'
 import type { UserRecord } from '@/types/delivery'
@@ -196,6 +197,21 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
             </span>
           </div>
         </div>
+
+        {/* Badge / Indicador de Entregas Conjuntas se houver */}
+        {metrics.jointDeliveriesConsolidatedCount > 0 && (
+          <div className="p-2 rounded-md bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/40 text-[10px] text-purple-700 dark:text-purple-300 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 truncate">
+              <Package className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                📦 {metrics.jointDeliveriesConsolidatedCount} entrega(s) conjunta(s) no mesmo ponto
+              </span>
+            </div>
+            <span className="font-mono font-bold shrink-0 ml-1">
+              -{metrics.jointSavedKm.toFixed(1)} km (-R$ {metrics.jointSavedFuelCost.toFixed(2)})
+            </span>
+          </div>
+        )}
 
         {/* Resumo da Regra de Preço / Consumo */}
         {showPricingExplanation && (

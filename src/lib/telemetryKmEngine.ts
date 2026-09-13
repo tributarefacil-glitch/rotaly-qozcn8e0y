@@ -118,6 +118,13 @@ export interface RealKmCalculationResult {
   calculationSource?: 'odometro' | 'historico_viario' | 'gps'
   /** Odômetro calculado se houver */
   odometerKm?: number
+  /** Metadados de entrega conjunta no mesmo endereço */
+  isJointDelivery?: boolean
+  isJointPrimary?: boolean
+  isJointSecondary?: boolean
+  jointGroupSize?: number
+  jointPrimaryTrackingCode?: string
+  jointPartnerTrackingCodes?: string[]
 }
 
 /**

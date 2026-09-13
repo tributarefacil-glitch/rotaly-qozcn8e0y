@@ -31,12 +31,12 @@ import {
   Check,
   HelpCircle,
   Loader2,
-  AlertTriangle,
   Building2,
   Sparkles,
   Phone,
   UserCheck,
   Edit3,
+  AlertTriangle,
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import type {
@@ -45,6 +45,7 @@ import type {
   OrderPriority,
   OrderItem,
   RouteSuggestionDetails,
+  OrderRecord,
 } from '@/types/delivery'
 import { useAuth } from '@/contexts/AuthContext'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
@@ -147,6 +148,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   >('pending')
   const [isCalculatingSuggestion, setIsCalculatingSuggestion] = useState(false)
 
+  // Alerta preventivo de venda duplicada (<24h)
+  const [recentCustomerOrders, setRecentCustomerOrders] = useState<OrderRecord[]>([])
+  const [isCheckingRecentOrders, setIsCheckingRecentOrders] = useState(false)
+  const [ignoredRecentOrderWarning, setIgnoredRecentOrderWarning] = useState(false)
+
   // Link parsing input state
   const [locationLinkInput, setLocationLinkInput] = useState('')
   const [isParsingLink, setIsParsingLink] = useState(false)
@@ -242,7 +248,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   }, [open, isMapsLoaded, selectedCoords])
 
   // Populate customer fields helper
-  const populateCustomerForm = useCallback((cust: CustomerRecord) => {
+  const populateCustomerForm = useCallback(async (cust: CustomerRecord) => {
     setExistingMatchedCustomerId(cust.id)
     setNewCustName(cust.name || '')
     setNewCustPhone(cust.phone || '')
@@ -267,6 +273,19 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     if (cust.lat && cust.lng) {
       setSelectedCoords({ lat: cust.lat, lng: cust.lng })
       setHasLocationPinned(true)
+    }
+
+    if (cust.id) {
+      setIsCheckingRecentOrders(true)
+      try {
+        const recents = await deliveryService.getRecentActiveOrdersForCustomer(cust.id, 24)
+        setRecentCustomerOrders(recents)
+      } catch (err) {
+        console.warn('Erro ao checar pedidos recentes do cliente:', err)
+        setRecentCustomerOrders([])
+      } finally {
+        setIsCheckingRecentOrders(false)
+      }
     }
   }, [])
 
@@ -583,12 +602,28 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   }, [open, isMapsLoaded, isAddingCustomer, initMap])
 
   // When selecting existing customer
-  const handleSelectExistingCustomer = (id: string) => {
+  const handleSelectExistingCustomer = async (id: string) => {
     setCustomerId(id)
+    setIgnoredRecentOrderWarning(false)
     const cust = localCustomers.find((c) => c.id === id)
     if (cust && cust.lat && cust.lng) {
       setSelectedCoords({ lat: cust.lat, lng: cust.lng })
       setHasLocationPinned(true)
+    }
+
+    if (id) {
+      setIsCheckingRecentOrders(true)
+      try {
+        const recents = await deliveryService.getRecentActiveOrdersForCustomer(id, 24)
+        setRecentCustomerOrders(recents)
+      } catch (err) {
+        console.warn('Erro ao checar pedidos recentes do cliente:', err)
+        setRecentCustomerOrders([])
+      } finally {
+        setIsCheckingRecentOrders(false)
+      }
+    } else {
+      setRecentCustomerOrders([])
     }
   }
 
@@ -1698,6 +1733,43 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               rows={2}
             />
           </div>
+
+          {/* AVISO PREVENTIVO: CLIENTE COM PEDIDO ATIVO NAS ÚLTIMAS 24H (DIRETRIZ: AVISAR, NUNCA BLOQUEAR) */}
+          {recentCustomerOrders.length > 0 && !ignoredRecentOrderWarning && (
+            <div className="rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50/90 dark:bg-amber-950/30 p-3.5 shadow-sm space-y-2">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1 flex-1">
+                  <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                    Aviso: Cliente com Pedido Recente (Possível Venda Dupla)
+                  </h4>
+                  <p className="text-xs text-amber-800 dark:text-amber-300/90 leading-relaxed">
+                    Este cliente já possui o pedido{' '}
+                    <strong className="font-mono text-amber-950 dark:text-amber-100 font-bold">
+                      {recentCustomerOrders.map((o) => o.tracking_code || o.id).join(', ')}
+                    </strong>{' '}
+                    pendente/registrado hoje ({recentCustomerOrders.length}{' '}
+                    {recentCustomerOrders.length === 1 ? 'pedido ativo' : 'pedidos ativos'} nas
+                    últimas 24h).
+                  </p>
+                  <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                    Deseja lançar assim mesmo? Você pode confirmar normalmente.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-1 border-t border-amber-200 dark:border-amber-800/40">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIgnoredRecentOrderWarning(true)}
+                  className="h-7 text-xs bg-white dark:bg-slate-900 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 hover:bg-amber-100"
+                >
+                  Ciente, prosseguir com nova entrega
+                </Button>
+              </div>
+            </div>
+          )}
 
           <DialogFooter className="gap-2 sm:gap-0 pt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
