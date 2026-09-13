@@ -56,6 +56,8 @@ import { ReportsSection } from '@/components/ReportsSection'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 import { CreateSellerModal } from '@/components/CreateSellerModal'
 import { EditSellerModal } from '@/components/EditSellerModal'
+import { SiteContentManager } from '@/components/SiteContentManager'
+import { Globe } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
@@ -110,6 +112,7 @@ interface AdminDashboardProps {
     | 'fuel'
     | 'deviations'
     | 'settings'
+    | 'site-content'
     | 'couriers'
     | 'sellers'
 }
@@ -146,6 +149,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'fuel'
     | 'deviations'
     | 'settings'
+    | 'site-content'
     | 'couriers'
     | 'sellers'
     | null
@@ -157,6 +161,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'fuel'
     | 'deviations'
     | 'settings'
+    | 'site-content'
     | 'couriers'
     | 'sellers'
   >(tabFromQuery || defaultTab)
@@ -172,6 +177,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         'fuel',
         'deviations',
         'settings',
+        'site-content',
         'couriers',
         'sellers',
       ].includes(qTab)
@@ -1018,7 +1024,18 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
             <Tabs
               value={activeTab}
               onValueChange={(v) =>
-                setActiveTab(v as 'overview' | 'reports' | 'settings' | 'couriers' | 'sellers')
+                setActiveTab(
+                  v as
+                    | 'overview'
+                    | 'control-tower'
+                    | 'reports'
+                    | 'fuel'
+                    | 'deviations'
+                    | 'settings'
+                    | 'site-content'
+                    | 'couriers'
+                    | 'sellers',
+                )
               }
               className="space-y-6"
             >
@@ -1064,6 +1081,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 >
                   <Settings className="h-3.5 w-3.5 mr-1.5 text-slate-400" />
                   Parâmetros R$/L
+                </TabsTrigger>
+                <TabsTrigger
+                  value="site-content"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
+                >
+                  <Globe className="h-3.5 w-3.5 mr-1.5 text-[#00A3FF]" />
+                  Conteúdo do Site
                 </TabsTrigger>
                 <TabsTrigger
                   value="couriers"
@@ -2126,6 +2150,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* ATALHO PARA GESTÃO DE CONTEÚDO DO SITE DENTRO DA ABA DE CONFIGURAÇÕES */}
+                <div className="pt-2">
+                  <SiteContentManager />
+                </div>
+              </TabsContent>
+
+              {/* TAB: CONTEÚDO DO SITE PÚBLICO (QUEM SOMOS & FALE CONOSCO) */}
+              <TabsContent value="site-content" className="space-y-6">
+                <SiteContentManager />
               </TabsContent>
 
               {/* TAB 1: OVERVIEW */}

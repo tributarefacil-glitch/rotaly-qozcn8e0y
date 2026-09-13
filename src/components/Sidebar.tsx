@@ -13,6 +13,7 @@ import {
   Users,
   Search,
   Building2,
+  Globe,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Badge } from '@/components/ui/badge'
@@ -84,6 +85,12 @@ const navItems: NavItem[] = [
     href: '/invoices',
     icon: FileText,
     roles: ['admin', 'seller'],
+  },
+  {
+    title: 'Conteúdo do Site',
+    href: '/admin?tab=site-content',
+    icon: Globe,
+    roles: ['admin'],
   },
   {
     title: 'Configurações Globais',
