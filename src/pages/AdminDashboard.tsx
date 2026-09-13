@@ -2842,7 +2842,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#0E1738] border border-[#1E2B58] text-[#60A5FA] font-mono">
-                    v0.0.152
+                    v0.0.153
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">
