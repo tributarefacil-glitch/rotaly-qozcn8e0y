@@ -60,6 +60,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
+import { getMyCompany, type ResolvedCompany } from '@/lib/companyResolver'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
@@ -118,8 +119,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const { currentCompany } = useCompany()
   const location = useLocation()
   const navigate = useNavigate()
+  const [resolvedCompany, setResolvedCompany] = useState<ResolvedCompany | null>(null)
+  const [isLoadingCompanyGate, setIsLoadingCompanyGate] = useState(true)
+  const [resolvedCompanySource, setResolvedCompanySource] = useState<string>('')
+  const [isDiagExpanded, setIsDiagExpanded] = useState(false)
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
+  const [couriers, setCouriers] = useState<UserRecord[]>([])
+  const [sellers, setSellers] = useState<UserRecord[]>([])
   const [locations, setLocations] = useState<LocationRecord[]>([])
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -250,34 +257,77 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     try {
       setIsLoading(true)
       setLoadError(null)
+
+      // A) Loading gate & Resolução da Empresa Ativa
+      let activeId = currentCompany?.id
+      let resolvedInfo: ResolvedCompany | null = null
+
+      if (activeId) {
+        resolvedInfo = {
+          id: activeId,
+          name:
+            currentCompany?.nome_fantasia || currentCompany?.nome_razao_social || 'Empresa Ativa',
+          source: 'admin_selection',
+        }
+        setResolvedCompanySource(`admin_selection (${activeId})`)
+      } else {
+        try {
+          resolvedInfo = await getMyCompany()
+          activeId = resolvedInfo.id
+          setResolvedCompanySource(`${resolvedInfo.source} (${resolvedInfo.id})`)
+        } catch (err) {
+          console.warn('[AdminDashboard] Erro ao resolver empresa:', err)
+        }
+      }
+
+      if (!activeId) {
+        activeId = 'ssyicw8uzwqc01w' // Farmácia Xodó como fallback seguro prioritário
+        if (!resolvedInfo) {
+          resolvedInfo = {
+            id: activeId,
+            name: 'Farmácia Xodó do Pilar',
+            source: 'fallback_filial',
+          }
+        }
+      }
+
+      setResolvedCompany(resolvedInfo)
+      setIsLoadingCompanyGate(false)
+
+      const companyId = activeId
+
       const [
         ordersData,
         usersData,
+        couriersData,
+        sellersData,
         notifsData,
         appSettings,
         advancesData,
-        accountsData,
         eventsData,
         reviewsData,
         locationsData,
       ] = await Promise.all([
-        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
-        deliveryService.getAllUsers(),
+        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id', companyId),
+        deliveryService.getAllUsers(companyId),
+        deliveryService.getCouriers(companyId),
+        deliveryService.getSellers(companyId),
         deliveryService.getNotifications(),
         deliveryService.getSettings(),
         deliveryService.getFuelAdvances(),
-        deliveryService.getCourierFuelAccounts(),
         deliveryService.getOffRouteEvents(),
         deliveryService.getReviews(),
         deliveryService.getLatestLocations(),
       ])
       setOrders(ordersData)
       setUsers(usersData)
+      setCouriers(couriersData)
+      setSellers(sellersData)
       setNotifications(notifsData)
       setSettings(appSettings)
       setFuelAdvances(advancesData)
       // Recalcula as contas correntes com base no filtro de período atual e dados completos
-      const couriersList = usersData.filter((u) => u.role === 'courier') as UserRecord[]
+      const couriersList = couriersData
       const calculatedAccounts = couriersList.map((courier) => {
         const metrics = calculateCourierFuelMetrics({
           courier,
@@ -725,10 +775,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     }
   }
 
-  // Filtered lists
-  const couriers = users.filter((u) => u.role === 'courier')
-  const sellers = users.filter((u) => u.role === 'seller')
-
+  // Filtered lists baseadas nos estados alimentados pela coleção membros
   const pendingCouriers = couriers.filter((c) => c.status === 'pending')
   const activeCouriers = couriers.filter(
     (c) => c.status === 'active' || c.status === 'idle' || c.status === 'busy',
@@ -922,1874 +969,2026 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col font-sans">
       <Header />
 
-      <div className="flex flex-1">
-        <Sidebar />
-
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 overflow-y-auto max-w-[1600px] mx-auto w-full">
-          {loadError && (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300">
-              <div className="flex items-center gap-3">
-                <AlertTriangle className="h-5 w-5 text-rose-400 shrink-0" />
-                <span className="text-sm font-medium">{loadError}</span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadData}
-                className="h-8 text-xs border-rose-500/40 text-rose-200 hover:bg-rose-500/20"
-              >
-                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                Tentar novamente
-              </Button>
-            </div>
-          )}
-
-          {/* Header Title & Actions */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <ShieldCheck className="h-6 w-6 text-[#60A5FA]" />
-                <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-white">
-                  Painel Executivo &amp; Gestão Rotaly
-                </h1>
-              </div>
-              <p className="font-sans text-xs sm:text-sm text-slate-400 mt-1">
-                Controle global de entregadores, vendedores, aprovações de documentos e telemetria.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadData}
-                className="h-9 gap-1.5 text-xs text-slate-700 border-slate-200 hover:bg-slate-50 rounded-input"
-              >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 text-[#0052CC] ${isLoading ? 'animate-spin' : ''}`}
-                />
-                Atualizar
-              </Button>
-              <Button
-                onClick={() => setIsNewUserModalOpen(true)}
-                className="h-9 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
-              >
-                <UserPlus className="h-4 w-4 text-[#FF6B35]" />
-                Cadastrar Usuário
-              </Button>
-            </div>
+      {isLoadingCompanyGate ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-4 min-h-[60vh]">
+          <div className="relative">
+            <RefreshCw className="h-10 w-10 text-[#0052CC] animate-spin" />
+            <ShieldCheck className="h-5 w-5 text-[#60A5FA] absolute -bottom-1 -right-1" />
           </div>
+          <div className="text-center space-y-1">
+            <p className="text-sm font-semibold text-white">Carregando dados da empresa...</p>
+            <p className="text-xs text-slate-400">
+              Sincronizando filial ativa e vínculos operacionais
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-1">
+          <Sidebar />
 
-          {/* MAIN TABS (Overview, Relatórios, Configurações, Entregadores, Vendedores) */}
-          <Tabs
-            value={activeTab}
-            onValueChange={(v) =>
-              setActiveTab(v as 'overview' | 'reports' | 'settings' | 'couriers' | 'sellers')
-            }
-            className="space-y-6"
-          >
-            <TabsList className="bg-[#0A1128] p-1 border border-[#1E2B58] rounded-xl flex flex-wrap gap-1 font-heading">
-              <TabsTrigger
-                value="overview"
-                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
-              >
-                <BarChart3 className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
-                Visão Geral
-              </TabsTrigger>
-              <TabsTrigger
-                value="control-tower"
-                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
-              >
-                <Compass className="h-3.5 w-3.5 mr-1.5 text-[#22C55E]" />
-                Torre de Controle
-              </TabsTrigger>
-              <TabsTrigger
-                value="reports"
-                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
-              >
-                <PieChart className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
-                Relatórios Operacionais
-              </TabsTrigger>
-              <TabsTrigger
-                value="fuel"
-                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
-              >
-                <Wallet className="h-3.5 w-3.5 mr-1.5 text-[#22C55E]" />
-                Controle de Combustível
-              </TabsTrigger>
-              <TabsTrigger
-                value="deviations"
-                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg text-[#FF6B35]"
-              >
-                <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-[#FF6B35]" />
-                Desvios &amp; Paradas ({offRouteEvents.length})
-              </TabsTrigger>
-              <TabsTrigger
-                value="settings"
-                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
-              >
-                <Settings className="h-3.5 w-3.5 mr-1.5 text-slate-400" />
-                Parâmetros R$/L
-              </TabsTrigger>
-              <TabsTrigger
-                value="couriers"
-                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg relative"
-              >
-                <Truck className="h-3.5 w-3.5 mr-1.5 text-[#FF6B35]" />
-                Entregadores ({couriers.length})
-                {pendingCouriers.length > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-[#FF6B35] text-white text-[10px] font-bold">
-                    {pendingCouriers.length}
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger
-                value="sellers"
-                className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
-              >
-                <Users className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
-                Vendedores ({sellers.length})
-              </TabsTrigger>
-            </TabsList>
-
-            {/* MÓDULO 1: TORRE DE CONTROLE NA ABA DO ADMIN */}
-            <TabsContent value="control-tower" className="space-y-6">
-              <ControlTower
-                orders={orders}
-                couriers={couriers}
-                locations={locations}
-                settings={settings}
-                offRouteEvents={offRouteEvents}
-                onRefresh={loadData}
-                userRole="admin"
-              />
-            </TabsContent>
-
-            {/* TAB: CONTROLE DE COMBUSTÍVEL & CONTA CORRENTE EM TEMPO REAL (REQUISITO 5) */}
-            <TabsContent value="fuel" className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <Wallet className="h-5 w-5 text-emerald-600" />
-                    Controle Financeiro de Combustível (Pagamento Antecipado)
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Conta corrente por entregador em tempo real:{' '}
-                    <strong>Valor Recebido (Adiantamentos)</strong> menos{' '}
-                    <strong>Gasto em Rotas Oficiais</strong>.
-                  </p>
+          <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-6 overflow-y-auto max-w-[1600px] mx-auto w-full">
+            {loadError && (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="h-5 w-5 text-rose-400 shrink-0" />
+                  <span className="text-sm font-medium">{loadError}</span>
                 </div>
-
                 <Button
-                  onClick={() => setIsNewFuelAdvanceModalOpen(true)}
-                  className="h-9 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/25 self-start sm:self-center"
+                  variant="outline"
+                  size="sm"
+                  onClick={loadData}
+                  className="h-8 text-xs border-rose-500/40 text-rose-200 hover:bg-rose-500/20"
                 >
-                  <PlusCircle className="h-4 w-4" />
-                  Cadastrar Adiantamento / Pagamento
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Tentar novamente
                 </Button>
               </div>
+            )}
 
-              {/* CARDS DE CONTA CORRENTE DOS ENTREGADORES */}
-              <div className="space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                    <CreditCard className="h-4 w-4 text-emerald-500" />
-                    Conta Corrente dos Entregadores (Saldo em Tempo Real)
-                  </h4>
-                  <p className="text-xs text-slate-400">
-                    💡 Clique em qualquer card para abrir o{' '}
-                    <strong className="text-blue-500">
-                      Histórico Completo de Entregas, KM, Combustível e Telemetria
-                    </strong>
-                    .
-                  </p>
+            {/* Header Title & Actions */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <ShieldCheck className="h-6 w-6 text-[#60A5FA]" />
+                  <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-white">
+                    Painel Executivo &amp; Gestão Rotaly
+                  </h1>
+                </div>
+                <p className="font-sans text-xs sm:text-sm text-slate-400 mt-1">
+                  Controle global de entregadores, vendedores, aprovações de documentos e
+                  telemetria.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadData}
+                  className="h-9 gap-1.5 text-xs text-slate-700 border-slate-200 hover:bg-slate-50 rounded-input"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 text-[#0052CC] ${isLoading ? 'animate-spin' : ''}`}
+                  />
+                  Atualizar
+                </Button>
+                <Button
+                  onClick={() => setIsNewUserModalOpen(true)}
+                  className="h-9 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
+                >
+                  <UserPlus className="h-4 w-4 text-[#FF6B35]" />
+                  Cadastrar Usuário
+                </Button>
+              </div>
+            </div>
+
+            {/* MAIN TABS (Overview, Relatórios, Configurações, Entregadores, Vendedores) */}
+            <Tabs
+              value={activeTab}
+              onValueChange={(v) =>
+                setActiveTab(v as 'overview' | 'reports' | 'settings' | 'couriers' | 'sellers')
+              }
+              className="space-y-6"
+            >
+              <TabsList className="bg-[#0A1128] p-1 border border-[#1E2B58] rounded-xl flex flex-wrap gap-1 font-heading">
+                <TabsTrigger
+                  value="overview"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
+                >
+                  <BarChart3 className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
+                  Visão Geral
+                </TabsTrigger>
+                <TabsTrigger
+                  value="control-tower"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
+                >
+                  <Compass className="h-3.5 w-3.5 mr-1.5 text-[#22C55E]" />
+                  Torre de Controle
+                </TabsTrigger>
+                <TabsTrigger
+                  value="reports"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
+                >
+                  <PieChart className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
+                  Relatórios Operacionais
+                </TabsTrigger>
+                <TabsTrigger
+                  value="fuel"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
+                >
+                  <Wallet className="h-3.5 w-3.5 mr-1.5 text-[#22C55E]" />
+                  Controle de Combustível
+                </TabsTrigger>
+                <TabsTrigger
+                  value="deviations"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg text-[#FF6B35]"
+                >
+                  <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-[#FF6B35]" />
+                  Desvios &amp; Paradas ({offRouteEvents.length})
+                </TabsTrigger>
+                <TabsTrigger
+                  value="settings"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
+                >
+                  <Settings className="h-3.5 w-3.5 mr-1.5 text-slate-400" />
+                  Parâmetros R$/L
+                </TabsTrigger>
+                <TabsTrigger
+                  value="couriers"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg relative"
+                >
+                  <Truck className="h-3.5 w-3.5 mr-1.5 text-[#FF6B35]" />
+                  Entregadores ({couriers.length})
+                  {pendingCouriers.length > 0 && (
+                    <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-[#FF6B35] text-white text-[10px] font-bold">
+                      {pendingCouriers.length}
+                    </span>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="sellers"
+                  className="text-xs font-semibold text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white data-[state=active]:shadow-brand rounded-lg"
+                >
+                  <Users className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
+                  Vendedores ({sellers.length})
+                </TabsTrigger>
+              </TabsList>
+
+              {/* MÓDULO 1: TORRE DE CONTROLE NA ABA DO ADMIN */}
+              <TabsContent value="control-tower" className="space-y-6">
+                <ControlTower
+                  orders={orders}
+                  couriers={couriers}
+                  locations={locations}
+                  settings={settings}
+                  offRouteEvents={offRouteEvents}
+                  onRefresh={loadData}
+                  userRole="admin"
+                />
+              </TabsContent>
+
+              {/* TAB: CONTROLE DE COMBUSTÍVEL & CONTA CORRENTE EM TEMPO REAL (REQUISITO 5) */}
+              <TabsContent value="fuel" className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <Wallet className="h-5 w-5 text-emerald-600" />
+                      Controle Financeiro de Combustível (Pagamento Antecipado)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Conta corrente por entregador em tempo real:{' '}
+                      <strong>Valor Recebido (Adiantamentos)</strong> menos{' '}
+                      <strong>Gasto em Rotas Oficiais</strong>.
+                    </p>
+                  </div>
+
+                  <Button
+                    onClick={() => setIsNewFuelAdvanceModalOpen(true)}
+                    className="h-9 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/25 self-start sm:self-center"
+                  >
+                    <PlusCircle className="h-4 w-4" />
+                    Cadastrar Adiantamento / Pagamento
+                  </Button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {currentFuelAccounts.map((acc) => {
-                    const isPositive = acc.balance >= 0
-                    return (
-                      <Card
-                        key={acc.courier.id}
-                        onClick={() => {
-                          setSelectedCourierForHistory(acc.courier)
-                          setIsCourierHistoryModalOpen(true)
-                        }}
-                        className="border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden cursor-pointer hover:border-[#0052CC]/60 hover:shadow-md transition-all group"
-                      >
-                        <div
-                          className={`absolute top-0 left-0 right-0 h-1.5 ${
-                            isPositive ? 'bg-emerald-500' : 'bg-rose-500'
-                          }`}
-                        />
-                        <CardHeader className="p-4 pb-2">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 font-bold text-xs">
-                                {acc.courier.name
-                                  ? acc.courier.name.slice(0, 2).toUpperCase()
-                                  : 'EN'}
+                {/* CARDS DE CONTA CORRENTE DOS ENTREGADORES */}
+                <div className="space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                      <CreditCard className="h-4 w-4 text-emerald-500" />
+                      Conta Corrente dos Entregadores (Saldo em Tempo Real)
+                    </h4>
+                    <p className="text-xs text-slate-400">
+                      💡 Clique em qualquer card para abrir o{' '}
+                      <strong className="text-blue-500">
+                        Histórico Completo de Entregas, KM, Combustível e Telemetria
+                      </strong>
+                      .
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {currentFuelAccounts.map((acc) => {
+                      const isPositive = acc.balance >= 0
+                      return (
+                        <Card
+                          key={acc.courier.id}
+                          onClick={() => {
+                            setSelectedCourierForHistory(acc.courier)
+                            setIsCourierHistoryModalOpen(true)
+                          }}
+                          className="border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden cursor-pointer hover:border-[#0052CC]/60 hover:shadow-md transition-all group"
+                        >
+                          <div
+                            className={`absolute top-0 left-0 right-0 h-1.5 ${
+                              isPositive ? 'bg-emerald-500' : 'bg-rose-500'
+                            }`}
+                          />
+                          <CardHeader className="p-4 pb-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 font-bold text-xs">
+                                  {acc.courier.name
+                                    ? acc.courier.name.slice(0, 2).toUpperCase()
+                                    : 'EN'}
+                                </div>
+                                <div>
+                                  <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
+                                    {acc.courier.name || 'Entregador'}
+                                  </CardTitle>
+                                  <p className="text-[10px] text-slate-500 flex items-center gap-1">
+                                    <span>{acc.courier.vehicle_plate || 'Sem placa'}</span> •{' '}
+                                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                      {acc.courier.vehicle_model ||
+                                        (acc.courier.vehicle_type === 'carro'
+                                          ? 'Carro'
+                                          : acc.courier.vehicle_type === 'caminhao'
+                                            ? 'Caminhão'
+                                            : acc.courier.vehicle_type === 'bicycle' ||
+                                                acc.courier.vehicle_type === 'bicicleta'
+                                              ? 'Bicicleta'
+                                              : 'Moto')}
+                                    </span>
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] px-1 py-0 uppercase font-mono font-bold ml-0.5"
+                                    >
+                                      {deliveryService.normalizeVehicleCategory(
+                                        acc.courier.vehicle_type,
+                                      ) === 'bicicleta'
+                                        ? '🚲 Bicicleta'
+                                        : deliveryService.normalizeVehicleCategory(
+                                            acc.courier.vehicle_type,
+                                          )}
+                                    </Badge>
+                                  </p>
+                                </div>
                               </div>
+                              <Badge
+                                className={`text-[10px] font-bold ${
+                                  isPositive
+                                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300'
+                                    : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300'
+                                }`}
+                              >
+                                {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
+                              </Badge>
+                            </div>
+                          </CardHeader>
+
+                          <CardContent className="p-4 pt-2 space-y-3 text-xs">
+                            {/* Saldo Principal */}
+                            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border flex items-center justify-between">
                               <div>
-                                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
-                                  {acc.courier.name || 'Entregador'}
-                                </CardTitle>
-                                <p className="text-[10px] text-slate-500 flex items-center gap-1">
-                                  <span>{acc.courier.vehicle_plate || 'Sem placa'}</span> •{' '}
-                                  <span className="font-semibold text-slate-700 dark:text-slate-300">
-                                    {acc.courier.vehicle_model ||
-                                      (acc.courier.vehicle_type === 'carro'
-                                        ? 'Carro'
-                                        : acc.courier.vehicle_type === 'caminhao'
-                                          ? 'Caminhão'
-                                          : acc.courier.vehicle_type === 'bicycle' ||
-                                              acc.courier.vehicle_type === 'bicicleta'
-                                            ? 'Bicicleta'
-                                            : 'Moto')}
-                                  </span>
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[9px] px-1 py-0 uppercase font-mono font-bold ml-0.5"
-                                  >
-                                    {deliveryService.normalizeVehicleCategory(
-                                      acc.courier.vehicle_type,
-                                    ) === 'bicicleta'
-                                      ? '🚲 Bicicleta'
-                                      : deliveryService.normalizeVehicleCategory(
-                                          acc.courier.vehicle_type,
-                                        )}
-                                  </Badge>
+                                <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                                  Saldo da Conta Corrente
+                                </span>
+                                <span
+                                  className={`text-xl font-black font-mono ${
+                                    isPositive
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-rose-600 dark:text-rose-400'
+                                  }`}
+                                >
+                                  R$ {acc.balance.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-[10px] text-slate-400 block">
+                                  {acc.advanceCount} adiantamento(s)
+                                </span>
+                                <span className="text-[10px] text-slate-400 block">
+                                  {acc.deliveriesCount} entregas
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Detalhamento: Recebido vs Gasto */}
+                            <div className="grid grid-cols-2 gap-2 text-[11px]">
+                              <div className="p-2 rounded-lg bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
+                                <span className="text-emerald-700 dark:text-emerald-400 block font-medium">
+                                  (+) Total Adiantado
+                                </span>
+                                <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono text-sm">
+                                  R$ {acc.totalAdvances.toFixed(2)}
+                                </span>
+                              </div>
+
+                              <div className="p-2 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
+                                <span className="text-amber-700 dark:text-amber-400 block font-medium">
+                                  {deliveryService.normalizeVehicleCategory(
+                                    acc.courier.vehicle_type,
+                                  ) === 'bicicleta'
+                                    ? 'Km Rodado (Sem Combustível)'
+                                    : '(-) Gasto Rota Oficial'}
+                                </span>
+                                <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm">
+                                  {deliveryService.normalizeVehicleCategory(
+                                    acc.courier.vehicle_type,
+                                  ) === 'bicicleta'
+                                    ? `${acc.totalRouteKm.toFixed(1)} km`
+                                    : `R$ ${acc.totalSpent.toFixed(2)}`}
+                                </span>
+                                <span className="text-[9px] text-slate-400 block mt-0.5">
+                                  {deliveryService.normalizeVehicleCategory(
+                                    acc.courier.vehicle_type,
+                                  ) === 'bicicleta'
+                                    ? 'Telemetria GPS apurada'
+                                    : `${acc.totalRouteKm.toFixed(1)} km reais oficiais (GPS)`}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Dica / Botão de clique para histórico */}
+                            <div className="pt-1 flex items-center justify-between text-[11px] text-[#0052CC] dark:text-[#60A5FA] font-medium group-hover:underline">
+                              <span>Ver histórico detalhado de entregas & telemetria</span>
+                              <span>→</span>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* HISTÓRICO DE PAGAMENTOS / ADIANTAMENTOS CADASTRADOS */}
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardHeader className="pb-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <Receipt className="h-4 w-4 text-emerald-600" />
+                          Histórico de Pagamentos e Adiantamentos ({filteredFuelAdvances.length})
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Lançamentos cadastrados pelo administrador com filtro por entregador e
+                          período.
+                        </CardDescription>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Filter by Courier */}
+                        <Select
+                          value={selectedCourierForFuelFilter}
+                          onValueChange={setSelectedCourierForFuelFilter}
+                        >
+                          <SelectTrigger className="h-8 w-44 text-xs">
+                            <SelectValue placeholder="Filtrar Entregador" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Todos os Entregadores</SelectItem>
+                            {couriers.map((c) => (
+                              <SelectItem key={c.id} value={c.id}>
+                                🛵 {c.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        {/* Filter by Period */}
+                        <Select
+                          value={fuelPeriodFilter}
+                          onValueChange={(v: 'all' | 'month' | 'week') => setFuelPeriodFilter(v)}
+                        >
+                          <SelectTrigger className="h-8 w-32 text-xs">
+                            <SelectValue placeholder="Período" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Todo Histórico</SelectItem>
+                            <SelectItem value="month">Este Mês</SelectItem>
+                            <SelectItem value="week">Últimos 7 dias</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
+                            <th className="py-2.5 px-3 font-semibold">Data</th>
+                            <th className="py-2.5 px-3 font-semibold">Entregador</th>
+                            <th className="py-2.5 px-3 font-semibold">Forma de Pagamento</th>
+                            <th className="py-2.5 px-3 font-semibold">Observações / Motivo</th>
+                            <th className="py-2.5 px-3 font-semibold text-right">Valor Pago</th>
+                            <th className="py-2.5 px-3 font-semibold text-right">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredFuelAdvances.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="py-6 text-center text-slate-400">
+                                Nenhum adiantamento cadastrado para os filtros selecionados.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredFuelAdvances.map((adv) => {
+                              const courier = users.find((u) => u.id === adv.courier_id)
+                              return (
+                                <tr
+                                  key={adv.id}
+                                  className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+                                >
+                                  <td className="py-2.5 px-3 font-mono text-slate-700 dark:text-slate-300">
+                                    {adv.date
+                                      ? new Date(adv.date).toLocaleDateString('pt-BR')
+                                      : '-'}
+                                  </td>
+                                  <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
+                                    {courier?.name || 'Entregador'}
+                                  </td>
+                                  <td className="py-2.5 px-3">
+                                    <Badge
+                                      variant="outline"
+                                      className="uppercase font-mono text-[10px] bg-slate-100 dark:bg-slate-800"
+                                    >
+                                      {adv.payment_method || 'PIX'}
+                                    </Badge>
+                                  </td>
+                                  <td className="py-2.5 px-3 text-slate-500 text-[11px] max-w-xs truncate">
+                                    {adv.notes || 'Adiantamento de combustível para rotas'}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-black text-emerald-600 dark:text-emerald-400 font-mono text-sm">
+                                    R$ {Number(adv.amount || 0).toFixed(2)}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleDeleteFuelAdvance(adv.id)}
+                                      className="h-7 w-7 p-0 text-slate-400 hover:text-rose-600"
+                                      title="Excluir adiantamento"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              )
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              {/* TAB: RELATÓRIO DE DESVIOS E PARADAS FORA DE ROTA (REQUISITO 2) */}
+              <TabsContent value="deviations" className="space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5 text-amber-500" />
+                      Relatório de Desvios de Rota e Paradas Não Previstas
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Ocorrências automáticas de telemetria:{' '}
+                      <strong>desvios superiores a 300 metros</strong> (não contabilizados no
+                      consumo de combustível) e <strong>paradas fora dos pontos previstos</strong>{' '}
+                      após o entregador iniciar a rota.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select value={offRouteFilterType} onValueChange={setOffRouteFilterType}>
+                      <SelectTrigger className="h-8 w-44 text-xs">
+                        <SelectValue placeholder="Tipo de Ocorrência" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todas as Ocorrências</SelectItem>
+                        <SelectItem value="route_deviation">
+                          🚨 Desvio de Rota (&gt;600m - Sem KM)
+                        </SelectItem>
+                        <SelectItem value="unexpected_stop">🛑 Parada Não Prevista</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select value={offRouteCourierFilter} onValueChange={setOffRouteCourierFilter}>
+                      <SelectTrigger className="h-8 w-44 text-xs">
+                        <SelectValue placeholder="Filtrar Entregador" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos os Entregadores</SelectItem>
+                        {couriers.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            🛵 {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* SUMMARY STATS */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+                    <CardContent className="p-4 flex items-center gap-3">
+                      <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-600">
+                        <AlertTriangle className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 font-medium">Total de Ocorrências</p>
+                        <h4 className="text-2xl font-black text-slate-900 dark:text-white">
+                          {offRouteEvents.length}
+                        </h4>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+                    <CardContent className="p-4 flex items-center gap-3">
+                      <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-600">
+                        <Compass className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 font-medium">
+                          Desvios &gt; 600m (Sem KM)
+                        </p>
+                        <h4 className="text-2xl font-black text-rose-600">
+                          {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}
+                        </h4>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+                    <CardContent className="p-4 flex items-center gap-3">
+                      <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600">
+                        <Clock className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 font-medium">Paradas Fora do Ponto</p>
+                        <h4 className="text-2xl font-black text-blue-600">
+                          {offRouteEvents.filter((e) => e.event_type === 'unexpected_stop').length}
+                        </h4>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* TABELA DE EVENTOS */}
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-bold text-slate-900 dark:text-white">
+                      Histórico Detalhado de Telemetria & Alertas ({filteredOffRouteEvents.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
+                            <th className="py-3 px-3 font-semibold">Data / Hora</th>
+                            <th className="py-3 px-3 font-semibold">Entregador</th>
+                            <th className="py-3 px-3 font-semibold">Tipo de Evento</th>
+                            <th className="py-3 px-3 font-semibold">Desvio / Detalhe</th>
+                            <th className="py-3 px-3 font-semibold">Coordenadas GPS</th>
+                            <th className="py-3 px-3 font-semibold">Observação do Sistema</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredOffRouteEvents.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="py-8 text-center text-slate-400">
+                                Nenhuma ocorrência de desvio ou parada registrada.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredOffRouteEvents.map((ev) => {
+                              const courier = users.find((u) => u.id === ev.courier_id)
+                              return (
+                                <tr
+                                  key={ev.id}
+                                  className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
+                                >
+                                  <td className="py-3 px-3 font-mono text-slate-600 dark:text-slate-300">
+                                    {new Date(ev.created).toLocaleString('pt-BR')}
+                                  </td>
+                                  <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                                    {courier?.name || 'Entregador'}
+                                  </td>
+                                  <td className="py-3 px-3">
+                                    {ev.event_type === 'route_deviation' ? (
+                                      <Badge className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300 text-[10px] font-bold">
+                                        🚨 Desvio de Rota
+                                      </Badge>
+                                    ) : (
+                                      <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-300 text-[10px] font-bold">
+                                        🛑 Parada Fora do Ponto
+                                      </Badge>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-3 font-semibold">
+                                    {ev.distance_deviation_meters ? (
+                                      <span className="text-rose-600 font-mono">
+                                        +{ev.distance_deviation_meters} metros
+                                      </span>
+                                    ) : ev.stop_duration_seconds ? (
+                                      <span className="text-amber-600 font-mono">
+                                        ~{Math.round(ev.stop_duration_seconds / 60)} min parado
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400">-</span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-3 font-mono text-slate-500 text-[11px]">
+                                    {ev.lat?.toFixed(5)}, {ev.lng?.toFixed(5)}
+                                  </td>
+                                  <td className="py-3 px-3 text-slate-500 text-[11px]">
+                                    {ev.notes ||
+                                      'Alerta disparado para vendedor e entregador com sinal sonoro.'}
+                                  </td>
+                                </tr>
+                              )
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              {/* TAB: RELATÓRIOS COMPLETOS (MÓDULO 4) */}
+              <TabsContent value="reports" className="space-y-6">
+                <ReportsSection
+                  orders={orders}
+                  couriers={couriers}
+                  settings={settings}
+                  offRouteEvents={offRouteEvents}
+                  locations={locations}
+                />
+              </TabsContent>
+
+              {/* TAB: CONFIGURAÇÕES DO ADMINISTRADOR (PARÂMETROS DE COMBUSTÍVEL POR TIPO DE VEÍCULO) */}
+              <TabsContent value="settings" className="space-y-6">
+                <Card className="border-slate-200 dark:border-slate-800 shadow-sm max-w-4xl">
+                  <CardHeader>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-white">
+                          <Fuel className="h-5 w-5 text-indigo-600" />
+                          Configurações Operacionais &amp; Parâmetros de Combustível
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Configure o preço do litro (R$/L) e o consumo médio (km/L) para cada
+                          categoria de veículo. Os cálculos de custo de rota e conta corrente passam
+                          a utilizar os parâmetros oficiais do entregador.
+                        </CardDescription>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => handleSaveAllFuelSettings()}
+                        disabled={isSavingSettings}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs gap-1.5 shrink-0 shadow-sm"
+                      >
+                        <Save className="h-4 w-4" />
+                        {isSavingSettings ? 'Salvando Todos...' : 'Salvar Todos em Lote'}
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    {/* Cards de cada tipo de veículo (Moto, Carro, Caminhão) */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* CARD 1: MOTO */}
+                      <div className="rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 p-4 space-y-4 flex flex-col justify-between">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between pb-2 border-b border-blue-200/60 dark:border-blue-800">
+                            <div className="flex items-center gap-2">
+                              <span className="text-2xl">🏍️</span>
+                              <div>
+                                <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
+                                  Moto
+                                </h3>
+                                <p className="text-[11px] text-slate-500">Scooter / Motocicleta</p>
+                              </div>
+                            </div>
+                            <Badge className="bg-blue-600 text-white text-[10px] font-bold">
+                              Padrão
+                            </Badge>
+                          </div>
+
+                          {/* Preço Litro Moto */}
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                              <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
+                              Preço do Litro (R$/L)
+                            </Label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
+                                R$
+                              </span>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0.1"
+                                value={motoPriceInput}
+                                onChange={(e) => setMotoPriceInput(e.target.value)}
+                                className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
+                                placeholder="5.59"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Consumo Moto */}
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                              <Gauge className="h-3.5 w-3.5 text-indigo-600" />
+                              Consumo (km por Litro)
+                            </Label>
+                            <div className="relative">
+                              <Input
+                                type="number"
+                                step="0.1"
+                                min="0.1"
+                                value={motoConsInput}
+                                onChange={(e) => setMotoConsInput(e.target.value)}
+                                className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
+                                placeholder="35.0"
+                              />
+                              <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
+                                km/L
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Estimativa em tempo real */}
+                          <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
+                            <p className="font-semibold text-slate-700 dark:text-slate-200">
+                              Custo por km:
+                            </p>
+                            <p className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                              R${' '}
+                              {(
+                                (parseFloat(motoPriceInput.replace(',', '.')) || 5.59) /
+                                (parseFloat(motoConsInput.replace(',', '.')) || 35.0)
+                              ).toFixed(4)}
+                              /km
+                            </p>
+                            <p className="text-[10px] text-slate-500 mt-0.5">
+                              Ex: 10 km = R${' '}
+                              {(
+                                (10 * (parseFloat(motoPriceInput.replace(',', '.')) || 5.59)) /
+                                (parseFloat(motoConsInput.replace(',', '.')) || 35.0)
+                              ).toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleSaveIndividualCategory('moto')}
+                          disabled={savingCategory === 'moto' || isSavingSettings}
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 mt-2"
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          {savingCategory === 'moto' ? 'Salvando...' : 'Salvar Moto'}
+                        </Button>
+                      </div>
+
+                      {/* CARD 2: CARRO */}
+                      <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 flex flex-col justify-between">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between pb-2 border-b border-emerald-200/60 dark:border-emerald-800">
+                            <div className="flex items-center gap-2">
+                              <span className="text-2xl">🚗</span>
+                              <div>
+                                <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
+                                  Carro
+                                </h3>
+                                <p className="text-[11px] text-slate-500">
+                                  Passeio / Utilitário Leve
                                 </p>
                               </div>
                             </div>
-                            <Badge
-                              className={`text-[10px] font-bold ${
-                                isPositive
-                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300'
-                                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300'
-                              }`}
-                            >
-                              {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
+                            <Badge className="bg-emerald-600 text-white text-[10px] font-bold">
+                              Urbano
                             </Badge>
                           </div>
-                        </CardHeader>
 
-                        <CardContent className="p-4 pt-2 space-y-3 text-xs">
-                          {/* Saldo Principal */}
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border flex items-center justify-between">
-                            <div>
-                              <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                                Saldo da Conta Corrente
+                          {/* Preço Litro Carro */}
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                              <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
+                              Preço do Litro (R$/L)
+                            </Label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
+                                R$
                               </span>
-                              <span
-                                className={`text-xl font-black font-mono ${
-                                  isPositive
-                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                    : 'text-rose-600 dark:text-rose-400'
-                                }`}
-                              >
-                                R$ {acc.balance.toFixed(2)}
-                              </span>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0.1"
+                                value={carroPriceInput}
+                                onChange={(e) => setCarroPriceInput(e.target.value)}
+                                className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
+                                placeholder="5.59"
+                              />
                             </div>
-                            <div className="text-right">
-                              <span className="text-[10px] text-slate-400 block">
-                                {acc.advanceCount} adiantamento(s)
-                              </span>
-                              <span className="text-[10px] text-slate-400 block">
-                                {acc.deliveriesCount} entregas
+                          </div>
+
+                          {/* Consumo Carro */}
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                              <Gauge className="h-3.5 w-3.5 text-emerald-600" />
+                              Consumo (km por Litro)
+                            </Label>
+                            <div className="relative">
+                              <Input
+                                type="number"
+                                step="0.1"
+                                min="0.1"
+                                value={carroConsInput}
+                                onChange={(e) => setCarroConsInput(e.target.value)}
+                                className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
+                                placeholder="12.0"
+                              />
+                              <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
+                                km/L
                               </span>
                             </div>
                           </div>
 
-                          {/* Detalhamento: Recebido vs Gasto */}
-                          <div className="grid grid-cols-2 gap-2 text-[11px]">
-                            <div className="p-2 rounded-lg bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
-                              <span className="text-emerald-700 dark:text-emerald-400 block font-medium">
-                                (+) Total Adiantado
-                              </span>
-                              <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono text-sm">
-                                R$ {acc.totalAdvances.toFixed(2)}
-                              </span>
-                            </div>
+                          {/* Estimativa em tempo real */}
+                          <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
+                            <p className="font-semibold text-slate-700 dark:text-slate-200">
+                              Custo por km:
+                            </p>
+                            <p className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                              R${' '}
+                              {(
+                                (parseFloat(carroPriceInput.replace(',', '.')) || 5.59) /
+                                (parseFloat(carroConsInput.replace(',', '.')) || 12.0)
+                              ).toFixed(4)}
+                              /km
+                            </p>
+                            <p className="text-[10px] text-slate-500 mt-0.5">
+                              Ex: 10 km = R${' '}
+                              {(
+                                (10 * (parseFloat(carroPriceInput.replace(',', '.')) || 5.59)) /
+                                (parseFloat(carroConsInput.replace(',', '.')) || 12.0)
+                              ).toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
 
-                            <div className="p-2 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
-                              <span className="text-amber-700 dark:text-amber-400 block font-medium">
-                                {deliveryService.normalizeVehicleCategory(
-                                  acc.courier.vehicle_type,
-                                ) === 'bicicleta'
-                                  ? 'Km Rodado (Sem Combustível)'
-                                  : '(-) Gasto Rota Oficial'}
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleSaveIndividualCategory('carro')}
+                          disabled={savingCategory === 'carro' || isSavingSettings}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 mt-2"
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          {savingCategory === 'carro' ? 'Salvando...' : 'Salvar Carro'}
+                        </Button>
+                      </div>
+
+                      {/* CARD 3: CAMINHÃO */}
+                      <div className="rounded-xl border border-orange-200 dark:border-orange-900/60 bg-orange-50/40 dark:bg-orange-950/20 p-4 space-y-4 flex flex-col justify-between">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between pb-2 border-b border-orange-200/60 dark:border-orange-800">
+                            <div className="flex items-center gap-2">
+                              <span className="text-2xl">🚚</span>
+                              <div>
+                                <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
+                                  Caminhão
+                                </h3>
+                                <p className="text-[11px] text-slate-500">VUC / Carga Pesada</p>
+                              </div>
+                            </div>
+                            <Badge className="bg-orange-600 text-white text-[10px] font-bold">
+                              Carga
+                            </Badge>
+                          </div>
+
+                          {/* Preço Litro Caminhão */}
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                              <DollarSign className="h-3.5 w-3.5 text-orange-600" />
+                              Preço do Litro (R$/L)
+                            </Label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
+                                R$
                               </span>
-                              <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm">
-                                {deliveryService.normalizeVehicleCategory(
-                                  acc.courier.vehicle_type,
-                                ) === 'bicicleta'
-                                  ? `${acc.totalRouteKm.toFixed(1)} km`
-                                  : `R$ ${acc.totalSpent.toFixed(2)}`}
-                              </span>
-                              <span className="text-[9px] text-slate-400 block mt-0.5">
-                                {deliveryService.normalizeVehicleCategory(
-                                  acc.courier.vehicle_type,
-                                ) === 'bicicleta'
-                                  ? 'Telemetria GPS apurada'
-                                  : `${acc.totalRouteKm.toFixed(1)} km reais oficiais (GPS)`}
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0.1"
+                                value={caminhaoPriceInput}
+                                onChange={(e) => setCaminhaoPriceInput(e.target.value)}
+                                className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
+                                placeholder="5.59"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Consumo Caminhão */}
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                              <Gauge className="h-3.5 w-3.5 text-orange-600" />
+                              Consumo (km por Litro)
+                            </Label>
+                            <div className="relative">
+                              <Input
+                                type="number"
+                                step="0.1"
+                                min="0.1"
+                                value={caminhaoConsInput}
+                                onChange={(e) => setCaminhaoConsInput(e.target.value)}
+                                className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
+                                placeholder="7.0"
+                              />
+                              <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
+                                km/L
                               </span>
                             </div>
                           </div>
 
-                          {/* Dica / Botão de clique para histórico */}
-                          <div className="pt-1 flex items-center justify-between text-[11px] text-[#0052CC] dark:text-[#60A5FA] font-medium group-hover:underline">
-                            <span>Ver histórico detalhado de entregas & telemetria</span>
-                            <span>→</span>
+                          {/* Estimativa em tempo real */}
+                          <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
+                            <p className="font-semibold text-slate-700 dark:text-slate-200">
+                              Custo por km:
+                            </p>
+                            <p className="font-mono font-bold text-orange-600 dark:text-orange-400">
+                              R${' '}
+                              {(
+                                (parseFloat(caminhaoPriceInput.replace(',', '.')) || 5.59) /
+                                (parseFloat(caminhaoConsInput.replace(',', '.')) || 7.0)
+                              ).toFixed(4)}
+                              /km
+                            </p>
+                            <p className="text-[10px] text-slate-500 mt-0.5">
+                              Ex: 10 km = R${' '}
+                              {(
+                                (10 * (parseFloat(caminhaoPriceInput.replace(',', '.')) || 5.59)) /
+                                (parseFloat(caminhaoConsInput.replace(',', '.')) || 7.0)
+                              ).toFixed(2)}
+                            </p>
                           </div>
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
-                </div>
-              </div>
+                        </div>
 
-              {/* HISTÓRICO DE PAGAMENTOS / ADIANTAMENTOS CADASTRADOS */}
-              <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-                <CardHeader className="pb-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <CardTitle className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                        <Receipt className="h-4 w-4 text-emerald-600" />
-                        Histórico de Pagamentos e Adiantamentos ({filteredFuelAdvances.length})
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Lançamentos cadastrados pelo administrador com filtro por entregador e
-                        período.
-                      </CardDescription>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleSaveIndividualCategory('caminhao')}
+                          disabled={savingCategory === 'caminhao' || isSavingSettings}
+                          className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs gap-1.5 mt-2"
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          {savingCategory === 'caminhao' ? 'Salvando...' : 'Salvar Caminhão'}
+                        </Button>
+                      </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* Filter by Courier */}
-                      <Select
-                        value={selectedCourierForFuelFilter}
-                        onValueChange={setSelectedCourierForFuelFilter}
-                      >
-                        <SelectTrigger className="h-8 w-44 text-xs">
-                          <SelectValue placeholder="Filtrar Entregador" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todos os Entregadores</SelectItem>
-                          {couriers.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              🛵 {c.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-
-                      {/* Filter by Period */}
-                      <Select
-                        value={fuelPeriodFilter}
-                        onValueChange={(v: 'all' | 'month' | 'week') => setFuelPeriodFilter(v)}
-                      >
-                        <SelectTrigger className="h-8 w-32 text-xs">
-                          <SelectValue placeholder="Período" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todo Histórico</SelectItem>
-                          <SelectItem value="month">Este Mês</SelectItem>
-                          <SelectItem value="week">Últimos 7 dias</SelectItem>
-                        </SelectContent>
-                      </Select>
+                    {/* Fórmula explicativa unificada */}
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border text-xs space-y-2 text-slate-600 dark:text-slate-300">
+                      <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <Fuel className="h-4 w-4 text-amber-500" />
+                        Fórmula de Cálculo Automática por Tipo de Veículo:
+                      </p>
+                      <p className="font-mono text-xs bg-white dark:bg-slate-900 p-2.5 rounded-lg border text-indigo-600 dark:text-indigo-400">
+                        Custo (R$) = [ Distância Total (km) × Preço do Litro do Tipo (R$) ] ÷
+                        Consumo do Tipo (km/L)
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
+                        <div className="p-2 rounded bg-white dark:bg-slate-900 border">
+                          <span className="font-bold text-slate-700 dark:text-slate-300">
+                            🏍️ Moto:
+                          </span>{' '}
+                          Consumo base <strong>{motoConsInput} km/L</strong> (preço R${' '}
+                          {motoPriceInput}/L)
+                        </div>
+                        <div className="p-2 rounded bg-white dark:bg-slate-900 border">
+                          <span className="font-bold text-slate-700 dark:text-slate-300">
+                            🚗 Carro:
+                          </span>{' '}
+                          Consumo base <strong>{carroConsInput} km/L</strong> (preço R${' '}
+                          {carroPriceInput}/L)
+                        </div>
+                        <div className="p-2 rounded bg-white dark:bg-slate-900 border">
+                          <span className="font-bold text-slate-700 dark:text-slate-300">
+                            🚚 Caminhão:
+                          </span>{' '}
+                          Consumo base <strong>{caminhaoConsInput} km/L</strong> (preço R${' '}
+                          {caminhaoPriceInput}/L)
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-500 pt-1">
+                        ℹ️ Caso um entregador não tenha veículo definido ou possua cadastro antigo,
+                        o sistema aplica <strong>Moto (35 km/L)</strong> como fallback de segurança.
+                      </p>
                     </div>
-                  </div>
-                </CardHeader>
+                  </CardContent>
+                </Card>
 
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
-                          <th className="py-2.5 px-3 font-semibold">Data</th>
-                          <th className="py-2.5 px-3 font-semibold">Entregador</th>
-                          <th className="py-2.5 px-3 font-semibold">Forma de Pagamento</th>
-                          <th className="py-2.5 px-3 font-semibold">Observações / Motivo</th>
-                          <th className="py-2.5 px-3 font-semibold text-right">Valor Pago</th>
-                          <th className="py-2.5 px-3 font-semibold text-right">Ação</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filteredFuelAdvances.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="py-6 text-center text-slate-400">
-                              Nenhum adiantamento cadastrado para os filtros selecionados.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredFuelAdvances.map((adv) => {
-                            const courier = users.find((u) => u.id === adv.courier_id)
-                            return (
-                              <tr
-                                key={adv.id}
-                                className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
-                              >
-                                <td className="py-2.5 px-3 font-mono text-slate-700 dark:text-slate-300">
-                                  {adv.date ? new Date(adv.date).toLocaleDateString('pt-BR') : '-'}
-                                </td>
-                                <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
-                                  {courier?.name || 'Entregador'}
-                                </td>
-                                <td className="py-2.5 px-3">
-                                  <Badge
-                                    variant="outline"
-                                    className="uppercase font-mono text-[10px] bg-slate-100 dark:bg-slate-800"
-                                  >
-                                    {adv.payment_method || 'PIX'}
-                                  </Badge>
-                                </td>
-                                <td className="py-2.5 px-3 text-slate-500 text-[11px] max-w-xs truncate">
-                                  {adv.notes || 'Adiantamento de combustível para rotas'}
-                                </td>
-                                <td className="py-2.5 px-3 text-right font-black text-emerald-600 dark:text-emerald-400 font-mono text-sm">
-                                  R$ {Number(adv.amount || 0).toFixed(2)}
-                                </td>
-                                <td className="py-2.5 px-3 text-right">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleDeleteFuelAdvance(adv.id)}
-                                    className="h-7 w-7 p-0 text-slate-400 hover:text-rose-600"
-                                    title="Excluir adiantamento"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </td>
-                              </tr>
-                            )
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+                {/* CARD: JORNADA DE TRABALHO DA EMPRESA */}
+                <Card className="border-slate-200 dark:border-slate-800 shadow-sm max-w-4xl">
+                  <CardHeader>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-white">
+                          <Clock className="h-5 w-5 text-blue-600" />
+                          Jornada de Trabalho da Empresa
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Defina o horário padrão de entrada, intervalo de almoço e término do
+                          expediente. Estes horários alimentam diretamente o motor de cálculo da
+                          carga horária das rotas, projeção de volta à base e os alertas de jornada
+                          na Torre de Controle e Otimizador.
+                        </CardDescription>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => handleSaveWorkShiftSettings()}
+                        disabled={isSavingShiftSettings}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 shrink-0 shadow-sm"
+                      >
+                        <Save className="h-4 w-4" />
+                        {isSavingShiftSettings
+                          ? 'Salvando Jornada...'
+                          : 'Salvar Jornada de Trabalho'}
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    {/* Grid de 4 Horários: Entrada, Saída Almoço, Volta Almoço, Fim do Expediente */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {/* 1. Entrada */}
+                      <div className="rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/30 dark:bg-blue-950/20 p-4 space-y-2">
+                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <span className="text-base">🟢</span>
+                          Entrada (Início)
+                        </Label>
+                        <p className="text-[11px] text-slate-500">Início da jornada diária</p>
+                        <Input
+                          type="time"
+                          value={workStartTimeInput}
+                          onChange={(e) => setWorkStartTimeInput(e.target.value)}
+                          className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
+                        />
+                        <span className="text-[10px] text-slate-400 block text-center">
+                          Ex: 08:00
+                        </span>
+                      </div>
 
-            {/* TAB: RELATÓRIO DE DESVIOS E PARADAS FORA DE ROTA (REQUISITO 2) */}
-            <TabsContent value="deviations" className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-amber-500" />
-                    Relatório de Desvios de Rota e Paradas Não Previstas
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Ocorrências automáticas de telemetria:{' '}
-                    <strong>desvios superiores a 300 metros</strong> (não contabilizados no consumo
-                    de combustível) e <strong>paradas fora dos pontos previstos</strong> após o
-                    entregador iniciar a rota.
-                  </p>
+                      {/* 2. Saída para Almoço */}
+                      <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/30 dark:bg-amber-950/20 p-4 space-y-2">
+                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <span className="text-base">🍽️</span>
+                          Saída para Almoço
+                        </Label>
+                        <p className="text-[11px] text-slate-500">Início da pausa de almoço</p>
+                        <Input
+                          type="time"
+                          value={lunchStartTimeInput}
+                          onChange={(e) => setLunchStartTimeInput(e.target.value)}
+                          className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
+                        />
+                        <span className="text-[10px] text-slate-400 block text-center">
+                          Ex: 12:00
+                        </span>
+                      </div>
+
+                      {/* 3. Volta do Almoço */}
+                      <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/30 dark:bg-amber-950/20 p-4 space-y-2">
+                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <span className="text-base">☕</span>
+                          Volta do Almoço
+                        </Label>
+                        <p className="text-[11px] text-slate-500">Término da pausa de almoço</p>
+                        <Input
+                          type="time"
+                          value={lunchEndTimeInput}
+                          onChange={(e) => setLunchEndTimeInput(e.target.value)}
+                          className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
+                        />
+                        <span className="text-[10px] text-slate-400 block text-center">
+                          Ex: 13:00
+                        </span>
+                      </div>
+
+                      {/* 4. Fim do Expediente */}
+                      <div className="rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/30 dark:bg-rose-950/20 p-4 space-y-2">
+                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <span className="text-base">🏁</span>
+                          Fim do Expediente
+                        </Label>
+                        <p className="text-[11px] text-slate-500">
+                          Horário limite da carga horária
+                        </p>
+                        <Input
+                          type="time"
+                          value={workEndTimeInput}
+                          onChange={(e) => setWorkEndTimeInput(e.target.value)}
+                          className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
+                        />
+                        <span className="text-[10px] text-slate-400 block text-center">
+                          Ex: 18:30
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Resumo da Jornada e Explicação das Regras */}
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border text-xs space-y-2.5 text-slate-600 dark:text-slate-300">
+                      <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                        Como esses horários impactam os cálculos de rota:
+                      </p>
+                      <ul className="list-disc list-inside space-y-1 text-[11px] leading-relaxed">
+                        <li>
+                          <strong>Término Projetado &amp; Volta à Base:</strong> Se a rota do
+                          entregador atravessar o intervalo de almoço (das{' '}
+                          <span className="font-mono font-bold text-amber-700 dark:text-amber-400">
+                            {lunchStartTimeInput || '12:00'}
+                          </span>{' '}
+                          às{' '}
+                          <span className="font-mono font-bold text-amber-700 dark:text-amber-400">
+                            {lunchEndTimeInput || '13:00'}
+                          </span>
+                          ), a duração da pausa é considerada no tempo total restante e no horário
+                          estimado de chegada.
+                        </li>
+                        <li>
+                          <strong>Badge de Carga Horária:</strong> Quando a previsão de término
+                          ultrapassar{' '}
+                          <span className="font-mono font-bold text-rose-700 dark:text-rose-400">
+                            {workEndTimeInput || '18:30'}
+                          </span>{' '}
+                          ou a jornada efetiva diária for excedida, o sistema exibe o badge{' '}
+                          <span className="font-bold text-amber-600">
+                            &quot;⚠️ Passa da carga horária (+X min)&quot;
+                          </span>
+                          . Caso contrário, exibe{' '}
+                          <span className="font-bold text-emerald-600">
+                            &quot;✓ Dentro da carga horária&quot;
+                          </span>
+                          .
+                        </li>
+                        <li>
+                          <strong>Aviso na Atribuição de Pedidos:</strong> Ao incluir novos clientes
+                          em rotas ativas no Otimizador ou pelo Vendedor, o impacto na jornada é
+                          projetado em tempo real comparando com estes parâmetros.
+                        </li>
+                      </ul>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              {/* TAB 1: OVERVIEW */}
+              <TabsContent value="overview" className="space-y-6">
+                {/* KPI CARDS */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* KPI 1: Total Sales */}
+                  <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Vendas Totais (Mês)
+                        </span>
+                        <div className="flex h-9 w-9 items-center justify-center rounded-card bg-blue-50 text-[#0052CC] border border-blue-100">
+                          <DollarSign className="h-4 w-4" />
+                        </div>
+                      </div>
+                      <p className="font-heading text-2xl font-black text-[#1a1a1a] mt-2">
+                        R$ {totalSales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
+                        <TrendingUp className="h-3.5 w-3.5" />
+                        <span>+18.4% em relação à semana anterior</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* KPI 2: Average Delivery Time */}
+                  <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Tempo Médio de Entrega
+                        </span>
+                        <div className="flex h-9 w-9 items-center justify-center rounded-card bg-orange-50 text-[#FF6B35] border border-orange-100">
+                          <Clock className="h-4 w-4" />
+                        </div>
+                      </div>
+                      <p className="font-heading text-2xl font-black text-[#1a1a1a] mt-2">
+                        27.4 min
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
+                        <TrendingUp className="h-3.5 w-3.5" />
+                        <span>-4.2 min (otimização de rota Rotaly)</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* KPI 3: Courier Utilization Rate */}
+                  <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Entregadores Ativos
+                        </span>
+                        <div className="flex h-9 w-9 items-center justify-center rounded-card bg-blue-50 text-[#0052CC] border border-blue-100">
+                          <Truck className="h-4 w-4" />
+                        </div>
+                      </div>
+                      <p className="font-heading text-2xl font-black text-[#0052CC] mt-2">
+                        {activeCouriers.length}
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-2 text-xs text-[#FF6B35] font-semibold">
+                        <span>{pendingCouriers.length} aguardando aprovação</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* KPI 4: Success Delivery Rate */}
+                  <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
+                          Taxa de Sucesso (SLA)
+                        </span>
+                        <div className="flex h-9 w-9 items-center justify-center rounded-card bg-emerald-50 text-[#00AA44] border border-emerald-100">
+                          <CheckCircle2 className="h-4 w-4" />
+                        </div>
+                      </div>
+                      <p className="font-heading text-2xl font-black text-[#00AA44] mt-2">
+                        {successRate}%
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
+                        <span>99.2% dentro do horário estimado</span>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <Select value={offRouteFilterType} onValueChange={setOffRouteFilterType}>
-                    <SelectTrigger className="h-8 w-44 text-xs">
-                      <SelectValue placeholder="Tipo de Ocorrência" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todas as Ocorrências</SelectItem>
-                      <SelectItem value="route_deviation">
-                        🚨 Desvio de Rota (&gt;600m - Sem KM)
-                      </SelectItem>
-                      <SelectItem value="unexpected_stop">🛑 Parada Não Prevista</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  <Select value={offRouteCourierFilter} onValueChange={setOffRouteCourierFilter}>
-                    <SelectTrigger className="h-8 w-44 text-xs">
-                      <SelectValue placeholder="Filtrar Entregador" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos os Entregadores</SelectItem>
-                      {couriers.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          🛵 {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {/* SUMMARY STATS */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardContent className="p-4 flex items-center gap-3">
-                    <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-600">
+                {/* CARD-RESUMO DE DESVIOS E PARADAS COM LINK EM 1 CLIQUE */}
+                <div className="rounded-card border border-amber-500/30 bg-[#0E1738] p-5 shadow-brand-dark flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#FF6B35]/20 border border-[#FF6B35]/40 text-[#FF6B35] font-bold shrink-0">
                       <AlertTriangle className="h-6 w-6" />
                     </div>
                     <div>
-                      <p className="text-xs text-slate-500 font-medium">Total de Ocorrências</p>
-                      <h4 className="text-2xl font-black text-slate-900 dark:text-white">
-                        {offRouteEvents.length}
-                      </h4>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardContent className="p-4 flex items-center gap-3">
-                    <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-600">
-                      <Compass className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 font-medium">
-                        Desvios &gt; 600m (Sem KM)
-                      </p>
-                      <h4 className="text-2xl font-black text-rose-600">
-                        {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}
-                      </h4>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
-                  <CardContent className="p-4 flex items-center gap-3">
-                    <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600">
-                      <Clock className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 font-medium">Paradas Fora do Ponto</p>
-                      <h4 className="text-2xl font-black text-blue-600">
-                        {offRouteEvents.filter((e) => e.event_type === 'unexpected_stop').length}
-                      </h4>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* TABELA DE EVENTOS */}
-              <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base font-bold text-slate-900 dark:text-white">
-                    Histórico Detalhado de Telemetria & Alertas ({filteredOffRouteEvents.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
-                          <th className="py-3 px-3 font-semibold">Data / Hora</th>
-                          <th className="py-3 px-3 font-semibold">Entregador</th>
-                          <th className="py-3 px-3 font-semibold">Tipo de Evento</th>
-                          <th className="py-3 px-3 font-semibold">Desvio / Detalhe</th>
-                          <th className="py-3 px-3 font-semibold">Coordenadas GPS</th>
-                          <th className="py-3 px-3 font-semibold">Observação do Sistema</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filteredOffRouteEvents.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="py-8 text-center text-slate-400">
-                              Nenhuma ocorrência de desvio ou parada registrada.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredOffRouteEvents.map((ev) => {
-                            const courier = users.find((u) => u.id === ev.courier_id)
-                            return (
-                              <tr
-                                key={ev.id}
-                                className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors"
-                              >
-                                <td className="py-3 px-3 font-mono text-slate-600 dark:text-slate-300">
-                                  {new Date(ev.created).toLocaleString('pt-BR')}
-                                </td>
-                                <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
-                                  {courier?.name || 'Entregador'}
-                                </td>
-                                <td className="py-3 px-3">
-                                  {ev.event_type === 'route_deviation' ? (
-                                    <Badge className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300 text-[10px] font-bold">
-                                      🚨 Desvio de Rota
-                                    </Badge>
-                                  ) : (
-                                    <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-300 text-[10px] font-bold">
-                                      🛑 Parada Fora do Ponto
-                                    </Badge>
-                                  )}
-                                </td>
-                                <td className="py-3 px-3 font-semibold">
-                                  {ev.distance_deviation_meters ? (
-                                    <span className="text-rose-600 font-mono">
-                                      +{ev.distance_deviation_meters} metros
-                                    </span>
-                                  ) : ev.stop_duration_seconds ? (
-                                    <span className="text-amber-600 font-mono">
-                                      ~{Math.round(ev.stop_duration_seconds / 60)} min parado
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-400">-</span>
-                                  )}
-                                </td>
-                                <td className="py-3 px-3 font-mono text-slate-500 text-[11px]">
-                                  {ev.lat?.toFixed(5)}, {ev.lng?.toFixed(5)}
-                                </td>
-                                <td className="py-3 px-3 text-slate-500 text-[11px]">
-                                  {ev.notes ||
-                                    'Alerta disparado para vendedor e entregador com sinal sonoro.'}
-                                </td>
-                              </tr>
-                            )
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* TAB: RELATÓRIOS COMPLETOS (MÓDULO 4) */}
-            <TabsContent value="reports" className="space-y-6">
-              <ReportsSection
-                orders={orders}
-                couriers={couriers}
-                settings={settings}
-                offRouteEvents={offRouteEvents}
-                locations={locations}
-              />
-            </TabsContent>
-
-            {/* TAB: CONFIGURAÇÕES DO ADMINISTRADOR (PARÂMETROS DE COMBUSTÍVEL POR TIPO DE VEÍCULO) */}
-            <TabsContent value="settings" className="space-y-6">
-              <Card className="border-slate-200 dark:border-slate-800 shadow-sm max-w-4xl">
-                <CardHeader>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-white">
-                        <Fuel className="h-5 w-5 text-indigo-600" />
-                        Configurações Operacionais &amp; Parâmetros de Combustível
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Configure o preço do litro (R$/L) e o consumo médio (km/L) para cada
-                        categoria de veículo. Os cálculos de custo de rota e conta corrente passam a
-                        utilizar os parâmetros oficiais do entregador.
-                      </CardDescription>
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={() => handleSaveAllFuelSettings()}
-                      disabled={isSavingSettings}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs gap-1.5 shrink-0 shadow-sm"
-                    >
-                      <Save className="h-4 w-4" />
-                      {isSavingSettings ? 'Salvando Todos...' : 'Salvar Todos em Lote'}
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Cards de cada tipo de veículo (Moto, Carro, Caminhão) */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {/* CARD 1: MOTO */}
-                    <div className="rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 p-4 space-y-4 flex flex-col justify-between">
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between pb-2 border-b border-blue-200/60 dark:border-blue-800">
-                          <div className="flex items-center gap-2">
-                            <span className="text-2xl">🏍️</span>
-                            <div>
-                              <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
-                                Moto
-                              </h3>
-                              <p className="text-[11px] text-slate-500">Scooter / Motocicleta</p>
-                            </div>
-                          </div>
-                          <Badge className="bg-blue-600 text-white text-[10px] font-bold">
-                            Padrão
-                          </Badge>
-                        </div>
-
-                        {/* Preço Litro Moto */}
-                        <div className="space-y-1">
-                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                            <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
-                            Preço do Litro (R$/L)
-                          </Label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
-                              R$
-                            </span>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min="0.1"
-                              value={motoPriceInput}
-                              onChange={(e) => setMotoPriceInput(e.target.value)}
-                              className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
-                              placeholder="5.59"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Consumo Moto */}
-                        <div className="space-y-1">
-                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                            <Gauge className="h-3.5 w-3.5 text-indigo-600" />
-                            Consumo (km por Litro)
-                          </Label>
-                          <div className="relative">
-                            <Input
-                              type="number"
-                              step="0.1"
-                              min="0.1"
-                              value={motoConsInput}
-                              onChange={(e) => setMotoConsInput(e.target.value)}
-                              className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
-                              placeholder="35.0"
-                            />
-                            <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
-                              km/L
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Estimativa em tempo real */}
-                        <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
-                          <p className="font-semibold text-slate-700 dark:text-slate-200">
-                            Custo por km:
-                          </p>
-                          <p className="font-mono font-bold text-blue-600 dark:text-blue-400">
-                            R${' '}
-                            {(
-                              (parseFloat(motoPriceInput.replace(',', '.')) || 5.59) /
-                              (parseFloat(motoConsInput.replace(',', '.')) || 35.0)
-                            ).toFixed(4)}
-                            /km
-                          </p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">
-                            Ex: 10 km = R${' '}
-                            {(
-                              (10 * (parseFloat(motoPriceInput.replace(',', '.')) || 5.59)) /
-                              (parseFloat(motoConsInput.replace(',', '.')) || 35.0)
-                            ).toFixed(2)}
-                          </p>
-                        </div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-heading text-sm font-bold text-white">
+                          Monitoramento de Desvios & Paradas de Rota
+                        </h3>
+                        <Badge className="bg-[#FF6B35] text-white text-[10px] font-bold">
+                          {offRouteEvents.length} ocorrência(s)
+                        </Badge>
                       </div>
-
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => handleSaveIndividualCategory('moto')}
-                        disabled={savingCategory === 'moto' || isSavingSettings}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 mt-2"
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                        {savingCategory === 'moto' ? 'Salvando...' : 'Salvar Moto'}
-                      </Button>
-                    </div>
-
-                    {/* CARD 2: CARRO */}
-                    <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-4 flex flex-col justify-between">
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between pb-2 border-b border-emerald-200/60 dark:border-emerald-800">
-                          <div className="flex items-center gap-2">
-                            <span className="text-2xl">🚗</span>
-                            <div>
-                              <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
-                                Carro
-                              </h3>
-                              <p className="text-[11px] text-slate-500">
-                                Passeio / Utilitário Leve
-                              </p>
-                            </div>
-                          </div>
-                          <Badge className="bg-emerald-600 text-white text-[10px] font-bold">
-                            Urbano
-                          </Badge>
-                        </div>
-
-                        {/* Preço Litro Carro */}
-                        <div className="space-y-1">
-                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                            <DollarSign className="h-3.5 w-3.5 text-emerald-600" />
-                            Preço do Litro (R$/L)
-                          </Label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
-                              R$
-                            </span>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min="0.1"
-                              value={carroPriceInput}
-                              onChange={(e) => setCarroPriceInput(e.target.value)}
-                              className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
-                              placeholder="5.59"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Consumo Carro */}
-                        <div className="space-y-1">
-                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                            <Gauge className="h-3.5 w-3.5 text-emerald-600" />
-                            Consumo (km por Litro)
-                          </Label>
-                          <div className="relative">
-                            <Input
-                              type="number"
-                              step="0.1"
-                              min="0.1"
-                              value={carroConsInput}
-                              onChange={(e) => setCarroConsInput(e.target.value)}
-                              className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
-                              placeholder="12.0"
-                            />
-                            <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
-                              km/L
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Estimativa em tempo real */}
-                        <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
-                          <p className="font-semibold text-slate-700 dark:text-slate-200">
-                            Custo por km:
-                          </p>
-                          <p className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                            R${' '}
-                            {(
-                              (parseFloat(carroPriceInput.replace(',', '.')) || 5.59) /
-                              (parseFloat(carroConsInput.replace(',', '.')) || 12.0)
-                            ).toFixed(4)}
-                            /km
-                          </p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">
-                            Ex: 10 km = R${' '}
-                            {(
-                              (10 * (parseFloat(carroPriceInput.replace(',', '.')) || 5.59)) /
-                              (parseFloat(carroConsInput.replace(',', '.')) || 12.0)
-                            ).toFixed(2)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => handleSaveIndividualCategory('carro')}
-                        disabled={savingCategory === 'carro' || isSavingSettings}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 mt-2"
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                        {savingCategory === 'carro' ? 'Salvando...' : 'Salvar Carro'}
-                      </Button>
-                    </div>
-
-                    {/* CARD 3: CAMINHÃO */}
-                    <div className="rounded-xl border border-orange-200 dark:border-orange-900/60 bg-orange-50/40 dark:bg-orange-950/20 p-4 space-y-4 flex flex-col justify-between">
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between pb-2 border-b border-orange-200/60 dark:border-orange-800">
-                          <div className="flex items-center gap-2">
-                            <span className="text-2xl">🚚</span>
-                            <div>
-                              <h3 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-wider">
-                                Caminhão
-                              </h3>
-                              <p className="text-[11px] text-slate-500">VUC / Carga Pesada</p>
-                            </div>
-                          </div>
-                          <Badge className="bg-orange-600 text-white text-[10px] font-bold">
-                            Carga
-                          </Badge>
-                        </div>
-
-                        {/* Preço Litro Caminhão */}
-                        <div className="space-y-1">
-                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                            <DollarSign className="h-3.5 w-3.5 text-orange-600" />
-                            Preço do Litro (R$/L)
-                          </Label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">
-                              R$
-                            </span>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min="0.1"
-                              value={caminhaoPriceInput}
-                              onChange={(e) => setCaminhaoPriceInput(e.target.value)}
-                              className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
-                              placeholder="5.59"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Consumo Caminhão */}
-                        <div className="space-y-1">
-                          <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                            <Gauge className="h-3.5 w-3.5 text-orange-600" />
-                            Consumo (km por Litro)
-                          </Label>
-                          <div className="relative">
-                            <Input
-                              type="number"
-                              step="0.1"
-                              min="0.1"
-                              value={caminhaoConsInput}
-                              onChange={(e) => setCaminhaoConsInput(e.target.value)}
-                              className="font-mono font-bold text-xs pr-12 bg-white dark:bg-slate-900"
-                              placeholder="7.0"
-                            />
-                            <span className="absolute right-3 top-2.5 text-xs font-semibold text-slate-400">
-                              km/L
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Estimativa em tempo real */}
-                        <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-900/80 border text-[11px] text-slate-600 dark:text-slate-300">
-                          <p className="font-semibold text-slate-700 dark:text-slate-200">
-                            Custo por km:
-                          </p>
-                          <p className="font-mono font-bold text-orange-600 dark:text-orange-400">
-                            R${' '}
-                            {(
-                              (parseFloat(caminhaoPriceInput.replace(',', '.')) || 5.59) /
-                              (parseFloat(caminhaoConsInput.replace(',', '.')) || 7.0)
-                            ).toFixed(4)}
-                            /km
-                          </p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">
-                            Ex: 10 km = R${' '}
-                            {(
-                              (10 * (parseFloat(caminhaoPriceInput.replace(',', '.')) || 5.59)) /
-                              (parseFloat(caminhaoConsInput.replace(',', '.')) || 7.0)
-                            ).toFixed(2)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => handleSaveIndividualCategory('caminhao')}
-                        disabled={savingCategory === 'caminhao' || isSavingSettings}
-                        className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs gap-1.5 mt-2"
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                        {savingCategory === 'caminhao' ? 'Salvando...' : 'Salvar Caminhão'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Fórmula explicativa unificada */}
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border text-xs space-y-2 text-slate-600 dark:text-slate-300">
-                    <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                      <Fuel className="h-4 w-4 text-amber-500" />
-                      Fórmula de Cálculo Automática por Tipo de Veículo:
-                    </p>
-                    <p className="font-mono text-xs bg-white dark:bg-slate-900 p-2.5 rounded-lg border text-indigo-600 dark:text-indigo-400">
-                      Custo (R$) = [ Distância Total (km) × Preço do Litro do Tipo (R$) ] ÷ Consumo
-                      do Tipo (km/L)
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
-                      <div className="p-2 rounded bg-white dark:bg-slate-900 border">
-                        <span className="font-bold text-slate-700 dark:text-slate-300">
-                          🏍️ Moto:
-                        </span>{' '}
-                        Consumo base <strong>{motoConsInput} km/L</strong> (preço R${' '}
-                        {motoPriceInput}/L)
-                      </div>
-                      <div className="p-2 rounded bg-white dark:bg-slate-900 border">
-                        <span className="font-bold text-slate-700 dark:text-slate-300">
-                          🚗 Carro:
-                        </span>{' '}
-                        Consumo base <strong>{carroConsInput} km/L</strong> (preço R${' '}
-                        {carroPriceInput}/L)
-                      </div>
-                      <div className="p-2 rounded bg-white dark:bg-slate-900 border">
-                        <span className="font-bold text-slate-700 dark:text-slate-300">
-                          🚚 Caminhão:
-                        </span>{' '}
-                        Consumo base <strong>{caminhaoConsInput} km/L</strong> (preço R${' '}
-                        {caminhaoPriceInput}/L)
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-slate-500 pt-1">
-                      ℹ️ Caso um entregador não tenha veículo definido ou possua cadastro antigo, o
-                      sistema aplica <strong>Moto (35 km/L)</strong> como fallback de segurança.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* CARD: JORNADA DE TRABALHO DA EMPRESA */}
-              <Card className="border-slate-200 dark:border-slate-800 shadow-sm max-w-4xl">
-                <CardHeader>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-white">
-                        <Clock className="h-5 w-5 text-blue-600" />
-                        Jornada de Trabalho da Empresa
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Defina o horário padrão de entrada, intervalo de almoço e término do
-                        expediente. Estes horários alimentam diretamente o motor de cálculo da carga
-                        horária das rotas, projeção de volta à base e os alertas de jornada na Torre
-                        de Controle e Otimizador.
-                      </CardDescription>
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={() => handleSaveWorkShiftSettings()}
-                      disabled={isSavingShiftSettings}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 shrink-0 shadow-sm"
-                    >
-                      <Save className="h-4 w-4" />
-                      {isSavingShiftSettings ? 'Salvando Jornada...' : 'Salvar Jornada de Trabalho'}
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Grid de 4 Horários: Entrada, Saída Almoço, Volta Almoço, Fim do Expediente */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {/* 1. Entrada */}
-                    <div className="rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/30 dark:bg-blue-950/20 p-4 space-y-2">
-                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                        <span className="text-base">🟢</span>
-                        Entrada (Início)
-                      </Label>
-                      <p className="text-[11px] text-slate-500">Início da jornada diária</p>
-                      <Input
-                        type="time"
-                        value={workStartTimeInput}
-                        onChange={(e) => setWorkStartTimeInput(e.target.value)}
-                        className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
-                      />
-                      <span className="text-[10px] text-slate-400 block text-center">
-                        Ex: 08:00
-                      </span>
-                    </div>
-
-                    {/* 2. Saída para Almoço */}
-                    <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/30 dark:bg-amber-950/20 p-4 space-y-2">
-                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                        <span className="text-base">🍽️</span>
-                        Saída para Almoço
-                      </Label>
-                      <p className="text-[11px] text-slate-500">Início da pausa de almoço</p>
-                      <Input
-                        type="time"
-                        value={lunchStartTimeInput}
-                        onChange={(e) => setLunchStartTimeInput(e.target.value)}
-                        className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
-                      />
-                      <span className="text-[10px] text-slate-400 block text-center">
-                        Ex: 12:00
-                      </span>
-                    </div>
-
-                    {/* 3. Volta do Almoço */}
-                    <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/30 dark:bg-amber-950/20 p-4 space-y-2">
-                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                        <span className="text-base">☕</span>
-                        Volta do Almoço
-                      </Label>
-                      <p className="text-[11px] text-slate-500">Término da pausa de almoço</p>
-                      <Input
-                        type="time"
-                        value={lunchEndTimeInput}
-                        onChange={(e) => setLunchEndTimeInput(e.target.value)}
-                        className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
-                      />
-                      <span className="text-[10px] text-slate-400 block text-center">
-                        Ex: 13:00
-                      </span>
-                    </div>
-
-                    {/* 4. Fim do Expediente */}
-                    <div className="rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/30 dark:bg-rose-950/20 p-4 space-y-2">
-                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                        <span className="text-base">🏁</span>
-                        Fim do Expediente
-                      </Label>
-                      <p className="text-[11px] text-slate-500">Horário limite da carga horária</p>
-                      <Input
-                        type="time"
-                        value={workEndTimeInput}
-                        onChange={(e) => setWorkEndTimeInput(e.target.value)}
-                        className="font-mono font-bold text-sm bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-center"
-                      />
-                      <span className="text-[10px] text-slate-400 block text-center">
-                        Ex: 18:30
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Resumo da Jornada e Explicação das Regras */}
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border text-xs space-y-2.5 text-slate-600 dark:text-slate-300">
-                    <p className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                      Como esses horários impactam os cálculos de rota:
-                    </p>
-                    <ul className="list-disc list-inside space-y-1 text-[11px] leading-relaxed">
-                      <li>
-                        <strong>Término Projetado &amp; Volta à Base:</strong> Se a rota do
-                        entregador atravessar o intervalo de almoço (das{' '}
-                        <span className="font-mono font-bold text-amber-700 dark:text-amber-400">
-                          {lunchStartTimeInput || '12:00'}
-                        </span>{' '}
-                        às{' '}
-                        <span className="font-mono font-bold text-amber-700 dark:text-amber-400">
-                          {lunchEndTimeInput || '13:00'}
-                        </span>
-                        ), a duração da pausa é considerada no tempo total restante e no horário
-                        estimado de chegada.
-                      </li>
-                      <li>
-                        <strong>Badge de Carga Horária:</strong> Quando a previsão de término
-                        ultrapassar{' '}
-                        <span className="font-mono font-bold text-rose-700 dark:text-rose-400">
-                          {workEndTimeInput || '18:30'}
-                        </span>{' '}
-                        ou a jornada efetiva diária for excedida, o sistema exibe o badge{' '}
-                        <span className="font-bold text-amber-600">
-                          &quot;⚠️ Passa da carga horária (+X min)&quot;
-                        </span>
-                        . Caso contrário, exibe{' '}
-                        <span className="font-bold text-emerald-600">
-                          &quot;✓ Dentro da carga horária&quot;
-                        </span>
-                        .
-                      </li>
-                      <li>
-                        <strong>Aviso na Atribuição de Pedidos:</strong> Ao incluir novos clientes
-                        em rotas ativas no Otimizador ou pelo Vendedor, o impacto na jornada é
-                        projetado em tempo real comparando com estes parâmetros.
-                      </li>
-                    </ul>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* TAB 1: OVERVIEW */}
-            <TabsContent value="overview" className="space-y-6">
-              {/* KPI CARDS */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* KPI 1: Total Sales */}
-                <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
-                        Vendas Totais (Mês)
-                      </span>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-card bg-blue-50 text-[#0052CC] border border-blue-100">
-                        <DollarSign className="h-4 w-4" />
-                      </div>
-                    </div>
-                    <p className="font-heading text-2xl font-black text-[#1a1a1a] mt-2">
-                      R$ {totalSales.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
-                      <TrendingUp className="h-3.5 w-3.5" />
-                      <span>+18.4% em relação à semana anterior</span>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* KPI 2: Average Delivery Time */}
-                <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
-                        Tempo Médio de Entrega
-                      </span>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-card bg-orange-50 text-[#FF6B35] border border-orange-100">
-                        <Clock className="h-4 w-4" />
-                      </div>
-                    </div>
-                    <p className="font-heading text-2xl font-black text-[#1a1a1a] mt-2">27.4 min</p>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
-                      <TrendingUp className="h-3.5 w-3.5" />
-                      <span>-4.2 min (otimização de rota Rotaly)</span>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* KPI 3: Courier Utilization Rate */}
-                <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
-                        Entregadores Ativos
-                      </span>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-card bg-blue-50 text-[#0052CC] border border-blue-100">
-                        <Truck className="h-4 w-4" />
-                      </div>
-                    </div>
-                    <p className="font-heading text-2xl font-black text-[#0052CC] mt-2">
-                      {activeCouriers.length}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs text-[#FF6B35] font-semibold">
-                      <span>{pendingCouriers.length} aguardando aprovação</span>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* KPI 4: Success Delivery Rate */}
-                <Card className="border border-slate-200 bg-white shadow-brand rounded-card">
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-500">
-                        Taxa de Sucesso (SLA)
-                      </span>
-                      <div className="flex h-9 w-9 items-center justify-center rounded-card bg-emerald-50 text-[#00AA44] border border-emerald-100">
-                        <CheckCircle2 className="h-4 w-4" />
-                      </div>
-                    </div>
-                    <p className="font-heading text-2xl font-black text-[#00AA44] mt-2">
-                      {successRate}%
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-2 text-xs font-medium text-[#00AA44]">
-                      <span>99.2% dentro do horário estimado</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* CARD-RESUMO DE DESVIOS E PARADAS COM LINK EM 1 CLIQUE */}
-              <div className="rounded-card border border-amber-500/30 bg-[#0E1738] p-5 shadow-brand-dark flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#FF6B35]/20 border border-[#FF6B35]/40 text-[#FF6B35] font-bold shrink-0">
-                    <AlertTriangle className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-heading text-sm font-bold text-white">
-                        Monitoramento de Desvios & Paradas de Rota
-                      </h3>
-                      <Badge className="bg-[#FF6B35] text-white text-[10px] font-bold">
-                        {offRouteEvents.length} ocorrência(s)
-                      </Badge>
-                    </div>
-                    <p className="font-sans text-xs text-slate-300 mt-0.5">
-                      {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}{' '}
-                      desvio(s) &gt;600m e{' '}
-                      {offRouteEvents.filter((e) => e.event_type === 'unexpected_stop').length}{' '}
-                      parada(s) não previstas registradas via telemetria (rotas ativas e parciais).
-                    </p>
-                  </div>
-                </div>
-
-                <Button
-                  onClick={() => {
-                    setActiveTab('deviations')
-                    navigate('/admin?tab=deviations')
-                  }}
-                  className="bg-gradient-to-r from-[#FF6B35] to-[#E5531E] hover:from-[#E5531E] hover:to-[#C0392B] text-white font-bold text-xs shrink-0 shadow-brand rounded-input"
-                >
-                  Ver Relatório de Desvios (1 Clique) →
-                </Button>
-              </div>
-
-              {/* Pending Approvals Alert Banner */}
-              {pendingCouriers.length > 0 && (
-                <div className="rounded-card border border-orange-200 bg-orange-50/80 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-brand">
-                  <div className="flex items-center gap-3.5">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#FF6B35] text-white font-bold shrink-0">
-                      <AlertCircle className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <h3 className="font-heading text-sm font-bold text-[#1a1a1a]">
-                        {pendingCouriers.length}{' '}
-                        {pendingCouriers.length === 1
-                          ? 'novo entregador aguarda aprovação de documentos'
-                          : 'novos entregadores aguardam aprovação de documentos'}
-                      </h3>
-                      <p className="font-sans text-xs text-slate-600 mt-0.5">
-                        Verifique a CNH e a foto de selfie para liberar o acesso ao aplicativo
-                        Rotaly.
+                      <p className="font-sans text-xs text-slate-300 mt-0.5">
+                        {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}{' '}
+                        desvio(s) &gt;600m e{' '}
+                        {offRouteEvents.filter((e) => e.event_type === 'unexpected_stop').length}{' '}
+                        parada(s) não previstas registradas via telemetria (rotas ativas e
+                        parciais).
                       </p>
                     </div>
                   </div>
 
                   <Button
                     onClick={() => {
-                      setActiveTab('couriers')
-                      setCourierStatusFilter('pending')
+                      setActiveTab('deviations')
+                      navigate('/admin?tab=deviations')
                     }}
-                    className="bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shrink-0 shadow-brand rounded-input"
+                    className="bg-gradient-to-r from-[#FF6B35] to-[#E5531E] hover:from-[#E5531E] hover:to-[#C0392B] text-white font-bold text-xs shrink-0 shadow-brand rounded-input"
                   >
-                    Analisar Cadastros Pendentes →
+                    Ver Relatório de Desvios (1 Clique) →
                   </Button>
                 </div>
-              )}
 
-              {/* CHARTS ROW (Weekly Trends + Status Distribution) */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Chart 1 */}
-                <Card className="lg:col-span-8 border border-slate-200 bg-white shadow-brand rounded-card">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
+                {/* Pending Approvals Alert Banner */}
+                {pendingCouriers.length > 0 && (
+                  <div className="rounded-card border border-orange-200 bg-orange-50/80 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-brand">
+                    <div className="flex items-center gap-3.5">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-card bg-[#FF6B35] text-white font-bold shrink-0">
+                        <AlertCircle className="h-6 w-6" />
+                      </div>
                       <div>
-                        <CardTitle className="font-heading text-base font-bold text-[#1a1a1a]">
-                          Tendência Semanal de Volume de Entregas
+                        <h3 className="font-heading text-sm font-bold text-[#1a1a1a]">
+                          {pendingCouriers.length}{' '}
+                          {pendingCouriers.length === 1
+                            ? 'novo entregador aguarda aprovação de documentos'
+                            : 'novos entregadores aguardam aprovação de documentos'}
+                        </h3>
+                        <p className="font-sans text-xs text-slate-600 mt-0.5">
+                          Verifique a CNH e a foto de selfie para liberar o acesso ao aplicativo
+                          Rotaly.
+                        </p>
+                      </div>
+                    </div>
+
+                    <Button
+                      onClick={() => {
+                        setActiveTab('couriers')
+                        setCourierStatusFilter('pending')
+                      }}
+                      className="bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shrink-0 shadow-brand rounded-input"
+                    >
+                      Analisar Cadastros Pendentes →
+                    </Button>
+                  </div>
+                )}
+
+                {/* CHARTS ROW (Weekly Trends + Status Distribution) */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Chart 1 */}
+                  <Card className="lg:col-span-8 border border-slate-200 bg-white shadow-brand rounded-card">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="font-heading text-base font-bold text-[#1a1a1a]">
+                            Tendência Semanal de Volume de Entregas
+                          </CardTitle>
+                          <CardDescription className="text-xs text-slate-500 font-sans">
+                            Distribuição diária de pedidos despachados e concluídos.
+                          </CardDescription>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className="text-xs text-[#0052CC] bg-blue-50 border-blue-200 font-bold"
+                        >
+                          Meta: 25/dia
+                        </Badge>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="pt-4">
+                      <div className="h-56 w-full flex items-end justify-between gap-2 pt-6 pb-2 px-2">
+                        {volumeByDay.map((val, idx) => {
+                          const heightPercent = Math.max(15, (val / maxDayVolume) * 100)
+                          const isToday = idx === volumeByDay.length - 1
+
+                          return (
+                            <div
+                              key={idx}
+                              className="flex-1 flex flex-col items-center gap-2 h-full justify-end group"
+                            >
+                              <span className="text-[11px] font-bold text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity font-mono">
+                                {val}
+                              </span>
+                              <div
+                                className={`w-full max-w-[48px] rounded-t-md transition-all duration-300 ${
+                                  isToday
+                                    ? 'bg-[#0052CC] shadow-sm'
+                                    : 'bg-[#FF6B35] group-hover:bg-[#E5531E]'
+                                }`}
+                                style={{ height: `${heightPercent}%` }}
+                              />
+                              <span className="text-[10px] text-slate-500 font-medium truncate font-heading">
+                                {daysOfWeek[idx]}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Chart 2 */}
+                  <Card className="lg:col-span-4 border border-slate-200 bg-white shadow-brand rounded-card flex flex-col justify-between">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="font-heading text-base font-bold text-[#1a1a1a]">
+                        Status dos Pedidos
+                      </CardTitle>
+                      <CardDescription className="text-xs text-slate-500 font-sans">
+                        Proporção de entregas na operação atual.
+                      </CardDescription>
+                    </CardHeader>
+
+                    <CardContent className="space-y-3 pt-2 font-sans">
+                      <div className="flex items-center justify-between p-2.5 rounded-card bg-emerald-50/60 border border-emerald-200">
+                        <div className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full bg-[#00AA44]"></span>
+                          <span className="text-xs font-semibold text-slate-800">Entregues</span>
+                        </div>
+                        <span className="text-xs font-bold text-[#00AA44]">
+                          {deliveredOrders.length} (
+                          {totalOrders > 0
+                            ? Math.round((deliveredOrders.length / totalOrders) * 100)
+                            : 0}
+                          %)
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between p-2.5 rounded-card bg-orange-50/60 border border-orange-200">
+                        <div className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full bg-[#FF6B35]"></span>
+                          <span className="text-xs font-semibold text-slate-800">Em Trânsito</span>
+                        </div>
+                        <span className="text-xs font-bold text-[#FF6B35]">
+                          {inTransitOrders.length} (
+                          {totalOrders > 0
+                            ? Math.round((inTransitOrders.length / totalOrders) * 100)
+                            : 0}
+                          %)
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between p-2.5 rounded-card bg-blue-50/60 border border-blue-200">
+                        <div className="flex items-center gap-2">
+                          <span className="h-3 w-3 rounded-full bg-[#0052CC]"></span>
+                          <span className="text-xs font-semibold text-slate-800">Pendentes</span>
+                        </div>
+                        <span className="text-xs font-bold text-[#0052CC]">
+                          {pendingOrders.length} (
+                          {totalOrders > 0
+                            ? Math.round((pendingOrders.length / totalOrders) * 100)
+                            : 0}
+                          %)
+                        </span>
+                      </div>
+
+                      <div className="pt-2">
+                        <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            style={{
+                              width: `${(deliveredOrders.length / Math.max(1, totalOrders)) * 100}%`,
+                            }}
+                            className="bg-[#00AA44]"
+                          />
+                          <div
+                            style={{
+                              width: `${(inTransitOrders.length / Math.max(1, totalOrders)) * 100}%`,
+                            }}
+                            className="bg-[#FF6B35]"
+                          />
+                          <div
+                            style={{
+                              width: `${(pendingOrders.length / Math.max(1, totalOrders)) * 100}%`,
+                            }}
+                            className="bg-[#0052CC]"
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </TabsContent>
+
+              {/* TAB 2: COURIERS MANAGEMENT */}
+              <TabsContent value="couriers" className="space-y-4">
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardHeader className="pb-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <Truck className="h-5 w-5 text-purple-600" />
+                          Gestão de Entregadores & Credenciamento
                         </CardTitle>
-                        <CardDescription className="text-xs text-slate-500 font-sans">
-                          Distribuição diária de pedidos despachados e concluídos.
+                        <CardDescription className="text-xs">
+                          Aprove novos cadastros, bloqueie acessos e visualize documentos enviados
+                          (RG/CNH e selfies).
                         </CardDescription>
                       </div>
-                      <Badge
-                        variant="outline"
-                        className="text-xs text-[#0052CC] bg-blue-50 border-blue-200 font-bold"
-                      >
-                        Meta: 25/dia
-                      </Badge>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Filter by status */}
+                        <Select
+                          value={courierStatusFilter}
+                          onValueChange={(v) => setCourierStatusFilter(v)}
+                        >
+                          <SelectTrigger className="h-9 w-[150px] text-xs">
+                            <SelectValue placeholder="Filtrar Status" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Todos os Status</SelectItem>
+                            <SelectItem value="pending">
+                              🟡 Pendentes ({pendingCouriers.length})
+                            </SelectItem>
+                            <SelectItem value="active">
+                              🟢 Ativos ({activeCouriers.length})
+                            </SelectItem>
+                            <SelectItem value="inactive">
+                              ⚪ Inativos ({inactiveCouriers.length})
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+
+                        {/* Search box */}
+                        <div className="relative w-48 sm:w-64">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                          <Input
+                            placeholder="Buscar por nome, placa, e-mail..."
+                            value={searchCouriers}
+                            onChange={(e) => setSearchCouriers(e.target.value)}
+                            className="h-9 pl-8 text-xs"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </CardHeader>
 
-                  <CardContent className="pt-4">
-                    <div className="h-56 w-full flex items-end justify-between gap-2 pt-6 pb-2 px-2">
-                      {volumeByDay.map((val, idx) => {
-                        const heightPercent = Math.max(15, (val / maxDayVolume) * 100)
-                        const isToday = idx === volumeByDay.length - 1
-
-                        return (
-                          <div
-                            key={idx}
-                            className="flex-1 flex flex-col items-center gap-2 h-full justify-end group"
-                          >
-                            <span className="text-[11px] font-bold text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity font-mono">
-                              {val}
-                            </span>
-                            <div
-                              className={`w-full max-w-[48px] rounded-t-md transition-all duration-300 ${
-                                isToday
-                                  ? 'bg-[#0052CC] shadow-sm'
-                                  : 'bg-[#FF6B35] group-hover:bg-[#E5531E]'
-                              }`}
-                              style={{ height: `${heightPercent}%` }}
-                            />
-                            <span className="text-[10px] text-slate-500 font-medium truncate font-heading">
-                              {daysOfWeek[idx]}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Chart 2 */}
-                <Card className="lg:col-span-4 border border-slate-200 bg-white shadow-brand rounded-card flex flex-col justify-between">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="font-heading text-base font-bold text-[#1a1a1a]">
-                      Status dos Pedidos
-                    </CardTitle>
-                    <CardDescription className="text-xs text-slate-500 font-sans">
-                      Proporção de entregas na operação atual.
-                    </CardDescription>
-                  </CardHeader>
-
-                  <CardContent className="space-y-3 pt-2 font-sans">
-                    <div className="flex items-center justify-between p-2.5 rounded-card bg-emerald-50/60 border border-emerald-200">
-                      <div className="flex items-center gap-2">
-                        <span className="h-3 w-3 rounded-full bg-[#00AA44]"></span>
-                        <span className="text-xs font-semibold text-slate-800">Entregues</span>
-                      </div>
-                      <span className="text-xs font-bold text-[#00AA44]">
-                        {deliveredOrders.length} (
-                        {totalOrders > 0
-                          ? Math.round((deliveredOrders.length / totalOrders) * 100)
-                          : 0}
-                        %)
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between p-2.5 rounded-card bg-orange-50/60 border border-orange-200">
-                      <div className="flex items-center gap-2">
-                        <span className="h-3 w-3 rounded-full bg-[#FF6B35]"></span>
-                        <span className="text-xs font-semibold text-slate-800">Em Trânsito</span>
-                      </div>
-                      <span className="text-xs font-bold text-[#FF6B35]">
-                        {inTransitOrders.length} (
-                        {totalOrders > 0
-                          ? Math.round((inTransitOrders.length / totalOrders) * 100)
-                          : 0}
-                        %)
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between p-2.5 rounded-card bg-blue-50/60 border border-blue-200">
-                      <div className="flex items-center gap-2">
-                        <span className="h-3 w-3 rounded-full bg-[#0052CC]"></span>
-                        <span className="text-xs font-semibold text-slate-800">Pendentes</span>
-                      </div>
-                      <span className="text-xs font-bold text-[#0052CC]">
-                        {pendingOrders.length} (
-                        {totalOrders > 0
-                          ? Math.round((pendingOrders.length / totalOrders) * 100)
-                          : 0}
-                        %)
-                      </span>
-                    </div>
-
-                    <div className="pt-2">
-                      <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          style={{
-                            width: `${(deliveredOrders.length / Math.max(1, totalOrders)) * 100}%`,
-                          }}
-                          className="bg-[#00AA44]"
-                        />
-                        <div
-                          style={{
-                            width: `${(inTransitOrders.length / Math.max(1, totalOrders)) * 100}%`,
-                          }}
-                          className="bg-[#FF6B35]"
-                        />
-                        <div
-                          style={{
-                            width: `${(pendingOrders.length / Math.max(1, totalOrders)) * 100}%`,
-                          }}
-                          className="bg-[#0052CC]"
-                        />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-
-            {/* TAB 2: COURIERS MANAGEMENT */}
-            <TabsContent value="couriers" className="space-y-4">
-              <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-                <CardHeader className="pb-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <CardTitle className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                        <Truck className="h-5 w-5 text-purple-600" />
-                        Gestão de Entregadores & Credenciamento
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Aprove novos cadastros, bloqueie acessos e visualize documentos enviados
-                        (RG/CNH e selfies).
-                      </CardDescription>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* Filter by status */}
-                      <Select
-                        value={courierStatusFilter}
-                        onValueChange={(v) => setCourierStatusFilter(v)}
-                      >
-                        <SelectTrigger className="h-9 w-[150px] text-xs">
-                          <SelectValue placeholder="Filtrar Status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todos os Status</SelectItem>
-                          <SelectItem value="pending">
-                            🟡 Pendentes ({pendingCouriers.length})
-                          </SelectItem>
-                          <SelectItem value="active">
-                            🟢 Ativos ({activeCouriers.length})
-                          </SelectItem>
-                          <SelectItem value="inactive">
-                            ⚪ Inativos ({inactiveCouriers.length})
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-
-                      {/* Search box */}
-                      <div className="relative w-48 sm:w-64">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                        <Input
-                          placeholder="Buscar por nome, placa, e-mail..."
-                          value={searchCouriers}
-                          onChange={(e) => setSearchCouriers(e.target.value)}
-                          className="h-9 pl-8 text-xs"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </CardHeader>
-
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
-                          <th className="py-3 px-3 font-semibold">Entregador</th>
-                          <th className="py-3 px-3 font-semibold">Contato</th>
-                          <th className="py-3 px-3 font-semibold">Veículo & Placa</th>
-                          <th className="py-3 px-3 font-semibold">Status</th>
-                          <th className="py-3 px-3 font-semibold">Documentos</th>
-                          <th className="py-3 px-3 font-semibold text-right">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filteredCouriers.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="py-8 text-center text-slate-500">
-                              Nenhum entregador encontrado com os filtros selecionados.
-                            </td>
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
+                            <th className="py-3 px-3 font-semibold">Entregador</th>
+                            <th className="py-3 px-3 font-semibold">Contato</th>
+                            <th className="py-3 px-3 font-semibold">Veículo & Placa</th>
+                            <th className="py-3 px-3 font-semibold">Status</th>
+                            <th className="py-3 px-3 font-semibold">Documentos</th>
+                            <th className="py-3 px-3 font-semibold text-right">Ações</th>
                           </tr>
-                        ) : (
-                          filteredCouriers.map((c) => {
-                            const isPending = c.status === 'pending'
-                            const isInactive = c.status === 'inactive'
-                            const isActive =
-                              c.status === 'active' || c.status === 'idle' || c.status === 'busy'
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredCouriers.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="py-8 text-center text-slate-500">
+                                {couriers.length === 0
+                                  ? 'Nenhum entregador vinculado na tabela de membros desta empresa.'
+                                  : 'Nenhum entregador encontrado com os filtros selecionados.'}
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredCouriers.map((c) => {
+                              const isPending = c.status === 'pending'
+                              const isInactive = c.status === 'inactive'
+                              const isActive =
+                                c.status === 'active' || c.status === 'idle' || c.status === 'busy'
 
-                            return (
-                              <tr
-                                key={c.id}
-                                className="hover:bg-slate-50/60 dark:hover:bg-slate-800/50 transition-colors"
-                              >
-                                <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
-                                  <div className="flex items-center gap-2.5">
-                                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 font-bold text-xs uppercase">
-                                      {c.name ? c.name.slice(0, 2) : 'EN'}
+                              return (
+                                <tr
+                                  key={c.id}
+                                  className="hover:bg-slate-50/60 dark:hover:bg-slate-800/50 transition-colors"
+                                >
+                                  <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                                    <div className="flex items-center gap-2.5">
+                                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 font-bold text-xs uppercase">
+                                        {c.name ? c.name.slice(0, 2) : 'EN'}
+                                      </div>
+                                      <div>
+                                        <p className="font-bold text-slate-900 dark:text-white">
+                                          {c.name || 'Sem nome'}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500">{c.email}</p>
+                                      </div>
                                     </div>
+                                  </td>
+
+                                  <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
+                                    <div className="flex items-center gap-1.5">
+                                      <Phone className="h-3.5 w-3.5 text-slate-400" />
+                                      <span>{c.phone || 'Não informado'}</span>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-3 px-3">
                                     <div>
-                                      <p className="font-bold text-slate-900 dark:text-white">
-                                        {c.name || 'Sem nome'}
+                                      <p className="font-medium text-slate-800 dark:text-slate-200">
+                                        {c.vehicle_model || 'Modelo N/D'}{' '}
+                                        {c.vehicle_year ? `(${c.vehicle_year})` : ''}
                                       </p>
-                                      <p className="text-[11px] text-slate-500">{c.email}</p>
+                                      <div className="flex items-center gap-1.5 mt-0.5">
+                                        <Badge
+                                          variant="outline"
+                                          className="text-[9px] px-1 py-0 uppercase font-mono tracking-wider bg-slate-100 dark:bg-slate-800"
+                                        >
+                                          {c.vehicle_plate || 'SEM PLACA'}
+                                        </Badge>
+                                      </div>
+                                      <div className="mt-1.5">
+                                        <Select
+                                          value={deliveryService.normalizeVehicleCategory(
+                                            c.vehicle_type,
+                                          )}
+                                          onValueChange={(
+                                            val: 'moto' | 'carro' | 'caminhao' | 'bicicleta',
+                                          ) => handleUpdateCourierVehicleType(c, val)}
+                                        >
+                                          <SelectTrigger className="h-6 w-32 text-[11px] font-bold px-2 py-0 border-slate-300">
+                                            <SelectValue />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="moto" className="text-xs">
+                                              🏍️ Moto
+                                            </SelectItem>
+                                            <SelectItem value="carro" className="text-xs">
+                                              🚗 Carro
+                                            </SelectItem>
+                                            <SelectItem value="caminhao" className="text-xs">
+                                              🚚 Caminhão
+                                            </SelectItem>
+                                            <SelectItem value="bicicleta" className="text-xs">
+                                              🚲 Bicicleta
+                                            </SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
                                     </div>
-                                  </div>
-                                </td>
+                                  </td>
 
-                                <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
-                                  <div className="flex items-center gap-1.5">
-                                    <Phone className="h-3.5 w-3.5 text-slate-400" />
-                                    <span>{c.phone || 'Não informado'}</span>
-                                  </div>
-                                </td>
-
-                                <td className="py-3 px-3">
-                                  <div>
-                                    <p className="font-medium text-slate-800 dark:text-slate-200">
-                                      {c.vehicle_model || 'Modelo N/D'}{' '}
-                                      {c.vehicle_year ? `(${c.vehicle_year})` : ''}
-                                    </p>
-                                    <div className="flex items-center gap-1.5 mt-0.5">
-                                      <Badge
-                                        variant="outline"
-                                        className="text-[9px] px-1 py-0 uppercase font-mono tracking-wider bg-slate-100 dark:bg-slate-800"
-                                      >
-                                        {c.vehicle_plate || 'SEM PLACA'}
-                                      </Badge>
-                                    </div>
-                                    <div className="mt-1.5">
-                                      <Select
-                                        value={deliveryService.normalizeVehicleCategory(
-                                          c.vehicle_type,
-                                        )}
-                                        onValueChange={(
-                                          val: 'moto' | 'carro' | 'caminhao' | 'bicicleta',
-                                        ) => handleUpdateCourierVehicleType(c, val)}
-                                      >
-                                        <SelectTrigger className="h-6 w-32 text-[11px] font-bold px-2 py-0 border-slate-300">
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="moto" className="text-xs">
-                                            🏍️ Moto
-                                          </SelectItem>
-                                          <SelectItem value="carro" className="text-xs">
-                                            🚗 Carro
-                                          </SelectItem>
-                                          <SelectItem value="caminhao" className="text-xs">
-                                            🚚 Caminhão
-                                          </SelectItem>
-                                          <SelectItem value="bicicleta" className="text-xs">
-                                            🚲 Bicicleta
-                                          </SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                  </div>
-                                </td>
-
-                                <td className="py-3 px-3">
-                                  {isPending && (
-                                    <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-700 text-[10px] font-bold">
-                                      🟡 Pendente
-                                    </Badge>
-                                  )}
-                                  {isActive && (
-                                    <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700 text-[10px] font-bold">
-                                      🟢 Ativo
-                                    </Badge>
-                                  )}
-                                  {isInactive && (
-                                    <Badge className="bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700 text-[10px] font-bold">
-                                      ⚪ Inativo
-                                    </Badge>
-                                  )}
-                                </td>
-
-                                <td className="py-3 px-3">
-                                  <div className="flex items-center gap-1.5">
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => handleOpenDocsModal(c)}
-                                      className="h-7 text-[11px] gap-1 text-blue-600 border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100"
-                                    >
-                                      <Eye className="h-3 w-3" />
-                                      Docs
-                                    </Button>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => {
-                                        setSelectedCourierForHistory(c)
-                                        setIsCourierHistoryModalOpen(true)
-                                      }}
-                                      className="h-7 text-[11px] gap-1 text-amber-500 border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20 hover:bg-amber-100"
-                                      title="Ver histórico de entregas, km e combustível"
-                                    >
-                                      <Fuel className="h-3 w-3" />
-                                      Histórico
-                                    </Button>
-                                  </div>
-                                </td>
-
-                                <td className="py-3 px-3 text-right">
-                                  <div className="flex items-center justify-end gap-1.5">
+                                  <td className="py-3 px-3">
                                     {isPending && (
-                                      <Button
-                                        size="sm"
-                                        onClick={() => handleUpdateUserStatus(c, 'active')}
-                                        disabled={updatingUserId === c.id}
-                                        className="h-7 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] gap-1 shadow-sm"
-                                      >
-                                        <Check className="h-3 w-3" />
-                                        Aprovar
-                                      </Button>
+                                      <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-700 text-[10px] font-bold">
+                                        🟡 Pendente
+                                      </Badge>
                                     )}
-
                                     {isActive && (
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleUpdateUserStatus(c, 'inactive')}
-                                        disabled={updatingUserId === c.id}
-                                        className="h-7 px-2 text-rose-600 border-rose-200 dark:border-rose-900 hover:bg-rose-50 text-[11px] gap-1"
-                                      >
-                                        <Ban className="h-3 w-3" />
-                                        Bloquear
-                                      </Button>
+                                      <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700 text-[10px] font-bold">
+                                        🟢 Ativo
+                                      </Badge>
                                     )}
-
                                     {isInactive && (
+                                      <Badge className="bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700 text-[10px] font-bold">
+                                        ⚪ Inativo
+                                      </Badge>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3">
+                                    <div className="flex items-center gap-1.5">
                                       <Button
                                         variant="outline"
                                         size="sm"
-                                        onClick={() => handleUpdateUserStatus(c, 'active')}
-                                        disabled={updatingUserId === c.id}
-                                        className="h-7 px-2 text-emerald-600 border-emerald-200 dark:border-emerald-900 hover:bg-emerald-50 text-[11px] gap-1"
+                                        onClick={() => handleOpenDocsModal(c)}
+                                        className="h-7 text-[11px] gap-1 text-blue-600 border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100"
                                       >
-                                        <UserCheck className="h-3 w-3" />
-                                        Reativar
+                                        <Eye className="h-3 w-3" />
+                                        Docs
                                       </Button>
-                                    )}
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedCourierForHistory(c)
+                                          setIsCourierHistoryModalOpen(true)
+                                        }}
+                                        className="h-7 text-[11px] gap-1 text-amber-500 border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20 hover:bg-amber-100"
+                                        title="Ver histórico de entregas, km e combustível"
+                                      >
+                                        <Fuel className="h-3 w-3" />
+                                        Histórico
+                                      </Button>
+                                    </div>
+                                  </td>
 
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={() => handleDeleteUser(c)}
-                                      className="h-7 px-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-                                      title="Excluir Entregador"
-                                    >
-                                      <Trash2 className="h-3 w-3 mr-0.5" />
-                                      Excluir
-                                    </Button>
-                                  </div>
-                                </td>
-                              </tr>
-                            )
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+                                  <td className="py-3 px-3 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      {isPending && (
+                                        <Button
+                                          size="sm"
+                                          onClick={() => handleUpdateUserStatus(c, 'active')}
+                                          disabled={updatingUserId === c.id}
+                                          className="h-7 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] gap-1 shadow-sm"
+                                        >
+                                          <Check className="h-3 w-3" />
+                                          Aprovar
+                                        </Button>
+                                      )}
 
-            {/* TAB 3: SELLERS MANAGEMENT */}
-            <TabsContent value="sellers" className="space-y-4">
-              <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
-                <CardHeader className="pb-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <CardTitle className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                        <Users className="h-5 w-5 text-blue-600" />
-                        Gestão de Vendedores & Embarcadores
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Controle de contas comerciais que cadastram e despacham pedidos na
-                        plataforma.
-                      </CardDescription>
+                                      {isActive && (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => handleUpdateUserStatus(c, 'inactive')}
+                                          disabled={updatingUserId === c.id}
+                                          className="h-7 px-2 text-rose-600 border-rose-200 dark:border-rose-900 hover:bg-rose-50 text-[11px] gap-1"
+                                        >
+                                          <Ban className="h-3 w-3" />
+                                          Bloquear
+                                        </Button>
+                                      )}
+
+                                      {isInactive && (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => handleUpdateUserStatus(c, 'active')}
+                                          disabled={updatingUserId === c.id}
+                                          className="h-7 px-2 text-emerald-600 border-emerald-200 dark:border-emerald-900 hover:bg-emerald-50 text-[11px] gap-1"
+                                        >
+                                          <UserCheck className="h-3 w-3" />
+                                          Reativar
+                                        </Button>
+                                      )}
+
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => handleDeleteUser(c)}
+                                        className="h-7 px-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                                        title="Excluir Entregador"
+                                      >
+                                        <Trash2 className="h-3 w-3 mr-0.5" />
+                                        Excluir
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )
+                            })
+                          )}
+                        </tbody>
+                      </table>
                     </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-                    <div className="flex items-center gap-2">
-                      <div className="relative w-48 sm:w-64">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                        <Input
-                          placeholder="Buscar vendedor por nome ou e-mail..."
-                          value={searchSellers}
-                          onChange={(e) => setSearchSellers(e.target.value)}
-                          className="h-9 pl-8 text-xs"
-                        />
+              {/* TAB 3: SELLERS MANAGEMENT */}
+              <TabsContent value="sellers" className="space-y-4">
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardHeader className="pb-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <Users className="h-5 w-5 text-blue-600" />
+                          Gestão de Vendedores & Embarcadores
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Controle de contas comerciais que cadastram e despacham pedidos na
+                          plataforma.
+                        </CardDescription>
                       </div>
 
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-48 sm:w-64">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                          <Input
+                            placeholder="Buscar vendedor por nome ou e-mail..."
+                            value={searchSellers}
+                            onChange={(e) => setSearchSellers(e.target.value)}
+                            className="h-9 pl-8 text-xs"
+                          />
+                        </div>
+
+                        <Button
+                          onClick={() => setIsCreateSellerModalOpen(true)}
+                          className="h-9 gap-1.5 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition duration-100 whitespace-nowrap"
+                        >
+                          <UserPlus className="h-3.5 w-3.5 text-[#FF6B35]" />
+                          Novo Vendedor
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
+                            <th className="py-3 px-3 font-semibold">Vendedor / Estabelecimento</th>
+                            <th className="py-3 px-3 font-semibold">Contato</th>
+                            <th className="py-3 px-3 font-semibold">Status</th>
+                            <th className="py-3 px-3 font-semibold">Cadastrado em</th>
+                            <th className="py-3 px-3 font-semibold text-right">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredSellers.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="py-8 text-center text-slate-500">
+                                {sellers.length === 0
+                                  ? 'Nenhum vendedor vinculado na tabela de membros desta empresa.'
+                                  : 'Nenhum vendedor encontrado.'}
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredSellers.map((s) => {
+                              const isInactive = s.status === 'inactive'
+                              const isActive = s.status !== 'inactive'
+
+                              return (
+                                <tr
+                                  key={s.id}
+                                  className="hover:bg-slate-50/60 dark:hover:bg-slate-800/50 transition-colors"
+                                >
+                                  <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                                    <div className="flex items-center gap-2.5">
+                                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-300 font-bold text-xs uppercase">
+                                        {s.name ? s.name.slice(0, 2) : 'VD'}
+                                      </div>
+                                      <div>
+                                        <p className="font-bold text-slate-900 dark:text-white">
+                                          {s.name || 'Sem nome'}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500">{s.email}</p>
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
+                                    <div className="flex items-center gap-1.5">
+                                      <Phone className="h-3.5 w-3.5 text-slate-400" />
+                                      <span>{s.phone || 'Não informado'}</span>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-3 px-3">
+                                    {isActive ? (
+                                      <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700 text-[10px] font-bold">
+                                        🟢 Ativo
+                                      </Badge>
+                                    ) : (
+                                      <Badge className="bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700 text-[10px] font-bold">
+                                        ⚪ Inativo
+                                      </Badge>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 text-slate-500 text-[11px]">
+                                    {new Date(s.created).toLocaleDateString('pt-BR')}
+                                  </td>
+
+                                  <td className="py-3 px-3 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedSellerForEdit(s)
+                                          setIsEditSellerModalOpen(true)
+                                        }}
+                                        className="h-7 px-2 text-blue-600 border-blue-200 dark:border-blue-900 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-[11px] gap-1 font-semibold"
+                                        title="Editar Dados do Vendedor"
+                                      >
+                                        <Edit3 className="h-3 w-3 text-blue-600" />
+                                        Editar
+                                      </Button>
+
+                                      {isActive ? (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => handleUpdateUserStatus(s, 'inactive')}
+                                          disabled={updatingUserId === s.id}
+                                          className="h-7 px-2 text-rose-600 border-rose-200 dark:border-rose-900 hover:bg-rose-50 text-[11px] gap-1"
+                                        >
+                                          <Ban className="h-3 w-3" />
+                                          Bloquear
+                                        </Button>
+                                      ) : (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => handleUpdateUserStatus(s, 'active')}
+                                          disabled={updatingUserId === s.id}
+                                          className="h-7 px-2 text-emerald-600 border-emerald-200 dark:border-emerald-900 hover:bg-emerald-50 text-[11px] gap-1"
+                                        >
+                                          <UserCheck className="h-3 w-3" />
+                                          Reativar
+                                        </Button>
+                                      )}
+
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => handleDeleteUser(s)}
+                                        className="h-7 px-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                                        title="Excluir Vendedor"
+                                      >
+                                        <Trash2 className="h-3 w-3 mr-0.5" />
+                                        Excluir
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+
+            {/* ================= RODAPÉ / DIAGNÓSTICO DO SISTEMA ================= */}
+            <footer className="mt-8 border-t border-[#1E2B58]/60 pt-4 pb-6 text-slate-400">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#0E1738] border border-[#1E2B58] text-[#60A5FA] font-mono">
+                    v0.0.150
+                  </span>
+                  <span className="text-slate-500">•</span>
+                  <span className="text-slate-400">
+                    Operação Multi-tenant • PocketBase Skip Cloud
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsDiagExpanded((prev) => !prev)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#0E1738] border border-[#1E2B58] text-[11px] text-slate-300 hover:text-white hover:bg-[#16224c] transition-colors"
+                >
+                  <span>
+                    {isDiagExpanded ? 'Recolher Diagnóstico' : 'Ver Diagnóstico do Sistema'}
+                  </span>
+                  <span className="text-slate-400 font-mono">{isDiagExpanded ? '▲' : '▼'}</span>
+                </button>
+              </div>
+
+              {isDiagExpanded && (
+                <div className="mt-3 p-3.5 rounded-xl bg-[#070D1E] border border-[#1E2B58] text-xs text-slate-300 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="p-2.5 rounded-lg bg-[#0E1738] border border-[#1E2B58]/80 space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        Usuário Autenticado
+                      </span>
+                      <p className="font-semibold text-white truncate">
+                        {user?.name || user?.email || 'N/A'}
+                      </p>
+                      <p className="font-mono text-[10px] text-slate-400 truncate">
+                        ID: {user?.id || '—'}
+                      </p>
+                      <p className="text-[11px] text-[#60A5FA]">
+                        Papel: <strong>{user?.role || '—'}</strong>
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-[#0E1738] border border-[#1E2B58]/80 space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        Empresa Ativa
+                      </span>
+                      <p className="font-semibold text-white truncate">
+                        {currentCompany?.nome_fantasia ||
+                          currentCompany?.nome_razao_social ||
+                          resolvedCompany?.name ||
+                          'Farmácia Xodó do Pilar'}
+                      </p>
+                      <p className="font-mono text-[10px] text-slate-400 truncate">
+                        ID: {currentCompany?.id || resolvedCompany?.id || 'ssyicw8uzwqc01w'}
+                      </p>
+                      <p className="text-[10px] text-indigo-300 truncate font-mono">
+                        Fonte: {resolvedCompanySource || 'companyResolver (membros)'}
+                      </p>
+                      <p className="text-[11px] text-emerald-400">
+                        Status: <strong>Ativa</strong>
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-[#0E1738] border border-[#1E2B58]/80 space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        Contagens da Operação
+                      </span>
+                      <div className="flex flex-col text-[11px] space-y-0.5">
+                        <span className="text-white">
+                          Pedidos: <strong>{orders.length}</strong>
+                        </span>
+                        <span className="text-white">
+                          Entregadores: <strong>{couriers.length}</strong>
+                        </span>
+                        <span className="text-white">
+                          Vendedores: <strong>{sellers.length}</strong>
+                        </span>
+                        <span className="text-white">
+                          Usuários: <strong>{users.length}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-[#0E1738] border border-[#1E2B58]/80 space-y-1 flex flex-col justify-between">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                          Sincronização
+                        </span>
+                        <p className="text-[11px] text-slate-300">
+                          Última carga: {new Date().toLocaleTimeString('pt-BR')}
+                        </p>
+                      </div>
                       <Button
-                        onClick={() => setIsCreateSellerModalOpen(true)}
-                        className="h-9 gap-1.5 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition duration-100 whitespace-nowrap"
+                        type="button"
+                        size="sm"
+                        onClick={() => loadData()}
+                        className="h-7 text-[11px] bg-[#0052CC] hover:bg-[#003E99] text-white font-bold w-full"
                       >
-                        <UserPlus className="h-3.5 w-3.5 text-[#FF6B35]" />
-                        Novo Vendedor
+                        Recarregar Dados
                       </Button>
                     </div>
                   </div>
-                </CardHeader>
 
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
-                          <th className="py-3 px-3 font-semibold">Vendedor / Estabelecimento</th>
-                          <th className="py-3 px-3 font-semibold">Contato</th>
-                          <th className="py-3 px-3 font-semibold">Status</th>
-                          <th className="py-3 px-3 font-semibold">Cadastrado em</th>
-                          <th className="py-3 px-3 font-semibold text-right">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {filteredSellers.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="py-8 text-center text-slate-500">
-                              Nenhum vendedor encontrado.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredSellers.map((s) => {
-                            const isInactive = s.status === 'inactive'
-                            const isActive = s.status !== 'inactive'
-
-                            return (
-                              <tr
-                                key={s.id}
-                                className="hover:bg-slate-50/60 dark:hover:bg-slate-800/50 transition-colors"
-                              >
-                                <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
-                                  <div className="flex items-center gap-2.5">
-                                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-300 font-bold text-xs uppercase">
-                                      {s.name ? s.name.slice(0, 2) : 'VD'}
-                                    </div>
-                                    <div>
-                                      <p className="font-bold text-slate-900 dark:text-white">
-                                        {s.name || 'Sem nome'}
-                                      </p>
-                                      <p className="text-[11px] text-slate-500">{s.email}</p>
-                                    </div>
-                                  </div>
-                                </td>
-
-                                <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
-                                  <div className="flex items-center gap-1.5">
-                                    <Phone className="h-3.5 w-3.5 text-slate-400" />
-                                    <span>{s.phone || 'Não informado'}</span>
-                                  </div>
-                                </td>
-
-                                <td className="py-3 px-3">
-                                  {isActive ? (
-                                    <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700 text-[10px] font-bold">
-                                      🟢 Ativo
-                                    </Badge>
-                                  ) : (
-                                    <Badge className="bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700 text-[10px] font-bold">
-                                      ⚪ Inativo
-                                    </Badge>
-                                  )}
-                                </td>
-
-                                <td className="py-3 px-3 text-slate-500 text-[11px]">
-                                  {new Date(s.created).toLocaleDateString('pt-BR')}
-                                </td>
-
-                                <td className="py-3 px-3 text-right">
-                                  <div className="flex items-center justify-end gap-1.5">
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => {
-                                        setSelectedSellerForEdit(s)
-                                        setIsEditSellerModalOpen(true)
-                                      }}
-                                      className="h-7 px-2 text-blue-600 border-blue-200 dark:border-blue-900 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-[11px] gap-1 font-semibold"
-                                      title="Editar Dados do Vendedor"
-                                    >
-                                      <Edit3 className="h-3 w-3 text-blue-600" />
-                                      Editar
-                                    </Button>
-
-                                    {isActive ? (
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleUpdateUserStatus(s, 'inactive')}
-                                        disabled={updatingUserId === s.id}
-                                        className="h-7 px-2 text-rose-600 border-rose-200 dark:border-rose-900 hover:bg-rose-50 text-[11px] gap-1"
-                                      >
-                                        <Ban className="h-3 w-3" />
-                                        Bloquear
-                                      </Button>
-                                    ) : (
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleUpdateUserStatus(s, 'active')}
-                                        disabled={updatingUserId === s.id}
-                                        className="h-7 px-2 text-emerald-600 border-emerald-200 dark:border-emerald-900 hover:bg-emerald-50 text-[11px] gap-1"
-                                      >
-                                        <UserCheck className="h-3 w-3" />
-                                        Reativar
-                                      </Button>
-                                    )}
-
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={() => handleDeleteUser(s)}
-                                      className="h-7 px-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-                                      title="Excluir Vendedor"
-                                    >
-                                      <Trash2 className="h-3 w-3 mr-0.5" />
-                                      Excluir
-                                    </Button>
-                                  </div>
-                                </td>
-                              </tr>
-                            )
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </main>
-      </div>
+                  {/* Aviso amarelo com o motivo se contagens forem zero */}
+                  {(orders.length === 0 || couriers.length === 0) && (
+                    <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-start gap-2">
+                      <span className="text-amber-400 text-base leading-none">⚠️</span>
+                      <div>
+                        <strong className="font-bold">Aviso de Operação Zerada:</strong>{' '}
+                        {orders.length === 0 && 'Nenhum pedido retornado para a empresa ativa. '}
+                        {couriers.length === 0 &&
+                          'Nenhum entregador com vínculo ativo encontrado nesta empresa. '}
+                        Verifique os vínculos na coleção <code>membros</code> para garantir filial{' '}
+                        <code>ssyicw8uzwqc01w</code>.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </footer>
+          </main>
+        </div>
+      )}
 
       {/* ================= MODAL: CADASTRO DE ADIANTAMENTO DE COMBUSTÍVEL ================= */}
       <Dialog open={isNewFuelAdvanceModalOpen} onOpenChange={setIsNewFuelAdvanceModalOpen}>
