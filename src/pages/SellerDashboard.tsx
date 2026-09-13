@@ -1190,6 +1190,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             <ControlTower
               orders={orders}
               couriers={couriers}
+              locations={locations}
+              settings={settings}
+              offRouteEvents={offRouteEvents}
               onRefresh={loadData}
               userRole="seller"
             />

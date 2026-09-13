@@ -2323,10 +2323,34 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }, [open, wizardStep, isMapsLoaded])
 
   // Apply & Save Distribution (com opção de atribuir ou já Liberar Rota diretamente)
+  // REGRA INVIOLÁVEL: Todas as rotas só podem ser salvas e liberadas após otimização 100% pelo motor viário
   const handleApplyDistribution = async (releaseDirectly = false) => {
     if (!optimizationResult || optimizationResult.courierPlans.length === 0) {
       toast.error('Gere a otimização antes de confirmar a distribuição.')
       return
+    }
+
+    // Validação estrita de otimização 100%: nenhuma parada pode estar vazia ou sem sequência válida >= 1
+    const totalStopsInPlans = optimizationResult.courierPlans.reduce(
+      (sum, p) => sum + p.stops.length,
+      0,
+    )
+    if (totalStopsInPlans === 0) {
+      toast.error('Não é possível salvar: nenhuma entrega foi otimizada nas rotas.')
+      return
+    }
+
+    for (const plan of optimizationResult.courierPlans) {
+      if (plan.stops.length === 0) continue
+      const invalidStop = plan.stops.find(
+        (s) => !s.id || typeof s.lat !== 'number' || typeof s.lng !== 'number',
+      )
+      if (invalidStop) {
+        toast.error(
+          `A rota de ${plan.courier.name} possui paradas incompletas. Execute a otimização novamente.`,
+        )
+        return
+      }
     }
 
     const startBase = resolvedStartEntity
@@ -4866,25 +4890,59 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             type="button"
             onClick={() => handleApplyDistribution(false)}
             disabled={
-              isApplying || !optimizationResult || optimizationResult.courierPlans.length === 0
+              isApplying ||
+              isOptimizing ||
+              !optimizationResult ||
+              optimizationResult.courierPlans.length === 0
             }
             className="bg-slate-700 hover:bg-slate-800 text-white font-semibold text-xs flex items-center gap-1.5"
             title="Apenas salva a ordem otimizada sem liberar no app do entregador ainda"
           >
-            <Check className="h-4 w-4" />
-            {isApplying ? 'Salvando...' : 'Salvar Ordem (Sem Liberar)'}
+            {isOptimizing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+                <span>Otimizando rota com motor viário...</span>
+              </>
+            ) : isApplying ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Salvando...</span>
+              </>
+            ) : (
+              <>
+                <Check className="h-4 w-4" />
+                <span>Salvar Ordem (Sem Liberar)</span>
+              </>
+            )}
           </Button>
           <Button
             type="button"
             onClick={() => handleApplyDistribution(true)}
             disabled={
-              isApplying || !optimizationResult || optimizationResult.courierPlans.length === 0
+              isApplying ||
+              isOptimizing ||
+              !optimizationResult ||
+              optimizationResult.courierPlans.length === 0
             }
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/25 flex items-center gap-1.5"
             title="Salva a rota otimizada e já libera no app do entregador com alerta sonoro/push"
           >
-            <Sparkles className="h-4 w-4 text-amber-300" />
-            {isApplying ? 'Liberando...' : '🚀 Salvar & Liberar Rota'}
+            {isOptimizing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+                <span>Otimizando rota com motor viário...</span>
+              </>
+            ) : isApplying ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Liberando...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4 text-amber-300" />
+                <span>🚀 Salvar & Liberar Rota</span>
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

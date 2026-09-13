@@ -84,6 +84,7 @@ import {
   type LatLngPoint,
   type OsrmRouteResult,
 } from '@/services/osrmRoutingService'
+import { asyncPool } from '@/lib/promisePool'
 import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificationSound'
 import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
 import { useAuth } from '@/contexts/AuthContext'
@@ -98,6 +99,9 @@ import type { AppSettingsRecord } from '@/types/delivery'
 interface ControlTowerProps {
   orders?: OrderRecord[]
   couriers?: UserRecord[]
+  locations?: LocationRecord[]
+  settings?: AppSettingsRecord | null
+  offRouteEvents?: any[]
   onRefresh?: () => void
   userRole?: 'seller' | 'admin'
 }
@@ -163,9 +167,87 @@ const KANBAN_COLUMNS: KanbanColumnConfig[] = [
   },
 ]
 
-export const ControlTower: React.FC<ControlTowerProps> = ({
+interface ControlTowerErrorBoundaryProps {
+  children: React.ReactNode
+}
+
+interface ControlTowerErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+}
+
+export class ControlTowerErrorBoundary extends React.Component<
+  ControlTowerErrorBoundaryProps,
+  ControlTowerErrorBoundaryState
+> {
+  constructor(props: ControlTowerErrorBoundaryProps) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error): ControlTowerErrorBoundaryState {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Torre de Controle - Erro capturado pelo ErrorBoundary:', error, errorInfo)
+  }
+
+  handleReload = () => {
+    this.setState({ hasError: false, error: null })
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="w-full min-h-[500px] flex flex-col items-center justify-center p-8 bg-[#070D1E] border border-red-500/30 rounded-2xl text-center text-white space-y-4">
+          <div className="w-16 h-16 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center text-3xl">
+            📡
+          </div>
+          <div className="max-w-md space-y-2">
+            <h3 className="text-xl font-bold text-red-400">
+              Ops! A Torre de Controle encontrou um problema
+            </h3>
+            <p className="text-sm text-slate-300">
+              Ocorreu uma instabilidade visual temporária na renderização do mapa ou telemetria.
+              Seus dados continuam seguros.
+            </p>
+            {this.state.error?.message && (
+              <p className="text-xs font-mono text-slate-400 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 text-left overflow-x-auto max-h-24">
+                {this.state.error.message}
+              </p>
+            )}
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={this.handleReload}
+              className="px-5 py-2.5 rounded-xl font-bold text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-lg transition-colors cursor-pointer"
+            >
+              🔄 Recarregar Torre de Controle
+            </button>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="px-5 py-2.5 rounded-xl font-semibold text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer"
+            >
+              Recarregar Página
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    return this.props.children
+  }
+}
+
+const ControlTowerInner: React.FC<ControlTowerProps> = ({
   orders: initialOrders,
   couriers: initialCouriers,
+  locations: propLocations,
+  settings: propSettings,
+  offRouteEvents: propOffRouteEvents,
   onRefresh,
   userRole: propUserRole = 'seller',
 }) => {
@@ -175,8 +257,8 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const userRole = user?.role || propUserRole
   const [orders, setOrders] = useState<OrderRecord[]>(initialOrders || [])
   const [couriers, setCouriers] = useState<UserRecord[]>(initialCouriers || [])
-  const [locations, setLocations] = useState<LocationRecord[]>([])
-  const [appSettings, setAppSettings] = useState<AppSettingsRecord | null>(null)
+  const [locations, setLocations] = useState<LocationRecord[]>(propLocations || [])
+  const [appSettings, setAppSettings] = useState<AppSettingsRecord | null>(propSettings || null)
   const [isLoading, setIsLoading] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
 
@@ -206,6 +288,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   const courierAnimFramesRef = useRef<Map<string, number>>(new Map())
   const [polylineRef, setPolylineRef] = useState<any>(null)
   const googlePolylinesRef = useRef<any[]>([])
+  const activePolylinesMapRef = useRef<
+    Map<string, { main: any; inner: any; returnLeg?: any; dev?: any }>
+  >(new Map())
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
 
   // Modo de exibição das abas do mapa: 'in_transit' (Em Rota) ou 'delivered' (Entregues)
@@ -477,31 +562,64 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     }
   }, [initialCouriers])
 
-  // Realtime PocketBase subscriptions: 'orders' and 'locations'
+  // Sincronização de props opcionais passadas pelo componente pai (SellerDashboard / AdminDashboard)
+  const prevLocationsHashRef = useRef<string>('')
+  useEffect(() => {
+    if (!propLocations) return
+    const newHash = propLocations
+      .map((l) => `${l.user_id}-${l.lat}-${l.lng}-${l.speed}-${l.updated || l.created}`)
+      .join('|')
+    if (newHash !== prevLocationsHashRef.current) {
+      prevLocationsHashRef.current = newHash
+      setLocations(propLocations)
+    }
+  }, [propLocations])
+
+  useEffect(() => {
+    if (propSettings !== undefined) {
+      setAppSettings(propSettings)
+    }
+  }, [propSettings])
+
+  useEffect(() => {
+    if (propOffRouteEvents !== undefined) {
+      setRecentDeviations(propOffRouteEvents)
+    }
+  }, [propOffRouteEvents])
+
+  // Realtime PocketBase subscriptions:
+  // Se o componente pai fornecer as props memoizadas (locations, settings, offRouteEvents),
+  // desligamos as subscrições manuais correspondentes para evitar re-renders duplicados.
+  const hasParentLocations = Boolean(propLocations)
+  const hasParentSettings = propSettings !== undefined
+  const hasParentDeviations = Boolean(propOffRouteEvents)
+
   useEffect(() => {
     let isSubscribed = true
 
-    // Subscribe to locations (courier GPS movements)
-    pb.collection('locations')
-      .subscribe('*', (e) => {
-        if (!isSubscribed) return
-        if (e.action === 'create' || e.action === 'update') {
-          const newLoc = e.record as unknown as LocationRecord
-          setLocations((prev) => {
-            const existingIndex = prev.findIndex((l) => l.user_id === newLoc.user_id)
-            if (existingIndex >= 0) {
-              const updated = [...prev]
-              updated[existingIndex] = newLoc
-              return updated
-            }
-            return [newLoc, ...prev]
-          })
-          setLastUpdated(new Date())
-        }
-      })
-      .catch((err) => {
-        console.warn('Torre de Controle: erro subscrição locations:', err)
-      })
+    // Subscribe to locations apenas se o pai NÃO forneceu
+    if (!hasParentLocations) {
+      pb.collection('locations')
+        .subscribe('*', (e) => {
+          if (!isSubscribed) return
+          if (e.action === 'create' || e.action === 'update') {
+            const newLoc = e.record as unknown as LocationRecord
+            setLocations((prev) => {
+              const existingIndex = prev.findIndex((l) => l.user_id === newLoc.user_id)
+              if (existingIndex >= 0) {
+                const updated = [...prev]
+                updated[existingIndex] = newLoc
+                return updated
+              }
+              return [newLoc, ...prev]
+            })
+            setLastUpdated(new Date())
+          }
+        })
+        .catch((err) => {
+          console.warn('Torre de Controle: erro subscrição locations:', err)
+        })
+    }
 
     // Subscribe to orders (live delivery status updates & delivery alert)
     pb.collection('orders')
@@ -526,7 +644,7 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           }
         }
 
-        // ALTERAÇÃO 2: Ao receber update com route_finished === true ou status === 'delivered':
+        // Ao receber update com route_finished === true ou status === 'delivered':
         // remover imediatamente o courier do cache de rotas ativas, remover polilinhas e expurgar de globalInTransitOrders
         const isRouteFinished = Boolean(rec.route_finished)
 
@@ -538,6 +656,18 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
             activeRoutesCacheRef.current.delete(affectedCourierId)
 
             // Remove polilinhas ativas no Google Maps nativo
+            const existingLines = activePolylinesMapRef.current.get(affectedCourierId)
+            if (existingLines) {
+              try {
+                existingLines.main?.setMap(null)
+                existingLines.inner?.setMap(null)
+                existingLines.returnLeg?.setMap(null)
+                existingLines.dev?.setMap(null)
+              } catch {
+                /* intentionally ignored */
+              }
+              activePolylinesMapRef.current.delete(affectedCourierId)
+            }
             if (googlePolylinesRef.current && googlePolylinesRef.current.length > 0) {
               googlePolylinesRef.current.forEach((p) => {
                 try {
@@ -641,52 +771,63 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
       .catch((err) => {
         console.warn('Torre de Controle: erro subscrição orders:', err)
       })
-    // Subscribe to off_route_events (live deviation events)
-    pb.collection('off_route_events')
-      .subscribe('*', (e) => {
-        if (!isSubscribed) return
-        if (e.action === 'create') {
-          setRecentDeviations((prev) => [e.record, ...prev])
-          setLastUpdated(new Date())
-        } else if (e.action === 'update') {
-          setRecentDeviations((prev) =>
-            prev.map((item) => (item.id === e.record.id ? e.record : item)),
-          )
-        }
-      })
-      .catch((err) => {
-        console.warn('Torre de Controle: erro subscrição off_route_events:', err)
-      })
 
-    // Subscribe to app_settings (live work shift & fuel updates)
-    pb.collection('app_settings')
-      .subscribe('*', (e) => {
-        if (!isSubscribed) return
-        if (e.action === 'create' || e.action === 'update') {
-          setAppSettings(e.record as unknown as AppSettingsRecord)
-          setLastUpdated(new Date())
-        }
-      })
-      .catch((err) => {
-        console.warn('Torre de Controle: erro subscrição app_settings:', err)
-      })
+    // Subscribe to off_route_events apenas se o pai NÃO forneceu
+    if (!hasParentDeviations) {
+      pb.collection('off_route_events')
+        .subscribe('*', (e) => {
+          if (!isSubscribed) return
+          if (e.action === 'create') {
+            setRecentDeviations((prev) => [e.record, ...prev])
+            setLastUpdated(new Date())
+          } else if (e.action === 'update') {
+            setRecentDeviations((prev) =>
+              prev.map((item) => (item.id === e.record.id ? e.record : item)),
+            )
+          }
+        })
+        .catch((err) => {
+          console.warn('Torre de Controle: erro subscrição off_route_events:', err)
+        })
+    }
+
+    // Subscribe to app_settings apenas se o pai NÃO forneceu
+    if (!hasParentSettings) {
+      pb.collection('app_settings')
+        .subscribe('*', (e) => {
+          if (!isSubscribed) return
+          if (e.action === 'create' || e.action === 'update') {
+            setAppSettings(e.record as unknown as AppSettingsRecord)
+            setLastUpdated(new Date())
+          }
+        })
+        .catch((err) => {
+          console.warn('Torre de Controle: erro subscrição app_settings:', err)
+        })
+    }
 
     return () => {
       isSubscribed = false
-      pb.collection('locations')
-        .unsubscribe('*')
-        .catch(() => {})
+      if (!hasParentLocations) {
+        pb.collection('locations')
+          .unsubscribe('*')
+          .catch(() => {})
+      }
       pb.collection('orders')
         .unsubscribe('*')
         .catch(() => {})
-      pb.collection('off_route_events')
-        .unsubscribe('*')
-        .catch(() => {})
-      pb.collection('app_settings')
-        .unsubscribe('*')
-        .catch(() => {})
+      if (!hasParentDeviations) {
+        pb.collection('off_route_events')
+          .unsubscribe('*')
+          .catch(() => {})
+      }
+      if (!hasParentSettings) {
+        pb.collection('app_settings')
+          .unsubscribe('*')
+          .catch(() => {})
+      }
     }
-  }, [user?.id, user?.role])
+  }, [user?.id, user?.role, hasParentLocations, hasParentSettings, hasParentDeviations])
 
   // Load Google Maps Script
   useEffect(() => {
@@ -947,13 +1088,13 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
   // Atualização e cálculo contínuo de rotas viárias ativas, desvio de rota, parada fora do local e ETA
   useEffect(() => {
     let isCurrent = true
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
     // Para cada entregador com rota iniciada, buscar/atualizar o trajeto oficial:
     // Base de partida → sequência de clientes da rota iniciada (route_started = true)
-    // OTIMIZAÇÃO: Cache e debounce inteligente. Só recalcular rota viária (OSRM/Google)
-    // se a posição do entregador mudou >50m OU a lista de pedidos da rota mudou.
+    // OTIMIZAÇÃO: Cache de movimento mínimo de 100m + debounce de ~800ms + asyncPool (concorrência 4)
     const computeActiveRoutes = async () => {
-      const activePromises = activeRouteCouriers.map(async (item) => {
+      const computeCourierRoute = async (item: (typeof activeRouteCouriers)[0]) => {
         // Obter todos os pedidos ativos da rota iniciada ordenados por sequência
         const activeRouteOrders = item.allAssignedOrders
           .filter(
@@ -1011,12 +1152,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
           .join(',')
         const cached = activeRoutesCacheRef.current.get(item.courier.id)
 
-        // Se cache existente for válido e posição mudou <= 50 metros e pedidos não mudaram:
+        // Se cache existente for válido e posição mudou < 100 metros e pedidos não mudaram:
         // reutilizar a geometria calculada (evita chamadas de rede e re-criação de linhas)
         if (
           cached &&
           cached.stopIdsHash === stopIdsHash &&
-          distanceMeters(cached.courierPos, courierPos) < 50
+          distanceMeters(cached.courierPos, courierPos) < 100
         ) {
           // Atualiza apenas dados leves de telemetria instantânea (velocidade/posição/status do entregador)
           return {
@@ -1215,9 +1356,11 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
         } catch {
           return null
         }
-      })
+      }
 
-      const results = (await Promise.all(activePromises)).filter(Boolean) as any[]
+      // Concorrência limitada a 4 em voo via asyncPool existente
+      const rawResults = await asyncPool(4, activeRouteCouriers, computeCourierRoute)
+      const results = rawResults.filter(Boolean) as any[]
       if (isCurrent) {
         setActiveRoutesData(results)
 
@@ -1348,7 +1491,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     }
 
     if (activeRouteCouriers.length > 0) {
-      computeActiveRoutes()
+      // Debounce de ~800ms no gatilho do efeito para evitar re-cálculos frenéticos em rajada de GPS
+      debounceTimer = setTimeout(() => {
+        if (isCurrent) {
+          computeActiveRoutes()
+        }
+      }, 800)
     } else {
       setActiveRoutesData([])
       notifiedEventsRef.current.clear()
@@ -1356,6 +1504,9 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
 
     return () => {
       isCurrent = false
+      if (debounceTimer) {
+        clearTimeout(debounceTimer)
+      }
     }
   }, [activeRouteCouriers, recentDeviations, toast, appSettings])
 
@@ -1576,85 +1727,174 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     const bounds = new win.google.maps.LatLngBounds()
     let hasCoords = false
 
-    // Clear old Google Maps polylines
-    googlePolylinesRef.current.forEach((p) => p.setMap(null))
-    googlePolylinesRef.current = []
+    // OTIMIZAÇÃO: Reutilizar e mutar polylines existentes via setPath em vez de destruir/recriar
+    const currentRouteCourierIds = new Set(
+      mapDisplayMode === 'delivered' ? [] : activeRoutesData.map((r) => r.courierId),
+    )
+
+    // Limpar do mapa polylines de entregadores que não estão mais ativos
+    activePolylinesMapRef.current.forEach((lines, cId) => {
+      if (!currentRouteCourierIds.has(cId)) {
+        lines.main?.setMap(null)
+        lines.inner?.setMap(null)
+        lines.returnLeg?.setMap(null)
+        lines.dev?.setMap(null)
+        activePolylinesMapRef.current.delete(cId)
+      }
+    })
 
     // No modo 'delivered', não desenhamos as linhas viárias ativas nem linhas de desvio
     if (mapDisplayMode !== 'delivered') {
-      // 1. DESENHAR ROTAS REAIS VIÁRIAS NO GOOGLE MAPS NATIVO:
-      // Perna de ida/entregas em azul (#2563EB) e Perna de retorno à base em azul claro tracejado (#60A5FA)
+      // 1. DESENHAR/MUTAR ROTAS REAIS VIÁRIAS NO GOOGLE MAPS NATIVO
       activeRoutesData.forEach((routeData) => {
+        const cId = routeData.courierId
         const fPoints = routeData.forwardPoints || routeData.points
-        if (fPoints && fPoints.length >= 2) {
-          // LINHA AZUL VIÁRIA: Trajeto de ida e paradas
+        const hasForward = fPoints && fPoints.length >= 2
+        const rawFPath = hasForward ? fPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })) : []
+
+        const retPoints = routeData.returnPoints
+        const hasReturn = retPoints && retPoints.length >= 2
+        const rawRetPath = hasReturn ? retPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })) : []
+
+        const hasDev = Boolean(routeData.isDeviated && routeData.nearestPointOnRoute)
+        const rawDevPath = hasDev
+          ? [
+              { lat: routeData.courierPos.lat, lng: routeData.courierPos.lng },
+              { lat: routeData.nearestPointOnRoute.lat, lng: routeData.nearestPointOnRoute.lng },
+            ]
+          : []
+
+        let lines = activePolylinesMapRef.current.get(cId)
+
+        if (lines) {
+          // Mutar polylines existentes com setPath sem recriar
+          if (hasForward) {
+            lines.main.setMap(map)
+            lines.main.setPath(rawFPath)
+            lines.inner.setMap(map)
+            lines.inner.setPath(rawFPath)
+            fPoints.forEach((p: any) => bounds.extend(p))
+            hasCoords = true
+          } else {
+            lines.main.setMap(null)
+            lines.inner.setMap(null)
+          }
+
+          if (hasReturn) {
+            if (!lines.returnLeg) {
+              lines.returnLeg = new win.google.maps.Polyline({
+                path: rawRetPath,
+                geodesic: true,
+                strokeColor: '#60A5FA',
+                strokeOpacity: 0,
+                strokeWeight: 4,
+                icons: [
+                  {
+                    icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
+                    repeat: '8px',
+                  },
+                ],
+                map,
+              })
+            } else {
+              lines.returnLeg.setMap(map)
+              lines.returnLeg.setPath(rawRetPath)
+            }
+            retPoints.forEach((p: any) => bounds.extend(p))
+          } else if (lines.returnLeg) {
+            lines.returnLeg.setMap(null)
+          }
+
+          if (hasDev) {
+            if (!lines.dev) {
+              lines.dev = new win.google.maps.Polyline({
+                path: rawDevPath,
+                geodesic: true,
+                strokeColor: '#EF4444',
+                strokeOpacity: 1.0,
+                strokeWeight: 4,
+                icons: [
+                  {
+                    icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                    offset: '0',
+                    repeat: '10px',
+                  },
+                ],
+                map,
+              })
+            } else {
+              lines.dev.setMap(map)
+              lines.dev.setPath(rawDevPath)
+            }
+          } else if (lines.dev) {
+            lines.dev.setMap(null)
+          }
+        } else if (hasForward) {
+          // Criar polylines pela primeira vez para este entregador
           const mainPolyline = new win.google.maps.Polyline({
-            path: fPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })),
+            path: rawFPath,
             geodesic: true,
             strokeColor: '#2563EB',
             strokeOpacity: 0.95,
             strokeWeight: 5,
             map,
           })
-          googlePolylinesRef.current.push(mainPolyline)
-
-          // Traço interno suave para efeito visual e destaque do percurso
           const innerPolyline = new win.google.maps.Polyline({
-            path: fPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })),
+            path: rawFPath,
             geodesic: true,
             strokeColor: '#93C5FD',
             strokeOpacity: 0.85,
             strokeWeight: 2,
             map,
           })
-          googlePolylinesRef.current.push(innerPolyline)
+
+          let returnPolyline: any = null
+          if (hasReturn) {
+            returnPolyline = new win.google.maps.Polyline({
+              path: rawRetPath,
+              geodesic: true,
+              strokeColor: '#60A5FA',
+              strokeOpacity: 0,
+              strokeWeight: 4,
+              icons: [
+                {
+                  icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
+                  repeat: '8px',
+                },
+              ],
+              map,
+            })
+            retPoints.forEach((p: any) => bounds.extend(p))
+          }
+
+          let devPolyline: any = null
+          if (hasDev) {
+            devPolyline = new win.google.maps.Polyline({
+              path: rawDevPath,
+              geodesic: true,
+              strokeColor: '#EF4444',
+              strokeOpacity: 1.0,
+              strokeWeight: 4,
+              icons: [
+                {
+                  icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                  offset: '0',
+                  repeat: '10px',
+                },
+              ],
+              map,
+            })
+          }
+
+          activePolylinesMapRef.current.set(cId, {
+            main: mainPolyline,
+            inner: innerPolyline,
+            returnLeg: returnPolyline,
+            dev: devPolyline,
+          })
 
           fPoints.forEach((p: any) => bounds.extend(p))
           hasCoords = true
-        }
-
-        // Perna de retorno à base (último cliente → base de retorno): #60A5FA tracejado
-        const retPoints = routeData.returnPoints
-        if (retPoints && retPoints.length >= 2) {
-          const returnPolyline = new win.google.maps.Polyline({
-            path: retPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })),
-            geodesic: true,
-            strokeColor: '#60A5FA',
-            strokeOpacity: 0,
-            strokeWeight: 4,
-            icons: [
-              {
-                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
-                repeat: '8px',
-              },
-            ],
-            map,
-          })
-          googlePolylinesRef.current.push(returnPolyline)
-          retPoints.forEach((p: any) => bounds.extend(p))
-        }
-
-        // 2. DESVIO DE ROTA NO GOOGLE MAPS NATIVO: LINHA VERMELHA TRACEJADA
-        if (routeData.isDeviated && routeData.nearestPointOnRoute) {
-          const deviationPolyline = new win.google.maps.Polyline({
-            path: [
-              { lat: routeData.courierPos.lat, lng: routeData.courierPos.lng },
-              { lat: routeData.nearestPointOnRoute.lat, lng: routeData.nearestPointOnRoute.lng },
-            ],
-            geodesic: true,
-            strokeColor: '#EF4444',
-            strokeOpacity: 1.0,
-            strokeWeight: 4,
-            icons: [
-              {
-                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-                offset: '0',
-                repeat: '10px',
-              },
-            ],
-            map,
-          })
-          googlePolylinesRef.current.push(deviationPolyline)
         }
 
         // Base Marker se presente
@@ -5045,4 +5285,12 @@ export const ControlTower: React.FC<ControlTowerProps> = ({
     </div>
   )
 }
+export const ControlTower: React.FC<ControlTowerProps> = (props) => {
+  return (
+    <ControlTowerErrorBoundary>
+      <ControlTowerInner {...props} />
+    </ControlTowerErrorBoundary>
+  )
+}
+
 export default ControlTower

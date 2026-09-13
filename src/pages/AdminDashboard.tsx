@@ -1057,6 +1057,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               <ControlTower
                 orders={orders}
                 couriers={couriers}
+                locations={locations}
+                settings={settings}
+                offRouteEvents={offRouteEvents}
                 onRefresh={loadData}
                 userRole="admin"
               />
