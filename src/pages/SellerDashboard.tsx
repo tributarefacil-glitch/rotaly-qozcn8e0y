@@ -103,7 +103,7 @@ interface SellerDashboardProps {
 
 export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashboardProps) {
   const { user } = useAuth()
-  const { currentCompany } = useCompany()
+  const { currentCompany, isLoadingCompany } = useCompany()
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [couriers, setCouriers] = useState<UserRecord[]>([])
@@ -142,6 +142,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       setMainViewTab(defaultTab)
     }
   }, [defaultTab])
+
+  // Diagnóstico discreto no rodapé
+  const [isDiagExpanded, setIsDiagExpanded] = useState(false)
 
   // Modal: Adicionar Entrega à Rota Já Iniciada de um Entregador
   const [isAddToRouteModalOpen, setIsAddToRouteModalOpen] = useState(false)
@@ -189,7 +192,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   }
 
   const loadData = async () => {
+    // Gate de busca: só buscar quando currentCompany estiver resolvida e CompanyContext terminar de hidratar
+    if (isLoadingCompany || !currentCompany) {
+      return
+    }
+
     try {
+      const companyId = currentCompany.id
       const [
         ordersData,
         custData,
@@ -202,7 +211,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       ] = await Promise.all([
         deliveryService.getOrders(''),
         deliveryService.getCustomers(),
-        deliveryService.getCouriers(),
+        deliveryService.getCouriers(companyId),
         deliveryService.getLatestLocations(),
         deliveryService.getBaseAddresses(),
         deliveryService.getSettings(),
@@ -230,8 +239,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   }
 
   useEffect(() => {
-    loadData()
-  }, [user?.id, user?.role, currentCompany?.id])
+    if (!isLoadingCompany && currentCompany?.id) {
+      loadData()
+    }
+  }, [user?.id, user?.role, currentCompany?.id, isLoadingCompany])
 
   useEffect(() => {
     const handleCompanyChange = () => {
@@ -2333,6 +2344,117 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* PAINEL DISCRETO E EXPANSÍVEL DE DIAGNÓSTICO DO SISTEMA (RODAPÉ) */}
+      <footer className="mt-8 border-t border-[#1E2B58]/60 pt-3 pb-6">
+        <div className="flex items-center justify-between text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-mono text-[11px] text-slate-400">
+              Rotaly Build: <strong className="text-slate-300">2025-05-15.01</strong>
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsDiagExpanded((prev) => !prev)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#0E1738] border border-[#1E2B58] text-[11px] text-slate-300 hover:text-white hover:bg-[#16224c] transition-colors"
+          >
+            <span>{isDiagExpanded ? 'Recolher Diagnóstico' : 'Ver Diagnóstico do Sistema'}</span>
+            <span className="text-slate-400 font-mono">{isDiagExpanded ? '▲' : '▼'}</span>
+          </button>
+        </div>
+
+        {isDiagExpanded && (
+          <div className="mt-3 p-3.5 rounded-xl bg-[#070D1E] border border-[#1E2B58] text-xs text-slate-300 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-2.5 rounded-lg bg-[#0E1738] border border-[#1E2B58]/80 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                  Usuário Autenticado
+                </span>
+                <p className="font-semibold text-white truncate">
+                  {user?.name || user?.email || 'N/A'}
+                </p>
+                <p className="font-mono text-[10px] text-slate-400 truncate">
+                  ID: {user?.id || '—'}
+                </p>
+                <p className="text-[11px] text-[#60A5FA]">
+                  Papel: <strong>{user?.role || '—'}</strong>
+                </p>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-[#0E1738] border border-[#1E2B58]/80 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                  Empresa Ativa
+                </span>
+                <p className="font-semibold text-white truncate">
+                  {currentCompany?.nome_fantasia ||
+                    currentCompany?.nome_razao_social ||
+                    'Nenhuma selecionada'}
+                </p>
+                <p className="font-mono text-[10px] text-slate-400 truncate">
+                  ID: {currentCompany?.id || '—'}
+                </p>
+                <p className="text-[11px] text-emerald-400">
+                  Status: <strong>{isLoadingCompany ? 'Carregando...' : 'Ativa'}</strong>
+                </p>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-[#0E1738] border border-[#1E2B58]/80 space-y-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                  Contagens da Operação
+                </span>
+                <div className="flex flex-col text-[11px] space-y-0.5">
+                  <span className="text-white">
+                    Pedidos: <strong>{orders.length}</strong>
+                  </span>
+                  <span className="text-white">
+                    Clientes: <strong>{customers.length}</strong>
+                  </span>
+                  <span className="text-white">
+                    Entregadores: <strong>{couriers.length}</strong>
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-[#0E1738] border border-[#1E2B58]/80 space-y-1 flex flex-col justify-between">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    Sincronização
+                  </span>
+                  <p className="text-[11px] text-slate-300">
+                    Última carga: {new Date().toLocaleTimeString('pt-BR')}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => loadData()}
+                  className="h-7 text-[11px] bg-[#0052CC] hover:bg-[#003E99] text-white font-bold w-full"
+                >
+                  Recarregar Dados
+                </Button>
+              </div>
+            </div>
+
+            {/* Aviso amarelo com o motivo se contagens forem zero */}
+            {(orders.length === 0 || customers.length === 0 || couriers.length === 0) && (
+              <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-start gap-2">
+                <span className="text-amber-400 text-base leading-none">⚠️</span>
+                <div>
+                  <strong className="font-bold">Aviso de Operação Zerada:</strong>{' '}
+                  {orders.length === 0 && 'Nenhum pedido retornado para a empresa ativa. '}
+                  {customers.length === 0 && 'Nenhum cliente cadastrado nesta filial. '}
+                  {couriers.length === 0 &&
+                    'Nenhum entregador com vínculo ativo encontrado nesta empresa. '}
+                  Verifique os vínculos do usuário na coleção <code>membros</code> para garantir
+                  filial <code>ssyicw8uzwqc01w</code>.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </footer>
     </div>
   )
 }

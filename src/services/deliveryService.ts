@@ -77,18 +77,26 @@ export const deliveryService = {
    * Se vazio, nulo ou inválido, retorna a Matriz como default seguro.
    */
   getActiveCompanyId(): string {
-    const active =
-      typeof window !== 'undefined' ? localStorage.getItem('rotaly_active_empresa_id') : null
-    if (active && active !== 'undefined' && active !== 'null' && active.trim() !== '') {
-      return active.trim()
-    }
-
-    // Se o usuário autenticado atual for seller ou courier, nunca deve cair na Matriz como default cego
+    // Para perfis seller e courier, NUNCA usar localStorage legado como fonte se este apontar para Matriz
     try {
       const authModel = pb.authStore.record as { role?: string } | null
-      if (authModel && (authModel.role === 'seller' || authModel.role === 'courier')) {
-        // Retorna a Farmácia Xodó do Pilar como default seguro para as vendedoras/entregadores da filial
+      const isStaff = authModel && (authModel.role === 'seller' || authModel.role === 'courier')
+
+      const active =
+        typeof window !== 'undefined' ? localStorage.getItem('rotaly_active_empresa_id') : null
+      const trimmed = active && active !== 'undefined' && active !== 'null' ? active.trim() : null
+
+      if (isStaff) {
+        // Se houver valor no storage e NÃO for a Matriz, usa o storage reidratado
+        if (trimmed && trimmed !== this.MATRIZ_EMPRESA_ID && trimmed !== '') {
+          return trimmed
+        }
+        // Se vazio ou se apontava erroneamente para a Matriz, retorna a Farmácia Xodó do Pilar (ssyicw8uzwqc01w)
         return 'ssyicw8uzwqc01w'
+      }
+
+      if (trimmed && trimmed !== '') {
+        return trimmed
       }
     } catch {
       /* ignore */

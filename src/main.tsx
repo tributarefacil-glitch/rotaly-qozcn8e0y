@@ -3,6 +3,22 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './main.css'
 
+// Invalidação de cache legado de empresa ativa entre versões
+const APP_BUILD_VERSION = '2025-05-15.01'
+if (typeof window !== 'undefined') {
+  try {
+    const currentStoredVersion = localStorage.getItem('rotaly_app_build_version')
+    if (currentStoredVersion !== APP_BUILD_VERSION) {
+      localStorage.removeItem('rotaly_active_empresa_id')
+      localStorage.removeItem('rotaly_active_company')
+      localStorage.removeItem('rotaly_empresa_id')
+      localStorage.setItem('rotaly_app_build_version', APP_BUILD_VERSION)
+    }
+  } catch {
+    /* intentionally ignored */
+  }
+}
+
 // Register Service Worker for PWA Offline Caching
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {

@@ -467,12 +467,20 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
   }
 
-  // Fetch initial/refreshed data
+  // Determina se o componente pai (SellerDashboard / AdminDashboard) já está fornecendo os dados via props
+  const hasParentOrders = initialOrders !== undefined
+  const hasParentCouriers = initialCouriers !== undefined
+
+  // Fetch initial/refreshed data (apenas quando não alimentado via props)
   const fetchData = async () => {
+    // Se orders e couriers já vêm gerenciados pelas props do componente pai,
+    // não executar fetch duplicado para evitar condições de corrida com parâmetros vazios.
+    if (hasParentOrders && hasParentCouriers) {
+      return
+    }
+
     try {
       // Pedidos carregados pelo escopo da empresa ativa da filial (sem restringir por seller_id)
-      // 1. fetchedOrders: todos os pedidos da empresa ativa para pins, kanban, status e drawer
-      // 2. globalInTransitOrders: pedidos da filial em rota ativa não finalizada
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
 
       const [
@@ -483,20 +491,27 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         fetchedDeviations,
         fetchedSettings,
       ] = await Promise.all([
-        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
+        !hasParentOrders
+          ? deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id')
+          : Promise.resolve(orders),
         deliveryService.getOrders(
           globalTransitFilter,
           '-created',
           'customer_id,courier_id,seller_id',
         ),
-        deliveryService.getCouriers(),
+        !hasParentCouriers ? deliveryService.getCouriers() : Promise.resolve(couriers),
         deliveryService.getLatestLocations(),
         deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
         deliveryService.getSettings().catch(() => null),
       ])
-      setOrders(fetchedOrders)
+
+      if (!hasParentOrders) {
+        setOrders(fetchedOrders)
+      }
       setGlobalInTransitOrders(fetchedGlobalTransitOrders || [])
-      setCouriers(fetchedCouriers)
+      if (!hasParentCouriers) {
+        setCouriers(fetchedCouriers)
+      }
       setLocations(fetchedLocations)
       setRecentDeviations(fetchedDeviations || [])
       if (fetchedSettings) {
@@ -509,26 +524,28 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }
 
   // Sincronização inicial e periódica:
-  // Como as subscrições Realtime já cobrem 'locations', 'orders' e 'off_route_events' sem duplicar,
-  // mantemos busca inicial e apenas atualização de dados estáticos/auxiliares.
-  // NÃO chamamos onRefresh() do pai no timer periódico de 10s para evitar ciclo de renderização.
+  // Executa busca autônoma APENAS se props não foram fornecidas pelo componente pai.
   useEffect(() => {
-    fetchData()
-    const interval = setInterval(() => {
+    if (!hasParentOrders || !hasParentCouriers) {
       fetchData()
-    }, 30000) // 30s de segurança apenas para sincronização de fundo, sem chamar onRefresh do pai
-    return () => clearInterval(interval)
-  }, [user?.id, user?.role, currentCompany?.id])
+      const interval = setInterval(() => {
+        fetchData()
+      }, 30000)
+      return () => clearInterval(interval)
+    }
+  }, [user?.id, user?.role, currentCompany?.id, hasParentOrders, hasParentCouriers])
 
   useEffect(() => {
     const handleCompanyChange = () => {
-      fetchData()
+      if (!hasParentOrders || !hasParentCouriers) {
+        fetchData()
+      }
     }
     window.addEventListener('rotaly_company_changed', handleCompanyChange)
     return () => {
       window.removeEventListener('rotaly_company_changed', handleCompanyChange)
     }
-  }, [])
+  }, [hasParentOrders, hasParentCouriers])
 
   // Sync with incoming props com comparação estável por conteúdo (IDs + timestamps)
   const prevOrdersHashRef = useRef<string>('')
@@ -855,35 +872,70 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }, [])
 
   // Today's orders
-  // ALTERAÇÃO 3: Usar data local para hoje (evita divergência de fuso horário UTC vs Brasil).
-  // Incluir no todayOrders todo pedido status === 'delivered' cuja DATA DE ENTREGA seja hoje
-  // usando order.actual_arrival ou, na falta, order.updated, convertido para data LOCAL.
-  // Pedidos em rota / pending / assigned continuam entrando como hoje.
-  const todayStr = useMemo(() => new Date().toLocaleDateString('sv'), [])
+  // CAUSA 3: Usar data local para hoje de forma estritamente consistente entre lados.
+  // Para status 'delivered', compara a data local de created/actual_arrival/updated
+  // com a mesma conversão (.toLocaleDateString('sv') => 'YYYY-MM-DD').
+  // Em caso de dúvida ou ausência de data válida, INCLUIR o pedido (preferir mostrar a menos que filtrar).
+  const todayStr = useMemo(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  }, [])
+
   const todayOrders = useMemo(() => {
+    const toLocalDateStr = (dateVal?: string | Date | null): string => {
+      if (!dateVal) return ''
+      try {
+        const d = typeof dateVal === 'string' ? new Date(dateVal) : dateVal
+        if (isNaN(d.getTime())) return ''
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      } catch {
+        return ''
+      }
+    }
+
     return orders.filter((o) => {
-      // 1. Pedidos ativos/em andamento sempre visíveis na operação do dia
-      if (o.status === 'in_transit' || o.status === 'pending' || o.status === 'assigned') {
+      // 1. Pedidos ativos/em andamento sempre visíveis na operação
+      if (
+        o.status === 'in_transit' ||
+        o.status === 'pending' ||
+        o.status === 'assigned' ||
+        o.route_started === true
+      ) {
         return true
       }
 
-      // 2. Pedidos entregues: verificar data efetiva de entrega (actual_arrival ou updated em data local)
+      // 2. Pedidos entregues: verificar data efetiva de entrega ou criação em fuso local
       if (o.status === 'delivered') {
-        const deliveryTimestamp = o.actual_arrival || o.updated || o.created
-        if (deliveryTimestamp) {
-          const deliveryLocalDate = new Date(deliveryTimestamp).toLocaleDateString('sv')
-          if (deliveryLocalDate === todayStr) {
-            return true
-          }
-        }
-      }
-
-      // 3. Fallback por data de criação em data local
-      if (o.created) {
-        const createdLocalDate = new Date(o.created).toLocaleDateString('sv')
-        if (createdLocalDate === todayStr) {
+        const deliveryStamp = o.actual_arrival || o.updated || o.created
+        if (!deliveryStamp) {
+          // Em caso de ausência de timestamp, incluir fail-safe
           return true
         }
+        const deliveryLocalDate = toLocalDateStr(deliveryStamp)
+        const createdLocalDate = toLocalDateStr(o.created)
+
+        // Se coincidir com a data de hoje por qualquer um dos carimbos, incluir
+        if (deliveryLocalDate === todayStr || createdLocalDate === todayStr) {
+          return true
+        }
+
+        // Se a data de entrega não puder ser determinada com precisão, manter incluído
+        if (!deliveryLocalDate && !createdLocalDate) {
+          return true
+        }
+
+        // Se o pedido foi atualizado hoje, manter incluído
+        if (toLocalDateStr(o.updated) === todayStr) {
+          return true
+        }
+
+        return false
+      }
+
+      // 3. Fallback para pedidos em outros status (ocorrências, etc): conferir data local ou incluir
+      const createdLocalDate = toLocalDateStr(o.created)
+      if (!createdLocalDate || createdLocalDate === todayStr) {
+        return true
       }
 
       return false

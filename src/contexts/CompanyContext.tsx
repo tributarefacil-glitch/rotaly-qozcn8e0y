@@ -77,8 +77,8 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (isNonAdminStaff) {
         // Para perfis seller e courier:
         // 1. Resolve a empresa EXCLUSIVAMENTE pelo vínculo ativo em membros (user_id = user.id && ativo = true)
-        // 2. Se houver mais de um vínculo ativo (ex: migração em andamento), prioriza estritamente a filial (não-Matriz)
-        // 3. NUNCA consulta localStorage antes do banco para resolver a empresa de seller/courier
+        // 2. Se houver mais de um vínculo ativo, prioriza estritamente a filial (não-Matriz: empresa_id !== '7wo05iyvfcfh01h')
+        // 3. NUNCA usar fallback de localStorage como fonte de empresa para seller/courier
         const nonMatrizMember = memberRecords.find((m) => m.empresa_id !== '7wo05iyvfcfh01h')
         resolvedMember = nonMatrizMember || memberRecords[0] || null
 
@@ -93,6 +93,25 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             } catch {
               /* intentionally ignored */
             }
+          }
+        }
+
+        // Se a consulta a membros não retornou empresa por falha transitória ou sem vínculos,
+        // não adotar localStorage legado que possa apontar para a Matriz.
+        if (!resolvedCompany) {
+          try {
+            // Tentar buscar diretamente a filial de vínculo ou primeira empresa não-matriz
+            const filialRecords = await pb.collection<EmpresaRecord>('empresas').getFullList({
+              filter: `id != '7wo05iyvfcfh01h' && ativa != false`,
+              sort: 'created',
+              requestKey: null,
+            })
+            if (filialRecords.length > 0) {
+              resolvedCompany =
+                filialRecords.find((f) => f.id === 'ssyicw8uzwqc01w') || filialRecords[0]
+            }
+          } catch {
+            /* intentionally ignored */
           }
         }
       } else {
@@ -127,7 +146,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       // 4. FALLBACK SEGURO: se o usuário não tiver NENHUM membro nem empresa cadastrada,
-      // busca a "Empresa Principal" / primeira empresa cadastrada no banco para NUNCA travar a tela
+      // busca a empresa cadastrada no banco para NUNCA travar a tela
       if (!resolvedCompany) {
         try {
           const fallbackList = await pb.collection<EmpresaRecord>('empresas').getList(1, 1, {
@@ -136,7 +155,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           })
           if (fallbackList.items.length > 0) {
             resolvedCompany = fallbackList.items[0]
-            // Criar vínculo de membro em background para persistir retrocompatibilidade
             try {
               const newMember = await pb.collection<MembroRecord>('membros').create({
                 empresa_id: resolvedCompany.id,
@@ -164,10 +182,9 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         resolvedMember = memberRecords.find((m) => m.empresa_id === resolvedCompany?.id) || null
       }
 
-      // Ao resolver, sobrescrever ativamente localStorage com a empresa resolvida
+      // Ao resolver com SUCESSO via banco/membros, reidratar localStorage com a empresa resolvida
       if (resolvedCompany) {
         localStorage.setItem(STORAGE_KEY, resolvedCompany.id)
-        // Disparar evento para componentes ouvintes atualizarem caso necessário
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('rotaly_company_changed', {
