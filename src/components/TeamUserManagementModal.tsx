@@ -366,7 +366,7 @@ export function TeamUserManagementModal({
 
     // Proteção: não rebaixar a própria conta admin logada se for o admin logado
     if (editingUser && editingUser.id === currentUserId && formRole !== 'admin') {
-      toast.error('Você não pode alterar o seu próprio perfil de Administrador.')
+      toast.error('Você não pode rebaixar o seu próprio perfil de Administrador.')
       return
     }
 

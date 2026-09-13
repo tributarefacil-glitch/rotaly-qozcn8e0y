@@ -57,8 +57,9 @@ import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistory
 import { CreateSellerModal } from '@/components/CreateSellerModal'
 import { EditSellerModal } from '@/components/EditSellerModal'
 import { SiteContentManager } from '@/components/SiteContentManager'
-import { Globe } from 'lucide-react'
+import { Globe, KeyRound, Lock } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
@@ -234,6 +235,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
   // Report Period Filter
   const [reportPeriod, setReportPeriod] = useState<'all' | 'today' | 'week' | 'month'>('all')
+
+  // Change Password Modal state (Admin logado)
+  const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false)
 
   // View Documents Modal state
   const [selectedUserForDocs, setSelectedUserForDocs] = useState<UserRecord | null>(null)
@@ -1011,6 +1015,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   Atualizar
                 </Button>
                 <Button
+                  onClick={() => setIsChangePasswordModalOpen(true)}
+                  variant="outline"
+                  className="h-9 gap-2 text-xs border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 hover:text-white rounded-input"
+                >
+                  <KeyRound className="h-4 w-4 text-amber-400" />
+                  Trocar Senha
+                </Button>
+                <Button
                   onClick={() => setIsNewUserModalOpen(true)}
                   className="h-9 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition duration-100"
                 >
@@ -1019,7 +1031,6 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 </Button>
               </div>
             </div>
-
             {/* MAIN TABS (Overview, Relatórios, Configurações, Entregadores, Vendedores) */}
             <Tabs
               value={activeTab}
@@ -2147,6 +2158,54 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                           projetado em tempo real comparando com estes parâmetros.
                         </li>
                       </ul>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* CARD: SEGURANÇA E ACESSO DO ADMINISTRADOR */}
+                <Card className="border-slate-200 dark:border-slate-800 shadow-sm max-w-4xl bg-slate-900/60 border-indigo-900/30">
+                  <CardHeader>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base font-bold flex items-center gap-2 text-white">
+                          <Lock className="h-5 w-5 text-amber-400" />
+                          Segurança da Conta &amp; Senha do Administrador
+                        </CardTitle>
+                        <CardDescription className="text-xs text-slate-400">
+                          Atualize sua senha de acesso ao painel executivo Rotaly ({user?.email}). A
+                          alteração exige confirmação da senha atual.
+                        </CardDescription>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => setIsChangePasswordModalOpen(true)}
+                        className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs gap-1.5 shrink-0 shadow-sm"
+                      >
+                        <KeyRound className="h-4 w-4 text-slate-950" />
+                        Trocar Minha Senha
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="p-3.5 rounded-xl bg-[#0A1128] border border-[#1E2B58] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-300">
+                      <div className="space-y-1">
+                        <p className="font-bold text-white flex items-center gap-2">
+                          <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                          Status de Proteção do Acesso
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          Recomendado atualizar a senha padrão de instalação para uma chave forte e
+                          única.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className="text-emerald-400 border-emerald-500/40 bg-emerald-500/10 text-[11px]"
+                        >
+                          Admin Ativo
+                        </Badge>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -3576,6 +3635,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         }}
         onSellerUpdated={loadData}
         currentAdminId={user?.id}
+      />
+
+      {/* ================= MODAL: TROCAR SENHA DO ADMIN LOGADO ================= */}
+      <ChangePasswordModal
+        open={isChangePasswordModalOpen}
+        onOpenChange={setIsChangePasswordModalOpen}
       />
     </div>
   )

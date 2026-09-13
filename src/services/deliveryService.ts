@@ -647,6 +647,66 @@ export const deliveryService = {
     return pb.collection('users').confirmPasswordReset(token.trim(), password, passwordConfirm)
   },
 
+  /**
+   * Troca a senha do próprio usuário logado com confirmação da senha atual.
+   * Valida a senha atual reautenticando no PocketBase e em seguida atualiza
+   * para a nova senha, mantendo ou renovando a sessão ativa.
+   */
+  async changeMyPassword(params: {
+    currentPassword: string
+    newPassword: string
+    newPasswordConfirm: string
+  }): Promise<{ success: boolean; message: string }> {
+    const authUser = pb.authStore.record
+    if (!authUser || !authUser.id) {
+      throw new Error('Usuário não está autenticado.')
+    }
+
+    const email = (authUser.email || '').trim().toLowerCase()
+    if (!email) {
+      throw new Error('E-mail do usuário não identificado na sessão.')
+    }
+
+    const { currentPassword, newPassword, newPasswordConfirm } = params
+
+    if (!currentPassword) {
+      throw new Error('A senha atual é obrigatória.')
+    }
+    if (!newPassword || newPassword.length < 8) {
+      throw new Error('A nova senha deve ter no mínimo 8 caracteres.')
+    }
+    if (newPassword !== newPasswordConfirm) {
+      throw new Error('A confirmação da nova senha não confere.')
+    }
+
+    // 1. Reautenticar para validar a senha atual
+    try {
+      await pb.collection('users').authWithPassword(email, currentPassword)
+    } catch (authErr) {
+      console.warn('Falha na reautenticação com a senha atual:', authErr)
+      throw new Error('A senha atual informada está incorreta.')
+    }
+
+    // 2. Atualizar a senha do usuário
+    await pb.collection('users').update(authUser.id, {
+      oldPassword: currentPassword,
+      password: newPassword,
+      passwordConfirm: newPasswordConfirm,
+    })
+
+    // 3. Reautenticar com a nova senha para manter a sessão ativa com o novo tokenKey
+    try {
+      await pb.collection('users').authWithPassword(email, newPassword)
+    } catch (refreshErr) {
+      console.warn('Sessão requer novo login após alteração de senha:', refreshErr)
+    }
+
+    return {
+      success: true,
+      message: 'Senha alterada com sucesso!',
+    }
+  },
+
   // Helper to build file URL from PocketBase record
   getFileUrl(record: UserRecord, filename: string) {
     if (!filename) return ''

@@ -12,6 +12,7 @@ import {
   Clock,
   Radio,
   ExternalLink,
+  KeyRound,
 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
@@ -20,6 +21,7 @@ import { RotalyLogo } from '@/components/RotalyLogo'
 import { deliveryService } from '@/services/deliveryService'
 import type { NotificationRecord } from '@/types/delivery'
 import { useRealtime } from '@/hooks/use-realtime'
+import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -43,6 +45,7 @@ export const Header: React.FC = () => {
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isNotifOpen, setIsNotifOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
 
   // Fetch initial notifications
   const loadNotifications = async () => {
@@ -311,6 +314,14 @@ export const Header: React.FC = () => {
               <span>Página de Rastreio Demo</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => setIsChangePasswordOpen(true)}
+              className="text-[#0052CC] font-medium cursor-pointer"
+            >
+              <KeyRound className="mr-2 h-4 w-4 text-[#0052CC]" />
+              <span>Trocar Senha</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="text-rose-600 focus:text-rose-600">
               <LogOut className="mr-2 h-4 w-4" />
               <span>Sair da Conta</span>
@@ -318,6 +329,8 @@ export const Header: React.FC = () => {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <ChangePasswordModal open={isChangePasswordOpen} onOpenChange={setIsChangePasswordOpen} />
     </header>
   )
 }
