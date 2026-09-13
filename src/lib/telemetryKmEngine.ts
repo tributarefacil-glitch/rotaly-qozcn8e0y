@@ -114,6 +114,10 @@ export interface RealKmCalculationResult {
   samplingCurvatureFactor?: number
   /** Detalhes textuais da auditoria matemática */
   auditNotes?: string
+  /** Fonte de verdade utilizada no KM Oficial ('odometro' | 'historico_viario' | 'gps') */
+  calculationSource?: 'odometro' | 'historico_viario' | 'gps'
+  /** Odômetro calculado se houver */
+  odometerKm?: number
 }
 
 /**
@@ -437,11 +441,29 @@ export function calculateRealKmForOrder(params: {
 }): RealKmCalculationResult {
   const { order, allCourierLocations, courierEvents, allCourierOrders = [] } = params
 
-  // 1. Obter KM planejado (fallback e comparação)
+  // 1. Obter KM planejado e viário do histórico de rotas (fallback e comparação)
   let plannedBaseKm =
     typeof order.distance_km === 'number' && order.distance_km > 0 ? order.distance_km : 0
   let plannedReturnKm =
     typeof order.return_trip_km === 'number' && order.return_trip_km > 0 ? order.return_trip_km : 0
+
+  // Histórico viário gravado na rota do entregador (campo total_route_with_return_km do lote)
+  let routeTotalRoadKm =
+    typeof order.total_route_with_return_km === 'number' && order.total_route_with_return_km > 0
+      ? order.total_route_with_return_km
+      : 0
+
+  // Verificar odômetro informado na ordem ou lote
+  let odometerDifference: number | null = null
+  if (typeof order.km_odometro === 'number' && order.km_odometro > 0) {
+    odometerDifference = order.km_odometro
+  } else if (
+    typeof order.odometro_final === 'number' &&
+    typeof order.odometro_inicial === 'number' &&
+    order.odometro_final > order.odometro_inicial
+  ) {
+    odometerDifference = Number((order.odometro_final - order.odometro_inicial).toFixed(1))
+  }
 
   // Se a entrega tem origem igual ao destino (ex.: malote TRK-2026-670 ou distância base->destino < 100m)
   const orderStartLat = order.start_base_lat || 0
@@ -494,19 +516,32 @@ export function calculateRealKmForOrder(params: {
 
   // Se não houver telemetria GPS suficiente (< 2 pontos válidos)
   if (validPoints.length < 2) {
+    // Aplicar hierarquia: Odômetro > Histórico Viário > Planejado
+    let officialKmFallback = Number(plannedTotalKm.toFixed(1))
+    let source: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
+    if (odometerDifference && odometerDifference > 0) {
+      officialKmFallback = odometerDifference
+      source = 'odometro'
+    } else if (routeTotalRoadKm > 0) {
+      officialKmFallback = routeTotalRoadKm
+      source = 'historico_viario'
+    }
+
     return {
-      officialRealKm: Number(plannedTotalKm.toFixed(1)),
+      officialRealKm: officialKmFallback,
       deviationKm: 0,
-      totalGpsKm: Number(plannedTotalKm.toFixed(1)),
+      totalGpsKm: officialKmFallback,
       discardedNoiseKm,
-      isRealTelemetry: false,
+      isRealTelemetry: source === 'odometro',
       gpsPointsCount: validPoints.length,
       filteredNoisePointsCount: noiseCount,
       offRouteCount: offRouteEventsList.length,
       unexpectedStopsCount: unexpectedStopsList.length,
       plannedKm: Number(plannedTotalKm.toFixed(1)),
       hasReturnKm,
-      auditNotes: 'Sem telemetria GPS suficiente. Quilometragem baseada no planejamento.',
+      calculationSource: source,
+      odometerKm: odometerDifference || undefined,
+      auditNotes: `Cálculo via ${source === 'odometro' ? 'Odômetro da Moto' : 'Histórico Viário de Rotas'}.`,
     }
   }
 
@@ -642,10 +677,34 @@ export function calculateRealKmForOrder(params: {
 
   const finalTotalGpsKm = adjustedOfficialKm + adjustedDeviationKm
 
+  // HIERARQUIA DE PRECEDÊNCIA EXIGIDA PELO USUÁRIO:
+  // - PRIORIDADE 1: Odômetro da moto (odometro_final − odometro_inicial da rota), se informado.
+  // - PRIORIDADE 2: Histórico viário das rotas do entregador (total_route_with_return_km da rota no banco: Base -> paradas -> retorno).
+  // - PRIORIDADE 3: GPS serve APENAS para auditoria de desvios (KM Desvios), nunca para reduzir o km oficial viário.
+  let finalOfficialKm = Number(adjustedOfficialKm.toFixed(1))
+  let calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
+
+  if (odometerDifference && odometerDifference > 0) {
+    // Prioridade 1: Odômetro físico
+    finalOfficialKm = odometerDifference
+    calculationSource = 'odometro'
+  } else if (routeTotalRoadKm > 0) {
+    // Prioridade 2: Histórico viário do banco (NUNCA reduzido por falha de GPS)
+    // O KM viário oficial é o traçado rodoviário real da rota (com retorno).
+    // Se a telemetria GPS apurada for maior (ex.: rota estendida autorizada), preserva o maior.
+    finalOfficialKm = Math.max(routeTotalRoadKm, finalOfficialKm)
+    calculationSource = 'historico_viario'
+  } else if (plannedTotalKm > 0) {
+    finalOfficialKm = Math.max(plannedTotalKm, finalOfficialKm)
+    calculationSource = 'historico_viario'
+  } else {
+    calculationSource = 'gps'
+  }
+
   return {
-    officialRealKm: Number(adjustedOfficialKm.toFixed(1)),
+    officialRealKm: Number(finalOfficialKm.toFixed(1)),
     deviationKm: Number(adjustedDeviationKm.toFixed(1)),
-    totalGpsKm: Number(finalTotalGpsKm.toFixed(1)),
+    totalGpsKm: Number(Math.max(finalTotalGpsKm, finalOfficialKm).toFixed(1)),
     discardedNoiseKm,
     isRealTelemetry: true,
     gpsPointsCount: validPoints.length,
@@ -655,6 +714,14 @@ export function calculateRealKmForOrder(params: {
     plannedKm: Number(plannedTotalKm.toFixed(1)),
     hasReturnKm,
     samplingCurvatureFactor: curvatureFactor,
-    auditNotes: `Telemetria processada: ${validPoints.length} pontos GPS válidos. Sinuosidade compensada (${curvatureFactor > 1 ? '+25%' : '1.0x'}). Desvios descontados: ${adjustedDeviationKm.toFixed(1)} km.`,
+    calculationSource,
+    odometerKm: odometerDifference || undefined,
+    auditNotes: `Fonte: ${
+      calculationSource === 'odometro'
+        ? 'Odômetro da Moto'
+        : calculationSource === 'historico_viario'
+          ? 'Histórico Viário de Rotas'
+          : 'Telemetria GPS'
+    }. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km.`,
   }
 }

@@ -2321,7 +2321,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-mono text-[11px] text-slate-400">
-              Rotaly v0.0.153 • Build: <strong className="text-slate-300">2025-05-15.04</strong>
+              Rotaly v0.0.155 • Build: <strong className="text-slate-300">2025-05-15.05</strong>
             </span>
           </div>
 

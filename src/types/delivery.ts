@@ -67,6 +67,12 @@ export interface RotaRecord extends RecordModel {
   tempo_estimado_minutos?: number
   custo_combustivel?: number
   dados_planejamento?: any
+  odometro_inicial?: number
+  odometro_final?: number
+  km_odometro?: number
+  foto_odometro_inicial?: string
+  foto_odometro_final?: string
+  data?: string
 }
 
 export interface EntregaRecord extends RecordModel {
@@ -219,6 +225,12 @@ export interface OrderRecord extends RecordModel {
   return_trip_km?: number
   total_route_with_return_km?: number
   total_route_fuel_cost?: number
+  // Campos de Odômetro Físico (Prioridade 1 de Cálculo)
+  odometro_inicial?: number
+  odometro_final?: number
+  km_odometro?: number
+  foto_odometro_inicial?: string
+  foto_odometro_final?: string
   // expanded relations
   expand?: {
     customer_id?: CustomerRecord

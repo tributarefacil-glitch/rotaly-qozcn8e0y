@@ -28,6 +28,8 @@ export interface CourierOrderTelemetryCalculation {
   litersSpent: number
   offRouteCount: number
   unexpectedStopsCount: number
+  calculationSource?: 'odometro' | 'historico_viario' | 'gps'
+  odometerKm?: number
 }
 
 export interface CourierFuelCalculationResult {
@@ -50,6 +52,9 @@ export interface CourierFuelCalculationResult {
   orderCalculations: CourierOrderTelemetryCalculation[]
   // Objeto compatível com CourierFuelAccount
   fuelAccount: CourierFuelAccount | null
+  // Fonte oficial do cálculo
+  calculationSource: 'odometro' | 'historico_viario' | 'gps'
+  calculationSourceLabel: string
 }
 
 export interface UseCourierFuelOptions {
@@ -98,6 +103,8 @@ export function calculateCourierFuelMetrics(params: {
       vehicleCategory: fuelParams.category,
       orderCalculations: [],
       fuelAccount: null,
+      calculationSource: 'historico_viario',
+      calculationSourceLabel: 'Histórico Viário de Rotas',
     }
   }
 
@@ -150,20 +157,20 @@ export function calculateCourierFuelMetrics(params: {
     return true
   })
 
-  // 3. Filtrar ordens atribuídas ao entregador que tenham iniciado rota ou finalizado
+  // 3. Filtrar ordens atribuídas ao entregador que tenham sido entregues
   // (IMPORTANTE: pedidos cancelados o.status === 'cancelled' NUNCA somam km nem combustível)
+  // FILTRAGEM RIGOROSA DE PEDIDOS:
+  // Excluir telemetria órfã / fantasma (ex.: pedidos cancelados ou resquícios falsos)
   const allCourierOrders = orders.filter(
     (o) => o.courier_id === courier.id && o.status !== 'cancelled',
   )
 
   const eligibleOrders = allCourierOrders.filter((o) => {
+    // Apenas pedidos efetivamente entregues computam o gasto e km oficial concluído
     const isStartedOrDelivered =
-      o.status !== 'cancelled' &&
-      (o.route_started === true ||
-        o.status === 'delivered' ||
-        o.status === 'in_transit' ||
-        o.status === 'address_error' ||
-        o.status === 'client_absent')
+      (o.status as string) === 'delivered' ||
+      (o.route_started === true &&
+        ((o.status as string) === 'in_transit' || (o.status as string) === 'delivered'))
 
     if (!isStartedOrDelivered) return false
     if (periodFilter === 'all') return true
@@ -235,6 +242,24 @@ export function calculateCourierFuelMetrics(params: {
     routeBatches.set(assignedKey, list)
   })
 
+  // Pré-calcular métricas de telemetria e verificar a presença de Odômetro Físico ou Histórico Viário
+  let hasAnyOdometer = false
+  let totalBatchOdometer = 0
+
+  eligibleOrders.forEach((o) => {
+    if (typeof o.km_odometro === 'number' && o.km_odometro > 0) {
+      hasAnyOdometer = true
+      totalBatchOdometer += o.km_odometro
+    } else if (
+      typeof o.odometro_final === 'number' &&
+      typeof o.odometro_inicial === 'number' &&
+      o.odometro_final > o.odometro_inicial
+    ) {
+      hasAnyOdometer = true
+      totalBatchOdometer += o.odometro_final - o.odometro_inicial
+    }
+  })
+
   // Pré-calcular métricas de telemetria por lote de rota completa
   const batchTelemetryMap = new Map<string, ReturnType<typeof calculateRealKmForOrder>>()
   routeBatches.forEach((batchOrders, key) => {
@@ -242,10 +267,50 @@ export function calculateCourierFuelMetrics(params: {
     const anchorOrder = batchOrders[0]
     const batchTelemetry = calculateRealKmForOrder({
       order: anchorOrder,
+      allCourierOrders: batchOrders,
       allCourierLocations: courierLocations,
       courierEvents,
-      allCourierOrders: batchOrders,
     })
+
+    // Se no lote algum pedido tiver total_route_with_return_km registrado pelo otimizador de rotas
+    // (Histórico viário oficial da rota: Base -> Paradas -> Retorno)
+    const maxRoadKmInBatch = batchOrders.reduce((max, ord) => {
+      const roadKm =
+        typeof ord.total_route_with_return_km === 'number' ? ord.total_route_with_return_km : 0
+      return Math.max(max, roadKm)
+    }, 0)
+
+    // Verificar se há odômetro no lote
+    const batchOdometerKm = batchOrders.reduce((acc, ord) => {
+      if (typeof ord.km_odometro === 'number' && ord.km_odometro > 0) return acc + ord.km_odometro
+      if (
+        typeof ord.odometro_final === 'number' &&
+        typeof ord.odometro_inicial === 'number' &&
+        ord.odometro_final > ord.odometro_inicial
+      ) {
+        return acc + (ord.odometro_final - ord.odometro_inicial)
+      }
+      return acc
+    }, 0)
+
+    // APLICAR HIERARQUIA NO LOTE DA ROTA:
+    // PRIORIDADE 1: Odômetro da moto, se informado
+    // PRIORIDADE 2: Histórico viário de rotas (total_route_with_return_km)
+    // PRIORIDADE 3: GPS (nunca reduz o histórico viário oficial)
+    if (batchOdometerKm > 0) {
+      batchTelemetry.officialRealKm = Number(batchOdometerKm.toFixed(1))
+      batchTelemetry.calculationSource = 'odometro'
+      batchTelemetry.odometerKm = batchOdometerKm
+    } else if (maxRoadKmInBatch > 0) {
+      // O histórico viário gravado na rota é o KM real oficial
+      batchTelemetry.officialRealKm = Number(
+        Math.max(maxRoadKmInBatch, batchTelemetry.officialRealKm).toFixed(1),
+      )
+      batchTelemetry.calculationSource = 'historico_viario'
+    } else {
+      batchTelemetry.calculationSource = 'historico_viario'
+    }
+
     batchTelemetryMap.set(key, batchTelemetry)
   })
 
@@ -336,9 +401,9 @@ export function calculateCourierFuelMetrics(params: {
       batchTelemetryMap.get(key) ||
       calculateRealKmForOrder({
         order,
+        allCourierOrders: [order],
         allCourierLocations: courierLocations,
         courierEvents,
-        allCourierOrders: [order],
       })
     const batchOrders = routeBatches.get(key) || [order]
     const batchCount = batchOrders.length
@@ -413,8 +478,8 @@ export function calculateCourierFuelMetrics(params: {
     return {
       order,
       officialKm,
-      deviationKm,
-      totalGpsKm,
+      deviationKm: Number(deviationKm.toFixed(1)),
+      totalGpsKm: Number(totalGpsKm.toFixed(1)),
       discardedNoiseKm: batchTelemetry.discardedNoiseKm,
       isRealTelemetry: batchTelemetry.isRealTelemetry,
       hasReturnKm: batchTelemetry.hasReturnKm,
@@ -422,20 +487,39 @@ export function calculateCourierFuelMetrics(params: {
       litersSpent: Number(litersSpent.toFixed(2)),
       offRouteCount: batchTelemetry.offRouteCount,
       unexpectedStopsCount: batchTelemetry.unexpectedStopsCount,
+      calculationSource: batchTelemetry.calculationSource,
+      odometerKm: batchTelemetry.odometerKm,
     }
   })
 
   // Regra "linha = cabeçalho":
   // Os totais consolidados somam diretamente a soma de cada linha calculada (orderCalculations)
   // garantindo exatidão estrita e paridade 100% entre tabela e cabeçalho:
-  // totalKm = Σ kmRodado e totalFuelCost = Σ fuelCost
+  // totalKm = Σ kmRodado e totalFuelCost = Σ fuelCost (Gasto Rota Oficial = KM Real × R$ 0,1854/km)
   totalOfficialKm = Number(orderCalculations.reduce((acc, c) => acc + c.officialKm, 0).toFixed(1))
   totalDeviationKm = Number(orderCalculations.reduce((acc, c) => acc + c.deviationKm, 0).toFixed(1))
   totalOdometerKm = Number(orderCalculations.reduce((acc, c) => acc + c.totalGpsKm, 0).toFixed(1))
   totalLiters = Number(orderCalculations.reduce((acc, c) => acc + c.litersSpent, 0).toFixed(2))
-  totalSpent = Number(orderCalculations.reduce((acc, c) => acc + c.fuelCost, 0).toFixed(2))
+
+  // Gasto Rota Oficial = KM Real × Custo por KM (R$ 6,49 / 35 km/L = R$ 0,1854/km para moto)
+  const costPerKm = consumptionKml > 0 ? pricePerLiter / consumptionKml : 0
+  if (!isBicycle && costPerKm > 0) {
+    totalSpent = Number((totalOfficialKm * costPerKm).toFixed(2))
+  } else {
+    totalSpent = Number(orderCalculations.reduce((acc, c) => acc + c.fuelCost, 0).toFixed(2))
+  }
 
   const balance = totalAdvances - totalSpent
+
+  const calculationSource: 'odometro' | 'historico_viario' | 'gps' = hasAnyOdometer
+    ? 'odometro'
+    : 'historico_viario'
+  const calculationSourceLabel =
+    calculationSource === 'odometro'
+      ? 'Odômetro da Moto'
+      : calculationSource === 'historico_viario'
+        ? 'Histórico Viário de Rotas'
+        : 'Telemetria GPS'
 
   const fuelAccount: CourierFuelAccount = {
     courier,
@@ -464,6 +548,8 @@ export function calculateCourierFuelMetrics(params: {
     vehicleCategory: category,
     orderCalculations,
     fuelAccount,
+    calculationSource,
+    calculationSourceLabel,
   }
 }
 

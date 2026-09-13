@@ -35,6 +35,8 @@ import {
 import type { NotificationRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Camera } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
   FuelAdvanceRecord,
@@ -78,6 +80,12 @@ export default function CourierApp() {
   const [isLoading, setIsLoading] = useState(true)
   const [isStartingRoute, setIsStartingRoute] = useState(false)
   const [isFinishingRoute, setIsFinishingRoute] = useState(false)
+
+  // Estados opcionais de odômetro e foto do painel (auditoria informativa, nunca bloqueante)
+  const [odometroInicialInput, setOdometroInicialInput] = useState<string>('')
+  const [odometroFinalInput, setOdometroFinalInput] = useState<string>('')
+  const [fotoOdometroInicial, setFotoOdometroInicial] = useState<File | null>(null)
+  const [fotoOdometroFinal, setFotoOdometroFinal] = useState<File | null>(null)
   const [currentCourierLocation, setCurrentCourierLocation] = useState<{
     lat: number
     lng: number
@@ -718,7 +726,17 @@ export default function CourierApp() {
     setIsStartingRoute(true)
     try {
       const orderIdsToStart = activeDeliveries.map((o) => o.id)
-      await deliveryService.startCourierRoute(user.id, orderIdsToStart)
+      const odomInitVal = odometroInicialInput
+        ? parseFloat(odometroInicialInput.replace(',', '.'))
+        : undefined
+
+      await deliveryService.startCourierRoute(user.id, orderIdsToStart, {
+        odometro_inicial:
+          !isNaN(odomInitVal as number) && (odomInitVal as number) > 0
+            ? (odomInitVal as number)
+            : undefined,
+        foto_odometro_inicial: fotoOdometroInicial,
+      })
       toast.success('🚀 Rota aceita! Telemetria ativa e primeira entrega desbloqueada.', {
         duration: 4000,
       })
@@ -788,13 +806,25 @@ export default function CourierApp() {
     setIsFinishingRoute(true)
     try {
       const orderIdsToFinish = currentRouteOrders.map((o) => o.id)
-      await deliveryService.finishCourierRoute(user.id, orderIdsToFinish)
+      const odomFinalVal = odometroFinalInput
+        ? parseFloat(odometroFinalInput.replace(',', '.'))
+        : undefined
+
+      await deliveryService.finishCourierRoute(user.id, orderIdsToFinish, {
+        odometro_final:
+          !isNaN(odomFinalVal as number) && (odomFinalVal as number) > 0
+            ? (odomFinalVal as number)
+            : undefined,
+        foto_odometro_final: fotoOdometroFinal,
+      })
       toast.success(
         '🏁 Rota finalizada com sucesso na base! Odômetro oficial apurado e você já está liberado para receber uma nova rota.',
         {
           duration: 5000,
         },
       )
+      setOdometroFinalInput('')
+      setFotoOdometroFinal(null)
       await loadCourierOrders()
       await loadFuelAndAccountData()
     } catch (err) {
@@ -1076,9 +1106,57 @@ export default function CourierApp() {
                 <Clock className="h-3.5 w-3.5" />
                 Todas as entregas da rota foram concluídas!
               </p>
-              O km rodado do combustível continua acumulando via telemetria GPS até a sua chegada à
-              base. No ponto de chegada na base, finalize a rota inteira abaixo para liberar o
-              recebimento de uma nova rota.
+              No ponto de chegada na base, informe opcionalmente o odômetro final para registro e
+              finalize a rota inteira abaixo.
+            </div>
+
+            {/* Campos de Odômetro Final e Foto (Opcional - Nunca bloqueia) */}
+            <div className="p-3 rounded-xl bg-[#0A1128] border border-[#1E2B58] space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                  <span>🏍️</span> Odômetro Final da Moto (Opcional)
+                </span>
+                <Badge variant="outline" className="text-[9px] border-slate-700 text-slate-400">
+                  Auditoria
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">
+                    KM Final do Painel
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    placeholder="Ex: 12543.8"
+                    value={odometroFinalInput}
+                    onChange={(e) => setOdometroFinalInput(e.target.value)}
+                    className="h-9 bg-[#070D1E] border-[#1E2B58] text-white text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">
+                    Foto do Painel (Opcional)
+                  </label>
+                  <label className="flex items-center justify-center h-9 px-3 rounded-lg border border-dashed border-[#1E2B58] bg-[#070D1E] hover:border-emerald-500/50 cursor-pointer text-slate-300 text-xs gap-1.5 truncate">
+                    <Camera className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    <span className="truncate">
+                      {fotoOdometroFinal ? fotoOdometroFinal.name : 'Tirar Foto'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setFotoOdometroFinal(e.target.files[0])
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
 
             {/* Botões de Ação: Navegar até a base & Finalizar Rota Inteira */}
@@ -1129,6 +1207,62 @@ export default function CourierApp() {
         {/* ============================================================== */}
         {!isLoading && activeDeliveries.length > 0 && !isRouteStarted && (
           <div className="space-y-3">
+            {/* Odômetro Inicial e Foto (Opcional - Nunca bloqueia o aceite da rota) */}
+            <div className="p-3.5 rounded-2xl border border-[#1E2B58] bg-[#0E1738] space-y-2.5 text-xs shadow-md">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-white flex items-center gap-1.5 font-heading">
+                  <span>🏍️</span> Odômetro Inicial da Moto (Opcional)
+                </span>
+                <Badge
+                  variant="outline"
+                  className="text-[9px] border-emerald-500/40 text-emerald-400 bg-emerald-950/20"
+                >
+                  Prioridade 1
+                </Badge>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Se desejar, anote o odômetro e fotografe o painel da moto antes de sair da base. Não
+                bloqueia o início da rota.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">
+                    KM Inicial do Painel
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    placeholder="Ex: 12500.0"
+                    value={odometroInicialInput}
+                    onChange={(e) => setOdometroInicialInput(e.target.value)}
+                    className="h-9 bg-[#070D1E] border-[#1E2B58] text-white text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">
+                    Foto do Painel (Opcional)
+                  </label>
+                  <label className="flex items-center justify-center h-9 px-3 rounded-lg border border-dashed border-[#1E2B58] bg-[#070D1E] hover:border-emerald-500/50 cursor-pointer text-slate-300 text-xs gap-1.5 truncate">
+                    <Camera className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    <span className="truncate">
+                      {fotoOdometroInicial ? fotoOdometroInicial.name : 'Tirar Foto'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setFotoOdometroInicial(e.target.files[0])
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
             {/* Botão Principal Aceitar Rota */}
             <Button
               type="button"

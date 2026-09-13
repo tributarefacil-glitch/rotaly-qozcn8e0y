@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-13T04:22:29.335Z",
+  "generatedAt": "2026-09-13T04:44:18.519Z",
   "collections": [
     {
       "name": "users",
@@ -521,6 +521,36 @@
           "required": false,
           "system": false,
           "collectionRef": "empresas"
+        },
+        {
+          "name": "odometro_inicial",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "odometro_final",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "km_odometro",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "foto_odometro_inicial",
+          "type": "file",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "foto_odometro_final",
+          "type": "file",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -1504,6 +1534,42 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "odometro_inicial",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "odometro_final",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "km_odometro",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "foto_odometro_inicial",
+          "type": "file",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "foto_odometro_final",
+          "type": "file",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "data",
+          "type": "date",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

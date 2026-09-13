@@ -955,6 +955,10 @@ export const deliveryService = {
   async startCourierRoute(
     courierId: string,
     orderIds?: string[],
+    odometerData?: {
+      odometro_inicial?: number
+      foto_odometro_inicial?: File | null
+    },
   ): Promise<{ success: boolean; updatedCount: number }> {
     try {
       const now = new Date().toISOString()
@@ -975,11 +979,28 @@ export const deliveryService = {
 
       let updatedCount = 0
       for (const order of ordersToUpdate) {
-        await pb.collection('orders').update(order.id, {
-          route_started: true,
-          route_started_at: order.route_started_at || now,
-          status: order.status === 'assigned' ? 'in_transit' : order.status,
-        })
+        const hasFile = !!odometerData?.foto_odometro_inicial
+        const hasOdom =
+          typeof odometerData?.odometro_inicial === 'number' && odometerData.odometro_inicial > 0
+        if (hasFile || hasOdom) {
+          const formData = new FormData()
+          formData.append('route_started', 'true')
+          formData.append('route_started_at', order.route_started_at || now)
+          formData.append('status', order.status === 'assigned' ? 'in_transit' : order.status)
+          if (hasOdom) {
+            formData.append('odometro_inicial', String(odometerData!.odometro_inicial))
+          }
+          if (hasFile) {
+            formData.append('foto_odometro_inicial', odometerData!.foto_odometro_inicial!)
+          }
+          await pb.collection('orders').update(order.id, formData)
+        } else {
+          await pb.collection('orders').update(order.id, {
+            route_started: true,
+            route_started_at: order.route_started_at || now,
+            status: order.status === 'assigned' ? 'in_transit' : order.status,
+          })
+        }
         updatedCount++
       }
 
@@ -1004,6 +1025,10 @@ export const deliveryService = {
   async finishCourierRoute(
     courierId: string,
     orderIds?: string[],
+    odometerData?: {
+      odometro_final?: number
+      foto_odometro_final?: File | null
+    },
   ): Promise<{ success: boolean; updatedCount: number }> {
     try {
       const now = new Date().toISOString()
@@ -1024,10 +1049,32 @@ export const deliveryService = {
 
       let updatedCount = 0
       for (const order of ordersToUpdate) {
-        await pb.collection('orders').update(order.id, {
-          route_finished: true,
-          route_finished_at: now,
-        })
+        const hasFile = !!odometerData?.foto_odometro_final
+        const odomFinal = odometerData?.odometro_final
+        const hasOdom = typeof odomFinal === 'number' && odomFinal > 0
+
+        if (hasFile || hasOdom) {
+          const formData = new FormData()
+          formData.append('route_finished', 'true')
+          formData.append('route_finished_at', now)
+          if (hasOdom) {
+            formData.append('odometro_final', String(odomFinal))
+            const odomInit = order.odometro_inicial || 0
+            if (odomInit > 0 && odomFinal! > odomInit) {
+              const diff = Number((odomFinal! - odomInit).toFixed(1))
+              formData.append('km_odometro', String(diff))
+            }
+          }
+          if (hasFile) {
+            formData.append('foto_odometro_final', odometerData!.foto_odometro_final!)
+          }
+          await pb.collection('orders').update(order.id, formData)
+        } else {
+          await pb.collection('orders').update(order.id, {
+            route_finished: true,
+            route_finished_at: now,
+          })
+        }
         updatedCount++
       }
 
