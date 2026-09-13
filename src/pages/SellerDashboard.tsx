@@ -254,6 +254,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         !recEmpresaId || recEmpresaId === '' || recEmpresaId === deliveryService.MATRIZ_EMPRESA_ID
       )
     }
+    // Suporte aos IDs conhecidos de filiais
+    if (currentCompany.id === 'ssyicw8uzwqc01w' || currentCompany.id === 'k443r453664d6v7') {
+      return recEmpresaId === 'ssyicw8uzwqc01w' || recEmpresaId === 'k443r453664d6v7'
+    }
+    if (currentCompany.id === 'covyosobcb1b50n' || currentCompany.id === '4m935a8286j6y04') {
+      return recEmpresaId === 'covyosobcb1b50n' || recEmpresaId === '4m935a8286j6y04'
+    }
     return recEmpresaId === currentCompany.id
   }
 

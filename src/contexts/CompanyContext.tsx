@@ -85,15 +85,20 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       // Se não encontrou pelo storage, priorizar a empresa vinculada via membros
-      // Para admin, priorizar a Matriz se disponível, ou o primeiro membro ativo
+      // Para admin, priorizar a Matriz se disponível; para vendedor/entregador, priorizar sua empresa filial
       if (!resolvedCompany && memberRecords.length > 0) {
-        // Tentar encontrar membro com a Matriz primeiro
-        const matrizMember = memberRecords.find((m) => m.empresa_id === '7wo05iyvfcfh01h')
-        resolvedMember = matrizMember || memberRecords[0]
+        if (user.role === 'admin') {
+          const matrizMember = memberRecords.find((m) => m.empresa_id === '7wo05iyvfcfh01h')
+          resolvedMember = matrizMember || memberRecords[0]
+        } else {
+          // Para vendedor/entregador, se houver membro de empresa filha (não-matriz), priorizar ela!
+          const nonMatrizMember = memberRecords.find((m) => m.empresa_id !== '7wo05iyvfcfh01h')
+          resolvedMember = nonMatrizMember || memberRecords[0]
+        }
+
         if (resolvedMember.expand?.empresa_id) {
           resolvedCompany = resolvedMember.expand.empresa_id
         } else {
-          // Buscar empresa diretamente caso o expand não tenha vindo
           try {
             resolvedCompany = await pb
               .collection<EmpresaRecord>('empresas')

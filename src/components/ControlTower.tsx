@@ -630,11 +630,26 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         // Filtro por empresa ativa: não processar eventos de outra empresa (fail-safe)
         if (currentCompany?.id && rec?.empresa_id !== undefined) {
           const isMatriz = currentCompany.id === deliveryService.MATRIZ_EMPRESA_ID
-          const matches = isMatriz
-            ? !rec.empresa_id ||
+          let matches = false
+          if (isMatriz) {
+            matches =
+              !rec.empresa_id ||
               rec.empresa_id === '' ||
               rec.empresa_id === deliveryService.MATRIZ_EMPRESA_ID
-            : rec.empresa_id === currentCompany.id
+          } else if (
+            currentCompany.id === 'ssyicw8uzwqc01w' ||
+            currentCompany.id === 'k443r453664d6v7'
+          ) {
+            matches = rec.empresa_id === 'ssyicw8uzwqc01w' || rec.empresa_id === 'k443r453664d6v7'
+          } else if (
+            currentCompany.id === 'covyosobcb1b50n' ||
+            currentCompany.id === '4m935a8286j6y04'
+          ) {
+            matches = rec.empresa_id === 'covyosobcb1b50n' || rec.empresa_id === '4m935a8286j6y04'
+          } else {
+            matches = rec.empresa_id === currentCompany.id
+          }
+
           if (!matches) {
             if (e.action === 'delete' || e.action === 'update') {
               setOrders((prev) => prev.filter((o) => o.id !== rec.id))

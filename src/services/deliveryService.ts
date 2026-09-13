@@ -89,13 +89,25 @@ export const deliveryService = {
    * Helper para montar cláusula multi-tenant consistente e FAIL-SAFE:
    * 1. Se a empresa ativa for a Matriz (7wo05iyvfcfh01h) OU se não houver empresa válida no storage,
    *    aceita registros vinculados à Matriz E registros legados/vazios (`field = '7wo05iyvfcfh01h' || field = '' || field = null`).
-   * 2. Para qualquer outra empresa filial, aplica filtro estrito `field = '<id>'`.
+   * 2. Para filiais conhecidas (Farmácia Xodó ou Pimenta Verde), além de seu ID principal,
+   *    também aceita equivalências de migrações anteriores para garantir 100% do histórico.
    */
   getCompanyFilterClause(field = 'empresa_id'): string | null {
     const activeCompanyId = this.getActiveCompanyId()
     if (!activeCompanyId || activeCompanyId === this.MATRIZ_EMPRESA_ID) {
       return `(${field} = '${this.MATRIZ_EMPRESA_ID}' || ${field} = '' || ${field} = null)`
     }
+
+    // Suporte a IDs conhecidos da Farmácia Xodó
+    if (activeCompanyId === 'ssyicw8uzwqc01w' || activeCompanyId === 'k443r453664d6v7') {
+      return `(${field} = 'ssyicw8uzwqc01w' || ${field} = 'k443r453664d6v7')`
+    }
+
+    // Suporte a IDs conhecidos da Pimenta Verde
+    if (activeCompanyId === 'covyosobcb1b50n' || activeCompanyId === '4m935a8286j6y04') {
+      return `(${field} = 'covyosobcb1b50n' || ${field} = '4m935a8286j6y04')`
+    }
+
     return `${field} = '${activeCompanyId}'`
   },
 
@@ -544,15 +556,29 @@ export const deliveryService = {
     // Se há empresa ativa definida, buscar os usuários vinculados como entregador na coleção membros
     if (activeCompanyId) {
       try {
+        // Aceita IDs equivalentes para filiais conhecidas
+        let empresaFilter = `empresa_id = '${activeCompanyId}'`
+        if (activeCompanyId === 'ssyicw8uzwqc01w' || activeCompanyId === 'k443r453664d6v7') {
+          empresaFilter = `(empresa_id = 'ssyicw8uzwqc01w' || empresa_id = 'k443r453664d6v7')`
+        } else if (activeCompanyId === 'covyosobcb1b50n' || activeCompanyId === '4m935a8286j6y04') {
+          empresaFilter = `(empresa_id = 'covyosobcb1b50n' || empresa_id = '4m935a8286j6y04')`
+        }
+
         const membros = await pb.collection<MembroRecord>('membros').getFullList({
-          filter: `empresa_id = '${activeCompanyId}' && papel = 'entregador' && ativo = true`,
+          filter: `${empresaFilter} && papel = 'entregador' && ativo = true`,
           expand: 'user_id',
           requestKey: null,
         })
         const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
 
         if (usersFromMembers.length > 0) {
-          return usersFromMembers
+          // Deduplicar por id
+          const seen = new Set<string>()
+          return usersFromMembers.filter((u) => {
+            if (seen.has(u.id)) return false
+            seen.add(u.id)
+            return true
+          })
         }
 
         // Se for a Matriz e não houver membros ainda com expand, manter fallback para legados
@@ -582,15 +608,27 @@ export const deliveryService = {
 
     if (activeCompanyId) {
       try {
+        let empresaFilter = `empresa_id = '${activeCompanyId}'`
+        if (activeCompanyId === 'ssyicw8uzwqc01w' || activeCompanyId === 'k443r453664d6v7') {
+          empresaFilter = `(empresa_id = 'ssyicw8uzwqc01w' || empresa_id = 'k443r453664d6v7')`
+        } else if (activeCompanyId === 'covyosobcb1b50n' || activeCompanyId === '4m935a8286j6y04') {
+          empresaFilter = `(empresa_id = 'covyosobcb1b50n' || empresa_id = '4m935a8286j6y04')`
+        }
+
         const membros = await pb.collection<MembroRecord>('membros').getFullList({
-          filter: `empresa_id = '${activeCompanyId}' && papel = 'vendedor' && ativo = true`,
+          filter: `${empresaFilter} && papel = 'vendedor' && ativo = true`,
           expand: 'user_id',
           requestKey: null,
         })
         const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
 
         if (usersFromMembers.length > 0) {
-          return usersFromMembers
+          const seen = new Set<string>()
+          return usersFromMembers.filter((u) => {
+            if (seen.has(u.id)) return false
+            seen.add(u.id)
+            return true
+          })
         }
 
         if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
@@ -619,15 +657,27 @@ export const deliveryService = {
 
     if (activeCompanyId) {
       try {
+        let empresaFilter = `empresa_id = '${activeCompanyId}'`
+        if (activeCompanyId === 'ssyicw8uzwqc01w' || activeCompanyId === 'k443r453664d6v7') {
+          empresaFilter = `(empresa_id = 'ssyicw8uzwqc01w' || empresa_id = 'k443r453664d6v7')`
+        } else if (activeCompanyId === 'covyosobcb1b50n' || activeCompanyId === '4m935a8286j6y04') {
+          empresaFilter = `(empresa_id = 'covyosobcb1b50n' || empresa_id = '4m935a8286j6y04')`
+        }
+
         const membros = await pb.collection<MembroRecord>('membros').getFullList({
-          filter: `empresa_id = '${activeCompanyId}' && ativo = true`,
+          filter: `${empresaFilter} && ativo = true`,
           expand: 'user_id',
           requestKey: null,
         })
         const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
 
         if (usersFromMembers.length > 0) {
-          return usersFromMembers
+          const seen = new Set<string>()
+          return usersFromMembers.filter((u) => {
+            if (seen.has(u.id)) return false
+            seen.add(u.id)
+            return true
+          })
         }
 
         if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
