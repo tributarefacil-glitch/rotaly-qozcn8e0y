@@ -202,12 +202,18 @@ function ProtectedRoute({
     return <>{children}</>
   }
 
-  // Reforço estrito: role 'seller' NUNCA acessa ou é roteada para /admin sob nenhuma condição
-  if (role === 'seller' && location.pathname.startsWith('/admin')) {
+  // BLINDAGEM ESTRITA: perfis não-admin (seller ou courier) NUNCA podem renderizar em /admin ou qualquer sub-rota admin
+  if (
+    role !== 'admin' &&
+    (location.pathname === '/admin' || location.pathname.startsWith('/admin/'))
+  ) {
+    if (role === 'courier') {
+      return <Navigate to="/courier" replace />
+    }
     return <Navigate to="/seller" replace />
   }
 
-  // Role verification
+  // Role verification para rotas que exigem perfis específicos
   if (allowedRoles && !allowedRoles.includes(role)) {
     if (role === 'admin') return <Navigate to="/admin" replace />
     if (role === 'courier') return <Navigate to="/courier" replace />

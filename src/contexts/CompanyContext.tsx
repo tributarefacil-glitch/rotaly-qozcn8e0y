@@ -75,9 +75,10 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const isNonAdminStaff = user.role === 'seller' || user.role === 'courier'
 
       if (isNonAdminStaff) {
-        // ALTERAÇÃO 4: Para perfis seller e courier, IGNORAR o cache legado e resolver a empresa ativa
-        // imediatamente pela tabela membros (user_id = user.id && ativo = true).
-        // Se houver filial (não-Matriz), prioriza a filial da operação.
+        // Para perfis seller e courier:
+        // 1. Resolve a empresa EXCLUSIVAMENTE pelo vínculo ativo em membros (user_id = user.id && ativo = true)
+        // 2. Se houver mais de um vínculo ativo (ex: migração em andamento), prioriza estritamente a filial (não-Matriz)
+        // 3. NUNCA consulta localStorage antes do banco para resolver a empresa de seller/courier
         const nonMatrizMember = memberRecords.find((m) => m.empresa_id !== '7wo05iyvfcfh01h')
         resolvedMember = nonMatrizMember || memberRecords[0] || null
 
@@ -166,6 +167,14 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // Ao resolver, sobrescrever ativamente localStorage com a empresa resolvida
       if (resolvedCompany) {
         localStorage.setItem(STORAGE_KEY, resolvedCompany.id)
+        // Disparar evento para componentes ouvintes atualizarem caso necessário
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('rotaly_company_changed', {
+              detail: { companyId: resolvedCompany.id, company: resolvedCompany },
+            }),
+          )
+        }
       }
 
       setCurrentCompanyState(resolvedCompany)

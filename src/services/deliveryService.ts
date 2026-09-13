@@ -79,10 +79,22 @@ export const deliveryService = {
   getActiveCompanyId(): string {
     const active =
       typeof window !== 'undefined' ? localStorage.getItem('rotaly_active_empresa_id') : null
-    if (!active || active === 'undefined' || active === 'null' || active.trim() === '') {
-      return this.MATRIZ_EMPRESA_ID
+    if (active && active !== 'undefined' && active !== 'null' && active.trim() !== '') {
+      return active.trim()
     }
-    return active.trim()
+
+    // Se o usuário autenticado atual for seller ou courier, nunca deve cair na Matriz como default cego
+    try {
+      const authModel = pb.authStore.record as { role?: string } | null
+      if (authModel && (authModel.role === 'seller' || authModel.role === 'courier')) {
+        // Retorna a Farmácia Xodó do Pilar como default seguro para as vendedoras/entregadores da filial
+        return 'ssyicw8uzwqc01w'
+      }
+    } catch {
+      /* ignore */
+    }
+
+    return this.MATRIZ_EMPRESA_ID
   },
 
   setActiveCompanyId(empresaId: string): void {
