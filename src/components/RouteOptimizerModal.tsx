@@ -542,13 +542,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Initialize selected couriers and load app settings when opened
   useEffect(() => {
     if (open) {
-      if (!wasOpenRef.current) {
-        // Regra: "não precisa bloquear o entregador para vendedor. apenas não deixar a rota entrar no app do entregador enquanto ele estiver na rota atual"
+      // Re-sincronizar seleção SEMPRE que couriers carregar/mudar:
+      // Se couriers chegou com dados e nenhum entregador está selecionado ainda, popular automaticamente
+      if (couriers.length > 0 && selectedCourierIds.length === 0) {
         const availableIds = couriers.filter((c) => c.status !== 'inactive').map((c) => c.id)
-
         setSelectedCourierIds(
           availableIds.length > 0 ? availableIds : couriers.slice(0, 3).map((c) => c.id),
         )
+      }
+
+      if (!wasOpenRef.current) {
         // ETAPA 2: Abre vazia sem clientes pré-marcados; vendedor busca e marca os pedidos
         setSelectedOrderIds([])
         setSearchOrderFilter('')
@@ -580,7 +583,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       setDraggingStop(null)
     }
     wasOpenRef.current = open
-  }, [open, couriers])
+  }, [open, couriers, selectedCourierIds.length])
 
   // Assinar realtime da coleção app_settings para refletir qualquer alteração de jornada na hora
   useRealtime<AppSettingsRecord>(
@@ -646,7 +649,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         c.name.toLowerCase().includes(searchCourierFilter.toLowerCase()) ||
         (c.vehicle_model || '').toLowerCase().includes(searchCourierFilter.toLowerCase()) ||
         (c.vehicle_plate || '').toLowerCase().includes(searchCourierFilter.toLowerCase())
-      const matchesVehicle = vehicleFilter === 'all' || c.vehicle_type === vehicleFilter
+      const courierVeh = deliveryService.normalizeVehicleCategory(c.vehicle_type || 'moto')
+      const targetVeh =
+        vehicleFilter === 'all' ? 'all' : deliveryService.normalizeVehicleCategory(vehicleFilter)
+      const matchesVehicle = vehicleFilter === 'all' || courierVeh === targetVeh
       return matchesSearch && matchesVehicle
     })
   }, [couriers, searchCourierFilter, vehicleFilter])

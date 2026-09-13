@@ -220,7 +220,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         eventsData,
         fuelData,
       ] = await Promise.all([
-        deliveryService.getOrders('', '-created'),
+        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id', companyId),
         deliveryService.getCustomers(),
         deliveryService.getCouriers(companyId),
         deliveryService.getLatestLocations(),
@@ -558,7 +558,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   })
 
-  // Filtered orders list
+  // Filtered orders list — por padrão, mostra TODOS os pedidos da empresa ativa sem restrição de vendedor ou data
   const filteredOrders = orders.filter((o) => {
     const matchesStatus = selectedStatus === 'all' ? true : o.status === selectedStatus
     const matchesSeller = onlyMySales ? o.seller_id === user?.id : true
@@ -2373,7 +2373,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-mono text-[11px] text-slate-400">
-              Rotaly v0.0.148 • Build: <strong className="text-slate-300">2025-05-15.02</strong>
+              Rotaly v0.0.152 • Build: <strong className="text-slate-300">2025-05-15.03</strong>
             </span>
           </div>
 

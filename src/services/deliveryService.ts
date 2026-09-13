@@ -601,7 +601,17 @@ export const deliveryService = {
           expand: 'user_id',
           requestKey: null,
         })
-        const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
+        const usersFromMembers = membros
+          .map((m) => {
+            const u = m.expand?.user_id as UserRecord | undefined
+            if (!u) return null
+            return {
+              ...u,
+              vehicle_type: m.vehicle_type || u.vehicle_type || 'moto',
+              status: m.ativo ? ('active' as const) : ('inactive' as const),
+            } as UserRecord
+          })
+          .filter(Boolean) as UserRecord[]
 
         if (usersFromMembers.length > 0) {
           // Deduplicar por id
@@ -615,11 +625,16 @@ export const deliveryService = {
 
         // Se for a Matriz e não houver membros ainda com expand, manter fallback para legados
         if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
-          return pb.collection<UserRecord>('users').getFullList({
+          const list = await pb.collection<UserRecord>('users').getFullList({
             filter: "role = 'courier'",
             sort: '-created',
             requestKey: null,
           })
+          return list.map((u) => ({
+            ...u,
+            vehicle_type: u.vehicle_type || 'moto',
+            status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+          }))
         }
 
         return []
@@ -628,11 +643,16 @@ export const deliveryService = {
       }
     }
 
-    return pb.collection<UserRecord>('users').getFullList({
+    const fallbackList = await pb.collection<UserRecord>('users').getFullList({
       filter: "role = 'courier'",
       sort: '-created',
       requestKey: null,
     })
+    return fallbackList.map((u) => ({
+      ...u,
+      vehicle_type: u.vehicle_type || 'moto',
+      status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+    }))
   },
 
   async getSellers(empresaId?: string) {
