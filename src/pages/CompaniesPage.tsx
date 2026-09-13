@@ -354,24 +354,24 @@ export const CompaniesPage: React.FC = () => {
   })
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#070D1E] text-slate-100 font-sans">
+    <div className="flex h-screen w-full overflow-hidden bg-white text-[#002855] font-sans">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-y-auto">
         <Header />
 
         <main className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto w-full">
           {/* Top banner / Title */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[#1E2B58] pb-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 pb-6">
             <div>
               <div className="flex items-center gap-3 mb-1">
-                <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#2563EB] flex items-center justify-center text-white shadow-brand">
-                  <Building2 className="h-5 w-5" />
+                <div className="h-10 w-10 rounded-xl bg-[#002855] flex items-center justify-center text-white shadow-sm">
+                  <Building2 className="h-5 w-5 text-[#00A3FF]" />
                 </div>
                 <div>
-                  <h1 className="font-heading text-xl sm:text-2xl font-black tracking-tight text-white">
+                  <h1 className="font-heading text-xl sm:text-2xl font-black tracking-tight text-[#002855]">
                     Gestão Multi-Tenant &amp; Empresas
                   </h1>
-                  <p className="text-xs sm:text-sm text-slate-400">
+                  <p className="text-xs sm:text-sm text-slate-500">
                     Isole e gerencie múltiplas operações com total conformidade e Row Level Security
                     no Rotaly.
                   </p>
@@ -382,7 +382,7 @@ export const CompaniesPage: React.FC = () => {
             <div className="flex items-center gap-3">
               <Button
                 onClick={() => setIsCreateOpen(true)}
-                className="h-10 px-4 bg-[#FF6B35] hover:bg-[#E55A25] text-white font-bold text-xs rounded-xl shadow-brand gap-2"
+                className="h-10 px-4 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs rounded-xl shadow-sm gap-2"
               >
                 <Plus className="h-4 w-4" />
                 Cadastrar Nova Empresa
@@ -392,28 +392,28 @@ export const CompaniesPage: React.FC = () => {
 
           {/* Active Company Highlight Card */}
           {currentCompany && (
-            <Card className="border border-[#1E2B58] bg-[#0E1738] shadow-brand-dark rounded-2xl overflow-hidden">
-              <div className="h-1.5 w-full bg-gradient-to-r from-[#0052CC] via-blue-500 to-[#FF6B35]" />
+            <Card className="border border-slate-200 bg-white shadow-sm rounded-2xl overflow-hidden">
+              <div className="h-1.5 w-full bg-gradient-to-r from-[#002855] via-[#00A3FF] to-[#002855]" />
               <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
-                  <div className="h-12 w-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                    <Building className="h-6 w-6" />
+                  <div className="h-12 w-12 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#002855]">
+                    <Building className="h-6 w-6 text-[#00A3FF]" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#002855] bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
                         Empresa Ativa na Sessão
                       </span>
                       {currentCompany.ativa && (
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 flex items-center gap-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
                           <CheckCircle2 className="h-3 w-3" /> Ativa
                         </span>
                       )}
                     </div>
-                    <h2 className="font-heading text-lg font-bold text-white mt-1">
+                    <h2 className="font-heading text-lg font-bold text-[#002855] mt-1">
                       {currentCompany.nome_fantasia || currentCompany.nome_razao_social}
                     </h2>
-                    <p className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+                    <p className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
                       <span>{currentCompany.nome_razao_social}</span>
                       {currentCompany.cnpj && <span>• CNPJ: {currentCompany.cnpj}</span>}
                     </p>
@@ -423,7 +423,7 @@ export const CompaniesPage: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Badge
                     variant="outline"
-                    className="border-[#1E2B58] text-slate-300 text-xs py-1 px-3"
+                    className="border-slate-200 text-slate-700 text-xs py-1 px-3"
                   >
                     {membros.filter((m) => m.empresa_id === currentCompany.id).length} membros
                     vinculados
@@ -432,9 +432,9 @@ export const CompaniesPage: React.FC = () => {
                     size="sm"
                     variant="outline"
                     onClick={() => setSelectedEmpresaForMembers(currentCompany)}
-                    className="border-[#1E2B58] bg-[#0A1128] hover:bg-[#121E46] text-white text-xs gap-1.5"
+                    className="border-slate-200 bg-slate-50 hover:bg-slate-100 text-[#002855] text-xs gap-1.5"
                   >
-                    <Users className="h-3.5 w-3.5 text-blue-400" />
+                    <Users className="h-3.5 w-3.5 text-[#00A3FF]" />
                     Gerenciar Membros
                   </Button>
                 </div>
@@ -450,7 +450,7 @@ export const CompaniesPage: React.FC = () => {
               placeholder="Buscar por razão social, nome fantasia, CNPJ ou cidade..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="h-10 pl-9 border-[#1E2B58] bg-[#0E1738] text-xs text-white placeholder:text-slate-500 rounded-xl"
+              className="h-10 pl-9 border-slate-200 bg-slate-50 text-xs text-[#002855] placeholder:text-slate-400 rounded-xl focus:bg-white focus:border-[#00A3FF]"
             />
           </div>
 
@@ -482,22 +482,22 @@ export const CompaniesPage: React.FC = () => {
                     key={emp.id}
                     className={`border transition-all rounded-2xl overflow-hidden flex flex-col justify-between ${
                       isSelected
-                        ? 'border-blue-500/50 bg-[#0E1738] shadow-lg shadow-blue-500/10'
-                        : 'border-[#1E2B58] bg-[#0A1128] hover:border-slate-700'
+                        ? 'border-[#00A3FF] bg-blue-50/20 shadow-md ring-1 ring-[#00A3FF]'
+                        : 'border-slate-200 bg-white hover:border-slate-300 shadow-xs'
                     }`}
                   >
                     <div>
                       <div className="p-5 pb-3">
                         <div className="flex items-start justify-between gap-2 mb-2">
                           <div className="flex items-center gap-2">
-                            <div className="h-9 w-9 rounded-xl bg-[#0052CC]/15 border border-[#0052CC]/30 flex items-center justify-center text-[#60A5FA]">
-                              <Building2 className="h-4 w-4" />
+                            <div className="h-9 w-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#002855]">
+                              <Building2 className="h-4 w-4 text-[#00A3FF]" />
                             </div>
                             <div>
-                              <h3 className="font-heading text-sm font-bold text-white line-clamp-1">
+                              <h3 className="font-heading text-sm font-bold text-[#002855] line-clamp-1">
                                 {emp.nome_fantasia || emp.nome_razao_social}
                               </h3>
-                              <p className="text-[11px] text-slate-400 line-clamp-1">
+                              <p className="text-[11px] text-slate-500 line-clamp-1">
                                 {emp.nome_razao_social}
                               </p>
                             </div>

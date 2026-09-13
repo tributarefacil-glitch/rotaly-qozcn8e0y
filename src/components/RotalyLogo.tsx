@@ -3,7 +3,7 @@ import { rotalyLogoImg } from '@/assets/logo-rotaly'
 
 export interface RotalyLogoProps {
   className?: string
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'header' | 'hero' | 'footer'
+  size?: 'xs' | 'sm' | 'md' | 'panelHeader' | 'lg' | 'xl' | '2xl' | 'header' | 'hero' | 'footer'
   variant?: 'full' | 'icon' | 'badge' | 'image'
   theme?: 'dark' | 'light'
   showTagline?: boolean
@@ -113,11 +113,18 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
     xs: { imgHeight: 'h-6', icon: 24, text: 'text-sm', tagline: 'text-[8px]', gap: 'gap-1.5' },
     sm: { imgHeight: 'h-8', icon: 32, text: 'text-base', tagline: 'text-[9px]', gap: 'gap-2' },
     md: {
-      imgHeight: 'h-11 sm:h-12 md:h-13',
+      imgHeight: 'h-10 sm:h-12 md:h-14',
       icon: 46,
       text: 'text-xl sm:text-2xl',
       tagline: 'text-[11px]',
       gap: 'gap-2.5',
+    },
+    panelHeader: {
+      imgHeight: 'h-10 sm:h-12',
+      icon: 42,
+      text: 'text-lg sm:text-xl',
+      tagline: 'text-[10px]',
+      gap: 'gap-2',
     },
     lg: {
       imgHeight: 'h-14 sm:h-16 md:h-[68px] lg:h-[72px]',

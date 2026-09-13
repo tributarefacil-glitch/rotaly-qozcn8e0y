@@ -836,9 +836,8 @@ export default function CourierApp() {
   }
 
   return (
-    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col pb-24 md:pb-8 font-sans antialiased selection:bg-[#0052CC]/30">
+    <div className="min-h-screen bg-white text-[#002855] flex flex-col pb-20 md:pb-6 font-sans">
       <Header />
-
       <main className="flex-1 max-w-xl mx-auto w-full p-4 space-y-4">
         {/* CABEÇALHO LIMPO DA ROTA COM STATUS DE GPS E CONECTIVIDADE */}
         <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 shadow-xl">

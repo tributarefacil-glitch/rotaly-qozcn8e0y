@@ -118,28 +118,30 @@ export const Header: React.FC = () => {
   }[role]
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between bg-[#0A1128] border-b border-[#1E2B58] text-white px-4 shadow-brand-dark transition-all sm:px-6">
+    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between bg-white border-b border-slate-200 text-[#002855] px-4 shadow-sm transition-all sm:px-6">
       {/* Left section: App Brand & Status */}
       <div className="flex items-center gap-3.5">
         <Link to="/" className="flex items-center hover:opacity-95 transition-opacity">
-          <RotalyLogo size="md" theme="dark" showTagline={false} />
+          <RotalyLogo size="panelHeader" theme="light" showTagline={false} />
         </Link>
-        <div className="hidden md:flex items-center gap-2 rounded-full border border-[#1E2B58] bg-[#0E1738]/80 px-3 py-1 text-xs font-semibold text-slate-200">
+        <div className="hidden md:flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
           <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#22C55E] opacity-75"></span>
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#22C55E]"></span>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#00A3FF] opacity-75"></span>
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#00A3FF]"></span>
           </span>
-          <span className="text-[11px] font-sans tracking-wide">GPS &amp; Realtime Ativo</span>
+          <span className="text-[11px] font-sans tracking-wide text-[#002855]">
+            GPS &amp; Realtime Ativo
+          </span>
         </div>
 
         {/* Active Company Badge (Empresa Única: Rotaly Operações) */}
         <div className="flex items-center">
-          <div className="flex items-center gap-1.5 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2.5 py-1 text-xs text-slate-200">
-            <Building2 className="h-3.5 w-3.5 text-[#FF6B35] shrink-0" />
-            <span className="max-w-[140px] sm:max-w-[180px] truncate font-semibold text-white">
+          <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700">
+            <Building2 className="h-3.5 w-3.5 text-[#00A3FF] shrink-0" />
+            <span className="max-w-[140px] sm:max-w-[180px] truncate font-semibold text-[#002855]">
               {currentCompany?.nome_fantasia || 'Rotaly Operações'}
             </span>
-            <span className="hidden sm:inline-block rounded bg-[#0052CC]/40 px-1.5 py-0.2 text-[9px] font-bold text-blue-200">
+            <span className="hidden sm:inline-block rounded bg-[#002855]/10 px-1.5 py-0.2 text-[9px] font-bold text-[#002855]">
               Matriz
             </span>
           </div>
@@ -155,7 +157,7 @@ export const Header: React.FC = () => {
             placeholder="Rastrear entrega Rotaly (ex: TRK-2025-001)..."
             value={searchTracking}
             onChange={(e) => setSearchTracking(e.target.value)}
-            className="h-9 w-full rounded-lg border border-[#1E2B58] bg-[#0E1738] pl-9 pr-4 text-xs text-white placeholder:text-slate-400 transition focus:border-[#60A5FA] focus:bg-[#121E46] focus:ring-1 focus:ring-[#60A5FA]"
+            className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-4 text-xs text-slate-900 placeholder:text-slate-400 transition focus:border-[#00A3FF] focus:bg-white focus:ring-1 focus:ring-[#00A3FF]"
           />
         </form>
       </div>
@@ -168,11 +170,11 @@ export const Header: React.FC = () => {
             <Button
               variant="ghost"
               size="icon"
-              className="relative h-9 w-9 rounded-md border border-white/20 bg-white/10 hover:bg-white/20 text-white"
+              className="relative h-9 w-9 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[#002855]"
             >
-              <Bell className="h-4 w-4 text-white" />
+              <Bell className="h-4 w-4 text-[#002855]" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#FF6B35] px-1 text-[10px] font-bold text-white ring-2 ring-[#0052CC]">
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#00A3FF] px-1 text-[10px] font-bold text-white ring-2 ring-white">
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </span>
               )}
@@ -180,16 +182,16 @@ export const Header: React.FC = () => {
           </PopoverTrigger>
           <PopoverContent
             align="end"
-            className="w-80 sm:w-96 p-0 shadow-xl border-slate-200 bg-white text-[#1a1a1a]"
+            className="w-80 sm:w-96 p-0 shadow-xl border-slate-200 bg-white text-[#002855]"
           >
-            <div className="flex items-center justify-between border-b border-slate-200 p-3 bg-[#F5F5F5]">
+            <div className="flex items-center justify-between border-b border-slate-200 p-3 bg-slate-50">
               <div className="flex items-center gap-2">
-                <Bell className="h-4 w-4 text-[#0052CC]" />
-                <span className="font-heading font-bold text-sm text-[#1a1a1a]">Notificações</span>
+                <Bell className="h-4 w-4 text-[#00A3FF]" />
+                <span className="font-heading font-bold text-sm text-[#002855]">Notificações</span>
                 {unreadCount > 0 && (
                   <Badge
                     variant="secondary"
-                    className="text-xs px-1.5 py-0 bg-orange-100 text-[#FF6B35] border-orange-200 font-bold"
+                    className="text-xs px-1.5 py-0 bg-blue-100 text-[#002855] border-blue-200 font-bold"
                   >
                     {unreadCount} novas
                   </Badge>
@@ -200,7 +202,7 @@ export const Header: React.FC = () => {
                   variant="ghost"
                   size="sm"
                   onClick={handleMarkAllAsRead}
-                  className="h-7 text-xs text-[#0052CC] hover:text-[#003E99] font-semibold"
+                  className="h-7 text-xs text-[#00A3FF] hover:text-[#008CE0] font-semibold"
                 >
                   Marcar lidas
                 </Button>
@@ -216,22 +218,20 @@ export const Header: React.FC = () => {
                 notifications.slice(0, 10).map((n) => (
                   <div
                     key={n.id}
-                    className={`p-3 transition hover:bg-blue-50/40 ${
-                      !n.read ? 'bg-blue-50/70' : ''
-                    }`}
+                    className={`p-3 transition hover:bg-slate-50 ${!n.read ? 'bg-blue-50/50' : ''}`}
                   >
                     <div className="flex items-start gap-2.5">
                       <div className="mt-0.5">
                         {n.type === 'off_route' && (
-                          <AlertTriangle className="h-4 w-4 text-[#E74C3C]" />
+                          <AlertTriangle className="h-4 w-4 text-rose-500" />
                         )}
-                        {n.type === 'delay' && <Clock className="h-4 w-4 text-[#FF6B35]" />}
-                        {n.type === 'order' && <Truck className="h-4 w-4 text-[#0052CC]" />}
-                        {n.type === 'system' && <Radio className="h-4 w-4 text-[#00AA44]" />}
+                        {n.type === 'delay' && <Clock className="h-4 w-4 text-amber-500" />}
+                        {n.type === 'order' && <Truck className="h-4 w-4 text-[#002855]" />}
+                        {n.type === 'system' && <Radio className="h-4 w-4 text-emerald-500" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <p className="text-xs font-bold text-[#1a1a1a] truncate">{n.title}</p>
+                          <p className="text-xs font-bold text-[#002855] truncate">{n.title}</p>
                           <span className="text-[10px] text-slate-400">
                             {new Date(n.created).toLocaleTimeString([], {
                               hour: '2-digit',
@@ -249,7 +249,7 @@ export const Header: React.FC = () => {
               )}
             </div>
 
-            <div className="border-t border-slate-200 p-2 text-center bg-[#F5F5F5]">
+            <div className="border-t border-slate-200 p-2 text-center bg-slate-50">
               <span className="text-[11px] text-slate-500 font-medium">
                 Push Real-time Rotaly ativo
               </span>
@@ -262,16 +262,16 @@ export const Header: React.FC = () => {
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="flex items-center gap-2 pl-2 pr-2 sm:pr-3 py-1.5 h-auto rounded-lg hover:bg-[#121E46] border border-transparent hover:border-[#1E2B58] text-white"
+              className="flex items-center gap-2 pl-2 pr-2 sm:pr-3 py-1.5 h-auto rounded-lg hover:bg-slate-100 border border-slate-200 text-[#002855]"
             >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white text-xs font-black uppercase shadow-sm border border-blue-300/30">
-                {user?.name ? user.name.slice(0, 2) : 'LH'}
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#002855] text-white text-xs font-black uppercase shadow-sm">
+                {user?.name ? user.name.slice(0, 2) : 'RO'}
               </div>
               <div className="hidden text-left sm:block">
-                <p className="font-heading text-xs font-bold leading-none text-white">
+                <p className="font-heading text-xs font-bold leading-none text-[#002855]">
                   {user?.name || 'Usuário'}
                 </p>
-                <p className="text-[10px] text-slate-300 leading-none mt-1">{user?.email}</p>
+                <p className="text-[10px] text-slate-500 leading-none mt-1">{user?.email}</p>
               </div>
             </Button>
           </DropdownMenuTrigger>

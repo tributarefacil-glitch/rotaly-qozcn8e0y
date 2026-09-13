@@ -126,10 +126,10 @@ export const Sidebar: React.FC = () => {
     })
 
   return (
-    <aside className="hidden md:flex h-[calc(100vh-4rem)] w-64 flex-col border-r border-[#1E2B58] bg-[#0A1128] text-slate-200 shadow-xl select-none">
+    <aside className="hidden md:flex h-[calc(100vh-4rem)] w-64 flex-col border-r border-slate-200 bg-white text-slate-700 shadow-sm select-none">
       {/* Navigation Links */}
       <div className="flex-1 space-y-1.5 p-4 overflow-y-auto">
-        <div className="px-3 py-1 font-heading text-[11px] font-black uppercase tracking-wider text-slate-400">
+        <div className="px-3 py-1 font-heading text-[11px] font-bold uppercase tracking-wider text-slate-400">
           Navegação Rotaly
         </div>
         <nav className="space-y-1.5">
@@ -148,14 +148,14 @@ export const Sidebar: React.FC = () => {
                 key={item.href}
                 to={item.href}
                 className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-sans font-medium transition-all duration-150',
+                  'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-sans font-medium transition-all duration-150',
                   isActive
-                    ? 'bg-gradient-to-r from-[#0052CC] to-[#1D4ED8] text-white shadow-brand font-semibold border border-blue-400/30'
-                    : 'text-slate-300 hover:bg-[#121E46] hover:text-white hover:border-[#1E2B58]',
+                    ? 'bg-[#002855] text-white shadow-sm font-semibold'
+                    : 'text-slate-700 hover:bg-slate-100 hover:text-[#002855]',
                 )}
               >
                 <Icon
-                  className={cn('h-4 w-4 shrink-0', isActive ? 'text-[#60A5FA]' : 'text-slate-400')}
+                  className={cn('h-4 w-4 shrink-0', isActive ? 'text-[#00A3FF]' : 'text-slate-400')}
                 />
                 <span className="flex-1 tracking-tight">{item.title}</span>
                 {item.badge && (
@@ -164,8 +164,8 @@ export const Sidebar: React.FC = () => {
                     className={cn(
                       'text-[10px] font-sans h-5 px-1.5 font-bold',
                       isActive
-                        ? 'border-white/30 text-white bg-white/10'
-                        : 'border-[#FF6B35]/40 bg-[#FF6B35]/20 text-[#FF6B35]',
+                        ? 'border-white/30 text-white bg-white/20'
+                        : 'border-[#00A3FF]/40 bg-[#00A3FF]/10 text-[#008CE0]',
                     )}
                   >
                     {item.badge}
@@ -178,15 +178,15 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Floating Copilot Helper Card in Sidebar */}
-      <div className="p-4 border-t border-[#1E2B58] bg-[#070D1E]/80">
-        <div className="rounded-xl bg-[#0E1738] p-3 border border-[#1E2B58] shadow-sm">
+      <div className="p-4 border-t border-slate-200 bg-slate-50/70">
+        <div className="rounded-xl bg-white p-3 border border-slate-200 shadow-xs">
           <div className="flex items-center gap-2 mb-1.5">
-            <Sparkles className="h-4 w-4 text-[#FF6B35] animate-pulse" />
-            <span className="font-heading text-xs font-bold text-white tracking-wide">
+            <Sparkles className="h-4 w-4 text-[#00A3FF] animate-pulse" />
+            <span className="font-heading text-xs font-bold text-[#002855] tracking-wide">
               Rotaly Copilot IA
             </span>
           </div>
-          <p className="font-sans text-[11px] text-slate-300 leading-relaxed">
+          <p className="font-sans text-[11px] text-slate-500 leading-relaxed">
             Consulte rotas inteligentes, status de entregas e KPIs a qualquer instante.
           </p>
         </div>

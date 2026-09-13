@@ -55,37 +55,33 @@ function GlobalErrorFallback({
   }
 
   return (
-    <div className="min-h-screen w-full bg-[#0A1128] text-slate-100 flex items-center justify-center p-4 select-none relative overflow-hidden">
-      {/* Background glow graphics */}
-      <div className="absolute -top-32 -left-32 w-80 h-80 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-[#FF6B35]/15 rounded-full blur-3xl pointer-events-none" />
-
+    <div className="min-h-screen w-full bg-slate-50 text-[#002855] flex items-center justify-center p-4 select-none relative overflow-hidden font-sans">
       <div className="max-w-md w-full relative z-10">
-        <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-2xl rounded-2xl overflow-hidden">
-          <div className="h-1.5 w-full bg-gradient-to-r from-[#FF6B35] via-amber-500 to-[#0052CC]" />
+        <Card className="border border-slate-200 bg-white text-[#002855] shadow-xl rounded-2xl overflow-hidden">
+          <div className="h-1.5 w-full bg-gradient-to-r from-[#002855] via-[#00A3FF] to-[#002855]" />
 
           <CardHeader className="text-center pt-8 pb-4">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mb-2 shadow-inner">
-              <AlertTriangle className="h-7 w-7 text-amber-400" />
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 border border-amber-200 text-amber-500 mb-2 shadow-xs">
+              <AlertTriangle className="h-7 w-7 text-amber-500" />
             </div>
-            <CardTitle className="font-heading text-xl font-bold text-white tracking-tight">
+            <CardTitle className="font-heading text-xl font-bold text-[#002855] tracking-tight">
               Algo saiu do trilho
             </CardTitle>
-            <CardDescription className="text-slate-300 text-xs sm:text-sm mt-1 leading-relaxed">
+            <CardDescription className="text-slate-500 text-xs sm:text-sm mt-1 leading-relaxed">
               Tivemos um problema ao exibir esta tela.
             </CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-5 px-6 pb-6">
             {error && (
-              <details className="rounded-xl border border-[#1E2B58] bg-[#0A1128] p-3 text-xs text-slate-300">
-                <summary className="cursor-pointer font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1.5 outline-none select-none">
+              <details className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                <summary className="cursor-pointer font-semibold text-[#002855] hover:text-[#00A3FF] flex items-center gap-1.5 outline-none select-none">
                   <span>Detalhes do erro para debug</span>
                 </summary>
-                <div className="mt-2.5 space-y-1.5 font-mono text-[11px] text-slate-300 overflow-x-auto max-h-40 whitespace-pre-wrap bg-black/40 p-2.5 rounded-lg border border-white/5">
-                  <p className="text-rose-400 font-bold">{error.toString()}</p>
+                <div className="mt-2.5 space-y-1.5 font-mono text-[11px] text-slate-700 overflow-x-auto max-h-40 whitespace-pre-wrap bg-white p-2.5 rounded-lg border border-slate-200">
+                  <p className="text-rose-600 font-bold">{error.toString()}</p>
                   {errorInfo?.componentStack && (
-                    <p className="text-slate-400 text-[10px] mt-1">{errorInfo.componentStack}</p>
+                    <p className="text-slate-500 text-[10px] mt-1">{errorInfo.componentStack}</p>
                   )}
                 </div>
               </details>
@@ -94,7 +90,7 @@ function GlobalErrorFallback({
             <div className="flex flex-col sm:flex-row gap-2.5">
               <Button
                 onClick={handleReload}
-                className="flex-1 h-10 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-md rounded-xl transition-all"
+                className="flex-1 h-10 gap-2 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs shadow-md rounded-xl transition-all"
               >
                 <RefreshCw className="h-4 w-4" />
                 Recarregar página
@@ -102,9 +98,9 @@ function GlobalErrorFallback({
               <Button
                 variant="outline"
                 onClick={handleGoHome}
-                className="flex-1 h-10 gap-2 border-[#1E2B58] bg-[#0A1128] hover:bg-[#121E46] text-slate-200 hover:text-white text-xs font-semibold rounded-xl"
+                className="flex-1 h-10 gap-2 border-slate-300 bg-white hover:bg-slate-50 text-slate-700 hover:text-[#002855] text-xs font-semibold rounded-xl"
               >
-                <Home className="h-4 w-4 text-[#60A5FA]" />
+                <Home className="h-4 w-4 text-[#00A3FF]" />
                 Ir para o início
               </Button>
             </div>
@@ -185,22 +181,19 @@ function RouteErrorFallback({
   const navigate = useNavigate()
 
   return (
-    <div className="min-h-screen w-full bg-[#0A1128] text-slate-100 flex items-center justify-center p-4 select-none relative overflow-hidden">
-      <div className="absolute -top-32 -left-32 w-80 h-80 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-[#FF6B35]/15 rounded-full blur-3xl pointer-events-none" />
-
+    <div className="min-h-screen w-full bg-slate-50 text-[#002855] flex items-center justify-center p-4 select-none relative overflow-hidden font-sans">
       <div className="max-w-lg w-full relative z-10">
-        <Card className="border-2 border-amber-500/50 bg-[#0E1738] text-white shadow-2xl rounded-2xl overflow-hidden">
-          <div className="h-1.5 w-full bg-gradient-to-r from-amber-500 via-rose-500 to-[#0052CC]" />
+        <Card className="border border-slate-200 bg-white text-[#002855] shadow-xl rounded-2xl overflow-hidden">
+          <div className="h-1.5 w-full bg-gradient-to-r from-[#002855] via-[#00A3FF] to-[#002855]" />
 
           <CardHeader className="text-center pt-8 pb-3">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/40 text-amber-400 mb-2 shadow-inner">
-              <AlertTriangle className="h-7 w-7 text-amber-400" />
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 border border-amber-200 text-amber-500 mb-2 shadow-xs">
+              <AlertTriangle className="h-7 w-7 text-amber-500" />
             </div>
-            <CardTitle className="font-heading text-xl font-bold text-white tracking-tight">
+            <CardTitle className="font-heading text-xl font-bold text-[#002855] tracking-tight">
               Algo saiu do trilho nesta tela
             </CardTitle>
-            <CardDescription className="text-slate-300 text-xs sm:text-sm mt-1">
+            <CardDescription className="text-slate-500 text-xs sm:text-sm mt-1">
               {routeName
                 ? `Tela: ${routeName}`
                 : 'Ocorreu um erro inesperado ao carregar os dados.'}
@@ -209,11 +202,11 @@ function RouteErrorFallback({
 
           <CardContent className="space-y-4 px-6 pb-6">
             {error && (
-              <div className="rounded-xl border border-rose-500/40 bg-[#0A1128] p-3 text-xs">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400 block mb-1">
+              <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-3 text-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 block mb-1">
                   Mensagem do Erro
                 </span>
-                <p className="font-mono text-[11px] text-rose-300 break-words whitespace-pre-wrap bg-black/40 p-2.5 rounded-lg border border-white/5">
+                <p className="font-mono text-[11px] text-rose-700 break-words whitespace-pre-wrap bg-white p-2.5 rounded-lg border border-rose-200">
                   {error.message || String(error)}
                 </p>
               </div>
@@ -222,7 +215,7 @@ function RouteErrorFallback({
             <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
               <Button
                 onClick={() => window.location.reload()}
-                className="flex-1 h-10 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-md rounded-xl transition-all"
+                className="flex-1 h-10 gap-2 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs shadow-md rounded-xl transition-all"
               >
                 <RefreshCw className="h-4 w-4" />
                 Recarregar Página
@@ -233,9 +226,9 @@ function RouteErrorFallback({
                   onReset()
                   navigate('/')
                 }}
-                className="flex-1 h-10 gap-2 border-[#1E2B58] bg-[#0A1128] hover:bg-[#121E46] text-slate-200 hover:text-white text-xs font-semibold rounded-xl"
+                className="flex-1 h-10 gap-2 border-slate-300 bg-white hover:bg-slate-50 text-slate-700 hover:text-[#002855] text-xs font-semibold rounded-xl"
               >
-                <Home className="h-4 w-4 text-[#60A5FA]" />
+                <Home className="h-4 w-4 text-[#00A3FF]" />
                 Voltar ao Início
               </Button>
             </div>
@@ -307,10 +300,10 @@ function ProtectedRoute({
   // Se ainda estiver carregando a sessão/perfil, exibe tela de loading elegante no tema Dark Navy
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0A1128] text-white">
+      <div className="flex min-h-screen items-center justify-center bg-white text-[#002855]">
         <div className="flex flex-col items-center gap-3">
-          <div className="h-9 w-9 animate-spin rounded-full border-4 border-[#0052CC] border-t-transparent shadow-brand" />
-          <span className="font-heading text-xs font-semibold text-slate-300 tracking-wider uppercase">
+          <div className="h-9 w-9 animate-spin rounded-full border-4 border-[#00A3FF] border-t-transparent" />
+          <span className="font-heading text-xs font-semibold text-[#002855] tracking-wider uppercase">
             Carregando sessão...
           </span>
         </div>
@@ -375,29 +368,29 @@ function SettingsRoute() {
 
   if (role !== 'admin') {
     return (
-      <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-center items-center p-4 sm:p-6">
+      <div className="min-h-screen bg-slate-50 text-[#002855] flex flex-col justify-center items-center p-4 sm:p-6 font-sans">
         <div className="max-w-md w-full">
-          <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl overflow-hidden">
-            <div className="h-1.5 w-full bg-[#FF6B35]" />
+          <Card className="border border-slate-200 bg-white text-[#002855] shadow-lg rounded-2xl overflow-hidden">
+            <div className="h-1.5 w-full bg-[#00A3FF]" />
             <CardHeader className="text-center pt-6 pb-2">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 mb-2">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-rose-50 border border-rose-200 text-rose-500 mb-2">
                 <ShieldAlert className="h-6 w-6" />
               </div>
-              <CardTitle className="font-heading text-lg font-bold text-white">
+              <CardTitle className="font-heading text-lg font-bold text-[#002855]">
                 Acesso Restrito
               </CardTitle>
-              <CardDescription className="text-slate-300 text-xs mt-1">
+              <CardDescription className="text-slate-500 text-xs mt-1">
                 Você não tem permissão para acessar esta seção.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 pt-2 pb-6">
-              <p className="text-[11px] text-slate-400 text-center leading-relaxed">
+              <p className="text-[11px] text-slate-600 text-center leading-relaxed">
                 As configurações globais e parâmetros de combustível são reservados para o perfil
                 Administrador.
               </p>
               <Button
                 onClick={() => navigate(role === 'courier' ? '/courier' : '/seller')}
-                className="w-full h-10 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs rounded-xl shadow-brand"
+                className="w-full h-10 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs rounded-xl shadow-sm"
               >
                 Voltar para Meu Painel
               </Button>

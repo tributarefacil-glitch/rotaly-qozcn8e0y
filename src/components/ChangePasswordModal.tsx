@@ -115,23 +115,22 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ open, 
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md bg-[#0A1128] border border-[#1E2B58] text-white shadow-2xl">
-        <DialogHeader>
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0052CC]/20 border border-[#0052CC]/40 text-[#60A5FA]">
-              <KeyRound className="h-5 w-5" />
+      <DialogContent className="max-w-md bg-white border border-slate-200 text-[#002855] shadow-xl">
+        <DialogHeader className="space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 border border-blue-200 text-[#002855]">
+              <KeyRound className="h-5 w-5 text-[#00A3FF]" />
             </div>
             <div>
-              <DialogTitle className="text-base sm:text-lg font-bold text-white">
-                Trocar Minha Senha
+              <DialogTitle className="font-heading text-lg font-bold text-[#002855]">
+                Trocar Senha de Acesso
               </DialogTitle>
-              <DialogDescription className="text-xs text-slate-300">
-                Altere a senha de acesso da conta de Administrador ({user?.email}).
+              <DialogDescription className="text-xs text-slate-500">
+                Altere sua credencial de segurança da plataforma Rotaly
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
-
         <form onSubmit={handleSubmit} className="space-y-4 pt-2">
           {/* Campo Senha Atual */}
           <div className="space-y-1.5">
@@ -142,7 +141,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ open, 
                 placeholder="Digite sua senha atual"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="h-10 pr-10 text-xs sm:text-sm bg-[#0E1738] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA] focus:ring-1 focus:ring-[#60A5FA]"
+                className="h-10 pr-10 text-xs sm:text-sm bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-[#00A3FF] focus:bg-white focus:ring-1 focus:ring-[#00A3FF]"
                 autoComplete="current-password"
                 required
               />
@@ -169,7 +168,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ open, 
                 placeholder="Digite a nova senha segura"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="h-10 pr-10 text-xs sm:text-sm bg-[#0E1738] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA] focus:ring-1 focus:ring-[#60A5FA]"
+                className="h-10 pr-10 text-xs sm:text-sm bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-[#00A3FF] focus:bg-white focus:ring-1 focus:ring-[#00A3FF]"
                 autoComplete="new-password"
                 minLength={8}
                 required
@@ -194,7 +193,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ open, 
                 placeholder="Repita a nova senha"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="h-10 pr-10 text-xs sm:text-sm bg-[#0E1738] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA] focus:ring-1 focus:ring-[#60A5FA]"
+                className="h-10 pr-10 text-xs sm:text-sm bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-[#00A3FF] focus:bg-white focus:ring-1 focus:ring-[#00A3FF]"
                 autoComplete="new-password"
                 minLength={8}
                 required
@@ -211,7 +210,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ open, 
           </div>
 
           {/* Dicas de Validação Visual */}
-          <div className="p-3 rounded-lg bg-[#0E1738]/80 border border-[#1E2B58] space-y-1.5 text-[11px]">
+          <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1.5 text-[11px]">
             <div className="flex items-center gap-1.5">
               {isMinLength ? (
                 <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
@@ -246,15 +245,16 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ open, 
               variant="outline"
               onClick={() => handleOpenChange(false)}
               disabled={isSubmitting}
-              className="border-[#1E2B58] bg-[#0E1738] text-slate-300 hover:bg-[#121E46] hover:text-white"
+              className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-[#002855]"
             >
               Cancelar
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || !isMinLength || !isMatch || !currentPassword}
-              className="bg-[#0052CC] hover:bg-[#003E99] text-white font-bold gap-1.5 shadow-brand"
+              disabled={isSubmitting || !isFormValid}
+              className="bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold gap-1.5 shadow-sm"
             >
+              {' '}
               <ShieldCheck className="h-4 w-4" />
               {isSubmitting ? 'Atualizando Senha...' : 'Salvar Nova Senha'}
             </Button>

@@ -9,95 +9,96 @@
 
 @layer base {
   :root {
-    /* Rotaly Theme: Navy Blue (#1B3A8C), Cyan (#00A8E8), Dark Navy (#0A1128), Route Green (#22C55E), Route Yellow (#EAB308), Alert Red (#EF4444) */
-    --background: 226 60% 98%;
-    --foreground: 226 60% 10%;
+    /* Rotaly Design System: White background, Navy Blue (#002855), Cyan (#00A3FF) */
+    --background: 0 0% 100%; /* #FFFFFF */
+    --foreground: 212 100% 17%; /* #002855 */
 
     --card: 0 0% 100%;
-    --card-foreground: 226 60% 10%;
+    --card-foreground: 212 100% 17%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 226 60% 10%;
+    --popover-foreground: 212 100% 17%;
 
-    --primary: 223 68% 33%; /* #1B3A8C Rotaly Navy */
+    --primary: 212 100% 17%; /* #002855 Navy */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 16 100% 60%; /* #FF6B35 */
+    --secondary: 201 100% 50%; /* #00A3FF Cyan */
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 220 20% 96%;
-    --muted-foreground: 220 15% 45%;
+    --muted: 210 40% 96.1%; /* #F1F5F9 */
+    --muted-foreground: 215 16% 47%; /* #64748B */
 
-    --accent: 16 100% 60%;
+    --accent: 201 100% 50%; /* #00A3FF */
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%; /* #EF4444 */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 220 18% 90%;
-    --input: 220 18% 90%;
-    --ring: 226 60% 10%;
+    --border: 214.3 31.8% 91.4%; /* #E2E8F0 */
+    --input: 214.3 31.8% 91.4%;
+    --ring: 201 100% 50%; /* #00A3FF */
 
-    --radius: 0.625rem;
+    --radius: 0.75rem;
 
-    --sidebar-background: 226 60% 10%; /* #0A1128 Dark Navy sidebar */
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 216 100% 40%;
+    --sidebar-background: 0 0% 100%; /* White */
+    --sidebar-foreground: 212 100% 17%; /* #002855 */
+    --sidebar-primary: 201 100% 50%; /* #00A3FF */
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 224 50% 16%;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 226 40% 18%;
-    --sidebar-ring: 216 100% 40%;
+    --sidebar-accent: 210 40% 96.1%;
+    --sidebar-accent-foreground: 212 100% 17%;
+    --sidebar-border: 214.3 31.8% 91.4%;
+    --sidebar-ring: 201 100% 50%;
 
-    --chart-1: 142 71% 45%; /* Green */
-    --chart-2: 48 96% 53%; /* Yellow */
-    --chart-3: 24 95% 53%; /* Orange */
-    --chart-4: 0 84% 60%; /* Red */
-    --chart-5: 217 91% 60%; /* Blue */
+    --chart-1: 201 100% 50%; /* Cyan */
+    --chart-2: 212 100% 17%; /* Navy */
+    --chart-3: 142 71% 45%; /* Green */
+    --chart-4: 24 95% 53%; /* Orange */
+    --chart-5: 0 84% 60%; /* Red */
   }
 
   .dark {
-    --background: 226 60% 10%; /* #0A1128 Dark Navy */
-    --foreground: 210 40% 98%;
+    /* Nos painéis Rotaly institucionais, mantemos o visual claro unificado conforme a marca */
+    --background: 0 0% 100%;
+    --foreground: 212 100% 17%;
 
-    --card: 225 50% 13%;
-    --card-foreground: 210 40% 98%;
+    --card: 0 0% 100%;
+    --card-foreground: 212 100% 17%;
 
-    --popover: 225 50% 13%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 212 100% 17%;
 
-    --primary: 217 91% 60%;
-    --primary-foreground: 226 60% 10%;
+    --primary: 212 100% 17%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 16 100% 60%;
+    --secondary: 201 100% 50%;
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 226 40% 18%;
-    --muted-foreground: 215.4 16.3% 65%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215 16% 47%;
 
-    --accent: 16 100% 60%;
+    --accent: 201 100% 50%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 226 40% 20%;
-    --input: 226 40% 20%;
-    --ring: 217 91% 60%;
-    --sidebar-background: 226 70% 7%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 217 91% 60%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 201 100% 50%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 212 100% 17%;
+    --sidebar-primary: 201 100% 50%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 226 40% 18%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 226 40% 18%;
-    --sidebar-ring: 217 91% 60%;
+    --sidebar-accent: 210 40% 96.1%;
+    --sidebar-accent-foreground: 212 100% 17%;
+    --sidebar-border: 214.3 31.8% 91.4%;
+    --sidebar-ring: 201 100% 50%;
 
-    --chart-1: 142 71% 45%;
-    --chart-2: 48 96% 53%;
-    --chart-3: 24 95% 53%;
-    --chart-4: 0 84% 60%;
-    --chart-5: 217 91% 60%;
+    --chart-1: 201 100% 50%;
+    --chart-2: 212 100% 17%;
+    --chart-3: 142 71% 45%;
+    --chart-4: 24 95% 53%;
+    --chart-5: 0 84% 60%;
   }
 
   /* NEVER REMOVE THIS */
@@ -108,7 +109,7 @@
 
   body {
     background-color: #f8fafc;
-    color: #0a1128;
+    color: #002855;
     font-family:
       'Inter',
       -apple-system,

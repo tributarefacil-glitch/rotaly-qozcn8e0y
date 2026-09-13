@@ -218,7 +218,7 @@ export default function CourierFuelPage() {
   const isPositive = balance >= 0
 
   return (
-    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col pb-20 md:pb-6 font-sans">
+    <div className="min-h-screen bg-white text-[#002855] flex flex-col pb-20 md:pb-6 font-sans">
       <Header />
 
       <main className="flex-1 max-w-2xl mx-auto w-full p-4 space-y-4">

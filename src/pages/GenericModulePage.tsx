@@ -11,7 +11,7 @@ export default function GenericModulePage({
   description: string
 }) {
   return (
-    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-white text-[#002855] flex flex-col font-sans">
       <Header />
       <div className="flex flex-1">
         <Sidebar />

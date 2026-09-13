@@ -178,7 +178,7 @@ export default function CourierProfilePage() {
   const currentStatus = user?.status ? statusMap[user.status] || statusMap.active : statusMap.active
 
   return (
-    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col pb-24 md:pb-8 font-sans antialiased selection:bg-[#0052CC]/30">
+    <div className="min-h-screen bg-white text-[#002855] flex flex-col pb-24 md:pb-8 font-sans antialiased">
       <Header />
 
       <main className="flex-1 max-w-xl mx-auto w-full p-4 space-y-4">

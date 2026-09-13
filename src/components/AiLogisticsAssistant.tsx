@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/contexts/AuthContext'
 import pb from '@/lib/pocketbase/client'
@@ -189,40 +189,39 @@ export const AiLogisticsAssistant: React.FC = () => {
 
   return (
     <div className="fixed bottom-6 right-6 z-50 w-96 max-w-[calc(100vw-2rem)] shadow-2xl transition-all">
-      <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl overflow-hidden flex flex-col h-[520px]">
+      <Card className="border border-slate-200 bg-white text-[#002855] shadow-xl rounded-2xl overflow-hidden flex flex-col h-[520px]">
         {/* Header */}
-        <CardHeader className="flex flex-row items-center justify-between border-b border-[#1E2B58] p-3.5 bg-[#0A1128]">
+        <CardHeader className="flex flex-row items-center justify-between border-b border-slate-200 p-3.5 bg-slate-50">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#0052CC] text-white shadow-brand">
-              <Sparkles className="h-4 w-4 text-[#FF6B35]" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#002855] text-white shadow-xs">
+              <Bot className="h-4 w-4 text-[#00A3FF]" />
             </div>
             <div>
-              <CardTitle className="font-heading text-sm font-bold text-white flex items-center gap-2">
-                Rotaly Copilot IA
+              <div className="flex items-center gap-1.5">
+                <CardTitle className="font-heading text-sm font-bold text-[#002855]">
+                  Rotaly Copilot IA
+                </CardTitle>
                 <Badge
                   variant="outline"
-                  className="text-[10px] bg-[#0052CC]/30 text-[#60A5FA] border-[#60A5FA]/30 font-bold"
+                  className="text-[10px] bg-blue-50 text-[#002855] border-blue-200 font-bold"
                 >
-                  Online
+                  Inteligência Rotaly
                 </Badge>
-              </CardTitle>
-              <p className="font-sans text-[10px] text-slate-400">
-                Assistente de Operações e Frotas
-              </p>
+              </div>
+              <CardDescription className="text-[10px] text-slate-500">
+                Assistente de Operações e Rotas em Tempo Real
+              </CardDescription>
             </div>
           </div>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsOpen(false)}
-              className="h-7 w-7 text-slate-400 hover:text-white hover:bg-[#121E46] rounded-lg"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsOpen(false)}
+            className="h-7 w-7 text-slate-400 hover:text-[#002855] hover:bg-slate-100 rounded-lg"
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </CardHeader>
-
         {/* Messages Body */}
         <CardContent className="flex-1 overflow-y-auto p-4 space-y-3 font-sans" ref={scrollRef}>
           {messages.map((m) => (
@@ -238,8 +237,8 @@ export const AiLogisticsAssistant: React.FC = () => {
               <div
                 className={`rounded-xl px-3.5 py-2.5 text-xs max-w-[82%] leading-relaxed ${
                   m.role === 'user'
-                    ? 'bg-[#0052CC] text-white font-medium shadow-xs'
-                    : 'bg-[#0A1128] text-slate-200 border border-[#1E2B58]'
+                    ? 'bg-[#002855] text-white font-medium shadow-xs'
+                    : 'bg-slate-50 text-slate-800 border border-slate-200'
                 }`}
               >
                 {m.content ? (
@@ -271,7 +270,7 @@ export const AiLogisticsAssistant: React.FC = () => {
                   <button
                     key={idx}
                     onClick={() => handleSendMessage(q)}
-                    className="text-left text-[11px] p-2 rounded-lg bg-[#0A1128] hover:bg-[#121E46] border border-[#1E2B58] text-slate-300 hover:text-white transition font-sans"
+                    className="text-left text-[11px] p-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 hover:text-[#002855] transition font-sans"
                   >
                     ⚡ {q}
                   </button>
@@ -282,7 +281,7 @@ export const AiLogisticsAssistant: React.FC = () => {
         </CardContent>
 
         {/* Input Footer */}
-        <div className="p-3 border-t border-[#1E2B58] bg-[#0A1128]">
+        <div className="p-3 border-t border-slate-200 bg-slate-50">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -296,13 +295,13 @@ export const AiLogisticsAssistant: React.FC = () => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={isLoading}
-              className="h-9 bg-[#0E1738] border-[#1E2B58] text-xs text-white placeholder:text-slate-400 focus:border-[#60A5FA] rounded-lg"
+              className="h-9 bg-white border-slate-200 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#00A3FF] rounded-lg"
             />
             <Button
               type="submit"
               size="icon"
               disabled={isLoading || !input.trim()}
-              className="h-9 w-9 shrink-0 bg-[#0052CC] hover:bg-[#003E99] text-white rounded-lg shadow-brand"
+              className="h-9 w-9 shrink-0 bg-[#00A3FF] hover:bg-[#008CE0] text-white rounded-lg shadow-sm"
             >
               <Send className="h-4 w-4" />
             </Button>

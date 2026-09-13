@@ -201,7 +201,7 @@ export class ControlTowerErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="w-full min-h-[500px] flex flex-col items-center justify-center p-8 bg-[#070D1E] border border-red-500/30 rounded-2xl text-center text-white space-y-4">
+        <div className="w-full min-h-[500px] flex flex-col items-center justify-center p-8 bg-white border border-rose-200 rounded-2xl text-center text-[#002855] space-y-4 shadow-sm">
           <div className="w-16 h-16 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center text-3xl">
             📡
           </div>
@@ -3035,7 +3035,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
           <div className="flex flex-wrap items-center gap-2.5">
             {/* View Switcher: Split / Kanban / Map */}
-            <div className="bg-[#070D1E] p-1 rounded-xl border border-[#1E2B58] flex items-center gap-1">
+            <div className="bg-slate-100 p-1 rounded-xl border border-slate-200 flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => setActiveTab('split')}
@@ -3074,7 +3074,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               </button>
             </div>
 
-            <div className="flex items-center text-xs text-slate-300 bg-[#070D1E]/80 border border-[#1E2B58] px-3 py-2 rounded-xl">
+            <div className="flex items-center text-xs text-slate-600 bg-white border border-slate-200 px-3 py-2 rounded-xl shadow-xs">
               <Clock className="w-3.5 h-3.5 mr-1.5 text-slate-400" />
               <span>10s • {lastUpdated.toLocaleTimeString('pt-BR')}</span>
             </div>
@@ -3087,7 +3087,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 fetchData().finally(() => setIsLoading(false))
               }}
               disabled={isLoading}
-              className="h-9 gap-1.5 text-xs bg-[#070D1E] text-slate-200 border-[#1E2B58] hover:bg-[#121E46] hover:text-white rounded-xl"
+              className="h-9 gap-1.5 text-xs bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:text-[#002855] rounded-xl"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
               Atualizar
@@ -3119,17 +3119,17 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       </div>
 
       {/* 2. BARRA DE FILTROS & BUSCA RÁPIDA */}
-      <div className="rounded-xl border border-[#1E2B58] bg-[#0A1128] p-3.5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-3.5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow-sm">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
             Filtros do Fluxo:
           </span>
 
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-8 text-xs w-[160px] bg-[#070D1E] border-[#1E2B58] text-slate-200">
+            <SelectTrigger className="h-8 text-xs w-[160px] bg-slate-50 border-slate-200 text-slate-800">
               <SelectValue placeholder="Coluna / Status" />
             </SelectTrigger>
-            <SelectContent className="bg-[#0A1128] border-[#1E2B58] text-slate-200">
+            <SelectContent className="bg-white border-slate-200 text-slate-800">
               <SelectItem value="all">Todas as Colunas</SelectItem>
               <SelectItem value="pending">Aguardando Início</SelectItem>
               <SelectItem value="in_transit">Em Trânsito</SelectItem>
@@ -3139,10 +3139,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           </Select>
 
           <Select value={courierFilter} onValueChange={setCourierFilter}>
-            <SelectTrigger className="h-8 text-xs w-[180px] bg-[#070D1E] border-[#1E2B58] text-slate-200">
+            <SelectTrigger className="h-8 text-xs w-[180px] bg-slate-50 border-slate-200 text-slate-800">
               <SelectValue placeholder="Entregador" />
             </SelectTrigger>
-            <SelectContent className="bg-[#0A1128] border-[#1E2B58] text-slate-200">
+            <SelectContent className="bg-white border-slate-200 text-slate-800">
               <SelectItem value="all">Todos os Entregadores</SelectItem>
               {couriers.map((c) => (
                 <SelectItem key={c.id} value={c.id}>
@@ -3159,7 +3159,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             placeholder="Buscar por cliente, rastreio, rua..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-8 h-8 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 rounded-lg focus:border-[#60A5FA]"
+            className="pl-8 h-8 text-xs bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 rounded-lg focus:border-[#00A3FF] focus:bg-white"
           />
         </div>
       </div>
@@ -3333,8 +3333,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
       {/* 4. MAPA DE TELEMETRIA EM TEMPO REAL */}
       {(activeTab === 'map' || activeTab === 'split') && (
-        <div className="rounded-2xl border border-[#1E2B58] bg-[#0A1128] overflow-hidden shadow-xl">
-          <div className="p-4 bg-[#070D1E] border-b border-[#1E2B58] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-[#60A5FA]" />
               <h3 className="font-heading text-base font-bold text-white">
@@ -4065,7 +4065,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
         <SheetContent
           side="right"
-          className="w-full sm:max-w-md md:max-w-lg bg-[#0A1128] border-l border-[#1E2B58] text-slate-100 p-0 flex flex-col overflow-hidden"
+          className="w-full sm:max-w-md md:max-w-lg bg-white border-l border-slate-200 text-[#002855] p-0 flex flex-col overflow-hidden"
         >
           {selectedOrder && (
             <>

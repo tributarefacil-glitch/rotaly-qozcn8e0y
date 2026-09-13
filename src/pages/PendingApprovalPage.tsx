@@ -48,19 +48,19 @@ export default function PendingApprovalPage() {
   const isInactive = user?.status === 'inactive'
 
   return (
-    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative font-sans">
+    <div className="min-h-screen bg-white text-[#002855] flex flex-col justify-between relative font-sans">
       {/* Header */}
-      <header className="relative z-10 w-full border-b border-[#1E2B58] bg-[#0A1128]/90 backdrop-blur-md px-6 py-3.5 shadow-brand-dark">
+      <header className="relative z-10 w-full border-b border-slate-200 bg-white/95 backdrop-blur-md px-6 py-3.5 shadow-xs">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <Link to="/" className="flex items-center hover:opacity-95">
-            <RotalyLogo size="md" theme="dark" showTagline={false} />
+            <RotalyLogo size="md" theme="light" showTagline={false} />
           </Link>
 
           <Button
             variant="ghost"
             size="sm"
             onClick={logout}
-            className="text-xs text-[#EF4444] hover:bg-[#EF4444]/10 font-bold gap-1.5 rounded-lg border border-[#EF4444]/30"
+            className="text-xs text-rose-600 hover:bg-rose-50 font-bold gap-1.5 rounded-lg border border-rose-200"
           >
             <LogOut className="h-4 w-4" />
             Sair da Conta
@@ -69,13 +69,13 @@ export default function PendingApprovalPage() {
       </header>
       {/* Main Container */}
       <main className="relative z-10 flex-1 max-w-xl mx-auto w-full px-4 py-12 flex items-center justify-center">
-        <Card className="w-full border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl">
+        <Card className="w-full border border-slate-200 bg-white text-[#002855] shadow-lg rounded-2xl">
           <CardHeader className="text-center pb-2">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#FF6B35]/15 text-[#FF6B35] border border-[#FF6B35]/30 shadow-sm">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-[#00A3FF] border border-blue-200 shadow-xs">
               {isInactive ? (
-                <AlertCircle className="h-8 w-8 text-[#EF4444]" />
+                <AlertCircle className="h-8 w-8 text-rose-600" />
               ) : (
-                <Clock className="h-8 w-8 text-[#FF6B35] animate-pulse" />
+                <Clock className="h-8 w-8 text-[#00A3FF] animate-pulse" />
               )}
             </div>
 
@@ -83,20 +83,20 @@ export default function PendingApprovalPage() {
               variant="outline"
               className={`mx-auto mb-2 text-xs uppercase tracking-wider font-bold ${
                 isInactive
-                  ? 'bg-rose-500/20 text-[#EF4444] border-[#EF4444]/30'
-                  : 'bg-[#FF6B35]/20 text-[#FF6B35] border-[#FF6B35]/30'
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : 'bg-blue-50 text-[#002855] border-blue-200'
               }`}
             >
               {isInactive ? 'Conta Inativa / Bloqueada' : 'Cadastro em Análise'}
             </Badge>
 
-            <CardTitle className="font-heading text-2xl font-black text-white">
+            <CardTitle className="font-heading text-2xl font-black text-[#002855]">
               {isInactive
                 ? 'Acesso Temporariamente Suspenso'
                 : 'Aguardando Liberação do Administrador'}
             </CardTitle>
 
-            <CardDescription className="font-sans text-slate-300 text-sm mt-2 leading-relaxed">
+            <CardDescription className="font-sans text-slate-500 text-sm mt-2 leading-relaxed">
               {isInactive
                 ? 'Sua conta de entregador está com status Inativo. Entre em contato com a equipe de logística para mais informações.'
                 : 'Recebemos suas informações e seus documentos (RG/CNH e selfie). Nossa equipe de gestão está conferindo os dados para liberação do acesso.'}
@@ -105,24 +105,24 @@ export default function PendingApprovalPage() {
 
           <CardContent className="space-y-6 pt-4">
             {/* Status Checklist Box */}
-            <div className="rounded-xl border border-[#1E2B58] bg-[#0A1128] p-4 space-y-3 text-xs font-sans">
-              <div className="flex items-center justify-between pb-2 border-b border-[#1E2B58]">
-                <span className="text-slate-400">Usuário:</span>
-                <span className="font-bold text-white">{user?.name || 'Não informado'}</span>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 text-xs font-sans">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <span className="text-slate-500">Usuário:</span>
+                <span className="font-bold text-[#002855]">{user?.name || 'Não informado'}</span>
               </div>
-              <div className="flex items-center justify-between pb-2 border-b border-[#1E2B58]">
-                <span className="text-slate-400">E-mail:</span>
-                <span className="font-bold text-white">{user?.email}</span>
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <span className="text-slate-500">E-mail:</span>
+                <span className="font-bold text-[#002855]">{user?.email}</span>
               </div>
-              <div className="flex items-center justify-between pb-2 border-b border-[#1E2B58]">
-                <span className="text-slate-400">Perfil:</span>
-                <span className="font-bold text-[#60A5FA]">🛵 Entregador Rotaly</span>
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                <span className="text-slate-500">Perfil:</span>
+                <span className="font-bold text-[#00A3FF]">🛵 Entregador Rotaly</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Status atual:</span>
+                <span className="text-slate-500">Status atual:</span>
                 <span
                   className={`font-bold uppercase ${
-                    isInactive ? 'text-[#EF4444]' : 'text-[#FF6B35]'
+                    isInactive ? 'text-rose-600' : 'text-[#002855]'
                   }`}
                 >
                   {user?.status || 'Pendente'}
@@ -131,17 +131,17 @@ export default function PendingApprovalPage() {
             </div>
 
             {/* Steps Info */}
-            <div className="space-y-2.5 text-xs text-slate-300 font-sans">
+            <div className="space-y-2.5 text-xs text-slate-600 font-sans">
               <div className="flex items-start gap-2.5">
-                <CheckCircle2 className="h-4 w-4 text-[#22C55E] shrink-0 mt-0.5" />
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
                 <span>Cadastro e envio de documentos concluídos com sucesso.</span>
               </div>
               <div className="flex items-start gap-2.5">
-                <FileText className="h-4 w-4 text-[#FF6B35] shrink-0 mt-0.5" />
+                <FileText className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
                 <span>Análise documental pelo time de validação e compliance da Rotaly.</span>
               </div>
               <div className="flex items-start gap-2.5">
-                <ShieldCheck className="h-4 w-4 text-[#60A5FA] shrink-0 mt-0.5" />
+                <ShieldCheck className="h-4 w-4 text-[#002855] shrink-0 mt-0.5" />
                 <span>Após aprovação, suas rotas e entregas serão liberadas imediatamente.</span>
               </div>
             </div>
@@ -151,7 +151,7 @@ export default function PendingApprovalPage() {
               <Button
                 onClick={handleCheckStatus}
                 disabled={isRefreshing}
-                className="w-full h-11 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-sm shadow-brand rounded-xl gap-2 transition duration-100"
+                className="w-full h-11 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-sm shadow-sm rounded-xl gap-2 transition duration-100"
               >
                 <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 {isRefreshing ? 'Verificando...' : 'Verificar Status de Aprovação'}
@@ -160,7 +160,7 @@ export default function PendingApprovalPage() {
               <Button
                 variant="outline"
                 onClick={logout}
-                className="w-full h-10 border-[#1E2B58] bg-[#0A1128] text-slate-200 hover:bg-[#121E46] text-xs font-bold rounded-xl"
+                className="w-full h-10 border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-xs font-bold rounded-xl"
               >
                 Voltar à Tela de Login
               </Button>
@@ -170,7 +170,7 @@ export default function PendingApprovalPage() {
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400">
+      <footer className="relative z-10 border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-500">
         <p>Rotaly — Entrega rápida, confiança garantida • Sistema de Credenciamento</p>
       </footer>
     </div>

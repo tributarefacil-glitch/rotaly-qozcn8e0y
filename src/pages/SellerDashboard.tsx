@@ -718,7 +718,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     .reduce((acc, o) => acc + (Number(o.total_price) || 0), 0)
 
   return (
-    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-white text-[#002855] flex flex-col">
       <Header />
 
       <div className="flex flex-1">
@@ -728,10 +728,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           {/* Top Title & Actions Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-white flex items-center gap-2.5">
+              <h1 className="font-heading text-2xl sm:text-3xl font-black tracking-tight text-[#002855] flex items-center gap-2.5">
                 Painel do Lojista Rotaly
               </h1>
-              <p className="font-sans text-xs sm:text-sm text-slate-400">
+              <p className="font-sans text-xs sm:text-sm text-slate-500">
                 Acompanhamento em tempo real de pedidos, mapa de frotas, Torre de Controle e
                 Relatórios.
               </p>
@@ -742,92 +742,86 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 variant="outline"
                 size="sm"
                 onClick={loadData}
-                className="h-10 min-h-[44px] gap-1.5 text-xs text-slate-300 border-[#1E2B58] hover:bg-[#1E2B58] hover:text-white"
+                className="h-10 min-h-[44px] gap-1.5 text-xs text-slate-700 border-slate-200 bg-white hover:bg-slate-100 hover:text-[#002855]"
               >
-                <RefreshCw className="h-3.5 w-3.5" />
+                <RefreshCw className="h-3.5 w-3.5 text-[#00A3FF]" />
                 Atualizar
               </Button>
-
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setIsBaseConfigOpen(!isBaseConfigOpen)}
-                className={`h-10 min-h-[44px] gap-1.5 text-xs border border-[#60A5FA]/40 font-bold ${
+                className={`h-10 min-h-[44px] gap-1.5 text-xs border border-slate-200 font-bold ${
                   isBaseConfigOpen
-                    ? 'bg-[#0052CC] text-white'
-                    : 'bg-[#0E1738] text-[#60A5FA] hover:bg-[#121E46]'
+                    ? 'bg-[#002855] text-white'
+                    : 'bg-white text-[#002855] hover:bg-slate-50'
                 }`}
                 title="Configurar a Base da Empresa e Endereço Final de Retorno da Rota"
               >
-                <Building className="h-3.5 w-3.5 text-[#FF6B35]" />
+                <Building className="h-3.5 w-3.5 text-[#00A3FF]" />
                 <span className="hidden lg:inline">Base &amp; Retorno:</span>
-                <span className="max-w-[140px] truncate text-white">
+                <span className="max-w-[140px] truncate text-slate-900 font-bold">
                   {baseAddresses.find((b) => b.id === selectedBaseId)?.name ||
                     (baseAddresses.length > 0 ? baseAddresses[0].name : 'Mais Saudavel')}
                 </span>
                 <Edit3 className="h-3 w-3 text-slate-400" />
               </Button>
-
               <Button
                 onClick={() => setIsCustomerSearchModalOpen(true)}
-                className="h-10 min-h-[44px] gap-1.5 bg-[#0A1128] hover:bg-[#121E46] text-[#60A5FA] border border-[#60A5FA]/40 font-bold text-xs rounded-input shadow-sm transition"
+                className="h-10 min-h-[44px] gap-1.5 bg-white hover:bg-slate-50 text-[#002855] border border-slate-200 font-bold text-xs rounded-xl shadow-xs transition"
                 title="Buscar e Editar Clientes por Nome, CPF, CNPJ e Telefone"
               >
-                <Search className="h-4 w-4 text-[#60A5FA]" />
+                <Search className="h-4 w-4 text-[#00A3FF]" />
                 <span className="hidden sm:inline">Buscar / Editar</span>
                 <span className="sm:hidden">Buscar</span>
               </Button>
-
               <Button
                 onClick={() => {
                   setCustomerToEdit(null)
                   setIsCreateCustomerModalOpen(true)
                 }}
-                className="h-10 min-h-[44px] gap-1.5 bg-[#0A1128] hover:bg-[#121E46] text-[#22C55E] border border-[#22C55E]/40 font-bold text-xs rounded-input shadow-sm transition"
+                className="h-10 min-h-[44px] gap-1.5 bg-white hover:bg-slate-50 text-emerald-700 border border-emerald-200 font-bold text-xs rounded-xl shadow-xs transition"
               >
-                <UserPlus className="h-4 w-4 text-[#22C55E]" />
+                <UserPlus className="h-4 w-4 text-emerald-600" />
                 <span>+ Cliente</span>
               </Button>
-
               <Button
                 onClick={() => setIsCreateCourierModalOpen(true)}
-                className="h-10 min-h-[44px] gap-1.5 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-brand rounded-input transition"
+                className="h-10 min-h-[44px] gap-1.5 bg-[#002855] hover:bg-[#001D3D] text-white font-bold text-xs shadow-xs rounded-xl transition"
               >
-                <Truck className="h-4 w-4 text-[#FF6B35]" />
+                <Truck className="h-4 w-4 text-[#00A3FF]" />
                 <span>+ Entregador</span>
               </Button>
-
               <Button
                 onClick={() => setIsOptimizerModalOpen(true)}
-                className="relative h-10 min-h-[44px] gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 rounded-input"
+                className="relative h-10 min-h-[44px] gap-1.5 bg-[#002855] hover:bg-[#001D3D] text-white font-bold text-xs shadow-xs rounded-xl"
               >
-                <Sparkles className="h-4 w-4 text-[#FBBF24]" />
+                <Sparkles className="h-4 w-4 text-[#00A3FF]" />
                 <span>Otimizar Rotas</span>
                 {pendingCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-900 text-[10px] font-black animate-pulse">
+                  <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-[#00A3FF] text-white text-[10px] font-black">
                     {pendingCount} aguardando
                   </span>
                 )}
               </Button>
-
               <Button
                 onClick={() => setIsCreateModalOpen(true)}
-                className="h-10 min-h-[44px] gap-2 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-black text-xs shadow-brand rounded-input transition duration-100"
+                className="h-10 min-h-[44px] gap-2 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs shadow-sm rounded-xl transition duration-100"
               >
                 <Plus className="h-4 w-4" />
                 <span>Nova Entrega / Venda</span>
-              </Button>
+              </Button>{' '}
             </div>
           </div>
 
-          {/* Quick Actions Ribbon (Rotaly Visual: Dark Navy #0A1128, Fita Verde→Amarelo→Laranja→Vermelho, Mínimo 44px mobile touch) */}
+          {/* Quick Actions Ribbon (Rotaly Visual Institucional Claro) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-heading flex items-center gap-2">
-                <Sparkles className="h-3.5 w-3.5 text-[#FF6B35]" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 font-heading flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 text-[#00A3FF]" />
                 Ações Rápidas do Lojista
               </span>
-              <span className="text-[11px] text-slate-500 hidden sm:inline">
+              <span className="text-[11px] text-slate-400 hidden sm:inline">
                 Acesso direto aos fluxos centrais da sua operação
               </span>
             </div>
@@ -837,20 +831,20 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               <button
                 type="button"
                 onClick={() => setIsCreateModalOpen(true)}
-                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#FF6B35]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#FF6B35]"
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-white border border-slate-200 hover:border-[#00A3FF] hover:shadow-md transition-all duration-200 shadow-xs min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#00A3FF]"
               >
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#FF6B35] to-[#E74C3C]" />
-                <div className="h-12 w-12 rounded-xl bg-[#FF6B35]/15 border border-[#FF6B35]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                  <Package className="h-6 w-6 text-[#FF6B35]" />
+                <div className="absolute top-0 left-0 right-0 h-1 bg-[#00A3FF]" />
+                <div className="h-12 w-12 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Package className="h-6 w-6 text-[#00A3FF]" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-heading font-black text-sm text-white group-hover:text-[#FF6B35] transition-colors">
+                    <span className="font-heading font-black text-sm text-[#002855] group-hover:text-[#00A3FF] transition-colors">
                       Nova Entrega / Venda
                     </span>
-                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#FF6B35] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                    <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-[#00A3FF] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                  <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
                     Registrar pedido, buscar cliente e calcular rota inteligente
                   </p>
                 </div>
@@ -863,20 +857,20 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                   setCustomerToEdit(null)
                   setIsCreateCustomerModalOpen(true)
                 }}
-                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#22C55E]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#22C55E]"
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-white border border-slate-200 hover:border-emerald-500 hover:shadow-md transition-all duration-200 shadow-xs min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <div className="absolute top-0 left-0 right-0 h-1 bg-[#22C55E]" />
-                <div className="h-12 w-12 rounded-xl bg-[#22C55E]/15 border border-[#22C55E]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                  <UserPlus className="h-6 w-6 text-[#22C55E]" />
+                <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
+                <div className="h-12 w-12 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <UserPlus className="h-6 w-6 text-emerald-600" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-heading font-black text-sm text-white group-hover:text-[#22C55E] transition-colors">
+                    <span className="font-heading font-black text-sm text-[#002855] group-hover:text-emerald-600 transition-colors">
                       Cadastrar Cliente
                     </span>
-                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#22C55E] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                    <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                  <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
                     Até 3 telefones, busca CEP e deduplicação automática
                   </p>
                 </div>
@@ -886,20 +880,20 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               <button
                 type="button"
                 onClick={() => setIsCreateCourierModalOpen(true)}
-                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#60A5FA]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#0052CC]"
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-white border border-slate-200 hover:border-[#002855] hover:shadow-md transition-all duration-200 shadow-xs min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#002855]"
               >
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#0052CC] to-[#60A5FA]" />
-                <div className="h-12 w-12 rounded-xl bg-[#0052CC]/20 border border-[#0052CC]/40 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                  <Truck className="h-6 w-6 text-[#60A5FA]" />
+                <div className="absolute top-0 left-0 right-0 h-1 bg-[#002855]" />
+                <div className="h-12 w-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Truck className="h-6 w-6 text-[#002855]" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-heading font-black text-sm text-white group-hover:text-[#60A5FA] transition-colors">
+                    <span className="font-heading font-black text-sm text-[#002855] group-hover:text-[#00A3FF] transition-colors">
                       Cadastrar Entregador
                     </span>
-                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#60A5FA] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                    <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-[#002855] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                  <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
                     Moto, Carro ou Caminhão, placa e acesso ao App
                   </p>
                 </div>
@@ -909,25 +903,25 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               <button
                 type="button"
                 onClick={() => setIsOptimizerModalOpen(true)}
-                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#FBBF24]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#FBBF24]"
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-white border border-slate-200 hover:border-[#00A3FF] hover:shadow-md transition-all duration-200 shadow-xs min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#00A3FF]"
               >
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#22C55E] via-[#FBBF24] to-[#FF6B35]" />
-                <div className="h-12 w-12 rounded-xl bg-[#FBBF24]/15 border border-[#FBBF24]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                  <Sparkles className="h-6 w-6 text-[#FBBF24]" />
+                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#002855] to-[#00A3FF]" />
+                <div className="h-12 w-12 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Sparkles className="h-6 w-6 text-[#00A3FF]" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-heading font-black text-sm text-white group-hover:text-[#FBBF24] transition-colors">
+                    <span className="font-heading font-black text-sm text-[#002855] group-hover:text-[#00A3FF] transition-colors">
                       Otimizar Rotas
                     </span>
                     {pendingCount > 0 && (
-                      <span className="px-1.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/40 text-[10px] font-bold">
+                      <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-[#002855] border border-blue-200 text-[10px] font-bold">
                         {pendingCount} pendente{pendingCount > 1 ? 's' : ''}
                       </span>
                     )}
-                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#FBBF24] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                    <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-[#00A3FF] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                  <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
                     Divisão por menor trajeto, mapa interativo e liberação para entregador
                   </p>
                 </div>
@@ -937,23 +931,23 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               <button
                 type="button"
                 onClick={() => setMainViewTab('fuel')}
-                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-[#0A1128] border border-[#1E2B58] hover:border-[#22C55E]/60 hover:bg-[#0E1738] transition-all duration-200 shadow-brand-dark min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-[#22C55E]"
+                className="group relative overflow-hidden text-left p-4 rounded-2xl bg-white border border-slate-200 hover:border-emerald-500 hover:shadow-md transition-all duration-200 shadow-xs min-h-[80px] flex items-center gap-3.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <div className="absolute top-0 left-0 right-0 h-1 bg-[#22C55E]" />
-                <div className="h-12 w-12 rounded-xl bg-[#22C55E]/15 border border-[#22C55E]/30 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                  <Fuel className="h-6 w-6 text-[#22C55E]" />
+                <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
+                <div className="h-12 w-12 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Fuel className="h-6 w-6 text-emerald-600" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-heading font-black text-sm text-white group-hover:text-[#22C55E] transition-colors">
+                    <span className="font-heading font-black text-sm text-[#002855] group-hover:text-emerald-600 transition-colors">
                       Controle de Gasolina
                     </span>
-                    <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-[#22C55E] border border-emerald-500/40 text-[10px] font-bold">
+                    <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
                       GPS
                     </span>
-                    <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-[#22C55E] group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
+                    <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all shrink-0 ml-auto" />
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                  <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
                     Saldo da frota, adiantamentos e gasto real por km via telemetria
                   </p>
                 </div>
@@ -962,13 +956,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           </div>
 
           {/* Navigation Tabs between Overview, Control Tower, Fuel and Reports */}
-          <div className="flex border-b border-[#1E2B58] gap-2 overflow-x-auto scrollbar-thin">
+          <div className="flex border-b border-slate-200 gap-2 overflow-x-auto scrollbar-thin">
             <button
               onClick={() => setMainViewTab('overview')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
                 mainViewTab === 'overview'
-                  ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'border-[#00A3FF] text-[#002855] bg-blue-50/50 rounded-t-lg'
+                  : 'border-transparent text-slate-500 hover:text-[#002855]'
               }`}
             >
               Painel Geral &amp; Pedidos
@@ -977,24 +971,24 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               onClick={() => setMainViewTab('control-tower')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
                 mainViewTab === 'control-tower'
-                  ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'border-[#00A3FF] text-[#002855] bg-blue-50/50 rounded-t-lg'
+                  : 'border-transparent text-slate-500 hover:text-[#002855]'
               }`}
             >
               Torre de Controle
-              <span className="h-2 w-2 rounded-full bg-[#22C55E] animate-ping inline-block ml-0.5" />
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping inline-block ml-0.5" />
             </button>
             <button
               onClick={() => setMainViewTab('fuel')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
                 mainViewTab === 'fuel'
-                  ? 'border-[#22C55E] text-[#22C55E] bg-[#0E1738]/50 rounded-t-lg font-black'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'border-emerald-500 text-emerald-700 bg-emerald-50/50 rounded-t-lg font-black'
+                  : 'border-transparent text-slate-500 hover:text-[#002855]'
               }`}
             >
               <Fuel className="h-3.5 w-3.5" />
               Controle de Combustível
-              <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-[#22C55E] text-[10px] font-mono">
+              <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-mono">
                 GPS
               </span>
             </button>
@@ -1002,8 +996,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               onClick={() => setMainViewTab('customers')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
                 mainViewTab === 'customers'
-                  ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'border-[#00A3FF] text-[#002855] bg-blue-50/50 rounded-t-lg'
+                  : 'border-transparent text-slate-500 hover:text-[#002855]'
               }`}
             >
               <Users className="h-3.5 w-3.5" />
@@ -1013,8 +1007,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               onClick={() => setMainViewTab('reports')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap ${
                 mainViewTab === 'reports'
-                  ? 'border-[#60A5FA] text-[#60A5FA] bg-[#0E1738]/50 rounded-t-lg'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'border-[#00A3FF] text-[#002855] bg-blue-50/50 rounded-t-lg'
+                  : 'border-transparent text-slate-500 hover:text-[#002855]'
               }`}
             >
               Relatórios Operacionais
