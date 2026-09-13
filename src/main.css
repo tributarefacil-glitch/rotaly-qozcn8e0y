@@ -355,3 +355,34 @@
     animation: spotlight 2s ease forwards;
   }
 }
+
+/* ==========================================================================
+   REMOÇÃO COMPLETA DE SELO/MARCA D'ÁGUA DE PLATAFORMA (SKIP / CRIADO COM)
+   Garante 100% de limpeza visual de qualquer badge ou widget flutuante injetado
+   ========================================================================== */
+[id*='skip-badge'],
+[id*='skip_badge'],
+[id*='skipBadge'],
+[id*='skip-watermark'],
+[class*='skip-badge'],
+[class*='skip_badge'],
+[class*='skipBadge'],
+[class*='skip-watermark'],
+[data-skip-badge],
+[data-skip-watermark],
+a[href*='goskip.dev'],
+a[href*='skip.dev'],
+iframe[src*='goskip.dev'],
+div:has(> a[href*='goskip.dev']),
+div:has(> a[href*='skip.dev']) {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: absolute !important;
+  z-index: -9999 !important;
+}

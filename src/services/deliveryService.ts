@@ -7,6 +7,7 @@ import type {
   UserRecord,
   OptimizedRouteResult,
   AppSettingsRecord,
+  SiteContentRecord,
   FuelAdvanceRecord,
   ReviewRecord,
   OffRouteEventRecord,
@@ -828,6 +829,74 @@ export const deliveryService = {
       category: 'moto',
       pricePerLiter: settings?.moto_fuel_price || baseFallbackPrice,
       consumptionKml: settings?.moto_consumption_kml || settings?.fuel_consumption_kml || 35.0,
+    }
+  },
+
+  // Site Content (Quem Somos e Contato editáveis pelo Admin)
+  async getSiteContent(): Promise<SiteContentRecord> {
+    const defaultSiteContent: SiteContentRecord = {
+      id: 'default',
+      key: 'main',
+      about_title: 'Tecnologia que move cada entrega',
+      about_subtitle:
+        'A Rotaly nasceu com um objetivo claro: simplificar a logística urbana de ponta a ponta.',
+      about_paragraph_1:
+        'Unimos inteligência de rotas viárias, telemetria em tempo real e comprovantes digitais em uma plataforma unificada. Do momento em que o pedido sai do balcão até a assinatura do cliente final, garantimos transparência total, redução de até 40% nos gastos com combustível e previsibilidade para operadores e lojistas.',
+      about_paragraph_2:
+        'Nossa tecnologia foi desenhada para o dinamismo do dia a dia de farmácias, comércios locais e distribuidoras. Sem atritos, sem planilhas soltas e sem retrabalho, conectamos administradores, gestores de despacho e entregadores de forma intuitiva e eficiente.',
+      about_paragraph_3:
+        'Com sede no Rio de Janeiro e atendimento em expansão por todo o Brasil, colocamos controle operacional, auditoria de quilometragem e tranquilidade ao alcance de frotas de todos os tamanhos.',
+      phone: '(21) 4000-1234',
+      whatsapp: '21999999999',
+      email: 'contato@rotaly.com.br',
+      address: 'Rio de Janeiro - RJ, Brasil',
+      opening_hours: 'Segunda a Sábado, das 08:00 às 20:00',
+      facebook_url: 'https://facebook.com',
+      instagram_url: 'https://instagram.com',
+      linkedin_url: 'https://linkedin.com',
+      created: '',
+      updated: '',
+      collectionId: '',
+      collectionName: 'site_content',
+    }
+
+    try {
+      const records = await pb.collection<SiteContentRecord>('site_content').getList(1, 1, {
+        filter: "key = 'main'",
+        requestKey: null,
+      })
+      if (records.items.length > 0) {
+        return {
+          ...defaultSiteContent,
+          ...records.items[0],
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar site_content:', e)
+    }
+
+    return defaultSiteContent
+  },
+
+  async updateSiteContent(data: Partial<SiteContentRecord>): Promise<SiteContentRecord> {
+    try {
+      const records = await pb.collection<SiteContentRecord>('site_content').getList(1, 1, {
+        filter: "key = 'main'",
+        requestKey: null,
+      })
+      if (records.items.length > 0) {
+        return await pb
+          .collection<SiteContentRecord>('site_content')
+          .update(records.items[0].id, data)
+      } else {
+        return await pb.collection<SiteContentRecord>('site_content').create({
+          key: 'main',
+          ...data,
+        })
+      }
+    } catch (e) {
+      console.error('Erro ao salvar site_content:', e)
+      throw e
     }
   },
 

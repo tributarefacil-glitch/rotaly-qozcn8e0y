@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-13T16:37:16.088Z",
+  "generatedAt": "2026-09-13T17:05:12.628Z",
   "collections": [
     {
       "name": "users",
@@ -1751,6 +1751,124 @@
         }
       ],
       "indexes": ["CREATE INDEX idx_relatorios_empresa ON relatorios (empresa_id)"]
+    },
+    {
+      "name": "site_content",
+      "type": "base",
+      "apiRules": {
+        "list": "",
+        "view": "",
+        "create": "@request.auth.role = 'admin'",
+        "update": "@request.auth.role = 'admin'",
+        "delete": "@request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "key",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "about_title",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "about_subtitle",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "about_paragraph_1",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "about_paragraph_2",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "about_paragraph_3",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "phone",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "whatsapp",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "email",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "address",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "opening_hours",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "facebook_url",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "instagram_url",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "linkedin_url",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "extra",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE UNIQUE INDEX idx_site_content_key ON site_content (key)"]
     }
   ]
 }

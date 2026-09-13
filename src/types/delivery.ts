@@ -246,6 +246,24 @@ export interface VehicleFuelParam {
   consumptionKml: number
 }
 
+export interface SiteContentRecord extends RecordModel {
+  key: string
+  about_title?: string
+  about_subtitle?: string
+  about_paragraph_1?: string
+  about_paragraph_2?: string
+  about_paragraph_3?: string
+  phone?: string
+  whatsapp?: string
+  email?: string
+  address?: string
+  opening_hours?: string
+  facebook_url?: string
+  instagram_url?: string
+  linkedin_url?: string
+  extra?: Record<string, unknown>
+}
+
 export interface AppSettingsRecord extends RecordModel {
   key: string
   fuel_price_per_liter: number

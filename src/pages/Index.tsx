@@ -26,12 +26,17 @@ import {
   Phone,
   Globe,
   Facebook,
+  Clock,
+  MessageCircle,
+  Building2,
   Instagram,
   Linkedin,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { RotalyLogo } from '@/components/RotalyLogo'
 import { rotalyLogoImg } from '@/assets/logo-rotaly'
+import { deliveryService } from '@/services/deliveryService'
+import type { SiteContentRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -87,6 +92,50 @@ export default function Index() {
 
   // Public Tracking Search state
   const [trackingCode, setTrackingCode] = useState('')
+
+  // Site Content dinâmico do PocketBase com fallback
+  const [siteContent, setSiteContent] = useState<SiteContentRecord>({
+    id: 'default',
+    key: 'main',
+    about_title: 'Tecnologia que move cada entrega',
+    about_subtitle:
+      'A Rotaly nasceu com um objetivo claro: simplificar a logística urbana de ponta a ponta.',
+    about_paragraph_1:
+      'Unimos inteligência de rotas viárias, telemetria em tempo real e comprovantes digitais em uma plataforma unificada. Do momento em que o pedido sai do balcão até a assinatura do cliente final, garantimos transparência total, redução de até 40% nos gastos com combustível e previsibilidade para operadores e lojistas.',
+    about_paragraph_2:
+      'Nossa tecnologia foi desenhada para o dinamismo do dia a dia de farmácias, comércios locais e distribuidoras. Sem atritos, sem planilhas soltas e sem retrabalho, conectamos administradores, gestores de despacho e entregadores de forma intuitiva e eficiente.',
+    about_paragraph_3:
+      'Com sede no Rio de Janeiro e atendimento em expansão por todo o Brasil, colocamos controle operacional, auditoria de quilometragem e tranquilidade ao alcance de frotas de todos os tamanhos.',
+    phone: '(21) 4000-1234',
+    whatsapp: '21999999999',
+    email: 'contato@rotaly.com.br',
+    address: 'Rio de Janeiro - RJ, Brasil',
+    opening_hours: 'Segunda a Sábado, das 08:00 às 20:00',
+    facebook_url: 'https://facebook.com',
+    instagram_url: 'https://instagram.com',
+    linkedin_url: 'https://linkedin.com',
+    created: '',
+    updated: '',
+    collectionId: '',
+    collectionName: 'site_content',
+  })
+
+  useEffect(() => {
+    let isMounted = true
+    deliveryService
+      .getSiteContent()
+      .then((data) => {
+        if (isMounted && data) {
+          setSiteContent((prev) => ({ ...prev, ...data }))
+        }
+      })
+      .catch((err) => {
+        console.warn('Usando conteúdo institucional padrão:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   // Handle opening a specific profile card
   const handleSelectProfile = (p: 'admin' | 'seller' | 'courier') => {
@@ -265,12 +314,7 @@ export default function Index() {
             onClick={() => setSelectedProfile(null)}
             className="flex items-center gap-2 group transition-opacity"
           >
-            <img
-              src={rotalyLogoImg}
-              alt="Rotaly — Sua rota, nossa entrega"
-              className="h-10 sm:h-12 w-auto object-contain select-none"
-              draggable={false}
-            />
+            <RotalyLogo size="lg" theme="light" showTagline={false} />
           </Link>
 
           {/* Center Navigation Links (desktop) */}
@@ -1030,6 +1074,248 @@ export default function Index() {
                 </div>
               </div>
             </section>
+
+            {/* ================= SEÇÃO DEDICADA: QUEM SOMOS ================= */}
+            <section
+              id="quem-somos"
+              className="py-16 sm:py-24 bg-gradient-to-b from-white via-slate-50/70 to-white border-t border-slate-200/70 scroll-mt-20"
+            >
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-center">
+                  <div className="lg:col-span-7 space-y-6">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#002855]/10 border border-[#002855]/20 text-[#002855] text-xs font-bold uppercase tracking-wider">
+                      <Building2 className="h-3.5 w-3.5 text-[#00A3FF]" />
+                      Institucional Rotaly
+                    </div>
+                    <h2 className="text-2xl sm:text-4xl font-extrabold text-[#002855] font-heading tracking-tight leading-tight">
+                      {siteContent.about_title || 'Tecnologia que move cada entrega'}
+                    </h2>
+                    {siteContent.about_subtitle && (
+                      <p className="text-base sm:text-lg text-[#00A3FF] font-semibold leading-relaxed">
+                        {siteContent.about_subtitle}
+                      </p>
+                    )}
+                    <div className="space-y-4 text-slate-600 text-sm sm:text-base leading-relaxed">
+                      {siteContent.about_paragraph_1 && <p>{siteContent.about_paragraph_1}</p>}
+                      {siteContent.about_paragraph_2 && <p>{siteContent.about_paragraph_2}</p>}
+                      {siteContent.about_paragraph_3 && <p>{siteContent.about_paragraph_3}</p>}
+                    </div>
+                    <div className="pt-2 flex flex-wrap gap-4">
+                      <Button
+                        type="button"
+                        onClick={() => scrollToSection('contato')}
+                        className="bg-[#002855] hover:bg-[#001D3D] text-white font-bold h-11 px-6 rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+                      >
+                        <MessageCircle className="h-4 w-4 text-[#00A3FF]" />
+                        <span>Falar com Nossa Equipe</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={scrollToTracking}
+                        className="border-slate-300 hover:border-[#002855] text-[#002855] font-bold h-11 px-5 rounded-xl transition-all flex items-center gap-2 cursor-pointer"
+                      >
+                        <Search className="h-4 w-4 text-[#00A3FF]" />
+                        <span>Rastrear Encomenda</span>
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="lg:col-span-5">
+                    <div className="relative rounded-3xl bg-gradient-to-br from-[#002855] to-[#001D3D] p-8 text-white shadow-2xl overflow-hidden border border-[#002855]/30">
+                      <div className="absolute -top-12 -right-12 w-48 h-48 bg-[#00A3FF]/20 rounded-full blur-3xl pointer-events-none" />
+                      <div className="relative space-y-6">
+                        <div className="inline-flex p-3 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/15">
+                          <RotalyLogo size="md" theme="dark" showTagline={false} />
+                        </div>
+                        <h3 className="text-xl font-bold font-heading text-white">
+                          Conectando operações com precisão e economia
+                        </h3>
+                        <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-sans">
+                          Desenvolvemos soluções para quem vive a logística na prática. Do despacho
+                          automatizado à prestação de contas com telemetria real.
+                        </p>
+                        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/10 text-xs">
+                          <div className="space-y-1">
+                            <span className="text-2xl font-black text-[#00A3FF] block font-heading">
+                              40%
+                            </span>
+                            <span className="text-slate-300">Menos gastos em combustível</span>
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-2xl font-black text-[#00A3FF] block font-heading">
+                              100%
+                            </span>
+                            <span className="text-slate-300">Telemetria e fotos auditadas</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* ================= SEÇÃO DEDICADA: FALE CONOSCO / CONTATO ================= */}
+            <section
+              id="contato"
+              className="py-16 sm:py-24 bg-white border-t border-slate-200/80 scroll-mt-20"
+            >
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="text-center max-w-2xl mx-auto space-y-3 mb-12">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#00A3FF]/15 border border-[#00A3FF]/30 text-[#0066AA] text-xs font-bold uppercase tracking-wider">
+                    <Phone className="h-3.5 w-3.5 text-[#00A3FF]" />
+                    Atendimento Direto
+                  </div>
+                  <h2 className="text-2xl sm:text-4xl font-extrabold text-[#002855] font-heading tracking-tight">
+                    Fale Conosco
+                  </h2>
+                  <p className="text-sm sm:text-base text-slate-600">
+                    Dúvidas sobre a plataforma, suporte ou planos personalizados para sua frota?
+                    Nossa equipe está pronta para atender você.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {/* WhatsApp */}
+                  {siteContent.whatsapp && (
+                    <a
+                      href={`https://wa.me/${siteContent.whatsapp.replace(/\D/g, '')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="group rounded-2xl bg-white border-2 border-slate-200 hover:border-[#00A3FF] p-6 shadow-sm hover:shadow-lg transition-all duration-200 flex flex-col justify-between space-y-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                          <MessageCircle className="h-6 w-6" />
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border-emerald-200"
+                        >
+                          WhatsApp Oficial
+                        </Badge>
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="font-heading font-bold text-[#002855] text-base group-hover:text-[#00A3FF] transition-colors">
+                          Mensagem Rápida
+                        </h4>
+                        <p className="text-xs text-slate-500">Clique para abrir no WhatsApp</p>
+                        <p className="text-sm font-semibold text-slate-800 pt-1">
+                          {siteContent.whatsapp}
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold text-[#00A3FF] inline-flex items-center gap-1 group-hover:underline">
+                        Iniciar conversa →
+                      </span>
+                    </a>
+                  )}
+
+                  {/* Telefone */}
+                  {siteContent.phone && (
+                    <a
+                      href={`tel:${siteContent.phone.replace(/\D/g, '')}`}
+                      className="group rounded-2xl bg-white border-2 border-slate-200 hover:border-[#002855] p-6 shadow-sm hover:shadow-lg transition-all duration-200 flex flex-col justify-between space-y-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#002855]/10 text-[#002855] group-hover:bg-[#002855] group-hover:text-white transition-colors">
+                          <Phone className="h-6 w-6" />
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] font-bold text-slate-700 bg-slate-50 border-slate-200"
+                        >
+                          Ligação
+                        </Badge>
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="font-heading font-bold text-[#002855] text-base">
+                          Central de Atendimento
+                        </h4>
+                        <p className="text-xs text-slate-500">Atendimento telefônico direto</p>
+                        <p className="text-sm font-semibold text-slate-800 pt-1">
+                          {siteContent.phone}
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold text-[#002855] inline-flex items-center gap-1 group-hover:underline">
+                        Ligar agora →
+                      </span>
+                    </a>
+                  )}
+
+                  {/* E-mail */}
+                  {siteContent.email && (
+                    <a
+                      href={`mailto:${siteContent.email}`}
+                      className="group rounded-2xl bg-white border-2 border-slate-200 hover:border-[#00A3FF] p-6 shadow-sm hover:shadow-lg transition-all duration-200 flex flex-col justify-between space-y-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#00A3FF]/15 text-[#00A3FF] group-hover:bg-[#00A3FF] group-hover:text-white transition-colors">
+                          <Mail className="h-6 w-6" />
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] font-bold text-[#0066AA] bg-sky-50 border-sky-200"
+                        >
+                          E-mail
+                        </Badge>
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="font-heading font-bold text-[#002855] text-base group-hover:text-[#00A3FF] transition-colors">
+                          Suporte & Parcerias
+                        </h4>
+                        <p className="text-xs text-slate-500">Envie suas solicitações</p>
+                        <p className="text-sm font-semibold text-slate-800 pt-1 break-all">
+                          {siteContent.email}
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold text-[#00A3FF] inline-flex items-center gap-1 group-hover:underline">
+                        Enviar e-mail →
+                      </span>
+                    </a>
+                  )}
+
+                  {/* Endereço & Horário */}
+                  <div className="rounded-2xl bg-slate-50 border-2 border-slate-200 p-6 shadow-sm flex flex-col justify-between space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#002855]/10 text-[#002855]">
+                        <Clock className="h-6 w-6 text-[#002855]" />
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] font-bold text-slate-600 bg-white border-slate-200"
+                      >
+                        Horário
+                      </Badge>
+                    </div>
+                    <div className="space-y-2">
+                      <div>
+                        <h4 className="font-heading font-bold text-[#002855] text-sm">
+                          Horário de Funcionamento
+                        </h4>
+                        <p className="text-xs text-slate-600 mt-0.5">
+                          {siteContent.opening_hours || 'Segunda a Sábado, das 08:00 às 20:00'}
+                        </p>
+                      </div>
+                      {siteContent.address && (
+                        <div className="pt-2 border-t border-slate-200">
+                          <h5 className="font-heading font-bold text-[#002855] text-xs flex items-center gap-1">
+                            <MapPin className="h-3 w-3 text-[#00A3FF]" />
+                            Localização
+                          </h5>
+                          <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+                            {siteContent.address}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-semibold text-slate-500">
+                      Atendimento em todo o Brasil
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
           </>
         )}
       </main>
@@ -1045,18 +1331,14 @@ export default function Index() {
             {/* Column 1: Brand & Sobre */}
             <div className="space-y-4">
               <div className="flex items-center">
-                {/* Logo white box container for clear contrast */}
-                <div className="bg-white rounded-xl px-2.5 py-1.5 inline-flex items-center justify-center shadow-sm">
-                  <img
-                    src={rotalyLogoImg}
-                    alt="Rotaly — Sua rota, nossa entrega"
-                    className="h-9 w-auto object-contain"
-                  />
+                {/* Logo container para rodapé escuro */}
+                <div className="bg-white rounded-xl px-3 py-1.5 inline-flex items-center justify-center shadow-sm">
+                  <RotalyLogo size="md" theme="light" showTagline={false} />
                 </div>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed font-sans">
-                Plataforma completa de gestão e rastreamento para operações de entrega com
-                tecnologia, segurança e inteligência.
+                {siteContent.about_subtitle ||
+                  'Plataforma completa de gestão e rastreamento para operações de entrega com tecnologia, segurança e inteligência.'}
               </p>
               <p className="text-[11px] text-[#00A3FF] font-semibold">Sua rota, nossa entrega.</p>
             </div>
@@ -1150,57 +1432,96 @@ export default function Index() {
             </div>
 
             {/* Column 4: Fale conosco & Siga-nos */}
-            <div id="contato" className="space-y-3">
+            <div className="space-y-3">
               <h4 className="font-heading font-bold text-sm text-white uppercase tracking-wider">
                 Fale conosco
               </h4>
               <ul className="space-y-2 text-xs text-slate-300 font-sans">
-                <li className="flex items-center gap-2">
-                  <Phone className="h-3.5 w-3.5 text-[#00A3FF] shrink-0" />
-                  <span>(21) 4000-1234</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <Mail className="h-3.5 w-3.5 text-[#00A3FF] shrink-0" />
-                  <span>contato@rotaly.com.br</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <MapPin className="h-3.5 w-3.5 text-[#00A3FF] shrink-0 mt-0.5" />
-                  <span>Rio de Janeiro - RJ, Brasil</span>
-                </li>
+                {siteContent.whatsapp && (
+                  <li>
+                    <a
+                      href={`https://wa.me/${siteContent.whatsapp.replace(/\D/g, '')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 hover:text-[#00A3FF] transition-colors"
+                    >
+                      <MessageCircle className="h-3.5 w-3.5 text-[#00A3FF] shrink-0" />
+                      <span>WhatsApp: {siteContent.whatsapp}</span>
+                    </a>
+                  </li>
+                )}
+                {siteContent.phone && (
+                  <li>
+                    <a
+                      href={`tel:${siteContent.phone.replace(/\D/g, '')}`}
+                      className="inline-flex items-center gap-2 hover:text-[#00A3FF] transition-colors"
+                    >
+                      <Phone className="h-3.5 w-3.5 text-[#00A3FF] shrink-0" />
+                      <span>{siteContent.phone}</span>
+                    </a>
+                  </li>
+                )}
+                {siteContent.email && (
+                  <li>
+                    <a
+                      href={`mailto:${siteContent.email}`}
+                      className="inline-flex items-center gap-2 hover:text-[#00A3FF] transition-colors"
+                    >
+                      <Mail className="h-3.5 w-3.5 text-[#00A3FF] shrink-0" />
+                      <span>{siteContent.email}</span>
+                    </a>
+                  </li>
+                )}
+                {siteContent.address && (
+                  <li className="flex items-start gap-2">
+                    <MapPin className="h-3.5 w-3.5 text-[#00A3FF] shrink-0 mt-0.5" />
+                    <span>{siteContent.address}</span>
+                  </li>
+                )}
               </ul>
 
-              <div className="pt-2">
-                <span className="text-xs font-semibold text-slate-200 block mb-2">Siga-nos</span>
-                <div className="flex items-center gap-2.5">
-                  <a
-                    href="https://facebook.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="Facebook Rotaly"
-                    className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
-                  >
-                    <Facebook className="h-4 w-4" />
-                  </a>
-                  <a
-                    href="https://instagram.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="Instagram Rotaly"
-                    className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
-                  >
-                    <Instagram className="h-4 w-4" />
-                  </a>
-                  <a
-                    href="https://linkedin.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="LinkedIn Rotaly"
-                    className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
-                  >
-                    <Linkedin className="h-4 w-4" />
-                  </a>
+              {(siteContent.facebook_url ||
+                siteContent.instagram_url ||
+                siteContent.linkedin_url) && (
+                <div className="pt-2">
+                  <span className="text-xs font-semibold text-slate-200 block mb-2">Siga-nos</span>
+                  <div className="flex items-center gap-2.5">
+                    {siteContent.facebook_url && (
+                      <a
+                        href={siteContent.facebook_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="Facebook Rotaly"
+                        className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+                      >
+                        <Facebook className="h-4 w-4" />
+                      </a>
+                    )}
+                    {siteContent.instagram_url && (
+                      <a
+                        href={siteContent.instagram_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="Instagram Rotaly"
+                        className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+                      >
+                        <Instagram className="h-4 w-4" />
+                      </a>
+                    )}
+                    {siteContent.linkedin_url && (
+                      <a
+                        href={siteContent.linkedin_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label="LinkedIn Rotaly"
+                        className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+                      >
+                        <Linkedin className="h-4 w-4" />
+                      </a>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
 
