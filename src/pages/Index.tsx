@@ -10,22 +10,39 @@ import {
   ArrowLeft,
   Search,
   Zap,
-  MapPin,
   CheckCircle2,
-  Sparkles,
   Eye,
   EyeOff,
-  UserCheck,
-  Building2,
-  KeyRound,
+  Fuel,
+  TrendingUp,
+  Activity,
+  AlertTriangle,
+  Gauge,
+  MapPin,
+  Camera,
+  ChevronDown,
+  Menu,
+  X,
+  Phone,
+  Globe,
+  Facebook,
+  Instagram,
+  Linkedin,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { RotalyLogo } from '@/components/RotalyLogo'
+import { rotalyLogoImg } from '@/assets/logo-rotaly'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 
@@ -55,7 +72,7 @@ export default function Index() {
     }
   }, [isAuthenticated, role])
 
-  // Selected Profile for the dedicated login view: null means grid of 3 cards
+  // Selected Profile for dedicated login view: null means full landing page
   const [selectedProfile, setSelectedProfile] = useState<SelectedProfile>(null)
 
   // Login form states
@@ -64,6 +81,9 @@ export default function Index() {
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
+
+  // Mobile navigation drawer
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   // Public Tracking Search state
   const [trackingCode, setTrackingCode] = useState('')
@@ -74,6 +94,8 @@ export default function Index() {
     setEmail('')
     setPassword('')
     setLoginError(null)
+    setMobileMenuOpen(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   // Quick preset logins for easy demoing
@@ -165,6 +187,31 @@ export default function Index() {
     navigate(`/track/${trackingCode.trim().toUpperCase()}`)
   }
 
+  const scrollToTracking = () => {
+    setSelectedProfile(null)
+    const el = document.getElementById('rastreamento')
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' })
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+    const input = document.getElementById('tracking-input')
+    if (input) {
+      setTimeout(() => input.focus(), 300)
+    }
+  }
+
+  const scrollToSection = (id: string) => {
+    setSelectedProfile(null)
+    setMobileMenuOpen(false)
+    setTimeout(() => {
+      const el = document.getElementById(id)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth' })
+      }
+    }, 50)
+  }
+
   // Profile metadata for the form card
   const profileConfig: Record<
     'admin' | 'seller' | 'courier',
@@ -172,7 +219,6 @@ export default function Index() {
       title: string
       subtitle: string
       icon: React.ElementType
-      gradient: string
       badgeBg: string
       btnBg: string
       defaultEmail: string
@@ -181,11 +227,10 @@ export default function Index() {
   > = {
     admin: {
       title: 'Administrador',
-      subtitle: 'Acesso gerencial, aprovações e telemetria',
+      subtitle: 'Acesso gerencial, aprovações e telemetria da frota',
       icon: Shield,
-      gradient: 'from-rose-500 to-red-600',
-      badgeBg: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
-      btnBg: 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/30',
+      badgeBg: 'bg-[#002855]/10 text-[#002855] border-[#002855]/30',
+      btnBg: 'bg-[#002855] hover:bg-[#001D3D] text-white',
       defaultEmail: 'tributarefacil@gmail.com',
       accessInfo: 'Conta administrativa master pré-configurada.',
     },
@@ -193,461 +238,977 @@ export default function Index() {
       title: 'Lojista & Embarcador',
       subtitle: 'Gestão de pedidos, despacho e rotas de entrega',
       icon: Store,
-      gradient: 'from-blue-600 to-indigo-600',
-      badgeBg: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
-      btnBg: 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/30',
+      badgeBg: 'bg-[#00A3FF]/15 text-[#0066AA] border-[#00A3FF]/40',
+      btnBg: 'bg-[#00A3FF] hover:bg-[#008CE0] text-white shadow-sm',
       defaultEmail: 'vendedor@logistica.com',
       accessInfo: 'Cadastro de lojista realizado pelo administrador da plataforma.',
     },
     courier: {
       title: 'Entregador & Motorista',
-      subtitle: 'App mobile com GPS, rotas otimizadas e comprovantes',
+      subtitle: 'App mobile com GPS, rotas sequenciais e comprovantes digitais',
       icon: Truck,
-      gradient: 'from-purple-600 to-indigo-600',
-      badgeBg: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
-      btnBg: 'bg-purple-600 hover:bg-purple-500 shadow-purple-600/30',
+      badgeBg: 'bg-emerald-500/15 text-emerald-700 border-emerald-500/40',
+      btnBg: 'bg-[#002855] hover:bg-[#001D3D] text-white',
       defaultEmail: 'pimentaverdecentro@gmail.com',
       accessInfo: 'Cadastro de entregador realizado pelo administrador ou lojista.',
     },
   }
 
   return (
-    <div className="min-h-screen bg-[#070D1E] text-slate-100 flex flex-col justify-between selection:bg-[#0052CC] selection:text-white relative overflow-hidden">
-      {/* Background glow graphics */}
-      <div className="absolute -top-40 -left-40 w-96 h-96 bg-[#0052CC]/25 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-1/2 -right-40 w-96 h-96 bg-[#FF6B35]/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-[#22C55E]/15 rounded-full blur-3xl pointer-events-none" />
-
-      {/* Top Navbar */}
-      <header className="relative z-10 w-full border-b border-[#1E2B58] bg-[#0A1128]/90 backdrop-blur-md px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+    <div className="min-h-screen bg-white text-[#002855] flex flex-col justify-between selection:bg-[#00A3FF] selection:text-white font-sans antialiased">
+      {/* ================= TOP NAVBAR ================= */}
+      <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-[0_2px_12px_rgba(0,40,85,0.04)]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
+          {/* Logo brand */}
           <Link
             to="/"
             onClick={() => setSelectedProfile(null)}
-            className="flex items-center hover:opacity-95"
+            className="flex items-center gap-2 group transition-opacity"
           >
-            <RotalyLogo size="md" theme="dark" showTagline={false} />
+            <img
+              src={rotalyLogoImg}
+              alt="Rotaly — Sua rota, nossa entrega"
+              className="h-10 sm:h-12 w-auto object-contain select-none"
+              draggable={false}
+            />
           </Link>
 
-          <div className="flex items-center gap-3">
+          {/* Center Navigation Links (desktop) */}
+          <nav className="hidden lg:flex items-center gap-8 text-sm font-medium text-slate-700">
+            <button
+              type="button"
+              onClick={() => scrollToSection('plataforma')}
+              className="hover:text-[#00A3FF] transition-colors"
+            >
+              Plataforma
+            </button>
+
+            {/* Soluções Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger className="flex items-center gap-1 hover:text-[#00A3FF] transition-colors outline-none cursor-pointer">
+                <span>Soluções</span>
+                <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="w-56 p-2 bg-white shadow-xl border-slate-100 rounded-xl"
+              >
+                <DropdownMenuItem
+                  onClick={() => handleSelectProfile('admin')}
+                  className="cursor-pointer py-2.5 rounded-lg text-slate-700 hover:text-[#002855] hover:bg-slate-50 font-medium"
+                >
+                  <Shield className="h-4 w-4 mr-2.5 text-[#002855]" />
+                  <span>Para Administradores</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleSelectProfile('seller')}
+                  className="cursor-pointer py-2.5 rounded-lg text-slate-700 hover:text-[#002855] hover:bg-slate-50 font-medium"
+                >
+                  <Store className="h-4 w-4 mr-2.5 text-[#00A3FF]" />
+                  <span>Para Lojistas & Farmácias</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleSelectProfile('courier')}
+                  className="cursor-pointer py-2.5 rounded-lg text-slate-700 hover:text-[#002855] hover:bg-slate-50 font-medium"
+                >
+                  <Truck className="h-4 w-4 mr-2.5 text-emerald-600" />
+                  <span>Para Entregadores & Frotas</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <button
+              type="button"
+              onClick={() => scrollToSection('recursos')}
+              className="hover:text-[#00A3FF] transition-colors"
+            >
+              Recursos
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToSection('quem-somos')}
+              className="hover:text-[#00A3FF] transition-colors"
+            >
+              Quem somos
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToSection('contato')}
+              className="hover:text-[#00A3FF] transition-colors"
+            >
+              Contato
+            </button>
+          </nav>
+
+          {/* Right Action Buttons */}
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            {/* Dedicated "Entrar" dropdown or direct panel link */}
             {isAuthenticated ? (
               <Button
                 onClick={() => redirectByRoleAndStatus(role)}
-                className="bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs shadow-md"
+                className="bg-[#002855] hover:bg-[#001D3D] text-white text-xs sm:text-sm font-semibold h-10 px-4 rounded-xl shadow-sm transition-all"
               >
                 Acessar Meu Painel →
               </Button>
             ) : (
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-xs border-slate-700 text-slate-300">
-                  🔒 Acesso Restrito por Convite
-                </Badge>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="h-10 px-4 sm:px-5 border-slate-300 hover:border-[#002855] hover:bg-slate-50 text-slate-800 font-semibold text-xs sm:text-sm rounded-xl transition-all cursor-pointer"
+                  >
+                    Entrar
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="end"
+                  className="w-60 p-2 bg-white shadow-xl border-slate-100 rounded-xl"
+                >
+                  <div className="px-2 py-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    Escolha seu acesso
+                  </div>
+                  <DropdownMenuItem
+                    onClick={() => handleSelectProfile('admin')}
+                    className="cursor-pointer py-2.5 rounded-lg text-slate-700 hover:text-[#002855] hover:bg-slate-50 font-medium text-xs"
+                  >
+                    <Shield className="h-4 w-4 mr-2.5 text-[#002855]" />
+                    <span>Entrar como Administrador</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => handleSelectProfile('seller')}
+                    className="cursor-pointer py-2.5 rounded-lg text-slate-700 hover:text-[#002855] hover:bg-slate-50 font-medium text-xs"
+                  >
+                    <Store className="h-4 w-4 mr-2.5 text-[#00A3FF]" />
+                    <span>Entrar como Lojista</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => handleSelectProfile('courier')}
+                    className="cursor-pointer py-2.5 rounded-lg text-slate-700 hover:text-[#002855] hover:bg-slate-50 font-medium text-xs"
+                  >
+                    <Truck className="h-4 w-4 mr-2.5 text-emerald-600" />
+                    <span>Entrar como Entregador</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
-          </div>
-        </div>
-      </header>
 
-      {/* Main Content Area */}
-      <main className="relative z-10 flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 flex flex-col justify-center">
-        {selectedProfile ? (
-          /* ================= DEDICATED PROFILE LOGIN FORM ================= */
-          <div className="max-w-md mx-auto w-full transition-all duration-200">
+            {/* ATALHO FIXO NO MENU: Rastrear Pedido em Ciano #00A3FF */}
             <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelectedProfile(null)}
-              className="mb-4 text-xs text-[#0052CC] hover:bg-blue-50 gap-1.5 font-bold rounded-input"
+              type="button"
+              onClick={scrollToTracking}
+              className="h-10 px-4 sm:px-5 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs sm:text-sm rounded-xl shadow-[0_4px_14px_rgba(0,163,255,0.35)] hover:shadow-[0_6px_20px_rgba(0,163,255,0.45)] transition-all flex items-center gap-2 cursor-pointer"
             >
-              <ArrowLeft className="h-4 w-4" />
-              Escolher outro perfil de acesso
+              <Search className="h-4 w-4" />
+              <span className="whitespace-nowrap">Rastrear Pedido</span>
             </Button>
 
-            {(() => {
-              const cfg = profileConfig[selectedProfile]
-              const IconComponent = cfg.icon
-
-              return (
-                <Card className="border border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark rounded-2xl relative overflow-hidden">
-                  <div className="h-1.5 w-full bg-gradient-to-r from-[#22C55E] via-[#FBBF24] via-[#FF6B35] to-[#EF4444]" />
-
-                  <CardHeader className="space-y-2 pb-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white shadow-brand">
-                          <IconComponent className="h-5 w-5 text-white" />
-                        </div>
-                        <div>
-                          <CardTitle className="font-heading text-xl font-bold text-white">
-                            Login {cfg.title}
-                          </CardTitle>
-                          <Badge
-                            variant="outline"
-                            className={`mt-0.5 text-[10px] font-bold ${cfg.badgeBg}`}
-                          >
-                            Perfil {cfg.title}
-                          </Badge>
-                        </div>
-                      </div>
-                    </div>
-                    <CardDescription className="font-sans text-slate-400 text-xs">
-                      {cfg.subtitle}
-                    </CardDescription>
-                  </CardHeader>
-
-                  <CardContent className="space-y-4">
-                    {loginError && (
-                      <div className="p-3 rounded-xl border border-red-500/40 bg-red-500/10 text-red-200 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
-                        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-500 text-white font-bold text-[11px] mt-0.5">
-                          !
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-semibold text-red-300">Falha ao entrar</p>
-                          <p className="text-slate-200 mt-0.5 leading-relaxed">{loginError}</p>
-                        </div>
-                      </div>
-                    )}
-
-                    <form onSubmit={handleLoginSubmit} className="space-y-3.5">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-bold text-[#1a1a1a]">E-mail</Label>
-                        <div className="relative">
-                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                          <Input
-                            type="email"
-                            placeholder="seu.email@exemplo.com"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            className="bg-white border-slate-200 pl-9 text-xs text-[#1a1a1a] placeholder:text-slate-400 focus:border-[#0052CC] rounded-input"
-                            required
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs font-bold text-[#1a1a1a]">Senha</Label>
-                          <Link
-                            to="/forgot-password"
-                            className="text-[11px] text-[#0052CC] font-bold hover:underline"
-                          >
-                            Esqueceu a senha?
-                          </Link>
-                        </div>
-                        <div className="relative">
-                          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                          <Input
-                            type={showPassword ? 'text' : 'password'}
-                            placeholder="••••••••"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            className="bg-white border-slate-200 pl-9 pr-9 text-xs text-[#1a1a1a] placeholder:text-slate-400 rounded-input focus:border-[#0052CC]"
-                            required
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPassword(!showPassword)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                          >
-                            {showPassword ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-
-                      <Button
-                        type="submit"
-                        disabled={isLoading}
-                        className={`w-full h-11 text-white font-bold text-sm shadow-brand rounded-input transition duration-100 flex items-center justify-center gap-2 ${cfg.btnBg}`}
-                      >
-                        {isLoading ? (
-                          'Autenticando...'
-                        ) : (
-                          <>
-                            <span>Entrar como {cfg.title}</span>
-                            <ArrowRight className="h-4 w-4" />
-                          </>
-                        )}
-                      </Button>
-                    </form>
-
-                    {/* Quick 1-click login preset */}
-                    <div className="pt-2 border-t border-slate-100 space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => handleQuickLogin(cfg.defaultEmail, selectedProfile)}
-                        className="w-full py-2.5 px-3 rounded-input bg-[#F5F5F5] hover:bg-slate-200/70 border border-slate-200 text-left flex items-center justify-between transition group text-xs"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Zap className="h-3.5 w-3.5 text-[#FF6B35]" />
-                          <span className="text-[#1a1a1a] font-medium">
-                            Credencial de teste ({cfg.defaultEmail})
-                          </span>
-                        </div>
-                        <span className="text-[11px] font-bold text-[#0052CC] group-hover:translate-x-0.5 transition-transform">
-                          1-Clique →
-                        </span>
-                      </button>
-                    </div>
-
-                    {/* Access Notice and Forgot Password */}
-                    <div className="pt-2 text-center text-xs text-slate-400 space-y-1.5">
-                      <p className="text-[11px] text-slate-400">{cfg.accessInfo}</p>
-                      <p className="text-[10px] text-slate-500">
-                        Não tem conta? Solicite seu acesso ao administrador.
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })()}
+            {/* Mobile menu toggle */}
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="lg:hidden p-2 text-slate-700 hover:text-[#002855] rounded-lg border border-slate-200"
+              aria-label="Abrir menu"
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
           </div>
-        ) : (
-          /* ================= 3-BLOCK PROFILE CARDS SELECTION (MAIN LOGIN SCREEN) ================= */
-          <div className="space-y-10">
-            {/* Header intro */}
-            <div className="text-center space-y-3 max-w-2xl mx-auto">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 border border-[#1B3A8C]/20 text-[#1B3A8C] text-xs font-bold font-sans">
-                <Zap className="h-3.5 w-3.5 text-[#00A8E8]" />
-                Rotaly • Plataforma de Gestão e Rastreamento
-              </div>
+        </div>
 
-              <h1 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-[#1a1a1a] leading-tight">
-                Selecione seu perfil para acessar
-              </h1>
-
-              <p className="font-sans text-slate-600 text-sm sm:text-base leading-relaxed">
-                Entrega rápida, confiança garantida. Escolha seu módulo operacional para acessar o
-                painel correspondente.
-              </p>
-            </div>
-
-            {/* THREE CARDS GRID (ADMIN, SELLER, COURIER) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto w-full">
-              {/* CARD 1: ADMINISTRADOR */}
-              <div
-                onClick={() => handleSelectProfile('admin')}
-                role="button"
-                tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-6 shadow-brand-dark transition-all duration-200 hover:-translate-y-1 hover:border-[#60A5FA] hover:shadow-brand cursor-pointer overflow-hidden text-left"
-              >
-                <div className="space-y-4 relative z-10">
-                  <div className="flex items-center justify-between">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white shadow-brand group-hover:scale-105 transition-transform">
-                      <Shield className="h-6 w-6" />
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-[#0052CC]/30 text-[#60A5FA] border-[#60A5FA]/40"
-                    >
-                      Acesso Master
-                    </Badge>
-                  </div>
-
-                  <div>
-                    <h2 className="font-heading text-xl font-bold text-white group-hover:text-[#60A5FA] transition-colors">
-                      Administrador
-                    </h2>
-                    <p className="font-sans text-xs text-slate-300 mt-1.5 leading-relaxed">
-                      Painel executivo com telemetria da frota, aprovação de cadastros de
-                      entregadores, relatórios e KPIs globais.
-                    </p>
-                  </div>
-
-                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-[#1E2B58] font-sans">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>Gestão e validação de CNH/selfies</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>Aprovação e bloqueio de usuários</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>KPIs de SLA e faturamento</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="pt-6 relative z-10">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#60A5FA] group-hover:translate-x-1 transition-transform">
-                    <span>Entrar como Administrador</span>
-                    <ArrowRight className="h-4 w-4 text-[#FF6B35]" />
-                  </div>
-                </div>
-              </div>
-
-              {/* CARD 2: LOJISTA */}
-              <div
+        {/* Mobile menu dropdown */}
+        {mobileMenuOpen && (
+          <div className="lg:hidden border-t border-slate-100 bg-white px-4 py-4 space-y-2 text-sm font-medium shadow-lg animate-in slide-in-from-top-2">
+            <button
+              type="button"
+              onClick={() => scrollToSection('plataforma')}
+              className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-50 text-slate-800 font-semibold"
+            >
+              Plataforma & Perfis
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToSection('recursos')}
+              className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-50 text-slate-800 font-semibold"
+            >
+              Recursos & Diferenciais
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToSection('quem-somos')}
+              className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-50 text-slate-800 font-semibold"
+            >
+              Quem somos
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToSection('contato')}
+              className="w-full text-left py-2 px-3 rounded-lg hover:bg-slate-50 text-slate-800 font-semibold"
+            >
+              Fale Conosco
+            </button>
+            <div className="pt-2 border-t border-slate-100 flex flex-col gap-2">
+              <Button
+                variant="outline"
                 onClick={() => handleSelectProfile('seller')}
-                role="button"
-                tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-6 shadow-brand-dark transition-all duration-200 hover:-translate-y-1 hover:border-[#FF6B35] hover:shadow-brand-orange cursor-pointer overflow-hidden text-left"
+                className="w-full h-10 border-slate-300 text-[#002855] font-bold"
               >
-                <div className="space-y-4 relative z-10">
-                  <div className="flex items-center justify-between">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#FF6B35] text-white shadow-brand group-hover:scale-105 transition-transform">
-                      <Store className="h-6 w-6" />
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-[#FF6B35]/20 text-[#FF6B35] border-[#FF6B35]/40"
-                    >
-                      Painel do Lojista
-                    </Badge>
-                  </div>
-
-                  <div>
-                    <h2 className="font-heading text-xl font-bold text-white group-hover:text-[#FF6B35] transition-colors">
-                      Lojista
-                    </h2>
-                    <p className="font-sans text-xs text-slate-300 mt-1.5 leading-relaxed">
-                      Criação rápida de despachos, acompanhamento de pedidos no mapa em tempo real e
-                      otimização inteligente de rotas.
-                    </p>
-                  </div>
-
-                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-[#1E2B58] font-sans">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>Criação rápida de despachos</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>Roteirização inteligente com IA</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>Acompanhamento no mapa ao vivo</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="pt-6 relative z-10">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#FF6B35] group-hover:translate-x-1 transition-transform">
-                    <span>Entrar como Lojista</span>
-                    <ArrowRight className="h-4 w-4 text-[#60A5FA]" />
-                  </div>
-                </div>
-              </div>
-
-              {/* CARD 3: ENTREGADOR */}
-              <div
+                Acesso Lojista
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleSelectProfile('admin')}
+                className="w-full h-10 border-slate-300 text-[#002855] font-bold"
+              >
+                Acesso Administrador
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => handleSelectProfile('courier')}
-                role="button"
-                tabIndex={0}
-                className="group relative flex flex-col justify-between rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-6 shadow-brand-dark transition-all duration-200 hover:-translate-y-1 hover:border-[#60A5FA] hover:shadow-brand cursor-pointer overflow-hidden text-left"
+                className="w-full h-10 border-slate-300 text-[#002855] font-bold"
               >
-                <div className="space-y-4 relative z-10">
-                  <div className="flex items-center justify-between">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-[#0052CC] to-[#60A5FA] text-white shadow-brand group-hover:scale-105 transition-transform">
-                      <Truck className="h-6 w-6" />
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] uppercase font-bold tracking-wider bg-[#0052CC]/30 text-[#60A5FA] border-[#60A5FA]/40"
-                    >
-                      App Operacional
-                    </Badge>
-                  </div>
-
-                  <div>
-                    <h2 className="font-heading text-xl font-bold text-white group-hover:text-[#60A5FA] transition-colors">
-                      Entregador
-                    </h2>
-                    <p className="font-sans text-xs text-slate-300 mt-1.5 leading-relaxed">
-                      Interface mobile simplificada com lista de paradas sequencial, GPS ativo e
-                      comprovante com foto e assinatura na tela.
-                    </p>
-                  </div>
-
-                  <ul className="space-y-2 text-xs text-slate-300 pt-2 border-t border-[#1E2B58] font-sans">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>Telemetria GPS a cada 30 segundos</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>Assinatura digital e foto de entrega</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
-                      <span>Navegação com Waze / Google Maps</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="pt-6 relative z-10">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#60A5FA] group-hover:translate-x-1 transition-transform">
-                    <span>Entrar como Entregador</span>
-                    <ArrowRight className="h-4 w-4 text-[#FF6B35]" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Public Tracking Box & Access Policy Info */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-5xl mx-auto w-full pt-4">
-              {/* Public Tracking Box */}
-              <div className="lg:col-span-7 rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-5 shadow-brand-dark space-y-3">
-                <div className="flex items-center gap-2 text-[#60A5FA] font-bold text-xs uppercase tracking-wider font-heading">
-                  <Search className="h-4 w-4 text-[#FF6B35]" />
-                  <span>Acompanhe sua Encomenda (Rastreio Público Rotaly)</span>
-                </div>
-
-                <form onSubmit={handlePublicTracking} className="flex flex-col sm:flex-row gap-2">
-                  <div className="relative flex-1">
-                    <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input
-                      type="text"
-                      placeholder="Digite o código: TRK-2025-001..."
-                      value={trackingCode}
-                      onChange={(e) => setTrackingCode(e.target.value)}
-                      className="h-10 bg-[#0A1128] border-[#1E2B58] pl-10 text-xs text-white placeholder:text-slate-400 focus:border-[#60A5FA] rounded-xl"
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    className="h-10 px-5 bg-[#FF6B35] hover:bg-[#E5531E] text-white font-bold text-xs shadow-brand rounded-xl transition duration-100"
-                  >
-                    Rastrear Pedido
-                  </Button>
-                </form>
-              </div>
-
-              {/* Invitation Policy Box */}
-              <div className="lg:col-span-5 rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-5 shadow-brand-dark flex flex-col justify-between space-y-3">
-                <div>
-                  <div className="flex items-center gap-2 text-[#60A5FA] font-bold text-xs uppercase tracking-wider font-heading">
-                    <Lock className="h-4 w-4 text-[#FF6B35]" />
-                    <span>Cadastro Somente por Convite</span>
-                  </div>
-                  <p className="font-sans text-xs text-slate-300 mt-1 leading-relaxed">
-                    O acesso à plataforma é exclusivo para vendedores e entregadores cadastrados
-                    internamente por usuários autorizados do sistema.
-                  </p>
-                </div>
-
-                <div className="rounded-lg bg-[#0A1128] p-2.5 border border-[#1E2B58] text-[11px] text-slate-400">
-                  <span className="text-[#60A5FA] font-semibold">Precisa de acesso?</span> Entre em
-                  contato com a equipe de administração ou seu gestor de logística.
-                </div>
-              </div>
+                Acesso Entregador
+              </Button>
             </div>
           </div>
         )}
+      </header>
+
+      {/* ================= MAIN CONTENT ================= */}
+      <main className="flex-1 w-full">
+        {selectedProfile ? (
+          /* ================= DEDICATED PROFILE LOGIN FORM ================= */
+          <section className="py-12 sm:py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto flex flex-col items-center">
+            <div className="max-w-md w-full transition-all duration-200">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedProfile(null)}
+                className="mb-4 text-xs text-[#002855] hover:bg-slate-100 gap-1.5 font-bold rounded-lg cursor-pointer"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Voltar à página inicial
+              </Button>
+
+              {(() => {
+                const cfg = profileConfig[selectedProfile]
+                const IconComponent = cfg.icon
+
+                return (
+                  <Card className="border border-slate-200 bg-white text-slate-900 shadow-[0_10px_35px_rgba(0,40,85,0.08)] rounded-2xl relative overflow-hidden">
+                    <div className="h-1.5 w-full bg-gradient-to-r from-[#002855] via-[#00A3FF] to-[#002855]" />
+
+                    <CardHeader className="space-y-2 pb-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#002855] text-white shadow-sm">
+                            <IconComponent className="h-6 w-6 text-white" />
+                          </div>
+                          <div>
+                            <CardTitle className="font-heading text-xl font-bold text-[#002855]">
+                              Login {cfg.title}
+                            </CardTitle>
+                            <Badge
+                              variant="outline"
+                              className={`mt-0.5 text-[11px] font-bold ${cfg.badgeBg}`}
+                            >
+                              Perfil {cfg.title}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                      <CardDescription className="text-slate-600 text-xs leading-relaxed">
+                        {cfg.subtitle}
+                      </CardDescription>
+                    </CardHeader>
+
+                    <CardContent className="space-y-4">
+                      {loginError && (
+                        <div className="p-3.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-900 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-rose-600 text-white font-bold text-[11px] mt-0.5">
+                            !
+                          </div>
+                          <div className="flex-1">
+                            <p className="font-bold text-rose-900">Falha ao entrar</p>
+                            <p className="text-rose-700 mt-0.5 leading-relaxed">{loginError}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-bold text-slate-700">E-mail</Label>
+                          <div className="relative">
+                            <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                            <Input
+                              type="email"
+                              placeholder="seu.email@exemplo.com"
+                              value={email}
+                              onChange={(e) => setEmail(e.target.value)}
+                              className="bg-white border-slate-300 pl-10 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#00A3FF] focus:ring-1 focus:ring-[#00A3FF] rounded-xl h-11"
+                              required
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs font-bold text-slate-700">Senha</Label>
+                            <Link
+                              to="/forgot-password"
+                              className="text-[11px] text-[#00A3FF] font-semibold hover:underline"
+                            >
+                              Esqueceu a senha?
+                            </Link>
+                          </div>
+                          <div className="relative">
+                            <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                            <Input
+                              type={showPassword ? 'text' : 'password'}
+                              placeholder="••••••••"
+                              value={password}
+                              onChange={(e) => setPassword(e.target.value)}
+                              className="bg-white border-slate-300 pl-10 pr-10 text-xs text-slate-900 placeholder:text-slate-400 rounded-xl h-11 focus:border-[#00A3FF] focus:ring-1 focus:ring-[#00A3FF]"
+                              required
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword(!showPassword)}
+                              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                            >
+                              {showPassword ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        <Button
+                          type="submit"
+                          disabled={isLoading}
+                          className={`w-full h-11 text-white font-bold text-sm rounded-xl transition duration-150 flex items-center justify-center gap-2 ${cfg.btnBg}`}
+                        >
+                          {isLoading ? (
+                            'Autenticando...'
+                          ) : (
+                            <>
+                              <span>Entrar como {cfg.title}</span>
+                              <ArrowRight className="h-4 w-4" />
+                            </>
+                          )}
+                        </Button>
+                      </form>
+
+                      {/* Quick 1-click login preset */}
+                      <div className="pt-2 border-t border-slate-100 space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => handleQuickLogin(cfg.defaultEmail, selectedProfile)}
+                          className="w-full py-2.5 px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-left flex items-center justify-between transition group text-xs cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Zap className="h-3.5 w-3.5 text-[#00A3FF]" />
+                            <span className="text-slate-700 font-medium">
+                              Credencial de teste ({cfg.defaultEmail})
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-bold text-[#00A3FF] group-hover:translate-x-0.5 transition-transform">
+                            1-Clique →
+                          </span>
+                        </button>
+                      </div>
+
+                      {/* Access Notice */}
+                      <div className="pt-2 text-center text-xs text-slate-500 space-y-1">
+                        <p className="text-[11px] text-slate-500">{cfg.accessInfo}</p>
+                        <p className="text-[11px] text-slate-400">
+                          Acesso restrito a usuários autorizados do sistema Rotaly.
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })()}
+            </div>
+          </section>
+        ) : (
+          /* ================= REDESIGNED LANDING PAGE ================= */
+          <>
+            {/* HERO & RASTREAMENTO DO CLIENTE (DESTAQUE MÁXIMO) */}
+            <section
+              id="rastreamento"
+              className="relative overflow-hidden pt-12 pb-16 sm:pt-20 sm:pb-24 bg-gradient-to-b from-[#F0F7FF] via-white to-white"
+            >
+              {/* Subtle map route watermark graphic in background */}
+              <div className="absolute inset-0 pointer-events-none opacity-40">
+                <svg
+                  className="w-full h-full"
+                  viewBox="0 0 1440 600"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  preserveAspectRatio="xMidYMid slice"
+                >
+                  <circle cx="200" cy="180" r="140" fill="#00A3FF" fillOpacity="0.04" />
+                  <circle cx="1200" cy="260" r="180" fill="#002855" fillOpacity="0.03" />
+                  <path
+                    d="M 120 320 C 320 220, 520 400, 780 280 C 1020 160, 1220 340, 1380 240"
+                    stroke="#00A3FF"
+                    strokeWidth="3"
+                    strokeDasharray="8 8"
+                    strokeOpacity="0.3"
+                  />
+                  {/* Subtle map pin beacons */}
+                  <g transform="translate(180, 160)">
+                    <circle cx="16" cy="16" r="14" fill="#00A3FF" fillOpacity="0.12" />
+                    <circle cx="16" cy="16" r="6" fill="#00A3FF" />
+                  </g>
+                  <g transform="translate(1180, 240)">
+                    <circle cx="16" cy="16" r="14" fill="#002855" fillOpacity="0.1" />
+                    <circle cx="16" cy="16" r="6" fill="#002855" />
+                  </g>
+                </svg>
+              </div>
+
+              <div className="relative max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-6 sm:space-y-8">
+                {/* Hero Title & Subtitle */}
+                <div className="space-y-3 sm:space-y-4 max-w-3xl mx-auto">
+                  <h1 className="font-heading text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-[#002855] leading-tight sm:leading-tight">
+                    Acompanhe sua encomenda em tempo real
+                  </h1>
+                  <p className="text-base sm:text-lg lg:text-xl text-slate-600 font-normal leading-relaxed">
+                    Digite o código de rastreio e saiba onde está seu pedido agora.
+                  </p>
+                </div>
+
+                {/* BIG HERO TRACKING CARD (ELEMENTO CENTRAL E MAIS VISÍVEL) */}
+                <div className="max-w-3xl mx-auto">
+                  <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-4 shadow-[0_12px_45px_rgba(0,40,85,0.12)] border border-slate-200/80 transition-shadow hover:shadow-[0_16px_55px_rgba(0,40,85,0.16)]">
+                    <form
+                      onSubmit={handlePublicTracking}
+                      className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3"
+                    >
+                      {/* Left Shield Badge */}
+                      <div className="hidden sm:flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#00A3FF]/10 text-[#00A3FF]">
+                        <Shield className="h-7 w-7 text-[#00A3FF]" />
+                      </div>
+
+                      {/* Large Input Field */}
+                      <div className="relative flex-1">
+                        <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+                        <Input
+                          id="tracking-input"
+                          type="text"
+                          placeholder="Digite o código de rastreio (ex: TRK-2025-001...)"
+                          value={trackingCode}
+                          onChange={(e) => setTrackingCode(e.target.value)}
+                          className="h-14 sm:h-16 pl-12 pr-4 bg-slate-50/70 border-slate-200 hover:border-slate-300 focus:bg-white focus:border-[#00A3FF] focus:ring-2 focus:ring-[#00A3FF]/20 text-slate-900 placeholder:text-slate-400 text-sm sm:text-base font-medium rounded-xl sm:rounded-2xl shadow-inner transition-all"
+                        />
+                      </div>
+
+                      {/* Cyan CTA Button (Elemento mais visível) */}
+                      <Button
+                        type="submit"
+                        className="h-14 sm:h-16 px-6 sm:px-8 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-sm sm:text-base rounded-xl sm:rounded-2xl shadow-[0_6px_22px_rgba(0,163,255,0.4)] hover:shadow-[0_8px_28px_rgba(0,163,255,0.55)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2.5 shrink-0 cursor-pointer"
+                      >
+                        <Search className="h-5 w-5" />
+                        <span>Rastrear Pedido</span>
+                      </Button>
+                    </form>
+                  </div>
+
+                  {/* 3 Trust Signals directly below search */}
+                  <div className="mt-5 flex flex-wrap items-center justify-center gap-6 sm:gap-10 text-xs sm:text-sm text-slate-600 font-medium">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      </div>
+                      <span>Atualização em tempo real</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#00A3FF]/15 text-[#0066AA]">
+                        <Activity className="h-3.5 w-3.5 text-[#00A3FF]" />
+                      </div>
+                      <span>Informações precisas</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#002855]/10 text-[#002855]">
+                        <Shield className="h-3.5 w-3.5 text-[#002855]" />
+                      </div>
+                      <span>Entrega segura</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* SEÇÃO: ACESSO À PLATAFORMA (3 CARDS COM ELEVADO CONTRASTE E RESPIRO) */}
+            <section id="plataforma" className="py-16 sm:py-24 bg-white border-t border-slate-100">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+                <div className="text-center space-y-3 max-w-2xl mx-auto">
+                  <h2 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-[#002855]">
+                    Acesso à Plataforma
+                  </h2>
+                  <p className="text-slate-600 text-sm sm:text-base font-normal">
+                    Escolha seu perfil para acessar o painel correspondente.
+                  </p>
+                </div>
+
+                {/* 3 Dedicated Profile Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8 max-w-6xl mx-auto">
+                  {/* CARD 1: ADMINISTRADOR */}
+                  <div
+                    onClick={() => handleSelectProfile('admin')}
+                    role="button"
+                    tabIndex={0}
+                    className="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-slate-200 bg-white p-7 sm:p-8 shadow-[0_4px_20px_rgba(0,40,85,0.05)] hover:shadow-[0_12px_36px_rgba(0,40,85,0.12)] hover:border-[#002855]/40 transition-all duration-200 cursor-pointer text-left"
+                  >
+                    <div className="space-y-5">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#002855] text-white shadow-sm group-hover:scale-105 transition-transform">
+                        <Shield className="h-6 w-6 text-white" />
+                      </div>
+
+                      <div>
+                        <h3 className="font-heading text-xl sm:text-2xl font-bold text-[#002855] group-hover:text-[#00A3FF] transition-colors">
+                          Administrador
+                        </h3>
+                        <p className="text-xs sm:text-sm text-slate-600 mt-2 leading-relaxed">
+                          Painel executivo com telemetria da frota, aprovação de cadastros de
+                          entregadores, relatórios e KPIs globais.
+                        </p>
+                      </div>
+
+                      <ul className="space-y-2.5 text-xs sm:text-sm text-slate-700 pt-3 border-t border-slate-100">
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>Gestão e validação de CNH/selfies</span>
+                        </li>
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>Aprovação e bloqueio de usuários</span>
+                        </li>
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>KPIs de SLA e faturamento</span>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div className="pt-6 sm:pt-8">
+                      <div className="flex items-center text-xs sm:text-sm font-bold text-[#002855] group-hover:text-[#00A3FF] group-hover:translate-x-1 transition-all">
+                        <span>Entrar como Administrador</span>
+                        <ArrowRight className="h-4 w-4 ml-2 text-[#00A3FF]" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CARD 2: LOJISTA */}
+                  <div
+                    onClick={() => handleSelectProfile('seller')}
+                    role="button"
+                    tabIndex={0}
+                    className="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-slate-200 bg-white p-7 sm:p-8 shadow-[0_4px_20px_rgba(0,40,85,0.05)] hover:shadow-[0_12px_36px_rgba(0,163,255,0.18)] hover:border-[#00A3FF] transition-all duration-200 cursor-pointer text-left"
+                  >
+                    <div className="space-y-5">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#00A3FF] text-white shadow-sm group-hover:scale-105 transition-transform">
+                        <Store className="h-6 w-6 text-white" />
+                      </div>
+
+                      <div>
+                        <h3 className="font-heading text-xl sm:text-2xl font-bold text-[#002855] group-hover:text-[#00A3FF] transition-colors">
+                          Lojista
+                        </h3>
+                        <p className="text-xs sm:text-sm text-slate-600 mt-2 leading-relaxed">
+                          Criação rápida de despachos, acompanhamento de pedidos no mapa em tempo
+                          real e otimização inteligente de rotas.
+                        </p>
+                      </div>
+
+                      <ul className="space-y-2.5 text-xs sm:text-sm text-slate-700 pt-3 border-t border-slate-100">
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>Criação rápida de despachos</span>
+                        </li>
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>Roteirização inteligente com IA</span>
+                        </li>
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>Acompanhamento no mapa ao vivo</span>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div className="pt-6 sm:pt-8">
+                      <div className="flex items-center text-xs sm:text-sm font-bold text-[#00A3FF] group-hover:translate-x-1 transition-all">
+                        <span>Entrar como Lojista</span>
+                        <ArrowRight className="h-4 w-4 ml-2" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CARD 3: ENTREGADOR */}
+                  <div
+                    onClick={() => handleSelectProfile('courier')}
+                    role="button"
+                    tabIndex={0}
+                    className="group flex flex-col justify-between rounded-2xl sm:rounded-3xl border border-slate-200 bg-white p-7 sm:p-8 shadow-[0_4px_20px_rgba(0,40,85,0.05)] hover:shadow-[0_12px_36px_rgba(0,40,85,0.12)] hover:border-[#002855]/40 transition-all duration-200 cursor-pointer text-left"
+                  >
+                    <div className="space-y-5">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#002855] text-white shadow-sm group-hover:scale-105 transition-transform">
+                        <Truck className="h-6 w-6 text-white" />
+                      </div>
+
+                      <div>
+                        <h3 className="font-heading text-xl sm:text-2xl font-bold text-[#002855] group-hover:text-[#00A3FF] transition-colors">
+                          Entregador
+                        </h3>
+                        <p className="text-xs sm:text-sm text-slate-600 mt-2 leading-relaxed">
+                          Interface mobile simplificada com lista de paradas sequencial, GPS ativo e
+                          comprovante com foto e assinatura na tela.
+                        </p>
+                      </div>
+
+                      <ul className="space-y-2.5 text-xs sm:text-sm text-slate-700 pt-3 border-t border-slate-100">
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>Telemetria GPS a cada 30 segundos</span>
+                        </li>
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>Assinatura digital e foto de entrega</span>
+                        </li>
+                        <li className="flex items-start gap-2.5">
+                          <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
+                          <span>Navegação com Waze / Google Maps</span>
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div className="pt-6 sm:pt-8">
+                      <div className="flex items-center text-xs sm:text-sm font-bold text-[#002855] group-hover:text-[#00A3FF] group-hover:translate-x-1 transition-all">
+                        <span>Entrar como Entregador</span>
+                        <ArrowRight className="h-4 w-4 ml-2 text-[#00A3FF]" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* SEÇÃO: POR QUE ESCOLHER A ROTALY? (DIFERENCIAIS SOLICITADOS) */}
+            <section
+              id="recursos"
+              className="py-16 sm:py-24 bg-slate-50/70 border-t border-slate-200/60"
+            >
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+                <div className="text-center space-y-3 max-w-2xl mx-auto">
+                  <h2 className="font-heading text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-[#002855]">
+                    Por que escolher a Rotaly?
+                  </h2>
+                  <p className="text-slate-600 text-sm sm:text-base font-normal">
+                    Tecnologia inteligente para reduzir custos e dar controle absoluto à sua
+                    operação de entrega.
+                  </p>
+                </div>
+
+                {/* 7 Feature Cards Grid com alto contraste e respiro */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                  {/* Diferencial 1: Economia de até 40% de combustível */}
+                  <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#002855]/10 text-[#002855]">
+                      <Fuel className="h-6 w-6 text-[#002855]" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-heading font-bold text-[#002855] text-sm sm:text-base">
+                        Economia de até 40% de combustível
+                      </h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Roteirização viária inteligente calcula o caminho de menor custo e menor
+                        quilometragem.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Diferencial 2: +30% de produtividade dos entregadores */}
+                  <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#00A3FF]/15 text-[#00A3FF]">
+                      <TrendingUp className="h-6 w-6 text-[#00A3FF]" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-heading font-bold text-[#002855] text-sm sm:text-base">
+                        +30% de produtividade dos entregadores
+                      </h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Sequenciamento lógico de paradas reduz tempo ocioso e acelera as entregas
+                        por hora.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Diferencial 3: Monitoramento em tempo real de toda a operação */}
+                  <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#002855]/10 text-[#002855]">
+                      <Activity className="h-6 w-6 text-[#002855]" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-heading font-bold text-[#002855] text-sm sm:text-base">
+                        Monitoramento em tempo real de toda a operação
+                      </h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Torre de controle ao vivo com localização precisa, telemetria e status
+                        instantâneo.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Diferencial 4: Prevenção de desvios de rota e paradas fora do local */}
+                  <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600">
+                      <AlertTriangle className="h-6 w-6 text-amber-600" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-heading font-bold text-[#002855] text-sm sm:text-base">
+                        Prevenção de desvios de rota
+                      </h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Detecção automática de paradas indevidas e alertas de saída de rota
+                        designada.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Diferencial 5: Controle de quilometragem e performance */}
+                  <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#002855]/10 text-[#002855]">
+                      <Gauge className="h-6 w-6 text-[#002855]" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-heading font-bold text-[#002855] text-sm sm:text-base">
+                        Controle de quilometragem e performance
+                      </h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Métricas auditadas de km rodado, consumo estimado e adiantamentos de
+                        combustível.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Diferencial 6: Rastreamento em tempo real para empresa e cliente final */}
+                  <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#00A3FF]/15 text-[#00A3FF]">
+                      <MapPin className="h-6 w-6 text-[#00A3FF]" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-heading font-bold text-[#002855] text-sm sm:text-base">
+                        Rastreamento em tempo real
+                      </h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Transparência total com link público de rastreio para cliente final e painel
+                        para empresa.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Diferencial 7: Comprovante de entrega com foto e assinatura digital */}
+                  <div className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between space-y-3 sm:col-span-2 lg:col-span-2">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#002855]/10 text-[#002855]">
+                      <Camera className="h-6 w-6 text-[#002855]" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="font-heading font-bold text-[#002855] text-sm sm:text-base">
+                        Comprovante de entrega com foto e assinatura digital
+                      </h4>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Elimine contestações de entrega com registro fotográfico do pacote e
+                        assinatura colhida direto no celular do motorista.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
       </main>
 
-      {/* Footer */}
-      <footer className="relative z-10 border-t border-[#1E2B58] bg-[#0A1128] py-4 px-6 text-center text-xs text-slate-400 font-sans">
-        <p>
-          Rotaly © {new Date().getFullYear()} — Entrega rápida, confiança garantida • Sua logística
-          no próximo nível
-        </p>
+      {/* ================= FOOTER INSTITUCIONAL COMPLETO ================= */}
+      <footer
+        id="quem-somos"
+        className="bg-[#002855] text-white pt-14 pb-8 border-t border-[#001D3D]"
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
+          {/* Top 4 Columns */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 lg:gap-10">
+            {/* Column 1: Brand & Sobre */}
+            <div className="space-y-4">
+              <div className="flex items-center">
+                {/* Logo white box container for clear contrast */}
+                <div className="bg-white rounded-xl px-2.5 py-1.5 inline-flex items-center justify-center shadow-sm">
+                  <img
+                    src={rotalyLogoImg}
+                    alt="Rotaly — Sua rota, nossa entrega"
+                    className="h-9 w-auto object-contain"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                Plataforma completa de gestão e rastreamento para operações de entrega com
+                tecnologia, segurança e inteligência.
+              </p>
+              <p className="text-[11px] text-[#00A3FF] font-semibold">Sua rota, nossa entrega.</p>
+            </div>
+
+            {/* Column 2: Sobre a Rotaly */}
+            <div className="space-y-3">
+              <h4 className="font-heading font-bold text-sm text-white uppercase tracking-wider">
+                Sobre a Rotaly
+              </h4>
+              <ul className="space-y-2 text-xs text-slate-300 font-sans">
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection('plataforma')}
+                    className="hover:text-white transition-colors"
+                  >
+                    Nossa Plataforma
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection('recursos')}
+                    className="hover:text-white transition-colors"
+                  >
+                    Tecnologia e Algoritmos
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => scrollToSection('recursos')}
+                    className="hover:text-white transition-colors"
+                  >
+                    Segurança e Telemetria
+                  </button>
+                </li>
+                <li>
+                  <span className="text-slate-400">Soluções para PMEs e Grandes Frotas</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Column 3: Links Úteis */}
+            <div className="space-y-3">
+              <h4 className="font-heading font-bold text-sm text-white uppercase tracking-wider">
+                Links úteis
+              </h4>
+              <ul className="space-y-2 text-xs text-slate-300 font-sans">
+                <li>
+                  <button
+                    type="button"
+                    onClick={scrollToTracking}
+                    className="hover:text-[#00A3FF] transition-colors flex items-center gap-1.5"
+                  >
+                    <Search className="h-3 w-3 text-[#00A3FF]" />
+                    <span>Rastrear Encomenda</span>
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectProfile('seller')}
+                    className="hover:text-white transition-colors"
+                  >
+                    Acesso Lojista
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectProfile('courier')}
+                    className="hover:text-white transition-colors"
+                  >
+                    Acesso Entregador
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectProfile('admin')}
+                    className="hover:text-white transition-colors"
+                  >
+                    Acesso Administrador
+                  </button>
+                </li>
+                <li>
+                  <span className="text-slate-400">Política de Privacidade & Termos</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Column 4: Fale conosco & Siga-nos */}
+            <div id="contato" className="space-y-3">
+              <h4 className="font-heading font-bold text-sm text-white uppercase tracking-wider">
+                Fale conosco
+              </h4>
+              <ul className="space-y-2 text-xs text-slate-300 font-sans">
+                <li className="flex items-center gap-2">
+                  <Phone className="h-3.5 w-3.5 text-[#00A3FF] shrink-0" />
+                  <span>(21) 4000-1234</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Mail className="h-3.5 w-3.5 text-[#00A3FF] shrink-0" />
+                  <span>contato@rotaly.com.br</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <MapPin className="h-3.5 w-3.5 text-[#00A3FF] shrink-0 mt-0.5" />
+                  <span>Rio de Janeiro - RJ, Brasil</span>
+                </li>
+              </ul>
+
+              <div className="pt-2">
+                <span className="text-xs font-semibold text-slate-200 block mb-2">Siga-nos</span>
+                <div className="flex items-center gap-2.5">
+                  <a
+                    href="https://facebook.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Facebook Rotaly"
+                    className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+                  >
+                    <Facebook className="h-4 w-4" />
+                  </a>
+                  <a
+                    href="https://instagram.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Instagram Rotaly"
+                    className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+                  >
+                    <Instagram className="h-4 w-4" />
+                  </a>
+                  <a
+                    href="https://linkedin.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="LinkedIn Rotaly"
+                    className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+                  >
+                    <Linkedin className="h-4 w-4" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Copyright Bar (limpo, sem selo de plataforma) */}
+          <div className="border-t border-white/10 pt-6 text-center text-xs text-slate-400 font-sans">
+            <p>© {new Date().getFullYear()} Rotaly. Todos os direitos reservados.</p>
+          </div>
+        </div>
       </footer>
     </div>
   )

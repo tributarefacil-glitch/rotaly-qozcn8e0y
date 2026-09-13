@@ -2861,7 +2861,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">
-                    Operação Empresa Única (Rotaly Operações) • PocketBase Skip Cloud
+                    Operação Empresa Única (Rotaly Operações) • Servidor Central
                   </span>
                 </div>
 

@@ -148,11 +148,11 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
   return (
     <div className={`inline-flex items-center ${currentSize.gap} ${className}`}>
       <div className="flex items-center">
-        {/* Render the official user-provided image on rounded white card */}
-        <div className="bg-white rounded-xl px-2.5 py-1 shadow-sm flex items-center justify-center transition-transform duration-150 hover:scale-[1.02]">
+        {/* Render the official user-provided image on clean rounded badge */}
+        <div className="bg-white rounded-xl px-2 py-1 shadow-sm flex items-center justify-center transition-transform duration-150 hover:scale-[1.02]">
           <img
             src={rotalyLogoImg}
-            alt="Rotaly — Gestão & Entregas"
+            alt="Rotaly — Sua rota, nossa entrega"
             className={`${currentSize.imgHeight} w-auto object-contain select-none`}
             draggable={false}
           />
@@ -161,10 +161,10 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
         {showTagline && (
           <span
             className={`font-sans tracking-wide font-medium leading-tight ml-2.5 ${
-              theme === 'dark' ? 'text-slate-300/85' : 'text-slate-600'
+              theme === 'dark' ? 'text-slate-300' : 'text-slate-600'
             } ${currentSize.tagline}`}
           >
-            Gestão &amp; Rastreamento
+            Sua rota, nossa entrega.
           </span>
         )}
       </div>
