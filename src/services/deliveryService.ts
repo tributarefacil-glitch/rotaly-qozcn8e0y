@@ -723,6 +723,12 @@ export const deliveryService = {
     })
   },
 
+  // Cache de último registro conhecido por usuário para deduplicação em memória
+  _lastCourierLocationRecordMap: new Map<
+    string,
+    { id: string; lat: number; lng: number; accuracy?: number; timestamp: number }
+  >(),
+
   async updateCourierLocation(
     userId: string,
     lat: number,
@@ -737,6 +743,18 @@ export const deliveryService = {
       accuracy?: number
     },
   ) {
+    const now = Date.now()
+    const accuracy =
+      typeof extra?.accuracy === 'number' && !isNaN(extra.accuracy)
+        ? Math.round(extra.accuracy * 10) / 10
+        : undefined
+
+    // Se accuracy >= 500m (sem fix real), marcar o motivo como 'sem-fix' se gps_reason não veio especificado
+    let gpsReason = extra?.gps_reason
+    if ((accuracy == null || accuracy >= 500) && !gpsReason) {
+      gpsReason = 'sem-fix'
+    }
+
     const payload: Partial<LocationRecord> = {
       user_id: userId,
       lat,
@@ -750,16 +768,54 @@ export const deliveryService = {
     if (extra?.gps_status) {
       payload.gps_status = extra.gps_status
     }
-    if (extra?.gps_reason !== undefined) {
-      payload.gps_reason = extra.gps_reason
+    if (gpsReason !== undefined) {
+      payload.gps_reason = gpsReason
     }
     if (extra?.offline_buffered !== undefined) {
       payload.offline_buffered = extra.offline_buffered
     }
-    if (typeof extra?.accuracy === 'number' && !isNaN(extra.accuracy)) {
-      payload.accuracy = Math.round(extra.accuracy * 10) / 10
+    if (accuracy !== undefined) {
+      payload.accuracy = accuracy
     }
-    return pb.collection<LocationRecord>('locations').create(payload)
+
+    // Deduplicação defensiva no cliente antes de criar novas linhas:
+    // Se a posição mudou menos de ~10m OU a acurácia é >= 500m (sem fix / fallback de 2000m),
+    // reutiliza/atualiza o registro recente existente em vez de criar outro registro repetido.
+    const cached = this._lastCourierLocationRecordMap.get(userId)
+    if (cached && cached.id) {
+      const dist = haversineDistanceMeters(cached.lat, cached.lng, lat, lng)
+      const isWeakOrFallback = (accuracy ?? 2000) >= 500 || (cached.accuracy ?? 2000) >= 500
+      const isSubTenMeters = dist < 10
+
+      if (isSubTenMeters || isWeakOrFallback) {
+        try {
+          const updated = await pb
+            .collection<LocationRecord>('locations')
+            .update(cached.id, payload)
+          this._lastCourierLocationRecordMap.set(userId, {
+            id: updated.id,
+            lat,
+            lng,
+            accuracy,
+            timestamp: now,
+          })
+          return updated
+        } catch {
+          // Se o update falhar (ex: registro apagado), cai para o create abaixo
+        }
+      }
+    }
+
+    // Caso contrário (deslocamento real >= 10m com fix de GPS aceitável), cria novo ponto
+    const created = await pb.collection<LocationRecord>('locations').create(payload)
+    this._lastCourierLocationRecordMap.set(userId, {
+      id: created.id,
+      lat,
+      lng,
+      accuracy,
+      timestamp: now,
+    })
+    return created
   },
 
   async getLatestLocationForCourier(courierId: string) {

@@ -311,10 +311,19 @@ export default function CourierApp() {
   const isRouteStarted = hasActiveStartedRoute
 
   // Refs de controle para DEDUPE e LOCK contra concorrência no envio de GPS:
-  // Só grava na coleção locations se passaram > 30s OU se moveu > 20 metros.
-  const lastRecordedGpsRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
+  // - Intervalo mínimo RÍGIDO de 30s entre envios reais (throttle estrito contra rajadas).
+  // - Deduplicação: não enviar novo se mudou < 10m OU accuracy continua >= 500m (sem fix).
+  // - Retry com backoff exponencial (10s, 30s, 60s), máx 3 tentativas, nunca loop infinito.
+  const lastRecordedGpsRef = useRef<{
+    lat: number
+    lng: number
+    accuracy?: number
+    timestamp: number
+  } | null>(null)
   const isSendingLocationRef = useRef<boolean>(false)
   const isFetchingPositionRef = useRef<boolean>(false)
+  const retryCountRef = useRef<number>(0)
+  const retryTimeoutRef = useRef<any>(null)
   const triggerImmediateGpsRef = useRef<(() => void) | null>(null)
   const wakeLockSentinelRef = useRef<any>(null)
 
@@ -461,18 +470,28 @@ export default function CourierApp() {
       const now = Date.now()
       const last = lastRecordedGpsRef.current
 
+      // A) THROTTLE RÍGIDO DE 30s & DEDUPLICAÇÃO
+      // Garantir intervalo mínimo de 30s entre envios reais.
+      // Deduplicação: se a posição mudou menos de ~10m OU accuracy continua >= 500m (sem fix),
+      // não criar pings repetidos; aguarda rigorosamente a janela de 30s.
       if (last && !forceSend) {
         const timeDiffSeconds = (now - last.timestamp) / 1000
         const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+        const isWeakFix = (accuracyVal ?? 2000) >= 500 || (last.accuracy ?? 2000) >= 500
 
-        // Em movimento (>15m) envia com mais agilidade (após 5s); parado, respeita 25s
-        if (distanceDiffMeters < 15 && timeDiffSeconds < 25) {
+        // Throttle rígido: nunca envia antes de 30 segundos
+        if (timeDiffSeconds < 30) {
+          return
+        }
+
+        // Se mudou menos de 10m e acurácia continua fraca/sem-fix, rejeita novo envio imediato
+        if (distanceDiffMeters < 10 && isWeakFix && timeDiffSeconds < 60) {
           return
         }
       }
 
       isSendingLocationRef.current = true
-      let batteryLevel = 90
+      let batteryLevel: number | null = null
       let speed = 0
       try {
         batteryLevel = await getBatteryLevel()
@@ -488,21 +507,44 @@ export default function CourierApp() {
           }
         }
 
+        const isWeak = (accuracyVal ?? 2000) >= 500
+        const gpsReason = isWeak ? 'sem-fix' : ''
+
         // Tentar envio normal online
-        await deliveryService.updateCourierLocation(user.id, lat, lng, speed, 90, batteryLevel, {
-          gps_status: 'active',
-          gps_reason: '',
-          offline_buffered: false,
-          accuracy: accuracyVal,
-        })
-        lastRecordedGpsRef.current = { lat, lng, timestamp: now }
+        await deliveryService.updateCourierLocation(
+          user.id,
+          lat,
+          lng,
+          speed,
+          90,
+          batteryLevel ?? undefined,
+          {
+            gps_status: 'active',
+            gps_reason: gpsReason,
+            offline_buffered: false,
+            accuracy: accuracyVal,
+          },
+        )
+
+        // Sucesso: atualiza referência e reseta contador de retry
+        lastRecordedGpsRef.current = { lat, lng, accuracy: accuracyVal, timestamp: now }
+        retryCountRef.current = 0
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current)
+          retryTimeoutRef.current = null
+        }
 
         // Se houver pontos no buffer que aguardavam sinal, tenta flush agora que a rede respondeu
         if (offlineTelemetryBuffer.size(user.id) > 0 && !isFlushingBuffer) {
           offlineTelemetryBuffer.flush(user.id).catch(() => {})
         }
       } catch (e) {
-        console.error('Failed to post live location (salvando no buffer offline se em rota):', e)
+        console.error(
+          'Failed to post live location (aplicando backoff exponencial máx 3 tentativas):',
+          e,
+        )
+
+        // Salvar no buffer offline se em rota ativa
         if (hasActiveStartedRoute) {
           offlineTelemetryBuffer.enqueuePoint({
             userId: user.id,
@@ -511,10 +553,27 @@ export default function CourierApp() {
             speed,
             heading: 90,
             accuracy: accuracyVal,
-            batteryLevel,
+            batteryLevel: batteryLevel ?? undefined,
             timestamp: now,
-            reason: 'network_offline',
+            reason: (accuracyVal ?? 2000) >= 500 ? 'sem-fix' : 'network_offline',
           })
+        }
+
+        // RETRY COM BACKOFF EXPONENCIAL (10s, 30s, 60s) — NO MÁXIMO 3 TENTATIVAS
+        if (retryCountRef.current < 3 && isEffectActive) {
+          retryCountRef.current += 1
+          const backoffDelays = [10000, 30000, 60000] // 10s, 30s, 60s
+          const delayMs = backoffDelays[retryCountRef.current - 1] || 60000
+
+          if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current)
+          retryTimeoutRef.current = setTimeout(() => {
+            if (isEffectActive) {
+              processAndSendGps(lat, lng, speedVal, accuracyVal, true)
+            }
+          }, delayMs)
+        } else {
+          // Atingiu o teto de 3 tentativas: encerra o ciclo de retries para nunca entrar em loop de rajada
+          retryCountRef.current = 0
         }
       } finally {
         isSendingLocationRef.current = false
@@ -660,6 +719,10 @@ export default function CourierApp() {
         watchId = null
       }
       clearFallbackTimer()
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current)
+        retryTimeoutRef.current = null
+      }
       triggerImmediateGpsRef.current = null
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('pageshow', handlePageShow)

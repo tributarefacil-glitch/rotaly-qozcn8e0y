@@ -43,8 +43,8 @@ const MAX_BUFFER_POINTS = 500
 // Limiares de deduplicação no buffer offline
 // Se o novo ponto tiver distância < 5 metros E intervalo de tempo < 10 segundos,
 // não adiciona uma nova cópia duplicada (atualiza timestamp e mantém o buffer enxuto).
-const DEDUPLICATION_MAX_DISTANCE_METERS = 5
-const DEDUPLICATION_MIN_INTERVAL_MS = 10 * 1000
+const DEDUPLICATION_MAX_DISTANCE_METERS = 10
+const DEDUPLICATION_MIN_INTERVAL_MS = 30 * 1000
 
 class OfflineTelemetryBufferService {
   private syncInProgress = false
@@ -105,14 +105,16 @@ class OfflineTelemetryBufferService {
       const last = current[current.length - 1]
       const timeDiff = Math.abs(point.timestamp - last.timestamp)
       const distMeters = haversineDistanceMeters(last.lat, last.lng, point.lat, point.lng)
+      const isWeak = (point.accuracy ?? 2000) >= 500 || (last.accuracy ?? 2000) >= 500
 
-      // Regra 1: Deduplicação no enfileiramento:
-      // Se a coordenada é idêntica ou distância < 5m E o intervalo é inferior a 10s:
-      // NÃO enfileirar mais uma cópia repetida. Apenas atualizamos o timestamp do ponto existente
-      // (e campos complementares se forem mais recentes/precisos), evitando inflar o banco e trajetos.
+      // Regra 1: Deduplicação defensiva no enfileiramento:
+      // Se a coordenada mudou menos de 10m OU o fix continua fraco/sem-fix (>=500m) em intervalo < 30s:
+      // NÃO enfileirar mais uma cópia repetida. Apenas atualizamos o ponto existente em vez de empilhar,
+      // evitando inflar o banco e trajetos.
       if (
-        distMeters < DEDUPLICATION_MAX_DISTANCE_METERS &&
-        timeDiff < DEDUPLICATION_MIN_INTERVAL_MS
+        (distMeters < DEDUPLICATION_MAX_DISTANCE_METERS &&
+          timeDiff < DEDUPLICATION_MIN_INTERVAL_MS) ||
+        (isWeak && distMeters < 30 && timeDiff < 60 * 1000)
       ) {
         last.timestamp = Math.max(last.timestamp, point.timestamp)
         if (typeof point.speed === 'number' && !isNaN(point.speed)) {
