@@ -118,9 +118,10 @@ export const deliveryService = {
    * 2. Para filiais conhecidas (Farmácia Xodó ou Pimenta Verde), além de seu ID principal,
    *    também aceita equivalências de migrações anteriores para garantir 100% do histórico.
    */
-  getCompanyFilterClause(field = 'empresa_id'): string | null {
-    const activeCompanyId = this.getActiveCompanyId()
+  getCompanyFilterClause(field = 'empresa_id', overrideCompanyId?: string): string | null {
+    const activeCompanyId = overrideCompanyId || this.getActiveCompanyId()
     if (!activeCompanyId || activeCompanyId === this.MATRIZ_EMPRESA_ID) {
+      // Para admin / Matriz: incluir Matriz E registros legados sem empresa
       return `(${field} = '${this.MATRIZ_EMPRESA_ID}' || ${field} = '' || ${field} = null)`
     }
 
@@ -227,11 +228,16 @@ export const deliveryService = {
   },
 
   // Orders
-  async getOrders(filter = '', sort = '-created', expand = 'customer_id,courier_id,seller_id') {
-    // Injeção automática e segura de empresa_id se disponível no storage e não filtrado explicitamente
+  async getOrders(
+    filter = '',
+    sort = '-created',
+    expand = 'customer_id,courier_id,seller_id',
+    empresaId?: string,
+  ) {
+    // Injeção automática e segura de empresa_id se disponível no storage/parâmetro e não filtrado explicitamente
     let finalFilter = filter
     if (!filter.includes('empresa_id') && !filter.includes('tracking_code')) {
-      const companyClause = this.getCompanyFilterClause('empresa_id')
+      const companyClause = this.getCompanyFilterClause('empresa_id', empresaId)
       if (companyClause) {
         finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
       }
