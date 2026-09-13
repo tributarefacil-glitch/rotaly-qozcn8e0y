@@ -129,74 +129,18 @@ export const Header: React.FC = () => {
           <span className="text-[11px] font-sans tracking-wide">GPS &amp; Realtime Ativo</span>
         </div>
 
-        {/* Multi-Tenant Active Company Switcher */}
-        {currentCompany && (
-          <div className="flex items-center">
-            {hasMultiCompanyAccess && allCompanies.length > 1 ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 gap-1.5 sm:gap-2 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2 sm:px-2.5 text-xs text-white hover:bg-[#121E46]"
-                    title={currentCompany.nome_fantasia || currentCompany.nome_razao_social}
-                  >
-                    <Building2 className="h-3.5 w-3.5 text-[#FF6B35] shrink-0" />
-                    <span className="max-w-[85px] sm:max-w-[140px] md:max-w-[180px] truncate font-semibold">
-                      {currentCompany.nome_fantasia || currentCompany.nome_razao_social}
-                    </span>
-                    <ChevronDown className="h-3 w-3 text-slate-400 shrink-0" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="start"
-                  className="w-56 bg-[#0E1738] border-[#1E2B58] text-white"
-                >
-                  <DropdownMenuLabel className="text-[10px] uppercase text-slate-400 font-bold">
-                    Alternar Empresa
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator className="bg-[#1E2B58]" />
-                  {allCompanies.map((emp) => (
-                    <DropdownMenuItem
-                      key={emp.id}
-                      onClick={() => {
-                        setCurrentCompany(emp)
-                        toast.success(
-                          `Empresa ativa: ${emp.nome_fantasia || emp.nome_razao_social}`,
-                        )
-                      }}
-                      className={`text-xs flex items-center justify-between cursor-pointer ${
-                        currentCompany.id === emp.id ? 'bg-[#0052CC] text-white font-bold' : ''
-                      }`}
-                    >
-                      <span className="truncate">{emp.nome_fantasia || emp.nome_razao_social}</span>
-                      {currentCompany.id === emp.id && <CheckCircle2 className="h-3 w-3" />}
-                    </DropdownMenuItem>
-                  ))}
-                  {role === 'admin' && (
-                    <>
-                      <DropdownMenuSeparator className="bg-[#1E2B58]" />
-                      <DropdownMenuItem
-                        onClick={() => navigate('/empresas')}
-                        className="text-xs text-[#60A5FA] cursor-pointer"
-                      >
-                        <Building2 className="mr-2 h-3.5 w-3.5" />
-                        Gerenciar Empresas
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <div className="flex items-center gap-1.5 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2 sm:px-2.5 py-1 text-xs text-slate-300">
-                <Building2 className="h-3.5 w-3.5 text-[#FF6B35] shrink-0" />
-                <span className="max-w-[85px] sm:max-w-[140px] truncate font-medium">
-                  {currentCompany.nome_fantasia || currentCompany.nome_razao_social}
-                </span>
-              </div>
-            )}
+        {/* Active Company Badge (Empresa Única: Rotaly Operações) */}
+        <div className="flex items-center">
+          <div className="flex items-center gap-1.5 rounded-lg border border-[#1E2B58] bg-[#0E1738] px-2.5 py-1 text-xs text-slate-200">
+            <Building2 className="h-3.5 w-3.5 text-[#FF6B35] shrink-0" />
+            <span className="max-w-[140px] sm:max-w-[180px] truncate font-semibold text-white">
+              {currentCompany?.nome_fantasia || 'Rotaly Operações'}
+            </span>
+            <span className="hidden sm:inline-block rounded bg-[#0052CC]/40 px-1.5 py-0.2 text-[9px] font-bold text-blue-200">
+              Matriz
+            </span>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Center section: Global Tracking Code Search */}
@@ -361,32 +305,7 @@ export const Header: React.FC = () => {
                 </DropdownMenuItem>
               </>
             )}
-            {/* Quick company switch in mobile/profile menu if multi-company available */}
-            {hasMultiCompanyAccess && allCompanies.length > 1 && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-[10px] uppercase text-muted-foreground font-bold">
-                  Empresa Ativa
-                </DropdownMenuLabel>
-                {allCompanies.map((emp) => (
-                  <DropdownMenuItem
-                    key={`menu-emp-${emp.id}`}
-                    onClick={() => {
-                      setCurrentCompany(emp)
-                      toast.success(`Empresa ativa: ${emp.nome_fantasia || emp.nome_razao_social}`)
-                    }}
-                    className={`text-xs flex items-center justify-between cursor-pointer ${
-                      currentCompany?.id === emp.id ? 'bg-primary/10 text-primary font-bold' : ''
-                    }`}
-                  >
-                    <span className="truncate">{emp.nome_fantasia || emp.nome_razao_social}</span>
-                    {currentCompany?.id === emp.id && (
-                      <CheckCircle2 className="h-3 w-3 text-primary" />
-                    )}
-                  </DropdownMenuItem>
-                ))}
-              </>
-            )}
+
             <DropdownMenuItem onClick={() => navigate('/track/TRK-2025-001')}>
               <ExternalLink className="mr-2 h-4 w-4" />
               <span>Página de Rastreio Demo</span>

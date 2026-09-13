@@ -481,16 +481,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
 
     try {
-      // Resolver empresa de forma síncrona/banco via getMyCompany
-      let targetCompanyId = currentCompany?.id
-      try {
-        const resolved = await getMyCompany()
-        targetCompanyId = resolved.id
-      } catch {
-        /* ignore */
-      }
-
-      // Pedidos carregados pelo escopo da empresa ativa da filial (sem restringir por seller_id)
+      // Pedidos carregados sem isolamento
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
 
       const [
@@ -509,9 +500,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           '-created',
           'customer_id,courier_id,seller_id',
         ),
-        !hasParentCouriers
-          ? deliveryService.getCouriers(targetCompanyId)
-          : Promise.resolve(couriers),
+        !hasParentCouriers ? deliveryService.getCouriers() : Promise.resolve(couriers),
         deliveryService.getLatestLocations(),
         deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
         deliveryService.getSettings().catch(() => null),
@@ -649,37 +638,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         if (!isSubscribed) return
         const rec = e.record as unknown as OrderRecord
 
-        // Filtro por empresa ativa: não processar eventos de outra empresa (fail-safe)
-        if (currentCompany?.id && rec?.empresa_id !== undefined) {
-          const isMatriz = currentCompany.id === deliveryService.MATRIZ_EMPRESA_ID
-          let matches = false
-          if (isMatriz) {
-            matches =
-              !rec.empresa_id ||
-              rec.empresa_id === '' ||
-              rec.empresa_id === deliveryService.MATRIZ_EMPRESA_ID
-          } else if (
-            currentCompany.id === 'ssyicw8uzwqc01w' ||
-            currentCompany.id === 'k443r453664d6v7'
-          ) {
-            matches = rec.empresa_id === 'ssyicw8uzwqc01w' || rec.empresa_id === 'k443r453664d6v7'
-          } else if (
-            currentCompany.id === 'covyosobcb1b50n' ||
-            currentCompany.id === '4m935a8286j6y04'
-          ) {
-            matches = rec.empresa_id === 'covyosobcb1b50n' || rec.empresa_id === '4m935a8286j6y04'
-          } else {
-            matches = rec.empresa_id === currentCompany.id
-          }
-
-          if (!matches) {
-            if (e.action === 'delete' || e.action === 'update') {
-              setOrders((prev) => prev.filter((o) => o.id !== rec.id))
-              setGlobalInTransitOrders((prev) => prev.filter((o) => o.id !== rec.id))
-            }
-            return
-          }
-        }
+        // Modo Empresa Única (Rotaly Operações): todos os pedidos pertencem à operação unificada
 
         // Ao receber update com route_finished === true ou status === 'delivered':
         // remover imediatamente o courier do cache de rotas ativas, remover polilinhas e expurgar de globalInTransitOrders

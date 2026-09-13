@@ -194,22 +194,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   }
 
   const loadData = async () => {
-    // Garantir resolução assíncrona síncrona/banco via getMyCompany
-    let activeId = currentCompany?.id
     try {
-      const resolved = await getMyCompany()
-      activeId = resolved.id
-      setResolvedCompanySource(`${resolved.source} (${resolved.id})`)
-    } catch {
-      /* continue with currentCompany?.id */
-    }
-
-    if (!activeId) {
-      activeId = 'ssyicw8uzwqc01w'
-    }
-
-    try {
-      const companyId = activeId
+      setResolvedCompanySource('Rotaly Operações (Matriz)')
       const [
         ordersData,
         custData,
@@ -220,11 +206,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         eventsData,
         fuelData,
       ] = await Promise.all([
-        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id', companyId),
+        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
         deliveryService.getCustomers(),
-        deliveryService.getCouriers(companyId),
+        deliveryService.getCouriers(),
         deliveryService.getLatestLocations(),
-        deliveryService.getBaseAddresses(companyId),
+        deliveryService.getBaseAddresses(),
         deliveryService.getSettings(),
         deliveryService.getOffRouteEvents(),
         deliveryService.getFuelAdvances(),
@@ -238,15 +224,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       setSettings(settingsData)
       setOffRouteEvents(eventsData)
 
-      // Seleção robusta de base padrão: prioriza base da filial resolvida
-      const defaultBase =
-        basesData.find((b) => b.is_default && b.empresa_id === companyId) ||
-        basesData.find((b) => b.is_default) ||
-        basesData[0]
-      const defaultEnd =
-        basesData.find((b) => b.is_end_default && b.empresa_id === companyId) ||
-        basesData.find((b) => b.is_end_default) ||
-        defaultBase
+      // Seleção robusta de base padrão
+      const defaultBase = basesData.find((b) => b.is_default) || basesData[0]
+      const defaultEnd = basesData.find((b) => b.is_end_default) || defaultBase
 
       if (defaultBase) {
         setSelectedBaseId(defaultBase.id)
@@ -263,7 +243,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   useEffect(() => {
     loadData()
-  }, [user?.id, user?.role, currentCompany?.id])
+  }, [user?.id, user?.role])
 
   useEffect(() => {
     const handleCompanyChange = () => {
@@ -275,35 +255,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   }, [])
 
-  // Helper para verificar se um registro pertence à empresa ativa
-  const matchesCurrentCompany = (recEmpresaId?: string) => {
-    // Fail-safe: se não houver empresa selecionada ou se a empresa ativa for a Matriz,
-    // aceita pedidos da Matriz E pedidos com empresa_id vazio/nulo (legados e transição)
-    if (!currentCompany?.id || currentCompany.id === deliveryService.MATRIZ_EMPRESA_ID) {
-      return (
-        !recEmpresaId || recEmpresaId === '' || recEmpresaId === deliveryService.MATRIZ_EMPRESA_ID
-      )
-    }
-    // Suporte aos IDs conhecidos de filiais
-    if (currentCompany.id === 'ssyicw8uzwqc01w' || currentCompany.id === 'k443r453664d6v7') {
-      return recEmpresaId === 'ssyicw8uzwqc01w' || recEmpresaId === 'k443r453664d6v7'
-    }
-    if (currentCompany.id === 'covyosobcb1b50n' || currentCompany.id === '4m935a8286j6y04') {
-      return recEmpresaId === 'covyosobcb1b50n' || recEmpresaId === '4m935a8286j6y04'
-    }
-    return recEmpresaId === currentCompany.id
-  }
+  // Modo Empresa Única: aceita todos os registros
+  const matchesCurrentCompany = (_recEmpresaId?: string) => true
 
-  // Realtime subscriptions for orders and courier locations
+  // Realtime subscriptions for orders and courier locations (sem restrições)
   useRealtime<OrderRecord>('orders', (e) => {
-    // Filtro por empresa ativa: não mesclar pedidos de outra empresa
-    if (e.record?.empresa_id !== undefined && !matchesCurrentCompany(e.record.empresa_id)) {
-      if (e.action === 'delete' || e.action === 'update') {
-        setOrders((prev) => prev.filter((o) => o.id !== e.record.id))
-      }
-      return
-    }
-
     if (e.action === 'create') {
       setOrders((prev) => [e.record, ...prev])
       toast.info(`📦 Novo pedido criado: ${e.record.tracking_code}`)
@@ -316,14 +272,6 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   // Realtime hook for customers (clientes novos criados no modal de venda chegam imediatamente)
   useRealtime<CustomerRecord>('customers', (e) => {
-    // Filtro por empresa ativa
-    if (e.record?.empresa_id !== undefined && !matchesCurrentCompany(e.record.empresa_id)) {
-      if (e.action === 'delete' || e.action === 'update') {
-        setCustomers((prev) => prev.filter((c) => c.id !== e.record.id))
-      }
-      return
-    }
-
     if (e.action === 'create') {
       setCustomers((prev) => [e.record, ...prev.filter((c) => c.id !== e.record.id)])
     } else if (e.action === 'update') {
@@ -2412,13 +2360,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 <p className="font-semibold text-white truncate">
                   {currentCompany?.nome_fantasia ||
                     currentCompany?.nome_razao_social ||
-                    'Farmácia Xodó do Pilar'}
+                    'Rotaly Operações'}
                 </p>
                 <p className="font-mono text-[10px] text-slate-400 truncate">
-                  ID: {currentCompany?.id || 'ssyicw8uzwqc01w'}
+                  ID: {currentCompany?.id || deliveryService.MATRIZ_EMPRESA_ID}
                 </p>
                 <p className="text-[10px] text-indigo-300 truncate font-mono">
-                  Fonte: {resolvedCompanySource || 'companyResolver (membros)'}
+                  Fonte: {resolvedCompanySource || 'Empresa Única (Matriz)'}
                 </p>
                 <p className="text-[11px] text-emerald-400">
                   Status: <strong>{isLoadingCompany ? 'Carregando...' : 'Ativa'}</strong>
@@ -2468,12 +2416,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                 <span className="text-amber-400 text-base leading-none">⚠️</span>
                 <div>
                   <strong className="font-bold">Aviso de Operação Zerada:</strong>{' '}
-                  {orders.length === 0 && 'Nenhum pedido retornado para a empresa ativa. '}
-                  {customers.length === 0 && 'Nenhum cliente cadastrado nesta filial. '}
-                  {couriers.length === 0 &&
-                    'Nenhum entregador com vínculo ativo encontrado nesta empresa. '}
-                  Verifique os vínculos do usuário na coleção <code>membros</code> para garantir
-                  filial <code>ssyicw8uzwqc01w</code>.
+                  {orders.length === 0 && 'Nenhum pedido retornado para a operação. '}
+                  {customers.length === 0 && 'Nenhum cliente cadastrado. '}
+                  {couriers.length === 0 && 'Nenhum entregador cadastrado. '}
+                  Operando em modo Empresa Única: <code>Rotaly Operações</code>.
                 </div>
               </div>
             )}

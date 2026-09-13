@@ -258,43 +258,15 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setIsLoading(true)
       setLoadError(null)
 
-      // A) Loading gate & Resolução da Empresa Ativa
-      let activeId = currentCompany?.id
-      let resolvedInfo: ResolvedCompany | null = null
-
-      if (activeId) {
-        resolvedInfo = {
-          id: activeId,
-          name:
-            currentCompany?.nome_fantasia || currentCompany?.nome_razao_social || 'Empresa Ativa',
-          source: 'admin_selection',
-        }
-        setResolvedCompanySource(`admin_selection (${activeId})`)
-      } else {
-        try {
-          resolvedInfo = await getMyCompany()
-          activeId = resolvedInfo.id
-          setResolvedCompanySource(`${resolvedInfo.source} (${resolvedInfo.id})`)
-        } catch (err) {
-          console.warn('[AdminDashboard] Erro ao resolver empresa:', err)
-        }
+      // A) Modo Empresa Única: Rotaly Operações (Matriz)
+      const resolvedInfo: ResolvedCompany = {
+        id: deliveryService.MATRIZ_EMPRESA_ID,
+        name: 'Rotaly Operações',
+        source: 'single_company_matriz',
       }
-
-      if (!activeId) {
-        activeId = 'ssyicw8uzwqc01w' // Farmácia Xodó como fallback seguro prioritário
-        if (!resolvedInfo) {
-          resolvedInfo = {
-            id: activeId,
-            name: 'Farmácia Xodó do Pilar',
-            source: 'fallback_filial',
-          }
-        }
-      }
-
+      setResolvedCompanySource('Rotaly Operações (Matriz)')
       setResolvedCompany(resolvedInfo)
       setIsLoadingCompanyGate(false)
-
-      const companyId = activeId
 
       const [
         ordersData,
@@ -308,10 +280,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         reviewsData,
         locationsData,
       ] = await Promise.all([
-        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id', companyId),
-        deliveryService.getAllUsers(companyId),
-        deliveryService.getCouriers(companyId),
-        deliveryService.getSellers(companyId),
+        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
+        deliveryService.getAllUsers(),
+        deliveryService.getCouriers(),
+        deliveryService.getSellers(),
         deliveryService.getNotifications(),
         deliveryService.getSettings(),
         deliveryService.getFuelAdvances(),
@@ -2874,7 +2846,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">
-                    Operação Multi-tenant • PocketBase Skip Cloud
+                    Operação Empresa Única (Rotaly Operações) • PocketBase Skip Cloud
                   </span>
                 </div>
 
@@ -2915,14 +2887,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       <p className="font-semibold text-white truncate">
                         {currentCompany?.nome_fantasia ||
                           currentCompany?.nome_razao_social ||
-                          resolvedCompany?.name ||
-                          'Farmácia Xodó do Pilar'}
+                          'Rotaly Operações'}
                       </p>
                       <p className="font-mono text-[10px] text-slate-400 truncate">
-                        ID: {currentCompany?.id || resolvedCompany?.id || 'ssyicw8uzwqc01w'}
+                        ID: {currentCompany?.id || deliveryService.MATRIZ_EMPRESA_ID}
                       </p>
                       <p className="text-[10px] text-indigo-300 truncate font-mono">
-                        Fonte: {resolvedCompanySource || 'companyResolver (membros)'}
+                        Fonte: {resolvedCompanySource || 'Empresa Única (Matriz)'}
                       </p>
                       <p className="text-[11px] text-emerald-400">
                         Status: <strong>Ativa</strong>
@@ -2975,11 +2946,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       <span className="text-amber-400 text-base leading-none">⚠️</span>
                       <div>
                         <strong className="font-bold">Aviso de Operação Zerada:</strong>{' '}
-                        {orders.length === 0 && 'Nenhum pedido retornado para a empresa ativa. '}
-                        {couriers.length === 0 &&
-                          'Nenhum entregador com vínculo ativo encontrado nesta empresa. '}
-                        Verifique os vínculos na coleção <code>membros</code> para garantir filial{' '}
-                        <code>ssyicw8uzwqc01w</code>.
+                        {orders.length === 0 && 'Nenhum pedido retornado para a operação. '}
+                        {couriers.length === 0 && 'Nenhum entregador cadastrado no sistema. '}
+                        Operação unificada na Matriz <code>Rotaly Operações</code>.
                       </div>
                     </div>
                   )}

@@ -69,84 +69,35 @@ export const deliveryService = {
     return pb.collection<MembroRecord>('membros').delete(id)
   },
 
-  // ID da Empresa Matriz Rotaly (para retrocompatibilidade com dados legados sem empresa_id)
+  // ID da Empresa Matriz Rotaly (Empresa Única do Sistema)
   MATRIZ_EMPRESA_ID: '7wo05iyvfcfh01h',
 
   /**
    * Helper para obter o ID da empresa ativa de forma fail-safe.
-   * Se vazio, nulo ou inválido, retorna a Matriz como default seguro.
+   * Retorna SEMPRE a Matriz '7wo05iyvfcfh01h' ("Rotaly Operações").
    */
   getActiveCompanyId(): string {
-    try {
-      const authModel = pb.authStore.record as { id?: string; role?: string } | null
-      const isStaff = authModel && (authModel.role === 'seller' || authModel.role === 'courier')
-
-      const active =
-        typeof window !== 'undefined' ? localStorage.getItem('rotaly_active_empresa_id') : null
-      const trimmed = active && active !== 'undefined' && active !== 'null' ? active.trim() : null
-
-      // Se temos valor no storage:
-      if (trimmed && trimmed !== '') {
-        // Para seller ou courier, se estiver apontando para a Matriz, NUNCA aceitar Matriz — retornar Farmácia Xodó
-        if (isStaff && trimmed === this.MATRIZ_EMPRESA_ID) {
-          return 'ssyicw8uzwqc01w'
-        }
-        return trimmed
-      }
-
-      // Se não há valor no storage:
-      if (isStaff) {
-        return 'ssyicw8uzwqc01w'
-      }
-    } catch {
-      /* ignore */
-    }
-
-    return 'ssyicw8uzwqc01w'
+    return this.MATRIZ_EMPRESA_ID
   },
 
   setActiveCompanyId(empresaId: string): void {
     if (typeof window !== 'undefined' && empresaId) {
-      localStorage.setItem('rotaly_active_empresa_id', empresaId.trim())
+      localStorage.setItem('rotaly_active_empresa_id', this.MATRIZ_EMPRESA_ID)
     }
   },
 
   /**
-   * Helper para montar cláusula multi-tenant consistente e FAIL-SAFE:
-   * 1. Se a empresa ativa for a Matriz (7wo05iyvfcfh01h) OU se não houver empresa válida no storage,
-   *    aceita registros vinculados à Matriz E registros legados/vazios (`field = '7wo05iyvfcfh01h' || field = '' || field = null`).
-   * 2. Para filiais conhecidas (Farmácia Xodó ou Pimenta Verde), além de seu ID principal,
-   *    também aceita equivalências de migrações anteriores para garantir 100% do histórico.
+   * Helper de cláusula de empresa:
+   * No modo empresa única, não restringe ou aceita tudo para garantir 100% de visibilidade.
    */
-  getCompanyFilterClause(field = 'empresa_id', overrideCompanyId?: string): string | null {
-    const activeCompanyId = overrideCompanyId || this.getActiveCompanyId()
-    if (!activeCompanyId || activeCompanyId === this.MATRIZ_EMPRESA_ID) {
-      // Para admin / Matriz: incluir Matriz E registros legados sem empresa
-      return `(${field} = '${this.MATRIZ_EMPRESA_ID}' || ${field} = '' || ${field} = null)`
-    }
-
-    // Suporte a IDs conhecidos da Farmácia Xodó
-    if (activeCompanyId === 'ssyicw8uzwqc01w' || activeCompanyId === 'k443r453664d6v7') {
-      return `(${field} = 'ssyicw8uzwqc01w' || ${field} = 'k443r453664d6v7')`
-    }
-
-    // Suporte a IDs conhecidos da Pimenta Verde
-    if (activeCompanyId === 'covyosobcb1b50n' || activeCompanyId === '4m935a8286j6y04') {
-      return `(${field} = 'covyosobcb1b50n' || ${field} = '4m935a8286j6y04')`
-    }
-
-    return `${field} = '${activeCompanyId}'`
+  getCompanyFilterClause(_field = 'empresa_id', _overrideCompanyId?: string): string | null {
+    // Retorna null para nunca restringir queries e garantir que TODOS os registros apareçam unificados
+    return null
   },
 
-  // Multi-tenant Colaboradores, Rotas, Entregas, Relatórios
-  async getColaboradores(empresaId?: string) {
-    const targetId = empresaId || this.getActiveCompanyId()
-    const filter =
-      targetId === this.MATRIZ_EMPRESA_ID
-        ? `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
-        : `empresa_id = '${targetId}'`
+  // Colaboradores, Rotas, Entregas, Relatórios (Unificados)
+  async getColaboradores(_empresaId?: string) {
     return pb.collection<ColaboradorRecord>('colaboradores').getFullList({
-      filter,
       sort: 'nome',
       requestKey: null,
     })
@@ -161,14 +112,8 @@ export const deliveryService = {
     return pb.collection<ColaboradorRecord>('colaboradores').create(payload)
   },
 
-  async getRotas(empresaId?: string) {
-    const targetId = empresaId || this.getActiveCompanyId()
-    const filter =
-      targetId === this.MATRIZ_EMPRESA_ID
-        ? `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
-        : `empresa_id = '${targetId}'`
+  async getRotas(_empresaId?: string) {
     return pb.collection<RotaRecord>('rotas').getFullList({
-      filter,
       sort: '-created',
       requestKey: null,
     })
@@ -183,14 +128,8 @@ export const deliveryService = {
     return pb.collection<RotaRecord>('rotas').create(payload)
   },
 
-  async getEntregas(empresaId?: string) {
-    const targetId = empresaId || this.getActiveCompanyId()
-    const filter =
-      targetId === this.MATRIZ_EMPRESA_ID
-        ? `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
-        : `empresa_id = '${targetId}'`
+  async getEntregas(_empresaId?: string) {
     return pb.collection<EntregaRecord>('entregas').getFullList({
-      filter,
       sort: '-created',
       requestKey: null,
     })
@@ -205,14 +144,8 @@ export const deliveryService = {
     return pb.collection<EntregaRecord>('entregas').create(payload)
   },
 
-  async getRelatorios(empresaId?: string) {
-    const targetId = empresaId || this.getActiveCompanyId()
-    const filter =
-      targetId === this.MATRIZ_EMPRESA_ID
-        ? `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
-        : `empresa_id = '${targetId}'`
+  async getRelatorios(_empresaId?: string) {
     return pb.collection<RelatorioRecord>('relatorios').getFullList({
-      filter,
       sort: '-created',
       requestKey: null,
     })
@@ -232,19 +165,10 @@ export const deliveryService = {
     filter = '',
     sort = '-created',
     expand = 'customer_id,courier_id,seller_id',
-    empresaId?: string,
+    _empresaId?: string,
   ) {
-    // Injeção automática e segura de empresa_id se disponível no storage/parâmetro e não filtrado explicitamente
-    let finalFilter = filter
-    if (!filter.includes('empresa_id') && !filter.includes('tracking_code')) {
-      const companyClause = this.getCompanyFilterClause('empresa_id', empresaId)
-      if (companyClause) {
-        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
-      }
-    }
-
     return pb.collection<OrderRecord>('orders').getFullList({
-      filter: finalFilter,
+      filter,
       sort,
       expand,
       requestKey: null,
@@ -335,16 +259,8 @@ export const deliveryService = {
 
   // Customers
   async getCustomers(customFilter = '') {
-    let finalFilter = customFilter
-    if (!customFilter.includes('empresa_id')) {
-      const companyClause = this.getCompanyFilterClause('empresa_id')
-      if (companyClause) {
-        finalFilter = customFilter ? `(${customFilter}) && ${companyClause}` : companyClause
-      }
-    }
-
     return pb.collection<CustomerRecord>('customers').getFullList({
-      filter: finalFilter,
+      filter: customFilter,
       sort: 'name',
       requestKey: null,
     })
@@ -582,121 +498,22 @@ export const deliveryService = {
 
   // Users / Couriers / Sellers
   // Filtrados pela empresa ativa através dos vínculos da coleção membros (ativo = true)
-  async getCouriers(empresaId?: string) {
-    const activeCompanyId = empresaId || this.getActiveCompanyId()
-
-    // Se há empresa ativa definida, buscar os usuários vinculados como entregador na coleção membros
-    if (activeCompanyId) {
-      try {
-        // Aceita IDs equivalentes para filiais conhecidas
-        let empresaFilter = `empresa_id = '${activeCompanyId}'`
-        if (activeCompanyId === 'ssyicw8uzwqc01w' || activeCompanyId === 'k443r453664d6v7') {
-          empresaFilter = `(empresa_id = 'ssyicw8uzwqc01w' || empresa_id = 'k443r453664d6v7')`
-        } else if (activeCompanyId === 'covyosobcb1b50n' || activeCompanyId === '4m935a8286j6y04') {
-          empresaFilter = `(empresa_id = 'covyosobcb1b50n' || empresa_id = '4m935a8286j6y04')`
-        }
-
-        const membros = await pb.collection<MembroRecord>('membros').getFullList({
-          filter: `${empresaFilter} && papel = 'entregador' && ativo = true`,
-          expand: 'user_id',
-          requestKey: null,
-        })
-        const usersFromMembers = membros
-          .map((m) => {
-            const u = m.expand?.user_id as UserRecord | undefined
-            if (!u) return null
-            return {
-              ...u,
-              vehicle_type: m.vehicle_type || u.vehicle_type || 'moto',
-              status: m.ativo ? ('active' as const) : ('inactive' as const),
-            } as UserRecord
-          })
-          .filter(Boolean) as UserRecord[]
-
-        if (usersFromMembers.length > 0) {
-          // Deduplicar por id
-          const seen = new Set<string>()
-          return usersFromMembers.filter((u) => {
-            if (seen.has(u.id)) return false
-            seen.add(u.id)
-            return true
-          })
-        }
-
-        // Se for a Matriz e não houver membros ainda com expand, manter fallback para legados
-        if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
-          const list = await pb.collection<UserRecord>('users').getFullList({
-            filter: "role = 'courier'",
-            sort: '-created',
-            requestKey: null,
-          })
-          return list.map((u) => ({
-            ...u,
-            vehicle_type: u.vehicle_type || 'moto',
-            status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
-          }))
-        }
-
-        return []
-      } catch (err) {
-        console.warn('Erro ao filtrar couriers por membros da empresa:', err)
-      }
-    }
-
-    const fallbackList = await pb.collection<UserRecord>('users').getFullList({
+  async getCouriers(_empresaId?: string) {
+    // Modo Empresa Única: listar todos os entregadores do sistema cadastrados (sem isolamento)
+    const list = await pb.collection<UserRecord>('users').getFullList({
       filter: "role = 'courier'",
       sort: '-created',
       requestKey: null,
     })
-    return fallbackList.map((u) => ({
+    return list.map((u) => ({
       ...u,
       vehicle_type: u.vehicle_type || 'moto',
       status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
     }))
   },
 
-  async getSellers(empresaId?: string) {
-    const activeCompanyId = empresaId || this.getActiveCompanyId()
-
-    if (activeCompanyId) {
-      try {
-        let empresaFilter = `empresa_id = '${activeCompanyId}'`
-        if (activeCompanyId === 'ssyicw8uzwqc01w' || activeCompanyId === 'k443r453664d6v7') {
-          empresaFilter = `(empresa_id = 'ssyicw8uzwqc01w' || empresa_id = 'k443r453664d6v7')`
-        } else if (activeCompanyId === 'covyosobcb1b50n' || activeCompanyId === '4m935a8286j6y04') {
-          empresaFilter = `(empresa_id = 'covyosobcb1b50n' || empresa_id = '4m935a8286j6y04')`
-        }
-
-        const membros = await pb.collection<MembroRecord>('membros').getFullList({
-          filter: `${empresaFilter} && papel = 'vendedor' && ativo = true`,
-          expand: 'user_id',
-          requestKey: null,
-        })
-        const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
-
-        if (usersFromMembers.length > 0) {
-          const seen = new Set<string>()
-          return usersFromMembers.filter((u) => {
-            if (seen.has(u.id)) return false
-            seen.add(u.id)
-            return true
-          })
-        }
-
-        if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
-          return pb.collection<UserRecord>('users').getFullList({
-            filter: "role = 'seller'",
-            sort: '-created',
-            requestKey: null,
-          })
-        }
-
-        return []
-      } catch (err) {
-        console.warn('Erro ao filtrar sellers por membros da empresa:', err)
-      }
-    }
-
+  async getSellers(_empresaId?: string) {
+    // Modo Empresa Única: listar todos os vendedores do sistema cadastrados (sem isolamento)
     return pb.collection<UserRecord>('users').getFullList({
       filter: "role = 'seller'",
       sort: '-created',
@@ -704,47 +521,8 @@ export const deliveryService = {
     })
   },
 
-  async getAllUsers(empresaId?: string) {
-    const activeCompanyId = empresaId || this.getActiveCompanyId()
-
-    if (activeCompanyId) {
-      try {
-        let empresaFilter = `empresa_id = '${activeCompanyId}'`
-        if (activeCompanyId === 'ssyicw8uzwqc01w' || activeCompanyId === 'k443r453664d6v7') {
-          empresaFilter = `(empresa_id = 'ssyicw8uzwqc01w' || empresa_id = 'k443r453664d6v7')`
-        } else if (activeCompanyId === 'covyosobcb1b50n' || activeCompanyId === '4m935a8286j6y04') {
-          empresaFilter = `(empresa_id = 'covyosobcb1b50n' || empresa_id = '4m935a8286j6y04')`
-        }
-
-        const membros = await pb.collection<MembroRecord>('membros').getFullList({
-          filter: `${empresaFilter} && ativo = true`,
-          expand: 'user_id',
-          requestKey: null,
-        })
-        const usersFromMembers = membros.map((m) => m.expand?.user_id as UserRecord).filter(Boolean)
-
-        if (usersFromMembers.length > 0) {
-          const seen = new Set<string>()
-          return usersFromMembers.filter((u) => {
-            if (seen.has(u.id)) return false
-            seen.add(u.id)
-            return true
-          })
-        }
-
-        if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
-          return pb.collection<UserRecord>('users').getFullList({
-            sort: '-created',
-            requestKey: null,
-          })
-        }
-
-        return []
-      } catch (err) {
-        console.warn('Erro ao filtrar allUsers por membros da empresa:', err)
-      }
-    }
-
+  async getAllUsers(_empresaId?: string) {
+    // Modo Empresa Única: listar todos os usuários unificados
     return pb.collection<UserRecord>('users').getFullList({
       sort: '-created',
       requestKey: null,
@@ -853,16 +631,8 @@ export const deliveryService = {
 
   // Locations
   async getLatestLocations(filter = '', sort = '-created') {
-    let finalFilter = filter
-    if (!filter.includes('empresa_id') && !filter.includes('user_id')) {
-      const companyClause = this.getCompanyFilterClause('empresa_id')
-      if (companyClause) {
-        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
-      }
-    }
-
     return pb.collection<LocationRecord>('locations').getFullList({
-      filter: finalFilter,
+      filter,
       sort,
       expand: 'user_id',
       requestKey: null,
@@ -1061,104 +831,33 @@ export const deliveryService = {
   },
 
   // Base Addresses Management (Cadastro de Base da Empresa / Loja e Endereço Final)
-  async getBaseAddresses(empresaId?: string): Promise<BaseAddressRecord[]> {
-    const activeCompanyId = empresaId || this.getActiveCompanyId()
+  async getBaseAddresses(_empresaId?: string): Promise<BaseAddressRecord[]> {
     try {
-      let filter = ''
-      if (activeCompanyId) {
-        if (activeCompanyId === this.MATRIZ_EMPRESA_ID) {
-          filter = `(empresa_id = '${this.MATRIZ_EMPRESA_ID}' || empresa_id = '' || empresa_id = null)`
-        } else {
-          filter = `empresa_id = '${activeCompanyId}'`
-        }
-      }
-
       const records = await pb.collection<BaseAddressRecord>('base_addresses').getFullList({
-        filter,
         sort: '-is_default,name',
         requestKey: null,
       })
       if (records.length > 0) return records
-
-      // Se a busca com filtro restrito de filial retornou vazia, tentar buscar qualquer base cadastrada para a filial
-      if (activeCompanyId && activeCompanyId !== this.MATRIZ_EMPRESA_ID) {
-        const anyFilialBases = await pb
-          .collection<BaseAddressRecord>('base_addresses')
-          .getFullList({
-            sort: '-is_default,name',
-            requestKey: null,
-          })
-        const match = anyFilialBases.filter((b) => b.empresa_id === activeCompanyId)
-        if (match.length > 0) return match
-      }
     } catch (err) {
       console.warn('Could not fetch base_addresses from pb:', err)
     }
 
-    // Se a empresa for Farmácia Xodó do Pilar ou outra filial, o default NUNCA deve ser "Base Central" da Matriz
-    const isFarmacia =
-      !activeCompanyId ||
-      activeCompanyId === 'ssyicw8uzwqc01w' ||
-      activeCompanyId === 'k443r453664d6v7'
-    if (isFarmacia) {
-      return [
-        {
-          id: 'v400vj141k05c08',
-          name: 'Mais Saudavel',
-          type: 'base',
-          address: 'Rua da Prosperidade, 13 - Pilar, Duque de Caxias - RJ, 25230-085, Brasil',
-          street: 'Rua da Prosperidade, 13',
-          neighborhood: 'Pilar',
-          city: 'Duque de Caxias',
-          state: 'RJ',
-          postal_code: '25230-085',
-          lat: -22.7001402,
-          lng: -43.2982834,
-          is_default: true,
-          is_end_default: true,
-          empresa_id: 'ssyicw8uzwqc01w',
-          collectionId: 'base_addresses',
-          collectionName: 'base_addresses',
-          created: new Date().toISOString(),
-          updated: new Date().toISOString(),
-        },
-      ]
-    }
-
     return [
       {
-        id: 'default_central_base',
-        name: 'Base Central Rotaly (Polo Operacional)',
+        id: '811cpvr0g77m9ue',
+        name: 'Mais Saudavel',
         type: 'base',
-        address: 'Av. Rio Branco, 156 - Centro, Rio de Janeiro - RJ',
-        street: 'Av. Rio Branco, 156',
-        neighborhood: 'Centro',
-        city: 'Rio de Janeiro',
+        address: 'Rua da Prosperidade, 13 - Pilar, Duque de Caxias - RJ, 25230-085, Brasil',
+        street: 'Rua da Prosperidade, 13',
+        neighborhood: 'Pilar',
+        city: 'Duque de Caxias',
         state: 'RJ',
-        postal_code: '20040-003',
-        lat: -22.906847,
-        lng: -43.172896,
+        postal_code: '25230-085',
+        lat: -22.7001402,
+        lng: -43.2982834,
         is_default: true,
         is_end_default: true,
-        collectionId: 'base_addresses',
-        collectionName: 'base_addresses',
-        created: new Date().toISOString(),
-        updated: new Date().toISOString(),
-      },
-      {
-        id: 'default_endpoint_base',
-        name: 'Galpão / Ponto de Apoio Zona Sul',
-        type: 'end_point',
-        address: 'Rua São Clemente, 185 - Botafogo, Rio de Janeiro - RJ',
-        street: 'Rua São Clemente, 185',
-        neighborhood: 'Botafogo',
-        city: 'Rio de Janeiro',
-        state: 'RJ',
-        postal_code: '22260-001',
-        lat: -22.951917,
-        lng: -43.184852,
-        is_default: false,
-        is_end_default: false,
+        empresa_id: this.MATRIZ_EMPRESA_ID,
         collectionId: 'base_addresses',
         collectionName: 'base_addresses',
         created: new Date().toISOString(),

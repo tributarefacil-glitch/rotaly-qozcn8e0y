@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import pb from '@/lib/pocketbase/client'
 import type { EmpresaRecord, MembroRecord } from '@/types/delivery'
 import { useAuth } from './AuthContext'
-import { getMyCompany, clearCompanyCache } from '@/lib/companyResolver'
+import { getMyCompany, clearCompanyCache, MATRIZ_EMPRESA_ID } from '@/lib/companyResolver'
 
 interface CompanyContextType {
   currentCompany: EmpresaRecord | null
@@ -36,95 +36,60 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     setIsLoadingCompany(true)
     try {
-      // 1. Fonte única de verdade síncrona/banco via getMyCompany
+      // 1. Fonte única de verdade: Matriz Rotaly Operações
       const resolved = await getMyCompany()
 
-      // 2. Carregar lista de membros vinculados a este usuário
+      let resolvedCompany: EmpresaRecord | null = null
+      try {
+        resolvedCompany = await pb.collection<EmpresaRecord>('empresas').getOne(resolved.id, {
+          requestKey: null,
+        })
+      } catch {
+        resolvedCompany = {
+          id: MATRIZ_EMPRESA_ID,
+          nome_razao_social: 'Rotaly Logística Matriz',
+          nome_fantasia: 'Rotaly Operações',
+          cnpj: '34.567.890/0001-22',
+          telefone: '(21) 96428-2954',
+          email: 'tributarefacil@gmail.com',
+          cep: '25020-210',
+          logradouro: 'Rua Manuel Vieira',
+          numero: '196',
+          bairro: 'Centro',
+          cidade: 'Duque de Caxias',
+          estado: 'RJ',
+          ativa: true,
+          created: '',
+          updated: '',
+          collectionId: 'empresas',
+          collectionName: 'empresas',
+        }
+      }
+
+      // 2. Carregar vínculo de membro
       const memberRecords = await pb
         .collection<MembroRecord>('membros')
         .getFullList({
-          filter: `user_id = '${user.id}' && ativo = true`,
-          expand: 'empresa_id',
+          filter: `user_id = '${user.id}'`,
           sort: '-created',
           requestKey: null,
         })
-        .catch((e) => {
-          console.warn('Erro ao consultar membros do usuário:', e)
-          return [] as MembroRecord[]
-        })
+        .catch(() => [] as MembroRecord[])
 
-      // 3. Se for admin do sistema, buscar todas as empresas para o seletor
-      let companiesList: EmpresaRecord[] = []
-      if (user.role === 'admin') {
-        companiesList = await pb
-          .collection<EmpresaRecord>('empresas')
-          .getFullList({
-            sort: 'nome_razao_social',
-            requestKey: null,
-          })
-          .catch(() => [])
-      } else {
-        companiesList = memberRecords
-          .map((m) => (m.expand?.empresa_id as EmpresaRecord) || null)
-          .filter(Boolean) as EmpresaRecord[]
-      }
+      const resolvedMember = memberRecords[0] || null
 
-      // Buscar o registro completo da empresa resolvida
-      let resolvedCompany: EmpresaRecord | null =
-        companiesList.find((c) => c.id === resolved.id) || null
-
-      if (!resolvedCompany) {
-        try {
-          resolvedCompany = await pb.collection<EmpresaRecord>('empresas').getOne(resolved.id, {
-            requestKey: null,
-          })
-        } catch {
-          // Fallback mínimo para garantir objeto de empresa válido
-          resolvedCompany = {
-            id: resolved.id,
-            nome_razao_social: resolved.name,
-            nome_fantasia: resolved.name,
-            cnpj: '',
-            telefone: '',
-            email: '',
-            cep: '',
-            logradouro: '',
-            numero: '',
-            bairro: '',
-            cidade: 'Duque de Caxias',
-            estado: 'RJ',
-            ativa: true,
-            created: '',
-            updated: '',
-            collectionId: 'empresas',
-            collectionName: 'empresas',
-          }
-        }
-      }
-
-      if (!companiesList.some((c) => c.id === resolvedCompany?.id) && resolvedCompany) {
-        companiesList.unshift(resolvedCompany)
-      }
-      setAllCompanies(companiesList)
-
-      let resolvedMember = memberRecords.find((m) => m.empresa_id === resolvedCompany?.id) || null
-      if (!resolvedMember && memberRecords.length > 0) {
-        resolvedMember = memberRecords[0]
-      }
-
-      if (resolvedCompany) {
-        localStorage.setItem(STORAGE_KEY, resolvedCompany.id)
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(
-            new CustomEvent('rotaly_company_changed', {
-              detail: { companyId: resolvedCompany.id, company: resolvedCompany },
-            }),
-          )
-        }
-      }
-
+      setAllCompanies(resolvedCompany ? [resolvedCompany] : [])
       setCurrentCompanyState(resolvedCompany)
       setCurrentMember(resolvedMember)
+
+      localStorage.setItem(STORAGE_KEY, MATRIZ_EMPRESA_ID)
+      if (typeof window !== 'undefined' && resolvedCompany) {
+        window.dispatchEvent(
+          new CustomEvent('rotaly_company_changed', {
+            detail: { companyId: MATRIZ_EMPRESA_ID, company: resolvedCompany },
+          }),
+        )
+      }
     } catch (err) {
       console.error('Falha ao resolver contexto de empresa:', err)
     } finally {
@@ -151,7 +116,8 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }
 
-  const hasMultiCompanyAccess = user?.role === 'admin' || allCompanies.length > 1
+  // No modo empresa única, desativamos o multiCompanyAccess para impedir trocas
+  const hasMultiCompanyAccess = false
 
   return (
     <CompanyContext.Provider

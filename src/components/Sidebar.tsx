@@ -34,13 +34,7 @@ const navItems: NavItem[] = [
     icon: LayoutDashboard,
     roles: ['admin'],
   },
-  {
-    title: 'Empresas & Multi-Tenant',
-    href: '/empresas',
-    icon: Building2,
-    roles: ['admin'],
-    badge: 'Tenant',
-  },
+
   {
     title: 'Painel do Lojista',
     href: '/seller',
