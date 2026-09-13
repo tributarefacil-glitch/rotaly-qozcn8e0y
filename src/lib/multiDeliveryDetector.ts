@@ -99,12 +99,17 @@ export function detectMultiDeliveryGroups(orders: OrderRecord[]): MultiDeliveryG
   for (const ord of eligible) {
     const courierId = ord.courier_id || 'unassigned'
     // Identificador único do cliente
-    const customerId =
+    const rawAddr = String(
+      ord.expand?.customer_id?.address || ord.start_base_address || ord.id || '',
+    )
+    const addrSlug = rawAddr ? rawAddr.toLowerCase().trim() : 'no_address'
+    const customerId = String(
       ord.customer_id ||
-      ord.expand?.customer_id?.id ||
-      (ord.expand?.customer_id?.phone
-        ? `phone_${ord.expand.customer_id.phone.replace(/\D/g, '')}`
-        : `addr_${(ord.expand?.customer_id?.address || ord.start_base_address || ord.id).toLowerCase().trim()}`)
+        ord.expand?.customer_id?.id ||
+        (ord.expand?.customer_id?.phone
+          ? `phone_${String(ord.expand.customer_id.phone).replace(/\D/g, '')}`
+          : `addr_${addrSlug}`),
+    )
 
     const ts = getOrderDeliveryTimestamp(ord)
     const dayKey = getDeliveryDayKey(new Date(ts))

@@ -1140,159 +1140,161 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {currentFuelAccounts.map((acc) => {
-                      const isPositive = acc.balance >= 0
-                      return (
-                        <Card
-                          key={acc.courier.id}
-                          onClick={() => {
-                            setSelectedCourierForHistory(acc.courier)
-                            setIsCourierHistoryModalOpen(true)
-                          }}
-                          className="border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden cursor-pointer hover:border-[#0052CC]/60 hover:shadow-md transition-all group"
-                        >
-                          <div
-                            className={`absolute top-0 left-0 right-0 h-1.5 ${
-                              isPositive ? 'bg-emerald-500' : 'bg-rose-500'
-                            }`}
-                          />
-                          <CardHeader className="p-4 pb-2">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 font-bold text-xs">
-                                  {acc.courier.name
-                                    ? acc.courier.name.slice(0, 2).toUpperCase()
-                                    : 'EN'}
-                                </div>
-                                <div>
-                                  <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
-                                    {acc.courier.name || 'Entregador'}
-                                  </CardTitle>
-                                  <p className="text-[10px] text-slate-500 flex items-center gap-1">
-                                    <span>{acc.courier.vehicle_plate || 'Sem placa'}</span> •{' '}
-                                    <span className="font-semibold text-slate-700 dark:text-slate-300">
-                                      {acc.courier.vehicle_model ||
-                                        (acc.courier.vehicle_type === 'carro'
-                                          ? 'Carro'
-                                          : acc.courier.vehicle_type === 'caminhao'
-                                            ? 'Caminhão'
-                                            : acc.courier.vehicle_type === 'bicycle' ||
-                                                acc.courier.vehicle_type === 'bicicleta'
-                                              ? 'Bicicleta'
-                                              : 'Moto')}
-                                    </span>
-                                    <Badge
-                                      variant="outline"
-                                      className="text-[9px] px-1 py-0 uppercase font-mono font-bold ml-0.5"
-                                    >
-                                      {deliveryService.normalizeVehicleCategory(
-                                        acc.courier.vehicle_type,
-                                      ) === 'bicicleta'
-                                        ? '🚲 Bicicleta'
-                                        : deliveryService.normalizeVehicleCategory(
-                                            acc.courier.vehicle_type,
-                                          )}
-                                    </Badge>
-                                  </p>
-                                </div>
-                              </div>
-                              <Badge
-                                className={`text-[10px] font-bold ${
-                                  isPositive
-                                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300'
-                                    : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300'
-                                }`}
-                              >
-                                {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
-                              </Badge>
-                            </div>
-                          </CardHeader>
+                    {currentFuelAccounts
+                      .filter((acc) => acc && acc.courier && acc.courier.id)
+                      .map((acc) => {
+                        const balanceNum = Number(acc?.balance) || 0
+                        const totalAdvancesNum = Number(acc?.totalAdvances) || 0
+                        const totalSpentNum = Number(acc?.totalSpent) || 0
+                        const totalRouteKmNum = Number(acc?.totalRouteKm) || 0
+                        const isPositive = balanceNum >= 0
+                        const courierName = String(acc?.courier?.name || 'Entregador')
+                        const courierVehicleType = acc?.courier?.vehicle_type
+                        const isBicycle =
+                          deliveryService.normalizeVehicleCategory(courierVehicleType) ===
+                          'bicicleta'
 
-                          <CardContent className="p-4 pt-2 space-y-3 text-xs">
-                            {/* Saldo Principal */}
-                            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border flex items-center justify-between">
-                              <div>
-                                <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                                  Saldo da Conta Corrente
-                                </span>
-                                <span
-                                  className={`text-xl font-black font-mono ${
+                        return (
+                          <Card
+                            key={acc.courier.id}
+                            onClick={() => {
+                              setSelectedCourierForHistory(acc.courier)
+                              setIsCourierHistoryModalOpen(true)
+                            }}
+                            className="border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden cursor-pointer hover:border-[#0052CC]/60 hover:shadow-md transition-all group"
+                          >
+                            <div
+                              className={`absolute top-0 left-0 right-0 h-1.5 ${
+                                isPositive ? 'bg-emerald-500' : 'bg-rose-500'
+                              }`}
+                            />
+                            <CardHeader className="p-4 pb-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 font-bold text-xs">
+                                    {courierName.slice(0, 2).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
+                                      {courierName}
+                                    </CardTitle>
+                                    <p className="text-[10px] text-slate-500 flex items-center gap-1">
+                                      <span>{acc.courier.vehicle_plate || 'Sem placa'}</span> •{' '}
+                                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                        {acc.courier.vehicle_model ||
+                                          (courierVehicleType === 'carro'
+                                            ? 'Carro'
+                                            : courierVehicleType === 'caminhao'
+                                              ? 'Caminhão'
+                                              : courierVehicleType === 'bicycle' ||
+                                                  courierVehicleType === 'bicicleta'
+                                                ? 'Bicicleta'
+                                                : 'Moto')}
+                                      </span>
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[9px] px-1 py-0 uppercase font-mono font-bold ml-0.5"
+                                      >
+                                        {isBicycle
+                                          ? '🚲 Bicicleta'
+                                          : deliveryService.normalizeVehicleCategory(
+                                              courierVehicleType,
+                                            )}
+                                      </Badge>
+                                    </p>
+                                  </div>
+                                </div>
+                                <Badge
+                                  className={`text-[10px] font-bold ${
                                     isPositive
-                                      ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-rose-600 dark:text-rose-400'
+                                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300'
+                                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300'
                                   }`}
                                 >
-                                  R$ {acc.balance.toFixed(2)}
+                                  {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
+                                </Badge>
+                              </div>
+                            </CardHeader>
+
+                            <CardContent className="p-4 pt-2 space-y-3 text-xs">
+                              {/* Saldo Principal */}
+                              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                                    Saldo da Conta Corrente
+                                  </span>
+                                  <span
+                                    className={`text-xl font-black font-mono ${
+                                      isPositive
+                                        ? 'text-emerald-600 dark:text-emerald-400'
+                                        : 'text-rose-600 dark:text-rose-400'
+                                    }`}
+                                  >
+                                    R$ {balanceNum.toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-[10px] text-slate-400 block">
+                                    {Number(acc?.advanceCount) || 0} adiantamento(s)
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 block">
+                                    {Number(acc?.deliveriesCount) || 0} entregas
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Detalhamento: Recebido vs Gasto */}
+                              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                <div className="p-2 rounded-lg bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
+                                  <span className="text-emerald-700 dark:text-emerald-400 block font-medium">
+                                    (+) Total Adiantado
+                                  </span>
+                                  <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono text-sm">
+                                    R$ {totalAdvancesNum.toFixed(2)}
+                                  </span>
+                                </div>
+
+                                <div className="p-2 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
+                                  <span className="text-amber-700 dark:text-amber-400 block font-medium">
+                                    {isBicycle
+                                      ? 'Km Rodado (Sem Combustível)'
+                                      : '(-) Gasto Rota Oficial'}
+                                  </span>
+                                  <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm">
+                                    {isBicycle
+                                      ? `${totalRouteKmNum.toFixed(1)} km`
+                                      : `R$ ${totalSpentNum.toFixed(2)}`}
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    {isBicycle
+                                      ? 'Telemetria apurada'
+                                      : `${totalRouteKmNum.toFixed(1)} km reais oficiais`}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* KM Oficial vs KM Desvios com Badge da Fonte */}
+                              <div className="flex items-center justify-between pt-0.5 text-[10px]">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[9px] px-1.5 py-0.2 border-blue-400 text-blue-400 bg-blue-950/30 font-bold"
+                                >
+                                  🗺️ Histórico Viário de Rotas
+                                </Badge>
+                                <span className="text-slate-400 font-mono">
+                                  KM Oficial: <strong>{totalRouteKmNum.toFixed(1)} km</strong>
                                 </span>
                               </div>
-                              <div className="text-right">
-                                <span className="text-[10px] text-slate-400 block">
-                                  {acc.advanceCount} adiantamento(s)
-                                </span>
-                                <span className="text-[10px] text-slate-400 block">
-                                  {acc.deliveriesCount} entregas
-                                </span>
+
+                              {/* Dica / Botão de clique para histórico */}
+                              <div className="pt-1 flex items-center justify-between text-[11px] text-[#0052CC] dark:text-[#60A5FA] font-medium group-hover:underline">
+                                <span>Ver histórico detalhado de entregas & telemetria</span>
+                                <span>→</span>
                               </div>
-                            </div>
-
-                            {/* Detalhamento: Recebido vs Gasto */}
-                            <div className="grid grid-cols-2 gap-2 text-[11px]">
-                              <div className="p-2 rounded-lg bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
-                                <span className="text-emerald-700 dark:text-emerald-400 block font-medium">
-                                  (+) Total Adiantado
-                                </span>
-                                <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono text-sm">
-                                  R$ {acc.totalAdvances.toFixed(2)}
-                                </span>
-                              </div>
-
-                              <div className="p-2 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
-                                <span className="text-amber-700 dark:text-amber-400 block font-medium">
-                                  {deliveryService.normalizeVehicleCategory(
-                                    acc.courier.vehicle_type,
-                                  ) === 'bicicleta'
-                                    ? 'Km Rodado (Sem Combustível)'
-                                    : '(-) Gasto Rota Oficial'}
-                                </span>
-                                <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm">
-                                  {deliveryService.normalizeVehicleCategory(
-                                    acc.courier.vehicle_type,
-                                  ) === 'bicicleta'
-                                    ? `${acc.totalRouteKm.toFixed(1)} km`
-                                    : `R$ ${acc.totalSpent.toFixed(2)}`}
-                                </span>
-                                <span className="text-[9px] text-slate-400 block mt-0.5">
-                                  {deliveryService.normalizeVehicleCategory(
-                                    acc.courier.vehicle_type,
-                                  ) === 'bicicleta'
-                                    ? 'Telemetria apurada'
-                                    : `${acc.totalRouteKm.toFixed(1)} km reais oficiais`}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* KM Oficial vs KM Desvios com Badge da Fonte */}
-                            <div className="flex items-center justify-between pt-0.5 text-[10px]">
-                              <Badge
-                                variant="outline"
-                                className="text-[9px] px-1.5 py-0.2 border-blue-400 text-blue-400 bg-blue-950/30 font-bold"
-                              >
-                                🗺️ Histórico Viário de Rotas
-                              </Badge>
-                              <span className="text-slate-400 font-mono">
-                                KM Oficial: <strong>{acc.totalRouteKm.toFixed(1)} km</strong>
-                              </span>
-                            </div>
-
-                            {/* Dica / Botão de clique para histórico */}
-                            <div className="pt-1 flex items-center justify-between text-[11px] text-[#0052CC] dark:text-[#60A5FA] font-medium group-hover:underline">
-                              <span>Ver histórico detalhado de entregas & telemetria</span>
-                              <span>→</span>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )
-                    })}{' '}
+                            </CardContent>
+                          </Card>
+                        )
+                      })}
                   </div>
                 </div>
 
@@ -3487,23 +3489,21 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
           selectedCourierForHistory
             ? (() => {
                 const existing = currentFuelAccounts.find(
-                  (a) => a.courier.id === selectedCourierForHistory.id,
+                  (a) => a && a.courier && a.courier.id === selectedCourierForHistory.id,
                 )
                 const courierAdv = fuelAdvances.filter(
-                  (a) => a.courier_id === selectedCourierForHistory.id,
+                  (a) => a && a.courier_id === selectedCourierForHistory.id,
                 )
-                const totalAdv = courierAdv.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+                const totalAdv = courierAdv.reduce((sum, a) => sum + (Number(a?.amount) || 0), 0)
                 if (existing) {
+                  const existingTotalAdv = Number(existing.totalAdvances) || 0
+                  const effectiveAdv = existingTotalAdv > 0 ? existingTotalAdv : totalAdv
+                  const existingTotalSpent = Number(existing.totalSpent) || 0
                   return {
                     ...existing,
                     advances: existing.advances?.length ? existing.advances : courierAdv,
-                    totalAdvances: existing.totalAdvances > 0 ? existing.totalAdvances : totalAdv,
-                    balance: Number(
-                      (
-                        (existing.totalAdvances > 0 ? existing.totalAdvances : totalAdv) -
-                        existing.totalSpent
-                      ).toFixed(2),
-                    ),
+                    totalAdvances: effectiveAdv,
+                    balance: Number((effectiveAdv - existingTotalSpent).toFixed(2)),
                   }
                 }
                 return {

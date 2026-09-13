@@ -161,13 +161,145 @@ export class GlobalErrorBoundary extends Component<
   }
 }
 
+// Error Boundary dedicado para rotas com painel no tema Dark Navy (#0E1738)
+interface RouteErrorBoundaryProps {
+  children: React.ReactNode
+  routeName?: string
+}
+
+interface RouteErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+  errorInfo: ErrorInfo | null
+}
+
+function RouteErrorFallback({
+  error,
+  routeName,
+  onReset,
+}: {
+  error: Error | null
+  routeName?: string
+  onReset: () => void
+}) {
+  const navigate = useNavigate()
+
+  return (
+    <div className="min-h-screen w-full bg-[#0A1128] text-slate-100 flex items-center justify-center p-4 select-none relative overflow-hidden">
+      <div className="absolute -top-32 -left-32 w-80 h-80 bg-blue-600/15 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-[#FF6B35]/15 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="max-w-lg w-full relative z-10">
+        <Card className="border-2 border-amber-500/50 bg-[#0E1738] text-white shadow-2xl rounded-2xl overflow-hidden">
+          <div className="h-1.5 w-full bg-gradient-to-r from-amber-500 via-rose-500 to-[#0052CC]" />
+
+          <CardHeader className="text-center pt-8 pb-3">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/40 text-amber-400 mb-2 shadow-inner">
+              <AlertTriangle className="h-7 w-7 text-amber-400" />
+            </div>
+            <CardTitle className="font-heading text-xl font-bold text-white tracking-tight">
+              Algo saiu do trilho nesta tela
+            </CardTitle>
+            <CardDescription className="text-slate-300 text-xs sm:text-sm mt-1">
+              {routeName
+                ? `Tela: ${routeName}`
+                : 'Ocorreu um erro inesperado ao carregar os dados.'}
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-4 px-6 pb-6">
+            {error && (
+              <div className="rounded-xl border border-rose-500/40 bg-[#0A1128] p-3 text-xs">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400 block mb-1">
+                  Mensagem do Erro
+                </span>
+                <p className="font-mono text-[11px] text-rose-300 break-words whitespace-pre-wrap bg-black/40 p-2.5 rounded-lg border border-white/5">
+                  {error.message || String(error)}
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+              <Button
+                onClick={() => window.location.reload()}
+                className="flex-1 h-10 gap-2 bg-[#0052CC] hover:bg-[#003E99] text-white font-bold text-xs shadow-md rounded-xl transition-all"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Recarregar Página
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  onReset()
+                  navigate('/')
+                }}
+                className="flex-1 h-10 gap-2 border-[#1E2B58] bg-[#0A1128] hover:bg-[#121E46] text-slate-200 hover:text-white text-xs font-semibold rounded-xl"
+              >
+                <Home className="h-4 w-4 text-[#60A5FA]" />
+                Voltar ao Início
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+export class RouteErrorBoundary extends Component<
+  RouteErrorBoundaryProps,
+  RouteErrorBoundaryState
+> {
+  constructor(props: RouteErrorBoundaryProps) {
+    super(props)
+    this.state = {
+      hasError: false,
+      error: null,
+      errorInfo: null,
+    }
+  }
+
+  static getDerivedStateFromError(error: Error): Partial<RouteErrorBoundaryState> {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error(
+      `RouteErrorBoundary caught an error in [${this.props.routeName || 'route'}]:`,
+      error,
+      errorInfo?.componentStack,
+    )
+    this.setState({ errorInfo })
+  }
+
+  handleReset = () => {
+    this.setState({ hasError: false, error: null, errorInfo: null })
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <RouteErrorFallback
+          error={this.state.error}
+          routeName={this.props.routeName}
+          onReset={this.handleReset}
+        />
+      )
+    }
+
+    return this.props.children
+  }
+}
+
 // CORREÇÃO 4: Role Guard Component with Loop Prevention & Safe State
 function ProtectedRoute({
   children,
   allowedRoles,
+  routeName,
 }: {
   children: React.ReactNode
   allowedRoles?: ('admin' | 'seller' | 'courier')[]
+  routeName?: string
 }) {
   const { user, role, isLoading, isAuthenticated } = useAuth()
   const location = useLocation()
@@ -220,7 +352,7 @@ function ProtectedRoute({
     return <Navigate to="/seller" replace />
   }
 
-  return <>{children}</>
+  return <RouteErrorBoundary routeName={routeName}>{children}</RouteErrorBoundary>
 }
 
 // Componente dedicado para a rota /couriers:
@@ -405,7 +537,7 @@ const App = () => (
               <Route
                 path="/admin"
                 element={
-                  <ProtectedRoute allowedRoles={['admin']}>
+                  <ProtectedRoute allowedRoles={['admin']} routeName="Painel do Administrador">
                     <AdminDashboard defaultTab="overview" />
                   </ProtectedRoute>
                 }
@@ -413,7 +545,7 @@ const App = () => (
               <Route
                 path="/admin/users"
                 element={
-                  <ProtectedRoute allowedRoles={['admin']}>
+                  <ProtectedRoute allowedRoles={['admin']} routeName="Gestão de Usuários (Admin)">
                     <AdminDashboard defaultTab="couriers" />
                   </ProtectedRoute>
                 }
@@ -421,7 +553,7 @@ const App = () => (
               <Route
                 path="/users"
                 element={
-                  <ProtectedRoute allowedRoles={['admin']}>
+                  <ProtectedRoute allowedRoles={['admin']} routeName="Gestão de Usuários">
                     <AdminDashboard defaultTab="couriers" />
                   </ProtectedRoute>
                 }

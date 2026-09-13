@@ -37,21 +37,31 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
   showPricingExplanation = true,
   className = '',
 }) => {
-  const isPositive = metrics.balance >= 0
-  const activeCourier = courier || metrics.courier
+  const balanceNum = Number(metrics?.balance) || 0
+  const totalAdvancesNum = Number(metrics?.totalAdvances) || 0
+  const totalSpentNum = Number(metrics?.totalSpent) || 0
+  const totalOfficialKmNum = Number(metrics?.totalOfficialKm) || 0
+  const totalDeviationKmNum = Number(metrics?.totalDeviationKm) || 0
+  const jointSavedKmNum = Number(metrics?.jointSavedKm) || 0
+  const jointSavedFuelCostNum = Number(metrics?.jointSavedFuelCost) || 0
+  const pricePerLiterNum = Number(metrics?.pricePerLiter) || 0
+  const consumptionKmlNum = Number(metrics?.consumptionKml) || 1
+
+  const isPositive = balanceNum >= 0
+  const activeCourier = courier || metrics?.courier
+  const courierName = String(activeCourier?.name || 'Entregador')
   const isBicycle =
-    metrics.vehicleCategory === 'bicicleta' ||
+    metrics?.vehicleCategory === 'bicicleta' ||
     deliveryService.normalizeVehicleCategory(activeCourier?.vehicle_type) === 'bicicleta'
   const vehicleLabel =
     activeCourier?.vehicle_model ||
     (isBicycle
       ? 'Bicicleta'
-      : metrics.vehicleCategory === 'carro'
+      : metrics?.vehicleCategory === 'carro'
         ? 'Carro'
-        : metrics.vehicleCategory === 'caminhao'
+        : metrics?.vehicleCategory === 'caminhao'
           ? 'Caminhão'
           : 'Moto')
-
   return (
     <Card
       onClick={onOpenHistoryModal}
@@ -67,11 +77,11 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-300 font-bold text-xs shrink-0">
-              {activeCourier?.name ? activeCourier.name.slice(0, 2).toUpperCase() : 'EN'}
+              {courierName.slice(0, 2).toUpperCase()}
             </div>
             <div className="min-w-0">
               <CardTitle className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                {activeCourier?.name || 'Entregador'}
+                {courierName}
               </CardTitle>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1 truncate">
                 <span>{activeCourier?.vehicle_plate || 'Sem placa'}</span>
@@ -117,18 +127,18 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
                   : 'text-rose-600 dark:text-rose-400'
               }`}
             >
-              R$ {metrics.balance.toFixed(2)}
+              R$ {balanceNum.toFixed(2)}
             </span>
             <div className="flex items-center gap-1.5 mt-1">
               <Badge
                 variant="outline"
                 className={`text-[9px] px-1.5 py-0.5 font-bold ${
-                  metrics.calculationSource === 'odometro'
+                  metrics?.calculationSource === 'odometro'
                     ? 'border-indigo-400 text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-300'
                     : 'border-blue-400 text-blue-600 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300'
                 }`}
               >
-                {metrics.calculationSource === 'odometro'
+                {metrics?.calculationSource === 'odometro'
                   ? '🏍️ Odômetro da Moto'
                   : '🗺️ Histórico Viário de Rotas'}
               </Badge>
@@ -139,10 +149,10 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           </div>
           <div className="text-right shrink-0">
             <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-medium">
-              {metrics.advanceCount} adiantamento(s)
+              {Number(metrics?.advanceCount) || 0} adiantamento(s)
             </span>
             <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-medium">
-              {metrics.deliveriesCount} entregas
+              {Number(metrics?.deliveriesCount) || 0} entregas
             </span>
           </div>
         </div>
@@ -155,7 +165,7 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
               <span>(+) Total Adiantado</span>
             </div>
             <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono text-sm block mt-0.5">
-              R$ {metrics.totalAdvances.toFixed(2)}
+              R$ {totalAdvancesNum.toFixed(2)}
             </span>
             <span className="text-[9px] text-slate-400 block mt-0.5">Créditos antecipados</span>
           </div>
@@ -166,14 +176,12 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
               <span>{isBicycle ? 'Km Rodado (Sem Combustível)' : '(-) Gasto Rota Oficial'}</span>
             </div>
             <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm block mt-0.5">
-              {isBicycle
-                ? `${metrics.totalOfficialKm.toFixed(1)} km`
-                : `R$ ${metrics.totalSpent.toFixed(2)}`}
+              {isBicycle ? `${totalOfficialKmNum.toFixed(1)} km` : `R$ ${totalSpentNum.toFixed(2)}`}
             </span>
             <span className="text-[9px] text-slate-400 block mt-0.5">
               {isBicycle
                 ? 'Telemetria GPS apurada'
-                : `${metrics.totalOfficialKm.toFixed(1)} km reais oficiais`}
+                : `${totalOfficialKmNum.toFixed(1)} km reais oficiais`}
             </span>
           </div>
         </div>
@@ -183,32 +191,33 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <span className="text-slate-500 dark:text-slate-400">KM Real Oficial:</span>
             <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-              {metrics.totalOfficialKm.toFixed(1)} km
+              {totalOfficialKmNum.toFixed(1)} km
             </span>
           </div>
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <span className="text-slate-500 dark:text-slate-400">KM Desvios:</span>
             <span
               className={`font-mono font-bold ${
-                metrics.totalDeviationKm > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'
+                totalDeviationKmNum > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'
               }`}
             >
-              +{metrics.totalDeviationKm.toFixed(1)} km
+              +{totalDeviationKmNum.toFixed(1)} km
             </span>
           </div>
         </div>
 
         {/* Badge / Indicador de Entregas Conjuntas se houver */}
-        {metrics.jointDeliveriesConsolidatedCount > 0 && (
+        {(Number(metrics?.jointDeliveriesConsolidatedCount) || 0) > 0 && (
           <div className="p-2 rounded-md bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/40 text-[10px] text-purple-700 dark:text-purple-300 flex items-center justify-between">
             <div className="flex items-center gap-1.5 truncate">
               <Package className="h-3 w-3 shrink-0" />
               <span className="truncate">
-                📦 {metrics.jointDeliveriesConsolidatedCount} entrega(s) conjunta(s) no mesmo ponto
+                📦 {Number(metrics?.jointDeliveriesConsolidatedCount) || 0} entrega(s) conjunta(s)
+                no mesmo ponto
               </span>
             </div>
             <span className="font-mono font-bold shrink-0 ml-1">
-              -{metrics.jointSavedKm.toFixed(1)} km (-R$ {metrics.jointSavedFuelCost.toFixed(2)})
+              -{jointSavedKmNum.toFixed(1)} km (-R$ {jointSavedFuelCostNum.toFixed(2)})
             </span>
           </div>
         )}
@@ -224,10 +233,9 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
                 </span>
               ) : (
                 <span>
-                  R$ {metrics.pricePerLiter.toFixed(2)}/L • {metrics.consumptionKml.toFixed(1)} km/L
-                  ={' '}
+                  R$ {pricePerLiterNum.toFixed(2)}/L • {consumptionKmlNum.toFixed(1)} km/L ={' '}
                   <strong className="text-slate-700 dark:text-slate-300 font-mono">
-                    R$ {(metrics.pricePerLiter / (metrics.consumptionKml || 1)).toFixed(4)}/km
+                    R$ {(pricePerLiterNum / (consumptionKmlNum || 1)).toFixed(4)}/km
                   </strong>
                 </span>
               )}
