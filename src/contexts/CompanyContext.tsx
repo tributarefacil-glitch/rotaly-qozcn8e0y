@@ -68,61 +68,53 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       setAllCompanies(companiesList)
 
-      // 3. Identificar se o usuário já tinha uma empresa selecionada em localStorage
-      const savedCompanyId = localStorage.getItem(STORAGE_KEY)
+      // 3. Resolução da empresa ativa
       let resolvedCompany: EmpresaRecord | null = null
       let resolvedMember: MembroRecord | null = null
 
-      // Se o usuário tem vínculo com uma filial (não-Matriz), verificar se tem vínculo duplo Matriz+filial
-      const nonMatrizMember = memberRecords.find((m) => m.empresa_id !== '7wo05iyvfcfh01h')
-      const hasBranchAccess = Boolean(nonMatrizMember)
+      const isNonAdminStaff = user.role === 'seller' || user.role === 'courier'
 
-      // Regra Multi-Tenant:
-      // Para usuários não-admin com vínculo em filial (ex: vendedoras/entregadores da Farmácia Xodó ou Pimenta Verde),
-      // a filial DEVE ser a empresa padrão prioritária.
-      // Se o localStorage estava vazio OU apontando para a Matriz por herança legada,
-      // devemos sobrescrever com a filial!
-      const shouldForceBranchOverMatriz = user.role !== 'admin' && hasBranchAccess
+      if (isNonAdminStaff) {
+        // ALTERAÇÃO 4: Para perfis seller e courier, IGNORAR o cache legado e resolver a empresa ativa
+        // imediatamente pela tabela membros (user_id = user.id && ativo = true).
+        // Se houver filial (não-Matriz), prioriza a filial da operação.
+        const nonMatrizMember = memberRecords.find((m) => m.empresa_id !== '7wo05iyvfcfh01h')
+        resolvedMember = nonMatrizMember || memberRecords[0] || null
 
-      // Validar contra a lista de empresas existentes e ativas
-      if (savedCompanyId && savedCompanyId !== 'undefined' && savedCompanyId !== 'null') {
-        const candidateCompany =
-          companiesList.find((c) => c.id === savedCompanyId && c.ativa !== false) || null
-
-        // Se candidate for a Matriz mas o usuário tem filial e não é admin, ignorar a Matriz do storage
-        if (shouldForceBranchOverMatriz && candidateCompany?.id === '7wo05iyvfcfh01h') {
-          resolvedCompany = null
-          localStorage.removeItem(STORAGE_KEY)
-        } else {
-          resolvedCompany = candidateCompany
+        if (resolvedMember) {
+          if (resolvedMember.expand?.empresa_id) {
+            resolvedCompany = resolvedMember.expand.empresa_id
+          } else {
+            try {
+              resolvedCompany = await pb
+                .collection<EmpresaRecord>('empresas')
+                .getOne(resolvedMember.empresa_id)
+            } catch {
+              /* intentionally ignored */
+            }
+          }
         }
-      }
+      } else {
+        // Admin / Gestor mantém a liberdade de alternar e manter a escolha do localStorage
+        const savedCompanyId = localStorage.getItem(STORAGE_KEY)
+        if (savedCompanyId && savedCompanyId !== 'undefined' && savedCompanyId !== 'null') {
+          resolvedCompany =
+            companiesList.find((c) => c.id === savedCompanyId && c.ativa !== false) || null
+        }
 
-      // Se o ID salvo for inválido ou não existir na lista, limpar o storage imediatamente
-      if (savedCompanyId && !resolvedCompany) {
-        localStorage.removeItem(STORAGE_KEY)
-      }
-
-      // Se não encontrou pelo storage ou se forçado para filial, priorizar a empresa vinculada via membros
-      // Para admin, priorizar a Matriz se disponível; para vendedor/entregador, priorizar sua empresa filial (não-Matriz)
-      if (!resolvedCompany && memberRecords.length > 0) {
-        if (user.role === 'admin') {
+        if (!resolvedCompany && memberRecords.length > 0) {
           const matrizMember = memberRecords.find((m) => m.empresa_id === '7wo05iyvfcfh01h')
-          resolvedMember = matrizMember || nonMatrizMember || memberRecords[0]
-        } else {
-          // Para vendedor/entregador, se houver membro de empresa filha (não-matriz), priorizar SEMPRE ela!
-          resolvedMember = nonMatrizMember || memberRecords[0]
-        }
-
-        if (resolvedMember.expand?.empresa_id) {
-          resolvedCompany = resolvedMember.expand.empresa_id
-        } else {
-          try {
-            resolvedCompany = await pb
-              .collection<EmpresaRecord>('empresas')
-              .getOne(resolvedMember.empresa_id)
-          } catch {
-            /* intentionally ignored */
+          resolvedMember = matrizMember || memberRecords[0]
+          if (resolvedMember.expand?.empresa_id) {
+            resolvedCompany = resolvedMember.expand.empresa_id
+          } else {
+            try {
+              resolvedCompany = await pb
+                .collection<EmpresaRecord>('empresas')
+                .getOne(resolvedMember.empresa_id)
+            } catch {
+              /* intentionally ignored */
+            }
           }
         }
       }
@@ -171,6 +163,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         resolvedMember = memberRecords.find((m) => m.empresa_id === resolvedCompany?.id) || null
       }
 
+      // Ao resolver, sobrescrever ativamente localStorage com a empresa resolvida
       if (resolvedCompany) {
         localStorage.setItem(STORAGE_KEY, resolvedCompany.id)
       }

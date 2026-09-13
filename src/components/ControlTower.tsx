@@ -470,12 +470,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Fetch initial/refreshed data
   const fetchData = async () => {
     try {
-      const isSeller = user?.role === 'seller'
-      const sellerOrdersFilter = isSeller && user?.id ? `seller_id = '${user.id}'` : ''
-
-      // Separar em duas buscas:
-      // 1. sellerOrders (com filtro seller_id quando logado como vendedor — para pins de clientes, kanban e drawer)
-      // 2. globalInTransitOrders (todos os pedidos do sistema em rota ativa não finalizada: route_started=true && (route_finished=false || route_finished=null), sem seller_id)
+      // Pedidos carregados pelo escopo da empresa ativa da filial (sem restringir por seller_id)
+      // 1. fetchedOrders: todos os pedidos da empresa ativa para pins, kanban, status e drawer
+      // 2. globalInTransitOrders: pedidos da filial em rota ativa não finalizada
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
 
       const [
@@ -486,11 +483,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         fetchedDeviations,
         fetchedSettings,
       ] = await Promise.all([
-        deliveryService.getOrders(
-          sellerOrdersFilter,
-          '-created',
-          'customer_id,courier_id,seller_id',
-        ),
+        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
         deliveryService.getOrders(
           globalTransitFilter,
           '-created',
@@ -735,12 +728,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           })
         }
 
-        // Filtro seller_id: eventos de pedidos locais da loja (para pins de pedidos, kanban e drawer)
-        const isSeller = user?.role === 'seller'
-        if (isSeller && user?.id && rec?.seller_id && rec.seller_id !== user.id) {
-          return
-        }
-
+        // Eventos de pedidos da empresa ativa da filial (aceitos sem amarrar em seller_id)
         if (e.action === 'create') {
           setOrders((prev) => [rec, ...prev])
           setLastUpdated(new Date())

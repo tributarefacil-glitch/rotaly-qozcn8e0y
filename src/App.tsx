@@ -202,14 +202,30 @@ function ProtectedRoute({
     return <>{children}</>
   }
 
+  // Reforço estrito: role 'seller' NUNCA acessa ou é roteada para /admin sob nenhuma condição
+  if (role === 'seller' && location.pathname.startsWith('/admin')) {
+    return <Navigate to="/seller" replace />
+  }
+
   // Role verification
   if (allowedRoles && !allowedRoles.includes(role)) {
-    if (role === 'courier') return <Navigate to="/courier" replace />
     if (role === 'admin') return <Navigate to="/admin" replace />
+    if (role === 'courier') return <Navigate to="/courier" replace />
     return <Navigate to="/seller" replace />
   }
 
   return <>{children}</>
+}
+
+// Componente dedicado para a rota /couriers:
+// - Se role for seller, redireciona para /seller (o painel do vendedor já possui gestão de entregadores da filial)
+// - Se role for admin, renderiza AdminDashboard
+function CouriersRoute() {
+  const { role } = useAuth()
+  if (role === 'seller') {
+    return <Navigate to="/seller" replace />
+  }
+  return <AdminDashboard defaultTab="couriers" />
 }
 
 // CORREÇÃO 2 & 3: Componente dedicado para a rota /settings
@@ -340,7 +356,7 @@ const App = () => (
                 path="/couriers"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <AdminDashboard />
+                    <CouriersRoute />
                   </ProtectedRoute>
                 }
               />

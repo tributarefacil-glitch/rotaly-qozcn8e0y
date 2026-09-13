@@ -112,6 +112,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
   const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
+  const [onlyMySales, setOnlyMySales] = useState<boolean>(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isCreateCourierModalOpen, setIsCreateCourierModalOpen] = useState(false)
@@ -189,9 +190,6 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   const loadData = async () => {
     try {
-      const isSeller = user?.role === 'seller'
-      const ordersFilter = isSeller && user?.id ? `seller_id = '${user.id}'` : ''
-
       const [
         ordersData,
         custData,
@@ -202,7 +200,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         eventsData,
         fuelData,
       ] = await Promise.all([
-        deliveryService.getOrders(ordersFilter),
+        deliveryService.getOrders(''),
         deliveryService.getCustomers(),
         deliveryService.getCouriers(),
         deliveryService.getLatestLocations(),
@@ -271,11 +269,6 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       if (e.action === 'delete' || e.action === 'update') {
         setOrders((prev) => prev.filter((o) => o.id !== e.record.id))
       }
-      return
-    }
-
-    const isSeller = user?.role === 'seller'
-    if (isSeller && user?.id && e.record?.seller_id && e.record.seller_id !== user.id) {
       return
     }
 
@@ -536,11 +529,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   // Filtered orders list
   const filteredOrders = orders.filter((o) => {
     const matchesStatus = selectedStatus === 'all' ? true : o.status === selectedStatus
+    const matchesSeller = onlyMySales ? o.seller_id === user?.id : true
     const customerName = o.expand?.customer_id?.name || ''
     const matchesSearch =
       o.tracking_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
       customerName.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchesStatus && matchesSearch
+    return matchesStatus && matchesSeller && matchesSearch
   })
 
   // REQUISITO 2: PERMISSÕES DO VENDEDOR/ADMIN sobre entregas
@@ -1585,6 +1579,23 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                         </TabsTrigger>
                       </TabsList>
                     </Tabs>
+
+                    {user?.role === 'seller' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOnlyMySales((prev) => !prev)}
+                        className={`h-9 px-2.5 text-xs font-semibold rounded-lg border transition ${
+                          onlyMySales
+                            ? 'bg-[#FF6B35] text-white border-[#FF6B35] hover:bg-[#E5531E]'
+                            : 'bg-[#0A1128] text-slate-300 border-[#1E2B58] hover:bg-[#121E46] hover:text-white'
+                        }`}
+                        title="Alternar entre ver todos os pedidos da filial ou apenas os criados por mim"
+                      >
+                        {onlyMySales ? '✓ Minhas Vendas' : 'Minhas Vendas'}
+                      </Button>
+                    )}
 
                     <div className="relative min-w-[200px]">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />

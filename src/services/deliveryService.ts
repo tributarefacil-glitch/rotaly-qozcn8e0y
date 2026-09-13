@@ -85,6 +85,12 @@ export const deliveryService = {
     return active.trim()
   },
 
+  setActiveCompanyId(empresaId: string): void {
+    if (typeof window !== 'undefined' && empresaId) {
+      localStorage.setItem('rotaly_active_empresa_id', empresaId.trim())
+    }
+  },
+
   /**
    * Helper para montar cláusula multi-tenant consistente e FAIL-SAFE:
    * 1. Se a empresa ativa for a Matriz (7wo05iyvfcfh01h) OU se não houver empresa válida no storage,
