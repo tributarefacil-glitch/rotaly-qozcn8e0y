@@ -3,10 +3,12 @@ import { rotalyLogoImg } from '@/assets/logo-rotaly'
 
 export interface RotalyLogoProps {
   className?: string
-  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'header'
   variant?: 'full' | 'icon' | 'badge' | 'image'
   theme?: 'dark' | 'light'
   showTagline?: boolean
+  withBadge?: boolean
+  imgClassName?: string
 }
 
 // Stylized isolated "R" emblem of Rotaly with vehicles and chevron
@@ -92,6 +94,8 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
   variant = 'image',
   theme = 'dark',
   showTagline = false,
+  withBadge = false,
+  imgClassName = '',
 }) => {
   const sizeMap = {
     xs: { imgHeight: 'h-6', icon: 24, text: 'text-sm', tagline: 'text-[8px]', gap: 'gap-1.5' },
@@ -104,8 +108,15 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
       gap: 'gap-2.5',
     },
     lg: {
-      imgHeight: 'h-12 sm:h-13 md:h-[50px]',
-      icon: 54,
+      imgHeight: 'h-14 sm:h-16 md:h-[68px] lg:h-[72px]',
+      icon: 64,
+      text: 'text-2xl sm:text-3xl',
+      tagline: 'text-xs',
+      gap: 'gap-3',
+    },
+    header: {
+      imgHeight: 'h-12 sm:h-14 md:h-[66px] lg:h-[72px]',
+      icon: 64,
       text: 'text-2xl sm:text-3xl',
       tagline: 'text-xs',
       gap: 'gap-3',
@@ -115,6 +126,13 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
       icon: 90,
       text: 'text-5xl sm:text-6xl',
       tagline: 'text-sm',
+      gap: 'gap-4',
+    },
+    '2xl': {
+      imgHeight: 'h-24 sm:h-28 md:h-32',
+      icon: 110,
+      text: 'text-6xl',
+      tagline: 'text-base',
       gap: 'gap-4',
     },
   }
@@ -144,19 +162,28 @@ export const RotalyLogo: React.FC<RotalyLogoProps> = ({
     )
   }
 
-  // Official uploaded image mode with clean white backdrop container for dark headers / transparent cards
+  // Official uploaded image mode
+  // Notice: when withBadge is false (default), the image displays directly without an artificial card wrapper
+  // that squashes or shrinks the logo. When withBadge is true, a clean rounded card is used (e.g. for dark backgrounds).
+  const imageElement = (
+    <img
+      src={rotalyLogoImg}
+      alt="Rotaly — Sua rota, nossa entrega"
+      className={`${currentSize.imgHeight} w-auto object-contain select-none transition-transform duration-150 group-hover:scale-[1.02] ${imgClassName}`}
+      draggable={false}
+    />
+  )
+
   return (
     <div className={`inline-flex items-center ${currentSize.gap} ${className}`}>
       <div className="flex items-center">
-        {/* Render the official user-provided image on clean rounded badge */}
-        <div className="bg-white rounded-xl px-2 py-1 shadow-sm flex items-center justify-center transition-transform duration-150 hover:scale-[1.02]">
-          <img
-            src={rotalyLogoImg}
-            alt="Rotaly — Sua rota, nossa entrega"
-            className={`${currentSize.imgHeight} w-auto object-contain select-none`}
-            draggable={false}
-          />
-        </div>
+        {withBadge ? (
+          <div className="bg-white rounded-xl p-1.5 shadow-sm flex items-center justify-center transition-transform duration-150 hover:scale-[1.02]">
+            {imageElement}
+          </div>
+        ) : (
+          imageElement
+        )}
 
         {showTagline && (
           <span

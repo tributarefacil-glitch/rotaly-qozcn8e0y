@@ -307,12 +307,13 @@ export default function Index() {
     <div className="min-h-screen bg-white text-[#002855] flex flex-col justify-between selection:bg-[#00A3FF] selection:text-white font-sans antialiased">
       {/* ================= TOP NAVBAR ================= */}
       <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-[0_2px_12px_rgba(0,40,85,0.04)]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-[5.5rem] py-2 flex items-center justify-between gap-4">
           {/* Logo brand */}
           <Link
             to="/"
             onClick={() => setSelectedProfile(null)}
-            className="flex items-center gap-2 group transition-opacity"
+            className="flex items-center group transition-opacity shrink-0 py-1"
+            title="Rotaly — Página Inicial"
           >
             <RotalyLogo size="lg" theme="light" showTagline={false} />
           </Link>
@@ -1331,9 +1332,9 @@ export default function Index() {
             {/* Column 1: Brand & Sobre */}
             <div className="space-y-4">
               <div className="flex items-center">
-                {/* Logo container para rodapé escuro */}
-                <div className="bg-white rounded-xl px-3 py-1.5 inline-flex items-center justify-center shadow-sm">
-                  <RotalyLogo size="md" theme="light" showTagline={false} />
+                {/* Logo container para rodapé escuro - bem visível e proporcional */}
+                <div className="bg-white rounded-2xl px-4 py-2 inline-flex items-center justify-center shadow-md">
+                  <RotalyLogo size="lg" theme="light" showTagline={false} />
                 </div>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed font-sans">
