@@ -73,10 +73,29 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       let resolvedCompany: EmpresaRecord | null = null
       let resolvedMember: MembroRecord | null = null
 
+      // Se o usuário tem vínculo com uma filial (não-Matriz), verificar se tem vínculo duplo Matriz+filial
+      const nonMatrizMember = memberRecords.find((m) => m.empresa_id !== '7wo05iyvfcfh01h')
+      const hasBranchAccess = Boolean(nonMatrizMember)
+
+      // Regra Multi-Tenant:
+      // Para usuários não-admin com vínculo em filial (ex: vendedoras/entregadores da Farmácia Xodó ou Pimenta Verde),
+      // a filial DEVE ser a empresa padrão prioritária.
+      // Se o localStorage estava vazio OU apontando para a Matriz por herança legada,
+      // devemos sobrescrever com a filial!
+      const shouldForceBranchOverMatriz = user.role !== 'admin' && hasBranchAccess
+
       // Validar contra a lista de empresas existentes e ativas
       if (savedCompanyId && savedCompanyId !== 'undefined' && savedCompanyId !== 'null') {
-        resolvedCompany =
+        const candidateCompany =
           companiesList.find((c) => c.id === savedCompanyId && c.ativa !== false) || null
+
+        // Se candidate for a Matriz mas o usuário tem filial e não é admin, ignorar a Matriz do storage
+        if (shouldForceBranchOverMatriz && candidateCompany?.id === '7wo05iyvfcfh01h') {
+          resolvedCompany = null
+          localStorage.removeItem(STORAGE_KEY)
+        } else {
+          resolvedCompany = candidateCompany
+        }
       }
 
       // Se o ID salvo for inválido ou não existir na lista, limpar o storage imediatamente
@@ -84,15 +103,14 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         localStorage.removeItem(STORAGE_KEY)
       }
 
-      // Se não encontrou pelo storage, priorizar a empresa vinculada via membros
-      // Para admin, priorizar a Matriz se disponível; para vendedor/entregador, priorizar sua empresa filial
+      // Se não encontrou pelo storage ou se forçado para filial, priorizar a empresa vinculada via membros
+      // Para admin, priorizar a Matriz se disponível; para vendedor/entregador, priorizar sua empresa filial (não-Matriz)
       if (!resolvedCompany && memberRecords.length > 0) {
         if (user.role === 'admin') {
           const matrizMember = memberRecords.find((m) => m.empresa_id === '7wo05iyvfcfh01h')
-          resolvedMember = matrizMember || memberRecords[0]
+          resolvedMember = matrizMember || nonMatrizMember || memberRecords[0]
         } else {
-          // Para vendedor/entregador, se houver membro de empresa filha (não-matriz), priorizar ela!
-          const nonMatrizMember = memberRecords.find((m) => m.empresa_id !== '7wo05iyvfcfh01h')
+          // Para vendedor/entregador, se houver membro de empresa filha (não-matriz), priorizar SEMPRE ela!
           resolvedMember = nonMatrizMember || memberRecords[0]
         }
 
