@@ -4,7 +4,7 @@ import App from './App.tsx'
 import './main.css'
 
 // Invalidação de cache legado de empresa ativa entre versões
-const APP_BUILD_VERSION = '2025-05-15.01'
+const APP_BUILD_VERSION = '2026-09-14.02'
 if (typeof window !== 'undefined') {
   try {
     const currentStoredVersion = localStorage.getItem('rotaly_app_build_version')

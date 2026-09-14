@@ -228,14 +228,20 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   const costAnalysis = useMemo(() => {
     let totalKm = 0
     let totalCost = 0
-    const activeRouteOrders = filteredOrders.filter(
-      (o) =>
-        o.route_started === true ||
-        o.status === 'delivered' ||
-        o.status === 'in_transit' ||
-        o.status === 'address_error' ||
-        o.status === 'client_absent',
-    )
+    // Blindagem de KM/Custo:
+    // Pedidos com status de insucesso (client_absent, address_error, cancelled)
+    // e pedidos com base 0,0 não imputam km/custo aos relatórios do dia.
+    const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
+
+    const activeRouteOrders = filteredOrders.filter((o) => {
+      if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
+      const baseLat = Number(o.start_base_lat) || 0
+      const baseLng = Number(o.start_base_lng) || 0
+      if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
+        return false
+      }
+      return o.status === 'delivered' || (o.route_started === true && o.status === 'in_transit')
+    })
 
     activeRouteOrders.forEach((o) => {
       const realTelemetry = calculateRealKmForOrder({
@@ -903,15 +909,38 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
                 {filteredOrders.slice(0, 30).map((order) => {
                   const cust = order.expand?.customer_id
                   const courier = couriers.find((c) => c.id === order.courier_id)
+                  const isUnsuccessful =
+                    order.status === 'client_absent' ||
+                    order.status === 'address_error' ||
+                    order.status === 'cancelled'
+                  const baseLat = Number(order.start_base_lat) || 0
+                  const baseLng = Number(order.start_base_lng) || 0
+                  const isZeroBase =
+                    baseLat === 0 &&
+                    baseLng === 0 &&
+                    !order.start_base_name &&
+                    !order.start_base_address
+
                   const baseDist =
-                    typeof order.distance_km === 'number' && order.distance_km > 0
+                    !isUnsuccessful &&
+                    !isZeroBase &&
+                    typeof order.distance_km === 'number' &&
+                    order.distance_km > 0
                       ? order.distance_km
                       : 0
                   const returnDist =
-                    typeof order.return_trip_km === 'number' && order.return_trip_km > 0
+                    !isUnsuccessful &&
+                    !isZeroBase &&
+                    typeof order.return_trip_km === 'number' &&
+                    order.return_trip_km > 0
                       ? order.return_trip_km
                       : 0
-                  const dist = baseDist > 0 || returnDist > 0 ? baseDist + returnDist : 4.2
+                  const dist =
+                    isUnsuccessful || isZeroBase
+                      ? 0
+                      : baseDist > 0 || returnDist > 0
+                        ? baseDist + returnDist
+                        : 4.2
                   const cost = fuelConsumption > 0 ? (dist * fuelPrice) / fuelConsumption : 0
 
                   return (

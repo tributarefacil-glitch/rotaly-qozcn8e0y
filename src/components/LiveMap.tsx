@@ -473,7 +473,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                 <span>🔋</span> ${batteryVal}%
               </span>
             `
-                : ''
+                : `
+              <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;" title="Bateria não disponível">
+                <span>🔋</span> —
+              </span>
+            `
             }
             ${
               item.offline_buffered
@@ -1238,12 +1242,19 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                               )
                             })()}
                             {typeof m.battery_level === 'number' &&
-                              !isNaN(m.battery_level) &&
-                              m.battery_level > 0 && (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-200 border-slate-700">
-                                  <span>🔋</span> {Math.round(m.battery_level)}%
-                                </span>
-                              )}
+                            !isNaN(m.battery_level) &&
+                            m.battery_level > 0 ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-200 border-slate-700">
+                                <span>🔋</span> {Math.round(m.battery_level)}%
+                              </span>
+                            ) : (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-400 border-slate-800"
+                                title="Bateria não informada pelo dispositivo"
+                              >
+                                <span>🔋</span> —
+                              </span>
+                            )}
                             {m.offline_buffered && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-blue-950/80 text-blue-300 border-blue-500/40 text-[9px]">
                                 🔄 Buffer sincronizado

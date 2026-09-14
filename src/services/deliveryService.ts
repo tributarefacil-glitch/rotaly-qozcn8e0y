@@ -1,4 +1,5 @@
 import pb from '@/lib/pocketbase/client'
+import { haversineDistanceMeters } from '@/lib/geo'
 import type {
   OrderRecord,
   CustomerRecord,
@@ -762,8 +763,10 @@ export const deliveryService = {
       speed,
       heading,
     }
-    if (typeof batteryLevel === 'number' && !isNaN(batteryLevel)) {
-      payload.battery_level = Math.max(0, Math.min(100, Math.round(batteryLevel)))
+    // Bateria real: apenas valores estritamente positivos (> 0) são gravados
+    // Valores nulos, indefinidos ou 0 (dispositivos sem Battery API como iOS) não devem poluir o banco como 0%
+    if (typeof batteryLevel === 'number' && !isNaN(batteryLevel) && batteryLevel > 0) {
+      payload.battery_level = Math.max(1, Math.min(100, Math.round(batteryLevel)))
     }
     if (extra?.gps_status) {
       payload.gps_status = extra.gps_status

@@ -202,13 +202,14 @@ export default function CourierApp() {
     }
   })
 
-  // Captura do nível de bateria com fallback gracioso
+  // Captura do nível de bateria com fallback gracioso:
+  // Se navigator.getBattery não existir (iOS/Safari) ou falhar, retorna null/undefined — NUNCA 0.
   const getBatteryLevel = async (): Promise<number | null> => {
     try {
       const nav = typeof navigator !== 'undefined' ? (navigator as any) : null
       if (nav && typeof nav.getBattery === 'function') {
         const battery = await nav.getBattery()
-        if (typeof battery?.level === 'number') {
+        if (typeof battery?.level === 'number' && !isNaN(battery.level) && battery.level > 0) {
           return Math.round(battery.level * 100)
         }
       }
@@ -495,16 +496,21 @@ export default function CourierApp() {
       let speed = 0
       try {
         batteryLevel = await getBatteryLevel()
-        if (typeof speedVal === 'number' && !isNaN(speedVal) && speedVal > 0) {
-          speed = Math.round(speedVal * 3.6)
-        } else if (last) {
-          const timeDiffSeconds = (now - last.timestamp) / 1000
-          const dist = haversineDistanceMeters(last.lat, last.lng, lat, lng)
-          if (dist < 2) {
-            speed = 0
-          } else if (timeDiffSeconds > 0 && timeDiffSeconds < 120) {
-            speed = Math.round((dist / timeDiffSeconds) * 3.6)
-          }
+
+        // Cálculo de velocidade com proteção contra velocidade residual antiga:
+        // Quando a velocidade real < 2 km/h ou delta de distância < 2m, FORÇAR speed = 0.
+        const deltaDist = last ? haversineDistanceMeters(last.lat, last.lng, lat, lng) : 0
+        const deltaSeconds = last ? (now - last.timestamp) / 1000 : 0
+        const calculatedSpeedKmh =
+          deltaSeconds > 0 && deltaSeconds < 120 ? (deltaDist / deltaSeconds) * 3.6 : 0
+
+        if (deltaDist < 2 || calculatedSpeedKmh < 2) {
+          speed = 0
+        } else if (typeof speedVal === 'number' && !isNaN(speedVal) && speedVal > 0) {
+          const rawSpeedKmh = Math.round(speedVal * 3.6)
+          speed = rawSpeedKmh < 2 ? 0 : rawSpeedKmh
+        } else {
+          speed = Math.round(calculatedSpeedKmh)
         }
 
         const isWeak = (accuracyVal ?? 2000) >= 500
@@ -526,6 +532,9 @@ export default function CourierApp() {
           },
         )
 
+        // Registrar timestamp do último ping online transmitido com sucesso
+        offlineTelemetryBuffer.recordSuccessfulOnlinePing(user.id, now)
+
         // Sucesso: atualiza referência e reseta contador de retry
         lastRecordedGpsRef.current = { lat, lng, accuracy: accuracyVal, timestamp: now }
         retryCountRef.current = 0
@@ -544,8 +553,9 @@ export default function CourierApp() {
           e,
         )
 
-        // Salvar no buffer offline se em rota ativa
-        if (hasActiveStartedRoute) {
+        // Salvar no buffer offline se em rota ativa E não estiver online (bloquear enfileiramento se navigator.onLine)
+        const isActuallyOnline = typeof navigator !== 'undefined' && navigator.onLine === true
+        if (hasActiveStartedRoute && !isActuallyOnline) {
           offlineTelemetryBuffer.enqueuePoint({
             userId: user.id,
             lat,

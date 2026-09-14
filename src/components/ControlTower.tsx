@@ -2230,7 +2230,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 <span>🔋</span> ${batteryVal}%
               </span>
             `
-                : ''
+                : `
+              <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;" title="Bateria não disponível">
+                <span>🔋</span> —
+              </span>
+            `
             }
             ${
               item.offline_buffered

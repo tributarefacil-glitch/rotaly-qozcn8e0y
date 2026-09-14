@@ -174,19 +174,30 @@ export function calculateCourierFuelMetrics(params: {
     return true
   })
 
-  // 3. Filtrar ordens atribuídas ao entregador que tenham sido entregues
-  // (IMPORTANTE: pedidos cancelados o.status === 'cancelled' NUNCA somam km nem combustível)
-  // FILTRAGEM RIGOROSA DE PEDIDOS:
-  // Excluir telemetria órfã / fantasma (ex.: pedidos cancelados ou resquícios falsos)
-  const allCourierOrders = orders.filter(
-    (o) => o.courier_id === courier.id && o.status !== 'cancelled',
-  )
+  // 3. Filtrar ordens atribuídas ao entregador que tenham sido entregues com sucesso.
+  // BLINDAGEM DE INSUCESSO E BASE INVÁLIDA:
+  // Pedidos cancelados, com insucesso (client_absent, address_error, cancelled) ou com base inválida (0,0)
+  // NUNCA imputam km/custo aos relatórios e à conta de combustível.
+  const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
+
+  const allCourierOrders = orders.filter((o) => {
+    if (o.courier_id !== courier.id) return false
+    if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
+    // Descartar pedidos com base 0,0 que não foram saneados
+    const baseLat = Number(o.start_base_lat) || 0
+    const baseLng = Number(o.start_base_lng) || 0
+    if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
+      return false
+    }
+    return true
+  })
 
   const eligibleOrders = allCourierOrders.filter((o) => {
     // Apenas pedidos efetivamente entregues computam o gasto e km oficial concluído
     const isStartedOrDelivered =
       (o.status as string) === 'delivered' ||
       (o.route_started === true &&
+        !UNSUCCESSFUL_STATUSES.has(o.status as string) &&
         ((o.status as string) === 'in_transit' || (o.status as string) === 'delivered'))
 
     if (!isStartedOrDelivered) return false

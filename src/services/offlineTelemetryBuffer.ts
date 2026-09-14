@@ -33,6 +33,7 @@ export interface OfflineTelemetryPoint {
     | 'permission_denied'
     | 'weak_signal'
     | 'cached_while_offline'
+    | 'sem-fix'
   synced?: boolean
   error?: string
 }
@@ -49,9 +50,18 @@ const DEDUPLICATION_MIN_INTERVAL_MS = 30 * 1000
 class OfflineTelemetryBufferService {
   private syncInProgress = false
   private listeners = new Set<(count: number) => void>()
+  private lastSuccessfulOnlinePingTimes = new Map<string, number>()
 
   private getStorageKey(userId: string): string {
     return `${STORAGE_PREFIX}${userId}`
+  }
+
+  /**
+   * Registra que um ping online foi enviado com sucesso no timestamp fornecido.
+   */
+  recordSuccessfulOnlinePing(userId: string, timestamp: number = Date.now()): void {
+    if (!userId) return
+    this.lastSuccessfulOnlinePingTimes.set(userId, timestamp)
   }
 
   /**
@@ -96,6 +106,19 @@ class OfflineTelemetryBufferService {
   }
 
   enqueue(point: Omit<OfflineTelemetryPoint, 'id' | 'synced'>): OfflineTelemetryPoint {
+    // Regra: Bloquear enfileiramento quando o navegador está online E um ping recente já foi transmitido
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
+    const lastOnlinePing = this.lastSuccessfulOnlinePingTimes.get(point.userId) || 0
+    const timeSinceOnlinePing = Date.now() - lastOnlinePing
+    if (isOnline && timeSinceOnlinePing < 30 * 1000) {
+      // Já transmitido com sucesso no mesmo ciclo (<30s): não polui o buffer offline
+      return {
+        ...point,
+        id: `discarded_${point.timestamp}`,
+        synced: true,
+      }
+    }
+
     const current = this.getBuffer(point.userId)
 
     // Ordenar cronologicamente para avaliar o último ponto registrado
@@ -262,14 +285,28 @@ class OfflineTelemetryBufferService {
         deduplicatedPoints.push(pt)
       }
 
+      // Descartar envio de pontos do buffer se um ping online foi transmitido com sucesso no mesmo ciclo (<30s)
+      const lastOnlinePingTime = this.lastSuccessfulOnlinePingTimes.get(userId) || 0
+      const now = Date.now()
+
       for (let i = 0; i < deduplicatedPoints.length; i++) {
         const pt = deduplicatedPoints[i]
+
+        // Se o ponto do buffer for muito recente e estiver dentro da janela (<30s) de um ping online já aceito,
+        // descarta para evitar duplicidade na coleção locations.
+        if (lastOnlinePingTime > 0 && Math.abs(pt.timestamp - lastOnlinePingTime) < 30 * 1000) {
+          continue
+        }
+
+        // Se o ponto tiver timestamp antigo e velocidade espúria, sanitiza a velocidade para 0 se delta não justificar
+        const speedToSend = typeof pt.speed === 'number' && pt.speed < 2 ? 0 : (pt.speed ?? 0)
+
         try {
           await deliveryService.updateCourierLocation(
             pt.userId,
             pt.lat,
             pt.lng,
-            pt.speed ?? 0,
+            speedToSend,
             pt.heading ?? 0,
             pt.batteryLevel,
             {
