@@ -47,9 +47,12 @@ export function getOperationalWindow(referenceDate: Date = new Date()): Operatio
 /**
  * Converte carimbos de data do banco para timestamp numérico seguro em milissegundos.
  */
-export function parseSafeTimestamp(dateVal?: string | Date | null): number {
+export function parseSafeTimestamp(dateVal?: string | number | Date | null): number {
   if (!dateVal) return 0
   try {
+    if (typeof dateVal === 'number') {
+      return isNaN(dateVal) ? 0 : dateVal
+    }
     if (dateVal instanceof Date) {
       const t = dateVal.getTime()
       return isNaN(t) ? 0 : t

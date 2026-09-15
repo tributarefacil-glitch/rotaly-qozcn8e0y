@@ -99,6 +99,7 @@ import {
   getOperationalWindow,
   isNeutralizedSystemError,
   isTodayOrder,
+  parseSafeTimestamp,
 } from '@/lib/operationalWindow'
 import { isOrderInActiveRoute } from '@/lib/activeRouteHelper'
 import type { AppSettingsRecord } from '@/types/delivery'
@@ -1184,10 +1185,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
           const points = [...forwardPoints, ...returnPoints.slice(1)]
 
-          // Detecção de sinal congelado/obsoleto (> 2 minutos)
-          const locTime = item.location_timestamp ? new Date(item.location_timestamp).getTime() : 0
+          // Detecção de sinal congelado/obsoleto (> 5 minutos)
+          // Pings com gps_status 'active' e offline_buffered false representam sinal vivo (não acusa)
+          const locTime = parseSafeTimestamp(item.location_timestamp)
           const isGpsFrozen =
-            item.gps_status === 'offline' || (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
+            item.gps_status === 'offline' ||
+            (locTime > 0 &&
+              Date.now() - locTime > 5 * 60 * 1000 &&
+              !(item.gps_status === 'active' && item.offline_buffered === false))
 
           // Projeção e desvio
           const nearest = findNearestPointOnRoute(courierPos, points)
@@ -1395,16 +1400,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         activeRouteCouriers.forEach((courierItem) => {
           const courierId = courierItem.courier.id
           const courierName = courierItem.courier.name || courierItem.courier.email || 'Entregador'
-          const locTime = courierItem.location_timestamp
-            ? new Date(courierItem.location_timestamp).getTime()
-            : 0
+          const locTime = parseSafeTimestamp(courierItem.location_timestamp)
           const isGpsDisabled = courierItem.gps_status === 'disabled'
           const isPermissionDenied =
             courierItem.gps_reason === 'permission_denied' ||
             (isGpsDisabled && courierItem.gps_reason !== 'unsupported')
           const isSignalLost =
             courierItem.gps_status === 'offline' ||
-            (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
+            (locTime > 0 &&
+              Date.now() - locTime > 5 * 60 * 1000 &&
+              !(courierItem.gps_status === 'active' && courierItem.offline_buffered === false))
 
           if (isGpsDisabled) {
             const gpsKey = `gps-disabled-${courierId}`
@@ -2101,12 +2106,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         courierMarker.addListener('mouseover', async () => {
           const fallbackCoords = `${item.lat.toFixed(4)}, ${item.lng.toFixed(4)}`
 
-          // Status do GPS por idade do ponto (> 2 minutos = off/sem sinal)
+          // Status do GPS por idade do ponto (> 5 minutos = off/sem sinal)
+          // Pings com gps_status 'active' e offline_buffered false = sinal vivo
           let isGpsActive = false
           if (item.location_timestamp) {
-            const locTime = new Date(item.location_timestamp).getTime()
-            if (!isNaN(locTime)) {
-              isGpsActive = Date.now() - locTime <= 2 * 60 * 1000
+            const locTime = parseSafeTimestamp(item.location_timestamp)
+            if (locTime > 0) {
+              isGpsActive =
+                (item.gps_status === 'active' && item.offline_buffered === false) ||
+                Date.now() - locTime <= 5 * 60 * 1000
             }
           } else {
             // Se tem coordenadas recentes associadas a item
@@ -2123,9 +2131,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const batteryColor =
             batteryVal <= 20 ? '#dc2626' : batteryVal <= 50 ? '#d97706' : '#16a34a'
 
-          const locTime = item.location_timestamp ? new Date(item.location_timestamp).getTime() : 0
+          const locTime = parseSafeTimestamp(item.location_timestamp)
           const minutesSinceLastPoint = locTime ? Math.floor((Date.now() - locTime) / 60000) : 0
-          const isOutdated = locTime ? Date.now() - locTime > 2 * 60 * 1000 : false
+          const isOutdated =
+            locTime > 0 &&
+            Date.now() - locTime > 5 * 60 * 1000 &&
+            !(item.gps_status === 'active' && item.offline_buffered === false)
           const isGpsDisabled = item.gps_status === 'disabled'
           const isSignalLost = item.gps_status === 'offline' || isOutdated
 
@@ -3407,12 +3418,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
                                 <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
                                   {(() => {
-                                    const lTime = item.location_timestamp
-                                      ? new Date(item.location_timestamp).getTime()
-                                      : 0
+                                    const lTime = parseSafeTimestamp(item.location_timestamp)
                                     const isFrozen =
                                       item.gps_status === 'offline' ||
-                                      (lTime > 0 && Date.now() - lTime > 2 * 60 * 1000)
+                                      (lTime > 0 &&
+                                        Date.now() - lTime > 5 * 60 * 1000 &&
+                                        !(
+                                          item.gps_status === 'active' &&
+                                          item.offline_buffered === false
+                                        ))
                                     if (isFrozen) {
                                       const timeStr = lTime
                                         ? new Date(lTime).toLocaleTimeString('pt-BR', {
@@ -3553,17 +3567,17 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                           )
                         })}
 
-                    {/* Alertas de Perda de sinal (>2 min) na Torre */}
+                    {/* Alertas de Perda de sinal (>5 min) na Torre */}
                     {mapDisplayMode === 'in_transit' &&
                       activeRouteCouriers
                         .filter((c) => {
                           if (c.gps_status === 'disabled') return false
-                          const locTime = c.location_timestamp
-                            ? new Date(c.location_timestamp).getTime()
-                            : 0
+                          if (c.gps_status === 'active' && c.offline_buffered === false)
+                            return false
+                          const locTime = parseSafeTimestamp(c.location_timestamp)
                           const isSignalLost =
                             c.gps_status === 'offline' ||
-                            (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
+                            (locTime > 0 && Date.now() - locTime > 5 * 60 * 1000)
                           return (
                             isSignalLost && !dismissedGpsAlertIds.includes(`sig-${c.courier.id}`)
                           )
@@ -3753,12 +3767,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
                                 <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
                                   {(() => {
-                                    const lTime = item.location_timestamp
-                                      ? new Date(item.location_timestamp).getTime()
-                                      : 0
+                                    const lTime = parseSafeTimestamp(item.location_timestamp)
                                     const isFrozen =
                                       item.gps_status === 'offline' ||
-                                      (lTime > 0 && Date.now() - lTime > 2 * 60 * 1000)
+                                      (lTime > 0 &&
+                                        Date.now() - lTime > 5 * 60 * 1000 &&
+                                        !(
+                                          item.gps_status === 'active' &&
+                                          item.offline_buffered === false
+                                        ))
                                     if (isFrozen) {
                                       const timeStr = lTime
                                         ? new Date(lTime).toLocaleTimeString('pt-BR', {
@@ -3898,17 +3915,17 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                           )
                         })}
 
-                    {/* Alertas de Perda de sinal (>2 min) no canvas */}
+                    {/* Alertas de Perda de sinal (>5 min) no canvas */}
                     {mapDisplayMode === 'in_transit' &&
                       activeRouteCouriers
                         .filter((c) => {
                           if (c.gps_status === 'disabled') return false
-                          const locTime = c.location_timestamp
-                            ? new Date(c.location_timestamp).getTime()
-                            : 0
+                          if (c.gps_status === 'active' && c.offline_buffered === false)
+                            return false
+                          const locTime = parseSafeTimestamp(c.location_timestamp)
                           const isSignalLost =
                             c.gps_status === 'offline' ||
-                            (locTime > 0 && Date.now() - locTime > 2 * 60 * 1000)
+                            (locTime > 0 && Date.now() - locTime > 5 * 60 * 1000)
                           return (
                             isSignalLost && !dismissedGpsAlertIds.includes(`sig-${c.courier.id}`)
                           )

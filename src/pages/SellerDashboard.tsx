@@ -202,6 +202,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const loadData = async () => {
     try {
       setResolvedCompanySource('Rotaly Operações (Matriz)')
+      const currentOpWindow = getOperationalWindow(new Date())
+      const windowStartIso = new Date(currentOpWindow.start).toISOString()
+      const ordersFilter = `created >= '${windowStartIso}' || (route_started = true && (route_finished = false || route_finished = null))`
+
       const [
         ordersData,
         custData,
@@ -212,7 +216,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         eventsData,
         fuelData,
       ] = await Promise.all([
-        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
+        deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
         deliveryService.getCustomers(),
         deliveryService.getCouriers(),
         deliveryService.getLatestLocations(),

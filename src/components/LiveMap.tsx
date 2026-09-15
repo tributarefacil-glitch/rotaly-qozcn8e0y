@@ -19,6 +19,7 @@ import {
   isGoogleMapsAuthError,
   reverseGeocodeCoordinates,
 } from '@/lib/googleMaps'
+import { parseSafeTimestamp } from '@/lib/operationalWindow'
 
 export interface MapMarkerItem {
   id: string
@@ -413,9 +414,12 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       const courierDisplayName = item.courier_name || item.title
       const hasDeviation = item.isDeviated && typeof item.deviationMeters === 'number'
 
-      const locTime = item.location_timestamp ? new Date(item.location_timestamp).getTime() : 0
+      const locTime = parseSafeTimestamp(item.location_timestamp)
       const minutesSinceLastPoint = locTime ? Math.floor((Date.now() - locTime) / 60000) : 0
-      const isOutdated = locTime ? Date.now() - locTime > 2 * 60 * 1000 : false
+      const isOutdated =
+        locTime > 0 &&
+        Date.now() - locTime > 5 * 60 * 1000 &&
+        !(item.gps_status === 'active' && item.offline_buffered === false)
       const isGpsDisabled = item.gps_status === 'disabled'
       const isSignalLost = item.gps_status === 'offline' || isOutdated
       // REQUISITO: Suprimir alertas de "Sem sinal" fora de rota ativa
@@ -1246,15 +1250,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                           {/* Badges de Bateria e GPS no popup do canvas */}
                           <div className="flex items-center gap-2 pt-1 font-bold text-[10px] flex-wrap">
                             {(() => {
-                              const locTime = m.location_timestamp
-                                ? new Date(m.location_timestamp).getTime()
-                                : 0
+                              const locTime = parseSafeTimestamp(m.location_timestamp)
                               const minutesSinceLastPoint = locTime
                                 ? Math.floor((Date.now() - locTime) / 60000)
                                 : 0
-                              const isOutdated = locTime
-                                ? Date.now() - locTime > 2 * 60 * 1000
-                                : false
+                              const isOutdated =
+                                locTime > 0 &&
+                                Date.now() - locTime > 5 * 60 * 1000 &&
+                                !(m.gps_status === 'active' && m.offline_buffered === false)
                               const isGpsDisabled = m.gps_status === 'disabled'
                               const isSignalLost = m.gps_status === 'offline' || isOutdated
                               const isInActiveRoute = m.hasActiveRoute !== false
