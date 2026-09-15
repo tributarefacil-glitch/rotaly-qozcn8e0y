@@ -427,8 +427,20 @@ export async function optimizeRouteSequence(params: {
   }
 
   // Custo de combustível
-  const effectiveCons = consumptionKml > 0 ? consumptionKml : vehicleType === 'moto' ? 32 : 10
-  const fuelCost = effectiveCons > 0 ? (totalKm * pricePerLiter) / effectiveCons : 0
+  // Bicicleta nunca gera custo de combustível
+  const isBicycle =
+    vehicleType === 'bicicleta' || vehicleType === 'bicycle' || vehicleType === 'bike'
+  const effectiveCons = isBicycle
+    ? 0
+    : consumptionKml > 0
+      ? consumptionKml
+      : vehicleType === 'moto'
+        ? 32
+        : 10
+  const fuelCost =
+    !isBicycle && effectiveCons > 0 && pricePerLiter > 0
+      ? (totalKm * pricePerLiter) / effectiveCons
+      : 0
 
   return {
     stops: sequencedStops,

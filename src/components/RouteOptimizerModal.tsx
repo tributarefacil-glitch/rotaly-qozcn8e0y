@@ -1100,11 +1100,15 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const totalDistKmNum = Number((totalMeters / 1000).toFixed(2))
       const durationMins = Math.round((totalDistKmNum / 22) * 60 + stops.length * 5)
 
-      const { pricePerLiter, consumptionKml } = deliveryService.getVehicleFuelParams(
+      const { pricePerLiter, consumptionKml, category } = deliveryService.getVehicleFuelParams(
         appSettings,
         courierVehicleType,
       )
-      const fuelCost = consumptionKml > 0 ? (totalDistKmNum * pricePerLiter) / consumptionKml : 0
+      const isBicycle = category === 'bicicleta'
+      const fuelCost =
+        !isBicycle && consumptionKml > 0 && pricePerLiter > 0
+          ? (totalDistKmNum * pricePerLiter) / consumptionKml
+          : 0
 
       return {
         updatedStops,
@@ -2424,24 +2428,31 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             stopReturnKm = Number(Math.max(0, totalReturnKm - allocatedReturnSum).toFixed(2))
           }
 
-          const { pricePerLiter: courierFuelPrice, consumptionKml: courierFuelCons } =
-            deliveryService.getVehicleFuelParams(appSettings, plan.courier.vehicle_type)
+          const {
+            pricePerLiter: courierFuelPrice,
+            consumptionKml: courierFuelCons,
+            category: courierVehicleCategory,
+          } = deliveryService.getVehicleFuelParams(appSettings, plan.courier.vehicle_type)
+
+          const isBicyclePlan = courierVehicleCategory === 'bicicleta'
 
           let stopFuelCost = 0
-          if (!isLastStop) {
-            stopFuelCost =
-              courierFuelCons > 0
-                ? Number(
-                    (
-                      ((stopDistanceKm + stopReturnKm) * courierFuelPrice) /
-                      courierFuelCons
-                    ).toFixed(2),
-                  )
-                : 0
-            allocatedFuelSum += stopFuelCost
-          } else {
-            // Última parada: garante que a soma dos combustíveis feche exatamente em planTotalFuel
-            stopFuelCost = Number(Math.max(0, planTotalFuel - allocatedFuelSum).toFixed(2))
+          if (!isBicyclePlan) {
+            if (!isLastStop) {
+              stopFuelCost =
+                courierFuelCons > 0
+                  ? Number(
+                      (
+                        ((stopDistanceKm + stopReturnKm) * courierFuelPrice) /
+                        courierFuelCons
+                      ).toFixed(2),
+                    )
+                  : 0
+              allocatedFuelSum += stopFuelCost
+            } else {
+              // Última parada: garante que a soma dos combustíveis feche exatamente em planTotalFuel
+              stopFuelCost = Number(Math.max(0, planTotalFuel - allocatedFuelSum).toFixed(2))
+            }
           }
 
           await deliveryService.updateOrder(stop.id, {

@@ -1431,9 +1431,18 @@ export const deliveryService = {
         )
         const totalDistKm = Number(((fallbackOutboundMeters + returnMeters) / 1000).toFixed(2))
         const returnDistKm = Number((returnMeters / 1000).toFixed(2))
-        const effectiveCons =
-          consumptionKml > 0 ? consumptionKml : courier.vehicle_type === 'moto' ? 32 : 10
-        const totalFuel = effectiveCons > 0 ? (totalDistKm * pricePerLiter) / effectiveCons : 0
+        const isBicycleCourier = this.normalizeVehicleCategory(courier.vehicle_type) === 'bicicleta'
+        const effectiveCons = isBicycleCourier
+          ? 0
+          : consumptionKml > 0
+            ? consumptionKml
+            : courier.vehicle_type === 'moto'
+              ? 32
+              : 10
+        const totalFuel =
+          !isBicycleCourier && effectiveCons > 0 && pricePerLiter > 0
+            ? (totalDistKm * pricePerLiter) / effectiveCons
+            : 0
 
         roadResult = {
           stops: stopsWithStep,
@@ -1467,9 +1476,11 @@ export const deliveryService = {
 
         // Rateio exato do combustível da rota para cumprir regra "linha = cabeçalho"
         let legFuelCost: number
-        if (!isLastStop) {
+        if (isBicycleCourier || totalRouteFuel <= 0) {
+          legFuelCost = 0
+        } else if (!isLastStop) {
           legFuelCost =
-            consumptionKml > 0
+            consumptionKml > 0 && pricePerLiter > 0
               ? Number(((stepDistKm * pricePerLiter) / consumptionKml).toFixed(2))
               : 0
           allocatedFuelSum += legFuelCost
@@ -1726,7 +1737,7 @@ export const deliveryService = {
   // Calculate Fuel Cost
   // Formula: Distância (km) * Preço do Litro (R$/L) / Consumo (km/L)
   calculateFuelCost(distanceKm: number, fuelPrice = 5.59, consumptionKml = 35.0): number {
-    if (consumptionKml <= 0) return 0
+    if (consumptionKml <= 0 || fuelPrice <= 0 || distanceKm <= 0) return 0
     return (distanceKm * fuelPrice) / consumptionKml
   },
 
@@ -1739,7 +1750,7 @@ export const deliveryService = {
       settings,
       vehicleType,
     )
-    if (category === 'bicicleta' || consumptionKml <= 0) return 0
+    if (category === 'bicicleta' || consumptionKml <= 0 || pricePerLiter <= 0) return 0
     return this.calculateFuelCost(distanceKm, pricePerLiter, consumptionKml)
   },
 
@@ -1844,7 +1855,11 @@ export const deliveryService = {
       )
     }, 0)
 
-    const totalSpent = consumptionKml > 0 ? (totalRouteKm * pricePerLiter) / consumptionKml : 0
+    const isBicycle = fuelParams.category === 'bicicleta'
+    const totalSpent =
+      !isBicycle && consumptionKml > 0 && pricePerLiter > 0
+        ? (totalRouteKm * pricePerLiter) / consumptionKml
+        : 0
     const balance = totalAdvances - totalSpent
 
     return {
@@ -1915,12 +1930,16 @@ export const deliveryService = {
         totalRouteKm += batchTelemetry.officialRealKm
       })
 
-      const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
+      const { pricePerLiter, consumptionKml, category } = this.getVehicleFuelParams(
         settings,
         courier.vehicle_type,
       )
 
-      const totalSpent = consumptionKml > 0 ? (totalRouteKm * pricePerLiter) / consumptionKml : 0
+      const isBicycle = category === 'bicicleta'
+      const totalSpent =
+        !isBicycle && consumptionKml > 0 && pricePerLiter > 0
+          ? (totalRouteKm * pricePerLiter) / consumptionKml
+          : 0
       const balance = totalAdvances - totalSpent
 
       return {

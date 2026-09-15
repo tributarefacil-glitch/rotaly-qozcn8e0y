@@ -269,12 +269,12 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
 
       const courier = couriers.find((c) => c.id === o.courier_id) || o.expand?.courier_id
       const vehicleType = courier?.vehicle_type || 'moto'
-      const { pricePerLiter, consumptionKml } = deliveryService.getVehicleFuelParams(
+      const { pricePerLiter, consumptionKml, category } = deliveryService.getVehicleFuelParams(
         settings,
         vehicleType,
       )
 
-      if (consumptionKml > 0) {
+      if (category !== 'bicicleta' && consumptionKml > 0 && pricePerLiter > 0) {
         totalCost += (orderKm * pricePerLiter) / consumptionKml
       }
     })

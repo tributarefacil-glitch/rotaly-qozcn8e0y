@@ -854,12 +854,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       // Obter veículo do entregador
       const courier = users.find((u) => u.id === o.courier_id) || o.expand?.courier_id
       const vehicleType = courier?.vehicle_type || 'moto'
-      const { pricePerLiter, consumptionKml } = deliveryService.getVehicleFuelParams(
+      const { pricePerLiter, consumptionKml, category } = deliveryService.getVehicleFuelParams(
         settings,
         vehicleType,
       )
 
-      if (consumptionKml > 0) {
+      if (category !== 'bicicleta' && consumptionKml > 0 && pricePerLiter > 0) {
         totalFuelCostCalculated += (orderKm * pricePerLiter) / consumptionKml
       }
     }
