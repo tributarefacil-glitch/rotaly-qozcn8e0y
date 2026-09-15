@@ -653,10 +653,21 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         const affectedCourierId = rec.courier_id
 
         if (affectedCourierId && (rec.route_finished === true || rec.status === 'delivered')) {
-          if (rec.route_finished === true) {
-            // Rota finalizada: limpa o cache de rotas do entregador imediatamente
-            activeRoutesCacheRef.current.delete(affectedCourierId)
+          // Ao mudar para delivered ou finalizar rota: limpar cache de geometria para recálculo imediato da nova perna
+          activeRoutesCacheRef.current.delete(affectedCourierId)
 
+          // Limpar notificações e alertas falsos associados ao entregador/pedido entregue
+          const devKey = `dev-${affectedCourierId}-${rec.id}`
+          const stopKey = `stop-${affectedCourierId}`
+          const etaKey = `eta-${affectedCourierId}-${rec.id}`
+          notifiedEventsRef.current.delete(devKey)
+          notifiedEventsRef.current.delete(stopKey)
+          notifiedEventsRef.current.delete(etaKey)
+
+          // Disparar atualização imediata de estado para recalcular rota sem aguardar refresh
+          setLastUpdated(new Date())
+
+          if (rec.route_finished === true) {
             // Remove polilinhas ativas no Google Maps nativo
             const existingLines = activePolylinesMapRef.current.get(affectedCourierId)
             if (existingLines) {
@@ -975,13 +986,18 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       )
       const finishedOrders = courierLocalOrders.filter((o) => o.status === 'delivered')
 
-      // Entregas da rota iniciada atribuídas ao entregador que ainda não foram marcadas como route_finished
-      const activeRouteOrdersForCourier = [
-        ...globalCourierTransit.filter((o) => isOrderInActiveRoute(o)),
-        ...courierLocalOrders.filter((o) => isOrderInActiveRoute(o)),
+      // Entregas atribuídas à rota do entregador: iniciada (route_started === true) e ainda não finalizada (route_finished !== true)
+      // Inclui pedidos delivered para saber se a rota inteira foi concluída e o entregador está retornando à base
+      const routeOrdersRaw = [
+        ...globalCourierTransit.filter(
+          (o) => o.route_started === true && o.route_finished !== true && o.status !== 'cancelled',
+        ),
+        ...courierLocalOrders.filter(
+          (o) => o.route_started === true && o.route_finished !== true && o.status !== 'cancelled',
+        ),
       ]
       const uniqueCourierRouteOrders = Array.from(
-        new Map(activeRouteOrdersForCourier.map((o) => [o.id, o])).values(),
+        new Map(routeOrdersRaw.map((o) => [o.id, o])).values(),
       )
 
       // Rota ativa existe se há rota iniciada e ainda não finalizada
@@ -1037,6 +1053,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         pendingCount: pendingOrders.length,
         problemCount: problemOrders.length,
         finishedCount: finishedOrders.length,
+        hasPendingReturnToBase: isReturningToBase,
         nextOrder,
         lastDelivered,
         vehicle: courier.vehicle_type || 'moto',
@@ -1046,10 +1063,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     })
   }, [couriers, locations, todayOrders, globalInTransitOrders])
 
-  // REQUISITO: No mapa aparecem APENAS entregadores com rota iniciada (hasRouteStarted && hasValidCoords && inTransitCount > 0)
+  // REQUISITO: No mapa aparecem entregadores com rota iniciada e coordenadas válidas
+  // Mantém ativo se há pedidos em trânsito (inTransitCount > 0) OU se está retornando à base (hasPendingReturnToBase)
   const activeRouteCouriers = useMemo(() => {
     return allCourierData.filter(
-      (c) => c.hasRouteStarted && c.hasValidCoords && c.inTransitCount > 0,
+      (c) =>
+        c.hasRouteStarted && c.hasValidCoords && (c.inTransitCount > 0 || c.hasPendingReturnToBase),
     )
   }, [allCourierData])
 
@@ -1083,43 +1102,55 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           return null
         }
 
-        // O primeiro pedido ativo define a base e o alvo primário de telemetria
+        // Fallback oficial da base (Mais Saudável, Rua da Prosperidade, 13 — Pilar)
+        const OFFICIAL_BASE_FALLBACK: LatLngPoint = { lat: -22.6990563, lng: -43.296723 }
+
+        // O primeiro pedido ativo (ou o último delivered se todos já foram entregues) define a base
         const primaryOrder =
           activeRouteOrders.find((o) => o.status === 'in_transit') ||
           activeRouteOrders.find((o) => o.status === 'pending') ||
+          activeRouteOrders[activeRouteOrders.length - 1] ||
           activeRouteOrders[0]
 
-        const baseLat = primaryOrder.start_base_lat ? Number(primaryOrder.start_base_lat) : item.lat
-        const baseLng = primaryOrder.start_base_lng ? Number(primaryOrder.start_base_lng) : item.lng
+        const baseLat = primaryOrder.start_base_lat
+          ? Number(primaryOrder.start_base_lat)
+          : OFFICIAL_BASE_FALLBACK.lat
+        const baseLng = primaryOrder.start_base_lng
+          ? Number(primaryOrder.start_base_lng)
+          : OFFICIAL_BASE_FALLBACK.lng
         const origin: LatLngPoint = { lat: baseLat, lng: baseLng }
         const courierPos: LatLngPoint = { lat: item.lat, lng: item.lng }
 
-        // Base de retorno: end_address_lat/lng ou fallback start_base_lat/lng
+        // Base de retorno: end_address_lat/lng ou fallback start_base ou fallback oficial
         const returnBaseLat = primaryOrder.end_address_lat
           ? Number(primaryOrder.end_address_lat)
-          : baseLat
+          : primaryOrder.start_base_lat
+            ? Number(primaryOrder.start_base_lat)
+            : OFFICIAL_BASE_FALLBACK.lat
         const returnBaseLng = primaryOrder.end_address_lng
           ? Number(primaryOrder.end_address_lng)
-          : baseLng
+          : primaryOrder.start_base_lng
+            ? Number(primaryOrder.start_base_lng)
+            : OFFICIAL_BASE_FALLBACK.lng
         const returnBasePos: LatLngPoint = { lat: returnBaseLat, lng: returnBaseLng }
 
-        // Coletar paradas válidas com lat/lng dos clientes
-        const stops: LatLngPoint[] = []
+        // Separar paradas em pendentes (in_transit/pending) e concluídas (delivered)
         const pendingStopsList: LatLngPoint[] = []
+        let lastDeliveredPos: LatLngPoint | null = null
+
         activeRouteOrders.forEach((o) => {
           const c = o.expand?.customer_id
           if (c?.lat && c?.lng) {
             const pt = { lat: Number(c.lat), lng: Number(c.lng) }
-            stops.push(pt)
             if (o.status !== 'delivered') {
               pendingStopsList.push(pt)
+            } else {
+              lastDeliveredPos = pt
             }
           }
         })
 
-        if (stops.length === 0 && !returnBasePos) return null
-
-        // Hash para verificar se a composição de pedidos/paradas mudou
+        // Hash para verificar se a composição de pedidos/paradas/status mudou
         const stopIdsHash = activeRouteOrders
           .map((o) => `${o.id}:${o.status}:${o.sequence}`)
           .join(',')
@@ -1141,49 +1172,84 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         }
 
         try {
-          // Traçar trajeto viário:
-          // Perna de ida + paradas: origin → cliente 1 → cliente 2 ... → último cliente
-          // Perna de retorno (separada): último cliente (ou origin se não houver paradas) → base de retorno
-          const forwardWaypoints: LatLngPoint[] = stops.length > 0 ? [origin, ...stops] : [origin]
-          const forwardSegments: LatLngPoint[] = []
-          let prevPoint = origin
+          // CORREÇÃO 1 & 4: Traçado ativo em tempo real
+          // Se há paradas pendentes:
+          // traçado parte da POSIÇÃO GPS ATUAL do entregador (courierPos) → próxima pendente → subsequentes pendentes
+          // Perna de retorno (tracejada #60A5FA): última pendente → returnBasePos
+          // Se NÃO há pendentes (todas entregues):
+          // traçado de ida fica vazio; traçado de retorno é courierPos → returnBasePos viário
+          let forwardPoints: LatLngPoint[] = []
+          let returnPoints: LatLngPoint[] = []
 
-          for (let sIdx = 1; sIdx < forwardWaypoints.length; sIdx++) {
-            const targetPoint = forwardWaypoints[sIdx]
-            try {
-              const segRes = await fetchStreetRoute(prevPoint, targetPoint)
-              if (segRes.coordinates.length >= 2) {
-                if (forwardSegments.length > 0) {
-                  forwardSegments.push(...segRes.coordinates.slice(1))
+          if (pendingStopsList.length > 0) {
+            // Trajeto vigente: courierPos → pendente 1 → pendente 2 ...
+            const activeWaypoints: LatLngPoint[] = [courierPos, ...pendingStopsList]
+            const forwardSegments: LatLngPoint[] = []
+            let prevPoint = activeWaypoints[0]
+
+            for (let sIdx = 1; sIdx < activeWaypoints.length; sIdx++) {
+              const targetPoint = activeWaypoints[sIdx]
+              try {
+                const segRes = await fetchStreetRoute(prevPoint, targetPoint)
+                if (segRes.coordinates.length >= 2) {
+                  if (forwardSegments.length > 0) {
+                    forwardSegments.push(...segRes.coordinates.slice(1))
+                  } else {
+                    forwardSegments.push(...segRes.coordinates)
+                  }
                 } else {
-                  forwardSegments.push(...segRes.coordinates)
+                  if (forwardSegments.length === 0) forwardSegments.push(prevPoint)
+                  forwardSegments.push(targetPoint)
                 }
-              } else {
+              } catch {
                 if (forwardSegments.length === 0) forwardSegments.push(prevPoint)
                 forwardSegments.push(targetPoint)
               }
+              prevPoint = targetPoint
+            }
+
+            forwardPoints = forwardSegments.length >= 2 ? forwardSegments : activeWaypoints
+
+            // Perna de retorno: última pendente → returnBasePos
+            const lastPendingStop = pendingStopsList[pendingStopsList.length - 1]
+            try {
+              const retRes = await fetchStreetRoute(lastPendingStop, returnBasePos)
+              if (retRes.coordinates.length >= 2) {
+                returnPoints = retRes.coordinates
+              } else {
+                returnPoints = [lastPendingStop, returnBasePos]
+              }
             } catch {
-              if (forwardSegments.length === 0) forwardSegments.push(prevPoint)
-              forwardSegments.push(targetPoint)
+              returnPoints = [lastPendingStop, returnBasePos]
             }
-            prevPoint = targetPoint
+          } else {
+            // Sem paradas pendentes: o entregador já cumpriu todas as entregas e deve retornar à base
+            // forwardPoints vazio (não há linha azul de cliente a cumprir)
+            // returnPoints: courierPos → returnBasePos viário (linha tracejada azul-claro #60A5FA)
+            forwardPoints = []
+            try {
+              const retRes = await fetchStreetRoute(courierPos, returnBasePos)
+              if (retRes.coordinates.length >= 2) {
+                returnPoints = retRes.coordinates
+              } else {
+                returnPoints = [courierPos, returnBasePos]
+              }
+            } catch {
+              returnPoints = [courierPos, returnBasePos]
+            }
           }
 
-          const forwardPoints = forwardSegments.length >= 2 ? forwardSegments : forwardWaypoints
+          // Trajeto total vigente (exclusivamente trecho a cumprir: do entregador até a próxima parada / base)
+          const activeVigenteRoutePoints: LatLngPoint[] =
+            forwardPoints.length >= 2
+              ? returnPoints.length >= 2
+                ? [...forwardPoints, ...returnPoints.slice(1)]
+                : forwardPoints
+              : returnPoints.length >= 2
+                ? returnPoints
+                : [courierPos, returnBasePos]
 
-          // Perna de retorno à base dedicada
-          const lastDeliveryPoint = stops.length > 0 ? stops[stops.length - 1] : origin
-          let returnPoints: LatLngPoint[] = [lastDeliveryPoint, returnBasePos]
-          try {
-            const retRes = await fetchStreetRoute(lastDeliveryPoint, returnBasePos)
-            if (retRes.coordinates.length >= 2) {
-              returnPoints = retRes.coordinates
-            }
-          } catch {
-            returnPoints = [lastDeliveryPoint, returnBasePos]
-          }
-
-          const points = [...forwardPoints, ...returnPoints.slice(1)]
+          const points = activeVigenteRoutePoints
 
           // Detecção de sinal congelado/obsoleto (> 5 minutos)
           // Pings com gps_status 'active' e offline_buffered false representam sinal vivo (não acusa)
@@ -1194,12 +1260,18 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               Date.now() - locTime > 5 * 60 * 1000 &&
               !(item.gps_status === 'active' && item.offline_buffered === false))
 
-          // Projeção e desvio
-          const nearest = findNearestPointOnRoute(courierPos, points)
+          // CORREÇÃO 2: Projeção e desvio medidos EXCLUSIVAMENTE sobre o trajeto vigente
+          // (courierPos → próxima pendente → subsequentes → retorno)
+          // NUNCA sobre segmentos de entregas antigas já cumpridas.
+          const nearest = findNearestPointOnRoute(courierPos, activeVigenteRoutePoints)
           const nextTargetPos = pendingStopsList[0] || returnBasePos
           const distToClientMeters = distanceMeters(courierPos, nextTargetPos)
 
-          const hasActiveRouteStarted = Boolean(primaryOrder.route_started) && item.hasRouteStarted
+          // Só avaliar desvio com rota iniciada (route_started === true) e não finalizada (route_finished !== true)
+          const hasActiveRouteStarted =
+            Boolean(primaryOrder.route_started) &&
+            primaryOrder.route_finished !== true &&
+            item.hasRouteStarted
 
           const routeStartTime = primaryOrder.route_started_at
             ? new Date(primaryOrder.route_started_at).getTime()
@@ -1217,19 +1289,32 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               return true
             })
 
-          // SE POSIÇÃO ESTÁ CONGELADA (>2min), SUPRIMIR FALSOS ALARMES DE DESVIO/PARADA
+          // SE POSIÇÃO ESTÁ CONGELADA (>2min) ou rota não iniciada, SUPRIMIR FALSOS ALARMES DE DESVIO/PARADA
           const isDeviated =
             !isGpsFrozen &&
             hasActiveRouteStarted &&
             (hasDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
 
-          // Parada fora do local
+          // CORREÇÃO 3: Alerta "parada fora"
+          // Não disparar falso alarme se o entregador estiver parado a <= 600m do último cliente entregue (lastDeliveredPos)
           const distToBaseMeters = distanceMeters(courierPos, origin)
+          const distToReturnBaseMeters = distanceMeters(courierPos, returnBasePos)
+          const isNearBase =
+            distToBaseMeters <= UNEXPECTED_STOP_THRESHOLD_METERS ||
+            distToReturnBaseMeters <= UNEXPECTED_STOP_THRESHOLD_METERS
+          const isNearNextTarget = distToClientMeters <= UNEXPECTED_STOP_THRESHOLD_METERS
+          const isNearLastDelivered = lastDeliveredPos
+            ? distanceMeters(courierPos, lastDeliveredPos) <= UNEXPECTED_STOP_THRESHOLD_METERS
+            : false
+
           const isStopped = typeof item.speed === 'number' && item.speed <= 2
-          const isFarFromClient = distToClientMeters > UNEXPECTED_STOP_THRESHOLD_METERS
-          const isFarFromBase = distToBaseMeters > UNEXPECTED_STOP_THRESHOLD_METERS
           const isUnexpectedStop =
-            !isGpsFrozen && hasActiveRouteStarted && isStopped && isFarFromClient && isFarFromBase
+            !isGpsFrozen &&
+            hasActiveRouteStarted &&
+            isStopped &&
+            !isNearBase &&
+            !isNearNextTarget &&
+            !isNearLastDelivered
 
           // ETA: Quando congelado, não projetar estimativas fictícias
           const effectiveSpeedKmh =
@@ -1808,24 +1893,31 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           } else if (lines.dev) {
             lines.dev.setMap(null)
           }
-        } else if (hasForward) {
-          // Criar polylines pela primeira vez para este entregador
-          const mainPolyline = new win.google.maps.Polyline({
-            path: rawFPath,
-            geodesic: true,
-            strokeColor: '#2563EB',
-            strokeOpacity: 0.95,
-            strokeWeight: 5,
-            map,
-          })
-          const innerPolyline = new win.google.maps.Polyline({
-            path: rawFPath,
-            geodesic: true,
-            strokeColor: '#93C5FD',
-            strokeOpacity: 0.85,
-            strokeWeight: 2,
-            map,
-          })
+        } else if (hasForward || hasReturn) {
+          // Criar polylines pela primeira vez para este entregador (mesmo se só tiver perna de retorno)
+          let mainPolyline: any = null
+          let innerPolyline: any = null
+
+          if (hasForward) {
+            mainPolyline = new win.google.maps.Polyline({
+              path: rawFPath,
+              geodesic: true,
+              strokeColor: '#2563EB',
+              strokeOpacity: 0.95,
+              strokeWeight: 5,
+              map,
+            })
+            innerPolyline = new win.google.maps.Polyline({
+              path: rawFPath,
+              geodesic: true,
+              strokeColor: '#93C5FD',
+              strokeOpacity: 0.85,
+              strokeWeight: 2,
+              map,
+            })
+            fPoints.forEach((p: any) => bounds.extend(p))
+            hasCoords = true
+          }
 
           let returnPolyline: any = null
           if (hasReturn) {
@@ -1844,6 +1936,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               map,
             })
             retPoints.forEach((p: any) => bounds.extend(p))
+            hasCoords = true
           }
 
           let devPolyline: any = null
@@ -1871,9 +1964,6 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             returnLeg: returnPolyline,
             dev: devPolyline,
           })
-
-          fPoints.forEach((p: any) => bounds.extend(p))
-          hasCoords = true
         }
 
         // Base Marker se presente
@@ -2688,8 +2778,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     // Verificar se o entregador está em desvio de rota e desenhar LINHA VERMELHA
     // REQUISITO ESTRITO: Linha vermelha apenas quando hasActiveRouteStarted && isDeviated
+    // Só avaliar se rota iniciada e não finalizada e pedido não entregue/cancelado
     const isSelectedOrderInActiveRoute =
       Boolean(selectedOrder.route_started) &&
+      selectedOrder.route_finished !== true &&
       (selectedOrder.status === 'in_transit' || selectedOrder.status === 'pending')
 
     if (
@@ -2725,23 +2817,41 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         meters: Math.round(nearest.distanceMeters),
       })
 
-      // Detectar parada fora do local: >600m do cliente e >600m da base com velocidade <= 2 km/h
+      // Detectar parada fora do local: verificar distância ao cliente destino, à base e ao último cliente entregue
       const distToCust =
         cust?.lat && cust?.lng
           ? distanceMeters(courierPoint, { lat: cust.lat, lng: cust.lng })
           : 999
       const basePoint: LatLngPoint = {
-        lat: selectedOrder.start_base_lat ? Number(selectedOrder.start_base_lat) : courierPoint.lat,
-        lng: selectedOrder.start_base_lng ? Number(selectedOrder.start_base_lng) : courierPoint.lng,
+        lat: selectedOrder.start_base_lat ? Number(selectedOrder.start_base_lat) : -22.6990563,
+        lng: selectedOrder.start_base_lng ? Number(selectedOrder.start_base_lng) : -43.296723,
       }
       const distToDrawerBase = distanceMeters(courierPoint, basePoint)
       const isSpeedZero = typeof courierData.speed === 'number' && courierData.speed <= 2
       const isFarFromCust = distToCust > UNEXPECTED_STOP_THRESHOLD_METERS
-      const isFarFromDrawerBase =
-        !selectedOrder.start_base_lat || distToDrawerBase > UNEXPECTED_STOP_THRESHOLD_METERS
+      const isFarFromDrawerBase = distToDrawerBase > UNEXPECTED_STOP_THRESHOLD_METERS
+
+      // Verificar se o entregador está próximo (<=600m) ao último cliente entregue
+      const lastDeliveredOrder = courierRouteOrders
+        .filter((o) => o.status === 'delivered')
+        .slice(-1)[0]
+      const lastDeliveredPos =
+        lastDeliveredOrder?.expand?.customer_id?.lat && lastDeliveredOrder?.expand?.customer_id?.lng
+          ? {
+              lat: Number(lastDeliveredOrder.expand.customer_id.lat),
+              lng: Number(lastDeliveredOrder.expand.customer_id.lng),
+            }
+          : null
+      const isNearLastDeliveredInDrawer = lastDeliveredPos
+        ? distanceMeters(courierPoint, lastDeliveredPos) <= UNEXPECTED_STOP_THRESHOLD_METERS
+        : false
 
       setDrawerUnexpectedStop(
-        isSelectedOrderInActiveRoute && isSpeedZero && isFarFromCust && isFarFromDrawerBase,
+        isSelectedOrderInActiveRoute &&
+          isSpeedZero &&
+          isFarFromCust &&
+          isFarFromDrawerBase &&
+          !isNearLastDeliveredInDrawer,
       )
 
       if (isDeviatedStrict) {
@@ -3969,7 +4079,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                       mapDisplayMode === 'delivered'
                         ? []
                         : activeRoutesData
-                            .filter((routeData) => Boolean(routeData.order?.route_started))
+                            .filter(
+                              (routeData) =>
+                                Boolean(routeData.order?.route_started) &&
+                                routeData.order?.route_finished !== true,
+                            )
                             .flatMap((routeData) => {
                               const lines: any[] = []
                               const fPoints = routeData.forwardPoints || routeData.points
@@ -3980,7 +4094,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                                   courierPosition: routeData.courierPos,
                                   streetCoordinates: fPoints,
                                   isDeviated: Boolean(
-                                    routeData.order?.route_started && routeData.isDeviated,
+                                    routeData.order?.route_started &&
+                                    routeData.order?.route_finished !== true &&
+                                    routeData.isDeviated,
                                   ),
                                   isReturnLeg: false,
                                 })
@@ -3990,8 +4106,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                                 lines.push({
                                   origin: retPoints[0],
                                   destination: retPoints[retPoints.length - 1],
+                                  courierPosition: routeData.courierPos,
                                   streetCoordinates: retPoints,
-                                  isDeviated: false,
+                                  isDeviated: Boolean(
+                                    (!fPoints || fPoints.length < 2) &&
+                                    routeData.order?.route_started &&
+                                    routeData.order?.route_finished !== true &&
+                                    routeData.isDeviated,
+                                  ),
                                   isReturnLeg: true,
                                 })
                               }
