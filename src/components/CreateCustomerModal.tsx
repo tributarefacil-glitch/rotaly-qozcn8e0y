@@ -22,9 +22,10 @@ import {
   BRAZILIAN_STATES,
   normalizeBrazilianUF,
   lookupViaCep,
-  fallbackGeocodeAddress,
+  geocodeAddressWithValidation,
   parseCoordinatesFromGoogleLink,
   reverseGeocodeCoordinates,
+  loadGoogleMapsScript,
 } from '@/lib/googleMaps'
 import { haversineDistanceMeters } from '@/lib/geo'
 import {
@@ -42,6 +43,8 @@ import {
   Link2,
   Crosshair,
   AlertTriangle,
+  MapPin,
+  Move,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -88,6 +91,14 @@ export function CreateCustomerModal({
   const [locationLinkInput, setLocationLinkInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const phoneDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Referências para o mini-mapa com pino interativo e arrastável
+  const miniMapContainerRef = useRef<HTMLDivElement | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const miniMapInstanceRef = useRef<any>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const miniMapMarkerRef = useRef<any>(null)
+  const [isPinManuallyAdjusted, setIsPinManuallyAdjusted] = useState(false)
 
   const isEditMode = Boolean(customerToEdit)
 
@@ -262,7 +273,98 @@ export function CreateCustomerModal({
     toast.success('Endereço localizado e campos preenchidos com sucesso!')
   }, [])
 
-  // Lookup CEP via ViaCEP
+  // Inicializa ou atualiza o mini-mapa com pino interativo/arrastável
+  const initOrUpdateMiniMap = useCallback((targetLat: number, targetLng: number) => {
+    if (typeof window === 'undefined') return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const win = window as any
+    if (!win.google?.maps || !miniMapContainerRef.current) return
+
+    try {
+      const position = { lat: targetLat, lng: targetLng }
+      if (!miniMapInstanceRef.current) {
+        const map = new win.google.maps.Map(miniMapContainerRef.current, {
+          center: position,
+          zoom: 16,
+          disableDefaultUI: false,
+          zoomControl: true,
+          streetViewControl: false,
+          mapTypeControl: false,
+          fullscreenControl: false,
+        })
+        miniMapInstanceRef.current = map
+
+        const marker = new win.google.maps.Marker({
+          position,
+          map,
+          draggable: true,
+          title: 'Arraste para calibrar a localização exata do cliente',
+        })
+        miniMapMarkerRef.current = marker
+
+        marker.addListener('dragend', (evt: any) => {
+          if (!evt?.latLng) return
+          const newLat = typeof evt.latLng.lat === 'function' ? evt.latLng.lat() : evt.latLng.lat
+          const newLng = typeof evt.latLng.lng === 'function' ? evt.latLng.lng() : evt.latLng.lng
+          setLat(newLat)
+          setLng(newLng)
+          setIsPinManuallyAdjusted(true)
+          setHasPrecisionWarning(false)
+          setPrecisionWarningDismissed(true)
+          toast.success(`Pino ajustado manualmente (${newLat.toFixed(6)}, ${newLng.toFixed(6)})`)
+        })
+
+        map.addListener('click', (evt: any) => {
+          if (!evt?.latLng) return
+          const clickLat = typeof evt.latLng.lat === 'function' ? evt.latLng.lat() : evt.latLng.lat
+          const clickLng = typeof evt.latLng.lng === 'function' ? evt.latLng.lng() : evt.latLng.lng
+          marker.setPosition({ lat: clickLat, lng: clickLng })
+          setLat(clickLat)
+          setLng(clickLng)
+          setIsPinManuallyAdjusted(true)
+          setHasPrecisionWarning(false)
+          setPrecisionWarningDismissed(true)
+          toast.success(`Pino reposicionado para (${clickLat.toFixed(6)}, ${clickLng.toFixed(6)})`)
+        })
+
+        setTimeout(() => {
+          if (win.google?.maps?.event && miniMapInstanceRef.current) {
+            win.google.maps.event.trigger(miniMapInstanceRef.current, 'resize')
+          }
+        }, 150)
+      } else {
+        miniMapInstanceRef.current.setCenter(position)
+        if (miniMapMarkerRef.current) {
+          miniMapMarkerRef.current.setPosition(position)
+        }
+        win.google.maps.event?.trigger(miniMapInstanceRef.current, 'resize')
+      }
+    } catch (err) {
+      console.warn('Erro ao inicializar mini-mapa:', err)
+    }
+  }, [])
+
+  // Sincroniza mini-mapa quando lat/lng mudam
+  useEffect(() => {
+    if (open && typeof lat === 'number' && typeof lng === 'number') {
+      loadGoogleMapsScript().then((loaded) => {
+        if (loaded) {
+          initOrUpdateMiniMap(lat, lng)
+        }
+      })
+    }
+  }, [open, lat, lng, initOrUpdateMiniMap])
+
+  // Limpeza ao fechar
+  useEffect(() => {
+    if (!open) {
+      miniMapInstanceRef.current = null
+      miniMapMarkerRef.current = null
+      setIsPinManuallyAdjusted(false)
+    }
+  }, [open])
+
+  // Lookup CEP via ViaCEP com geocodificação anti-erro
   const handleCepChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     let raw = e.target.value.replace(/\D/g, '')
     if (raw.length > 5) {
@@ -285,9 +387,15 @@ export function CreateCustomerModal({
           }
           toast.success('Endereço preenchido automaticamente pelo CEP!')
 
-          // Tentar geocodificar para obter coordenadas (polo operacional RJ como bias)
+          // Tentar geocodificar com validação anti-erro (conferindo cidade/CEP)
           const full = `${res.street || ''}, ${res.neighborhood || ''}, ${res.city || ''} - ${res.state || ''}, Brasil`
-          fallbackGeocodeAddress(full, { lat: -22.906847, lng: -43.172896 }).then((geo) => {
+          const expected = {
+            city: res.city,
+            postalCode: clean,
+            street: res.street,
+            neighborhood: res.neighborhood,
+          }
+          geocodeAddressWithValidation(full, expected, { lat: -22.68, lng: -43.3 }).then((geo) => {
             if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
               const isFallback =
                 Math.abs(geo.lat - -22.906847) < 0.0001 && Math.abs(geo.lng - -43.172896) < 0.0001
@@ -300,8 +408,14 @@ export function CreateCustomerModal({
               } else {
                 setLat(geo.lat)
                 setLng(geo.lng)
-                setHasPrecisionWarning(false)
-                setPrecisionWarningDismissed(false)
+                if (geo.parsed.validationWarning) {
+                  setHasPrecisionWarning(true)
+                  setPrecisionWarningDismissed(false)
+                  toast.warning(geo.parsed.validationWarning)
+                } else {
+                  setHasPrecisionWarning(false)
+                  setPrecisionWarningDismissed(false)
+                }
               }
             } else {
               setHasPrecisionWarning(true)
@@ -438,11 +552,17 @@ export function CreateCustomerModal({
       !lat || !lng || (Math.abs(lat - -22.906847) < 0.0001 && Math.abs(lng - -43.172896) < 0.0001)
 
     if (isDefaultFallback) {
-      // Tentar geocodificar o endereço antes de rejeitar
+      // Tentar geocodificar o endereço com validação anti-erro antes de rejeitar
       let resolvedLat: number | undefined = undefined
       let resolvedLng: number | undefined = undefined
       try {
-        const geocoded = await fallbackGeocodeAddress(fullAddress)
+        const expected = {
+          city: city.trim(),
+          postalCode: postalCode.trim(),
+          street: streetAndNumber.trim(),
+          neighborhood: neighborhood.trim(),
+        }
+        const geocoded = await geocodeAddressWithValidation(fullAddress, expected)
         if (geocoded && typeof geocoded.lat === 'number' && typeof geocoded.lng === 'number') {
           const isStillFallback =
             Math.abs(geocoded.lat - -22.906847) < 0.0001 &&
@@ -463,7 +583,7 @@ export function CreateCustomerModal({
         setHasPrecisionWarning(true)
         if (!precisionWarningDismissed) {
           toast.error(
-            'Endereço não geocodificado com precisão — revise no mapa antes de salvar. Cole o link do Google Maps ou confirme a localização.',
+            'Endereço não geocodificado com precisão — revise no mapa antes de salvar. Cole o link do Google Maps ou ajuste o pino.',
             { duration: 7000 },
           )
           return
@@ -474,11 +594,17 @@ export function CreateCustomerModal({
     let finalLat = lat
     let finalLng = lng
 
-    // Sanity check: se coordenadas foram capturadas/coladas do GPS do dispositivo,
-    // validar contra o endereço textual geocodificado; se distar > 2 km, alertar
-    if (fullAddress && finalLat && finalLng) {
+    // Sanity check: se coordenadas foram ajustadas manualmente ou capturadas,
+    // validar contra o endereço textual geocodificado; se distar > 3 km, alertar sem bloquear
+    if (fullAddress && finalLat && finalLng && !isPinManuallyAdjusted) {
       try {
-        const geocoded = await fallbackGeocodeAddress(fullAddress)
+        const expected = {
+          city: city.trim(),
+          postalCode: postalCode.trim(),
+          street: streetAndNumber.trim(),
+          neighborhood: neighborhood.trim(),
+        }
+        const geocoded = await geocodeAddressWithValidation(fullAddress, expected)
         if (geocoded && typeof geocoded.lat === 'number' && typeof geocoded.lng === 'number') {
           const isFallback =
             Math.abs(geocoded.lat - -22.906847) < 0.0001 &&
@@ -492,7 +618,7 @@ export function CreateCustomerModal({
             )
             if (distMeters > 3000) {
               toast.warning(
-                'Atenção: A coordenada dista mais de 3 km do endereço digitado. Verifique o número ou bairro.',
+                'Atenção: A coordenada dista mais de 3 km do endereço digitado. Ajuste o pino no mapa se necessário.',
                 { duration: 6000 },
               )
             }
@@ -917,6 +1043,47 @@ export function CreateCustomerModal({
               </span>
             </div>
           )}
+
+          {/* Mini-mapa com pino interativo e arrastável para confirmação/calibração manual */}
+          <div className="rounded-xl border border-[#1E2B58] bg-[#0A1128] p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-bold text-white flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 text-[#FF6B35]" />
+                Posicionamento do Pino no Mapa
+              </Label>
+              <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                <Move className="h-3 w-3 text-[#60A5FA]" />
+                Arraste o pino ou clique no mapa para calibrar
+              </span>
+            </div>
+
+            <div
+              ref={miniMapContainerRef}
+              className="w-full h-44 rounded-lg bg-[#070D1E] border border-[#1E2B58] overflow-hidden relative"
+            >
+              {(!lat || !lng) && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-[#070D1E]/90 z-10 text-slate-400 text-xs">
+                  <MapPin className="h-6 w-6 text-slate-500 mb-1 animate-pulse" />
+                  <p>Preencha o CEP ou busque o endereço acima para exibir o pino no mapa.</p>
+                </div>
+              )}
+            </div>
+
+            {typeof lat === 'number' && typeof lng === 'number' && (
+              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
+                <span className="font-mono text-slate-300">
+                  Coordenadas: {lat.toFixed(6)}, {lng.toFixed(6)}
+                </span>
+                {isPinManuallyAdjusted ? (
+                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                    ✓ Pino ajustado manualmente
+                  </span>
+                ) : (
+                  <span className="text-slate-400">Posição obtida por geocodificação</span>
+                )}
+              </div>
+            )}
+          </div>
 
           <DialogFooter className="pt-2 gap-2">
             <Button

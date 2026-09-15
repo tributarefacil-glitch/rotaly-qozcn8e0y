@@ -120,19 +120,26 @@ export function normalizeBrazilianUF(rawState?: string): string {
 }
 
 export interface ParsedAddress {
-  street: string
-  number: string
-  streetAndNumber: string
-  neighborhood: string
-  city: string
-  state: string
-  postalCode: string
+  street?: string
+  number?: string
+  streetAndNumber?: string
+  neighborhood?: string
+  city?: string
+  state?: string
+  postalCode?: string
   formattedAddress?: string
   lat?: number
   lng?: number
-  source?: 'google' | 'osm' | 'viacep'
+  source?: 'google' | 'nominatim' | 'viacep'
+  validationWarning?: string
 }
 
+export interface GeocodeValidationExpected {
+  city?: string
+  postalCode?: string
+  street?: string
+  neighborhood?: string
+}
 /**
  * Converte coordenadas em graus, minutos e segundos (DMS) para graus decimais (DD).
  * Ex: 23°01'21.6"S -> -23.0226667
@@ -1112,6 +1119,159 @@ export async function geocodeAddressGoogleRest(
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Geocoding unificado de endereços com prioridade Google Maps:
+ * 1. Tenta a API REST do Google Geocoding (geocodeAddressGoogleRest) se houver chave configurada
+ * 2. Tenta o SDK JS do Google Geocoder caso esteja carregado na página
+ * 3. Fallback para OpenStreetMap Nominatim (fallbackGeocodeAddress)
+ */
+/**
+ * Normaliza strings para comparação fonética/textual suave (remove acentos, pontuação, múltiplos espaços e lowercase)
+ */
+export function normalizeTextForComparison(text?: string): string {
+  if (!text) return ''
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Validação anti-erro: confere se o retorno do geocoder bate com os dados informados no formulário
+ * (cidade esperada e, se houver CEP, os 5 primeiros dígitos do CEP).
+ */
+export function isGeocodeResultConsistent(
+  result: { lat: number; lng: number; parsed: ParsedAddress },
+  expected?: GeocodeValidationExpected,
+): { valid: boolean; reason?: string } {
+  if (!expected) return { valid: true }
+
+  const expCity = normalizeTextForComparison(expected.city)
+  const expCepDigits = (expected.postalCode || '').replace(/\D/g, '')
+
+  // 1. Verificação de Cidade
+  if (expCity) {
+    const resCity = normalizeTextForComparison(result.parsed.city)
+    const formatted = normalizeTextForComparison(result.parsed.formattedAddress)
+    const cityMatched =
+      (resCity && (resCity.includes(expCity) || expCity.includes(resCity))) ||
+      (formatted && formatted.includes(expCity))
+
+    if (!cityMatched) {
+      return {
+        valid: false,
+        reason: `Cidade divergente: retornado "${result.parsed.city || 'indefinida'}", esperado "${expected.city}".`,
+      }
+    }
+  }
+
+  // 2. Verificação de CEP (prefixo de 5 dígitos para comparar o setor postal)
+  if (expCepDigits.length >= 5) {
+    const resCepDigits = (result.parsed.postalCode || '').replace(/\D/g, '')
+    if (resCepDigits.length >= 5) {
+      const expPrefix = expCepDigits.slice(0, 5)
+      const resPrefix = resCepDigits.slice(0, 5)
+      // Se a diferença entre os prefixos for grande (> 2 setores postais na mesma UF)
+      if (Math.abs(Number(expPrefix) - Number(resPrefix)) > 30) {
+        return {
+          valid: false,
+          reason: `CEP divergente: retornado "${result.parsed.postalCode}", esperado prefixo "${expPrefix}".`,
+        }
+      }
+    }
+  }
+
+  return { valid: true }
+}
+
+/**
+ * Geocodificação com validação anti-erro estrutural:
+ * 1. Tenta geocodificar o endereço completo.
+ * 2. Confere se a localidade/CEP retornados batem com os esperados (cidade/CEP do formulário).
+ * 3. Se houver divergência, tenta novamente geocodificando via (CEP + rua + número).
+ * 4. Se ainda assim divergir, tenta com o trecho mais restritivo (CEP + rua) e anexa um aviso.
+ */
+export async function geocodeAddressWithValidation(
+  address: string,
+  expected?: GeocodeValidationExpected,
+  biasCoords?: { lat: number; lng: number } | null,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<{ lat: number; lng: number; parsed: ParsedAddress } | null> {
+  const cleanAddr = address.trim()
+  if (!cleanAddr) return null
+
+  // 1ª tentativa: geocodificação direta do endereço completo
+  const firstResult = await geocodeAddressUnified(cleanAddr, biasCoords, options)
+
+  if (!expected || (!expected.city && !expected.postalCode)) {
+    return firstResult
+  }
+
+  if (firstResult) {
+    const check = isGeocodeResultConsistent(firstResult, expected)
+    if (check.valid) {
+      return firstResult
+    }
+    console.warn('[Anti-Erro Geocoding] Divergência na 1ª tentativa:', check.reason)
+  }
+
+  // 2ª tentativa: CEP + Rua + Número + Cidade (mais ancorado no CEP)
+  const cepClean = (expected.postalCode || '').replace(/\D/g, '')
+  const streetPart = expected.street || cleanAddr.split(',')[0] || ''
+  if (cepClean.length === 8 && streetPart) {
+    const candidateQuery2 = `${streetPart}, ${expected.neighborhood ? expected.neighborhood + ', ' : ''}${expected.city || ''} - CEP ${expected.postalCode}, Brasil`
+    try {
+      const secondResult = await geocodeAddressUnified(candidateQuery2, biasCoords, options)
+      if (secondResult) {
+        const check2 = isGeocodeResultConsistent(secondResult, expected)
+        if (check2.valid) {
+          return secondResult
+        }
+      }
+    } catch (e) {
+      console.warn('[Anti-Erro Geocoding] Falha na 2ª tentativa ancorada em CEP:', e)
+    }
+
+    // 3ª tentativa: Trecho mais restritivo (CEP + rua + cidade)
+    const candidateQuery3 = `CEP ${expected.postalCode}, ${streetPart}, ${expected.city || ''}`
+    try {
+      const thirdResult = await geocodeAddressUnified(candidateQuery3, biasCoords, options)
+      if (thirdResult) {
+        const check3 = isGeocodeResultConsistent(thirdResult, expected)
+        if (check3.valid) {
+          return thirdResult
+        }
+        // Se ainda assim divergir, anexa aviso estruturado
+        return {
+          ...thirdResult,
+          parsed: {
+            ...thirdResult.parsed,
+            validationWarning: `Localidade geocodificada pode divergir do bairro/cidade informado (${check3.reason}). Revise o pino no mapa.`,
+          },
+        }
+      }
+    } catch (e) {
+      console.warn('[Anti-Erro Geocoding] Falha na 3ª tentativa restritiva:', e)
+    }
+  }
+
+  // Se não foi possível reconciliar perfeitamente, retorna o primeiro resultado com aviso
+  if (firstResult) {
+    return {
+      ...firstResult,
+      parsed: {
+        ...firstResult.parsed,
+        validationWarning: 'Atenção: A coordenada geocodificada requer confirmação visual no mapa.',
+      },
+    }
+  }
+
+  return null
 }
 
 /**

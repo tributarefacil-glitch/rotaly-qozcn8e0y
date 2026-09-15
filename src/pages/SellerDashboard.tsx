@@ -28,6 +28,7 @@ import { CreateOrderModal } from '@/components/CreateOrderModal'
 import { CreateCourierModal } from '@/components/CreateCourierModal'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import { CustomerSearchModal } from '@/components/CustomerSearchModal'
+import { CustomerAddressAuditModal } from '@/components/CustomerAddressAuditModal'
 import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { ControlTower } from '@/components/ControlTower'
@@ -126,6 +127,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [isCreateCourierModalOpen, setIsCreateCourierModalOpen] = useState(false)
   const [isCreateCustomerModalOpen, setIsCreateCustomerModalOpen] = useState(false)
   const [isCustomerSearchModalOpen, setIsCustomerSearchModalOpen] = useState(false)
+  const [isCustomerAddressAuditModalOpen, setIsCustomerAddressAuditModalOpen] = useState(false)
   const [customerToEdit, setCustomerToEdit] = useState<CustomerRecord | null>(null)
   const [customerTabSearch, setCustomerTabSearch] = useState('')
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
@@ -1245,6 +1247,16 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                   <div className="flex items-center gap-2">
                     <Button
                       type="button"
+                      onClick={() => setIsCustomerAddressAuditModalOpen(true)}
+                      variant="outline"
+                      className="h-9 px-3 text-xs font-semibold bg-[#0A1128] border-[#1E2B58] text-amber-300 hover:bg-[#121E46] hover:text-white flex items-center gap-1.5 shadow-sm"
+                      title="Auditar calibração de endereços cadastrados no mapa"
+                    >
+                      <MapPin className="h-3.5 w-3.5 text-amber-400" />
+                      <span>Verificar Endereços no Mapa</span>
+                    </Button>
+                    <Button
+                      type="button"
                       onClick={() => setIsCustomerSearchModalOpen(true)}
                       className="h-9 px-3.5 text-xs font-bold bg-[#0052CC] hover:bg-[#003E99] text-white flex items-center gap-1.5 shadow-sm"
                     >
@@ -1985,8 +1997,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         open={isCustomerSearchModalOpen}
         onOpenChange={setIsCustomerSearchModalOpen}
         customers={customers}
-        onSelectCustomerToEdit={(customer) => {
-          setCustomerToEdit(customer)
+        onSelectCustomerToEdit={(c) => {
+          setCustomerToEdit(c)
           setIsCustomerSearchModalOpen(false)
           setIsCreateCustomerModalOpen(true)
         }}
@@ -1997,6 +2009,16 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         }}
       />
 
+      {/* Modal de Auditoria e Verificação Anti-Descalibração de Endereços */}
+      <CustomerAddressAuditModal
+        open={isCustomerAddressAuditModalOpen}
+        onOpenChange={setIsCustomerAddressAuditModalOpen}
+        customers={customers}
+        onEditCustomer={(c) => {
+          setCustomerToEdit(c)
+          setIsCreateCustomerModalOpen(true)
+        }}
+      />
       {/* Multi-Courier Route Optimizer Assistant Modal */}
       <RouteOptimizerModal
         open={isOptimizerModalOpen}
