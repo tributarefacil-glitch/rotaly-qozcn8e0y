@@ -204,7 +204,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       setResolvedCompanySource('Rotaly Operações (Matriz)')
       const currentOpWindow = getOperationalWindow(new Date())
       const windowStartIso = new Date(currentOpWindow.start).toISOString()
-      const ordersFilter = `created >= '${windowStartIso}' || (route_started = true && (route_finished = false || route_finished = null))`
+      const ordersFilter = `created >= '${windowStartIso}' || (route_started = true && (route_finished = false || route_finished = null)) || (route_released != true && (status = 'pending' || status = 'assigned'))`
 
       const [
         ordersData,
