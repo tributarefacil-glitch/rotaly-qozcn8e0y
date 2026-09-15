@@ -476,8 +476,13 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }
 
   // Determina se o componente pai (SellerDashboard / AdminDashboard) já está fornecendo os dados via props
-  const hasParentOrders = initialOrders !== undefined
-  const hasParentCouriers = initialCouriers !== undefined
+  // Contingência: se initialOrders ou initialCouriers vierem vazios (length === 0), a Torre busca os dados de forma autônoma
+  const hasParentOrders = Array.isArray(initialOrders)
+    ? initialOrders.length > 0
+    : Boolean(initialOrders)
+  const hasParentCouriers = Array.isArray(initialCouriers)
+    ? initialCouriers.length > 0
+    : Boolean(initialCouriers)
 
   // Fetch initial/refreshed data (apenas quando não alimentado via props)
   const fetchData = async () => {
@@ -485,6 +490,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     // precisamos apenas carregar as ordens globais em trânsito se não fornecidas
     try {
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
+      const currentOpWindow = getOperationalWindow(new Date())
+      const windowStartIso = new Date(currentOpWindow.start).toISOString()
+      const fallbackOrdersFilter = `created >= '${windowStartIso}' || (route_started = true && (route_finished = false || route_finished = null))`
 
       const [
         fetchedOrders,
@@ -495,7 +503,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         fetchedSettings,
       ] = await Promise.all([
         !hasParentOrders
-          ? deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id')
+          ? deliveryService.getOrders(
+              fallbackOrdersFilter,
+              '-created',
+              'customer_id,courier_id,seller_id',
+            )
           : Promise.resolve(orders),
         deliveryService.getOrders(
           globalTransitFilter,
@@ -531,7 +543,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }
 
   // Sincronização inicial e periódica:
-  // Executa busca autônoma APENAS se props não foram fornecidas pelo componente pai.
+  // Executa busca autônoma se props não foram fornecidas pelo componente pai ou vieram vazias ([]).
   useEffect(() => {
     if (!hasParentOrders || !hasParentCouriers) {
       fetchData()

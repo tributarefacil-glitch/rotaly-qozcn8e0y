@@ -64,6 +64,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
 import { getMyCompany, type ResolvedCompany } from '@/lib/companyResolver'
+import { getOperationalWindow } from '@/lib/operationalWindow'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
@@ -278,6 +279,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setResolvedCompany(resolvedInfo)
       setIsLoadingCompanyGate(false)
 
+      const currentOpWindow = getOperationalWindow(new Date())
+      const windowStartIso = new Date(currentOpWindow.start).toISOString()
+      const ordersFilter = `created >= '${windowStartIso}' || (route_started = true && (route_finished = false || route_finished = null))`
+
       const [
         ordersData,
         usersData,
@@ -290,7 +295,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         reviewsData,
         locationsData,
       ] = await Promise.all([
-        deliveryService.getOrders('', '-created', 'customer_id,courier_id,seller_id'),
+        deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
         deliveryService.getAllUsers(),
         deliveryService.getCouriers(),
         deliveryService.getSellers(),
@@ -308,32 +313,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setNotifications(notifsData)
       setSettings(appSettings)
       setFuelAdvances(advancesData)
-      // Recalcula as contas correntes com base no filtro de período atual e dados completos
-      const couriersList = couriersData
-      const calculatedAccounts = couriersList.map((courier) => {
-        const metrics = calculateCourierFuelMetrics({
-          courier,
-          advances: advancesData,
-          orders: ordersData,
-          locations: locationsData,
-          offRouteEvents: eventsData,
-          settings: appSettings,
-          periodFilter: fuelPeriodFilter,
-        })
-        return (
-          metrics.fuelAccount ||
-          deliveryService.getCourierFuelAccount(
-            courier,
-            advancesData,
-            ordersData,
-            appSettings,
-            fuelPeriodFilter,
-            locationsData,
-            eventsData,
-          )
-        )
-      })
-      setFuelAccounts(calculatedAccounts)
+      // O cálculo pesado de combustível foi movido para execução LAZY (somente na aba de combustível)
+      // para não travar a abertura inicial do AdminDashboard.
+      setFuelAccounts([])
       setOffRouteEvents(eventsData)
       setReviews(reviewsData)
       setLocations(locationsData)
@@ -833,45 +815,55 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     0,
   )
 
-  // REQUISITO 1: Quilometragem e consumo por veículo — somar distance_km + return_trip_km para todas as ordens com
-  // route_started === true OU status in_transit / delivered / address_error / client_absent (rotas parciais de retorno incluídas)
-  let totalKmRodada = 0
-  let totalFuelCostCalculated = 0
-
-  filteredReportOrders.forEach((o) => {
-    if (
-      o.route_started === true ||
-      o.status === 'delivered' ||
-      o.status === 'in_transit' ||
-      o.status === 'address_error' ||
-      o.status === 'client_absent'
-    ) {
-      const realTelemetry = calculateRealKmForOrder({
-        order: o,
-        allCourierLocations: locations,
-        courierEvents: offRouteEvents,
-        allCourierOrders: orders,
-      })
-
-      const orderKm = realTelemetry.officialRealKm
-      totalKmRodada += orderKm
-
-      // Obter veículo do entregador
-      const courier = users.find((u) => u.id === o.courier_id) || o.expand?.courier_id
-      const vehicleType = courier?.vehicle_type || 'moto'
-      const { pricePerLiter, consumptionKml, category } = deliveryService.getVehicleFuelParams(
-        settings,
-        vehicleType,
-      )
-
-      if (category !== 'bicicleta' && consumptionKml > 0 && pricePerLiter > 0) {
-        totalFuelCostCalculated += (orderKm * pricePerLiter) / consumptionKml
-      }
+  // REQUISITO 1: Quilometragem e consumo por veículo — cálculo LAZY executado apenas quando a aba de relatórios estiver aberta
+  const isReportsTabActive = activeTab === 'reports'
+  const { totalKmRodada, totalFuelCostCalculated } = useMemo(() => {
+    let km = 0
+    let fuel = 0
+    if (!isReportsTabActive) {
+      return { totalKmRodada: 0, totalFuelCostCalculated: 0 }
     }
-  })
+    filteredReportOrders.forEach((o) => {
+      if (
+        o.route_started === true ||
+        o.status === 'delivered' ||
+        o.status === 'in_transit' ||
+        o.status === 'address_error' ||
+        o.status === 'client_absent'
+      ) {
+        const realTelemetry = calculateRealKmForOrder({
+          order: o,
+          allCourierLocations: locations,
+          courierEvents: offRouteEvents,
+          allCourierOrders: orders,
+        })
 
-  // Recalcular fuelAccounts reativamente sempre que mudar o filtro de período, pedidos ou adiantamentos
+        const orderKm = realTelemetry.officialRealKm
+        km += orderKm
+
+        // Obter veículo do entregador
+        const courier = users.find((u) => u.id === o.courier_id) || o.expand?.courier_id
+        const vehicleType = courier?.vehicle_type || 'moto'
+        const { pricePerLiter, consumptionKml, category } = deliveryService.getVehicleFuelParams(
+          settings,
+          vehicleType,
+        )
+
+        if (category !== 'bicicleta' && consumptionKml > 0 && pricePerLiter > 0) {
+          fuel += (orderKm * pricePerLiter) / consumptionKml
+        }
+      }
+    })
+    return { totalKmRodada: km, totalFuelCostCalculated: fuel }
+  }, [isReportsTabActive, filteredReportOrders, locations, offRouteEvents, orders, users, settings])
+
+  // Recalcular fuelAccounts de forma LAZY — somente quando a aba de combustível ou o modal de histórico estiverem ativos
+  const isFuelViewActive = activeTab === 'fuel' || isCourierHistoryModalOpen
+
   const currentFuelAccounts = useMemo(() => {
+    if (!isFuelViewActive) {
+      return []
+    }
     return couriers.map((courier) => {
       const metrics = calculateCourierFuelMetrics({
         courier,
@@ -907,7 +899,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       }
       return acc
     })
-  }, [couriers, fuelAdvances, orders, settings, fuelPeriodFilter, locations, offRouteEvents])
+  }, [
+    isFuelViewActive,
+    couriers,
+    fuelAdvances,
+    orders,
+    settings,
+    fuelPeriodFilter,
+    locations,
+    offRouteEvents,
+  ])
 
   // Filtered Fuel Advances by Courier & Period (REQUISITO 5)
   const filteredFuelAdvances = fuelAdvances.filter((adv) => {
