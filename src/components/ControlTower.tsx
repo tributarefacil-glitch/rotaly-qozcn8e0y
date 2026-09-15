@@ -1835,15 +1835,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         if (lines) {
           // Mutar polylines existentes com setPath sem recriar
           if (hasForward) {
-            lines.main.setMap(map)
+            lines.main?.setMap(map)
             lines.main.setPath(rawFPath)
-            lines.inner.setMap(map)
+            lines.inner?.setMap(map)
             lines.inner.setPath(rawFPath)
             fPoints.forEach((p: any) => bounds.extend(p))
             hasCoords = true
           } else {
-            lines.main.setMap(null)
-            lines.inner.setMap(null)
+            lines.main?.setMap(null)
+            lines.inner?.setMap(null)
           }
 
           if (hasReturn) {
@@ -1863,12 +1863,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 map,
               })
             } else {
-              lines.returnLeg.setMap(map)
+              lines.returnLeg?.setMap(map)
               lines.returnLeg.setPath(rawRetPath)
             }
             retPoints.forEach((p: any) => bounds.extend(p))
           } else if (lines.returnLeg) {
-            lines.returnLeg.setMap(null)
+            lines.returnLeg?.setMap(null)
           }
 
           if (hasDev) {
@@ -1889,11 +1889,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 map,
               })
             } else {
-              lines.dev.setMap(map)
+              lines.dev?.setMap(map)
               lines.dev.setPath(rawDevPath)
             }
           } else if (lines.dev) {
-            lines.dev.setMap(null)
+            lines.dev?.setMap(null)
           }
         } else if (hasForward || hasReturn) {
           // Criar polylines pela primeira vez para este entregador (mesmo se só tiver perna de retorno)
