@@ -322,6 +322,7 @@ export default function CourierApp() {
     timestamp: number
   } | null>(null)
   const isSendingLocationRef = useRef<boolean>(false)
+  const isFlushingBufferRef = useRef(false)
   const isFetchingPositionRef = useRef<boolean>(false)
   const retryCountRef = useRef<number>(0)
   const retryTimeoutRef = useRef<any>(null)
@@ -341,6 +342,7 @@ export default function CourierApp() {
       // Ao voltar online, disparar flush idempotente do buffer E ping fresco imediato
       if (user?.id) {
         setIsFlushingBuffer(true)
+        isFlushingBufferRef.current = true
         try {
           const res = await offlineTelemetryBuffer.flush(user.id)
           if (res.sent > 0) {
@@ -350,6 +352,7 @@ export default function CourierApp() {
           console.warn('Falha ao flush do buffer offline:', e)
         } finally {
           setIsFlushingBuffer(false)
+          isFlushingBufferRef.current = false
         }
 
         // Ping imediato de posição fresca (maximumAge: 0)
@@ -544,7 +547,7 @@ export default function CourierApp() {
         }
 
         // Se houver pontos no buffer que aguardavam sinal, tenta flush agora que a rede respondeu
-        if (offlineTelemetryBuffer.size(user.id) > 0 && !isFlushingBuffer) {
+        if (offlineTelemetryBuffer.size(user.id) > 0 && !isFlushingBufferRef.current) {
           offlineTelemetryBuffer.flush(user.id).catch(() => {})
         }
       } catch (e) {
@@ -696,10 +699,14 @@ export default function CourierApp() {
       // 1. Flush imediato do buffer offline
       if (user?.id && offlineTelemetryBuffer.size(user.id) > 0) {
         setIsFlushingBuffer(true)
+        isFlushingBufferRef.current = true
         offlineTelemetryBuffer
           .flush(user.id)
           .catch(() => {})
-          .finally(() => setIsFlushingBuffer(false))
+          .finally(() => {
+            setIsFlushingBuffer(false)
+            isFlushingBufferRef.current = false
+          })
       }
 
       // 2. Ping fresco imediato com maximumAge: 0
@@ -737,7 +744,7 @@ export default function CourierApp() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('pageshow', handlePageShow)
     }
-  }, [user, isGpsActive, hasActiveStartedRoute, isFlushingBuffer, currentCourierLocation])
+  }, [user, isGpsActive, hasActiveStartedRoute])
 
   // Se todas as entregas individuais da rota ativa já foram concluídas (ou não há mais activeDeliveries pendentes)
   // mas a rota ainda não foi finalizada na base, o entregador está na etapa de RETORNO À BASE!
