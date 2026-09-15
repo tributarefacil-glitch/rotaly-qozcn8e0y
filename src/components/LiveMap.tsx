@@ -746,7 +746,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     // Remover apenas as polilinhas que não existem mais
     for (const [key, polyline] of googlePolylineMapRef.current.entries()) {
       if (!activePolylineKeys.has(key)) {
-        polyline.setMap(null)
+        try {
+          polyline?.setMap?.(null)
+        } catch {
+          /* intentionally ignored */
+        }
         googlePolylineMapRef.current.delete(key)
       }
     }
@@ -974,9 +978,17 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     // Remover marcadores que deixaram de existir
     for (const [id, entry] of googleMarkerMapRef.current.entries()) {
       if (!currentMarkerIds.has(id)) {
-        entry.marker.setMap(null)
-        if (entry.clickInfoWindow) {
-          entry.clickInfoWindow.close()
+        try {
+          entry?.marker?.setMap?.(null)
+        } catch {
+          /* intentionally ignored */
+        }
+        try {
+          if (entry?.clickInfoWindow) {
+            entry.clickInfoWindow.close()
+          }
+        } catch {
+          /* intentionally ignored */
         }
         liveCourierMarkersRef.current.delete(id)
         const frame = liveCourierAnimFramesRef.current.get(id)
