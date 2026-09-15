@@ -538,17 +538,19 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }
 
   const wasOpenRef = useRef(false)
+  const hasAutoSelectedCouriersRef = useRef(false)
 
   // Initialize selected couriers and load app settings when opened
   useEffect(() => {
     if (open) {
-      // Re-sincronizar seleção SEMPRE que couriers carregar/mudar:
-      // Se couriers chegou com dados e nenhum entregador está selecionado ainda, popular automaticamente
-      if (couriers.length > 0 && selectedCourierIds.length === 0) {
+      // Auto-seleção de entregadores deve ocorrer UMA VEZ ao abrir o modal (ou assim que couriers carregar)
+      // NUNCA re-selecionar quando o usuário deliberadamente desmarca todos os entregadores
+      if (couriers.length > 0 && !hasAutoSelectedCouriersRef.current) {
         const availableIds = couriers.filter((c) => c.status !== 'inactive').map((c) => c.id)
         setSelectedCourierIds(
           availableIds.length > 0 ? availableIds : couriers.slice(0, 3).map((c) => c.id),
         )
+        hasAutoSelectedCouriersRef.current = true
       }
 
       if (!wasOpenRef.current) {
@@ -576,6 +578,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         })
       }
     } else {
+      hasAutoSelectedCouriersRef.current = false
       if (tilesLoadedTimeoutRef.current) {
         clearTimeout(tilesLoadedTimeoutRef.current)
         tilesLoadedTimeoutRef.current = null
@@ -583,7 +586,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       setDraggingStop(null)
     }
     wasOpenRef.current = open
-  }, [open, couriers, selectedCourierIds.length])
+  }, [open, couriers])
 
   // Assinar realtime da coleção app_settings para refletir qualquer alteração de jornada na hora
   useRealtime<AppSettingsRecord>(
@@ -3969,14 +3972,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                           : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 opacity-90 hover:opacity-100'
                       }`}
                     >
-                      <div
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex items-center mt-0.5"
-                      >
+                      <div className="flex items-center mt-0.5 pointer-events-none">
                         <Checkbox
                           id={`ord-chk-${ord.id}`}
                           checked={isSelected}
-                          onCheckedChange={() => toggleOrderSelection(ord.id)}
+                          tabIndex={-1}
                           className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 h-4 w-4"
                         />
                       </div>
