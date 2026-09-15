@@ -48,6 +48,12 @@ import {
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
+import {
+  getOperationalWindow,
+  isTimestampInOperationalWindow,
+  isTodayOrder,
+  parseSafeTimestamp,
+} from '@/lib/operationalWindow'
 import { useToast } from '@/hooks/use-toast'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 
@@ -76,25 +82,32 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   const fuelPrice = settings?.fuel_price_per_liter || 5.59
   const fuelConsumption = settings?.fuel_consumption_kml || 35.0
 
-  // Filter orders by period
+  // Filter orders by period usando a janela operacional oficial (05:00 - 23:59)
   const filteredOrders = useMemo(() => {
     const now = new Date()
-    const todayStr = now.toISOString().split('T')[0]
+    const currentWindow = getOperationalWindow(now)
 
     return orders.filter((o) => {
-      const createdDate = o.created ? o.created.split('T')[0] : ''
-      const orderTime = o.created ? new Date(o.created).getTime() : Date.now()
-
       if (period === 'today') {
-        return createdDate === todayStr
+        return isTodayOrder(o, currentWindow)
       }
+
+      // Avalia o timestamp mais significativo do pedido para intervalos semanais/mensais
+      const relevantTs =
+        parseSafeTimestamp(o.route_finished_at) ||
+        parseSafeTimestamp(o.actual_arrival) ||
+        parseSafeTimestamp(o.route_started_at) ||
+        parseSafeTimestamp(o.created) ||
+        parseSafeTimestamp(o.updated) ||
+        0
+
       if (period === 'week') {
         const oneWeekAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
-        return orderTime >= oneWeekAgo
+        return relevantTs >= oneWeekAgo
       }
       if (period === 'month') {
         const oneMonthAgo = now.getTime() - 30 * 24 * 60 * 60 * 1000
-        return orderTime >= oneMonthAgo
+        return relevantTs >= oneMonthAgo
       }
       return true
     })
