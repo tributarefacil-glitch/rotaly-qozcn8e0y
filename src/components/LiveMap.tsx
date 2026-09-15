@@ -217,6 +217,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const mapInstanceRef = useRef<any>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const liveCourierMarkersRef = useRef<Map<string, any>>(new Map())
+  const hasInitialFitRef = useRef<boolean>(false)
   const liveCourierAnimFramesRef = useRef<Map<string, number>>(new Map())
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googleAccuracyCircleRef = useRef<any>(null)
@@ -666,7 +667,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     const activePolylineKeys = new Set<string>()
 
     visibleRouteLines.forEach((r, idx) => {
-      const coords = r.streetCoordinates || [r.origin, r.destination]
+      const rawCoords = r.streetCoordinates || [r.origin, r.destination]
+      // Polyline limitada aos últimos 100 pontos por entregador
+      const coords = rawCoords && rawCoords.length > 100 ? rawCoords.slice(-100) : rawCoords
       if (coords.length < 2) return
 
       const pathArray = coords.map((c) => ({ lat: c.lat, lng: c.lng }))
@@ -982,6 +985,33 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           liveCourierAnimFramesRef.current.delete(id)
         }
         googleMarkerMapRef.current.delete(id)
+      }
+    }
+
+    // (a) fitBounds apenas no primeiro carregamento, nunca a cada ping
+    if (!hasInitialFitRef.current && visibleMarkers.length > 0) {
+      const bounds = new google.maps.LatLngBounds()
+      let hasCoords = false
+      visibleMarkers.forEach((m) => {
+        if (
+          typeof m.lat === 'number' &&
+          typeof m.lng === 'number' &&
+          !isNaN(m.lat) &&
+          !isNaN(m.lng)
+        ) {
+          bounds.extend({ lat: m.lat, lng: m.lng })
+          hasCoords = true
+        }
+      })
+      if (hasCoords) {
+        hasInitialFitRef.current = true
+        mapInstanceRef.current.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 })
+        const listener = google.maps.event.addListener(mapInstanceRef.current, 'idle', () => {
+          if (mapInstanceRef.current.getZoom() > 15) {
+            mapInstanceRef.current.setZoom(15)
+          }
+          google.maps.event.removeListener(listener)
+        })
       }
     }
   }

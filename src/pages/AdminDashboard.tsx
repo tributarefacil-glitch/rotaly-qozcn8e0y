@@ -281,7 +281,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
       const currentOpWindow = getOperationalWindow(new Date())
       const windowStartIso = new Date(currentOpWindow.start).toISOString()
-      const ordersFilter = `created >= '${windowStartIso}' || (route_started = true && (route_finished = false || route_finished = null))`
+      const windowEndIso = new Date(currentOpWindow.end).toISOString()
+      const ordersFilter = `(created >= '${windowStartIso}' && created <= '${windowEndIso}') || (route_started = true && (route_finished = false || route_finished = null))`
 
       const [
         ordersData,

@@ -292,7 +292,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const [mapsError, setMapsError] = useState(false)
   const [mapInstance, setMapInstance] = useState<any>(null)
   const [markersRef, setMarkersRef] = useState<any[]>([])
+  const hasInitialFitRef = useRef(false)
   const courierMarkersMapRef = useRef<Map<string, any>>(new Map())
+  const customerMarkersMapRef = useRef<Map<string, any>>(new Map())
+  const baseMarkersMapRef = useRef<Map<string, any>>(new Map())
   const courierAnimFramesRef = useRef<Map<string, number>>(new Map())
   const [polylineRef, setPolylineRef] = useState<any>(null)
   const googlePolylinesRef = useRef<any[]>([])
@@ -619,36 +622,33 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Realtime PocketBase subscriptions:
   // Se o componente pai fornecer as props memoizadas (locations, settings, offRouteEvents),
   // desligamos as subscrições manuais correspondentes para evitar re-renders duplicados.
-  const hasParentLocations = Boolean(propLocations)
   const hasParentSettings = propSettings !== undefined
   const hasParentDeviations = Boolean(propOffRouteEvents)
 
   useEffect(() => {
     let isSubscribed = true
 
-    // Subscribe to locations apenas se o pai NÃO forneceu
-    if (!hasParentLocations) {
-      pb.collection('locations')
-        .subscribe('*', (e) => {
-          if (!isSubscribed) return
-          if (e.action === 'create' || e.action === 'update') {
-            const newLoc = e.record as unknown as LocationRecord
-            setLocations((prev) => {
-              const existingIndex = prev.findIndex((l) => l.user_id === newLoc.user_id)
-              if (existingIndex >= 0) {
-                const updated = [...prev]
-                updated[existingIndex] = newLoc
-                return updated
-              }
-              return [newLoc, ...prev]
-            })
-            setLastUpdated(new Date())
-          }
-        })
-        .catch((err) => {
-          console.warn('Torre de Controle: erro subscrição locations:', err)
-        })
-    }
+    // Subscrição SEMPRE ativa para telemetria em tempo real
+    pb.collection('locations')
+      .subscribe('*', (e) => {
+        if (!isSubscribed) return
+        if (e.action === 'create' || e.action === 'update') {
+          const newLoc = e.record as unknown as LocationRecord
+          setLocations((prev) => {
+            const existingIndex = prev.findIndex((l) => l.user_id === newLoc.user_id)
+            if (existingIndex >= 0) {
+              const updated = [...prev]
+              updated[existingIndex] = newLoc
+              return updated
+            }
+            return [newLoc, ...prev]
+          })
+          setLastUpdated(new Date())
+        }
+      })
+      .catch((err) => {
+        console.warn('Torre de Controle: erro subscrição locations:', err)
+      })
 
     // Subscribe to orders (live delivery status updates & delivery alert)
     pb.collection('orders')
@@ -828,11 +828,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     return () => {
       isSubscribed = false
-      if (!hasParentLocations) {
-        pb.collection('locations')
-          .unsubscribe('*')
-          .catch(() => {})
-      }
+      pb.collection('locations')
+        .unsubscribe('*')
+        .catch(() => {})
       pb.collection('orders')
         .unsubscribe('*')
         .catch(() => {})
@@ -847,7 +845,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           .catch(() => {})
       }
     }
-  }, [user?.id, user?.role, hasParentLocations, hasParentSettings, hasParentDeviations])
+  }, [user?.id, user?.role, hasParentSettings, hasParentDeviations])
 
   // Load Google Maps Script
   useEffect(() => {
@@ -1791,14 +1789,6 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       }
     }
 
-    // Clear old markers (preservando marcadores animados de entregadores)
-    markersRef.forEach((m) => {
-      // Se não for um dos marcadores de entregador ativos, limpar do mapa
-      const isManagedCourierMarker = Array.from(courierMarkersMapRef.current.values()).includes(m)
-      if (!isManagedCourierMarker) {
-        m.setMap(null)
-      }
-    })
     const newMarkers: any[] = []
     const bounds = new win.google.maps.LatLngBounds()
     let hasCoords = false
@@ -1978,21 +1968,31 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           })
         }
 
-        // Base Marker se presente
+        // Base Marker se presente (atualizado no lugar em vez de destruir/recriar)
         if (routeData.basePos) {
-          const baseMarker = new win.google.maps.Marker({
-            position: routeData.basePos,
-            map,
-            title: `🟢 Base de Partida (${routeData.courier.name})`,
-            icon: {
-              path: win.google.maps.SymbolPath.CIRCLE,
-              scale: 7,
-              fillColor: '#10B981',
-              fillOpacity: 1,
-              strokeWeight: 2,
-              strokeColor: '#FFFFFF',
-            },
-          })
+          const baseKey = `base-${cId}`
+          let baseMarker = baseMarkersMapRef.current.get(baseKey)
+          const baseTitle = `🟢 Base de Partida (${routeData.courier.name})`
+          if (baseMarker) {
+            baseMarker.setMap(map)
+            baseMarker.setPosition(routeData.basePos)
+            baseMarker.setTitle(baseTitle)
+          } else {
+            baseMarker = new win.google.maps.Marker({
+              position: routeData.basePos,
+              map,
+              title: baseTitle,
+              icon: {
+                path: win.google.maps.SymbolPath.CIRCLE,
+                scale: 7,
+                fillColor: '#10B981',
+                fillOpacity: 1,
+                strokeWeight: 2,
+                strokeColor: '#FFFFFF',
+              },
+            })
+            baseMarkersMapRef.current.set(baseKey, baseMarker)
+          }
           newMarkers.push(baseMarker)
         }
       })
@@ -2027,6 +2027,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     if (mapDisplayMode === 'delivered') {
       // Pins: Apenas entregas concluídas ('order_delivered') com pin verde
+      // Atualizar marcadores existentes no lugar em vez de destruir/recriar
+      const activeDeliveredOrderIds = new Set<string>()
+
       todayOrders
         .filter((o) => o.status === 'delivered')
         .forEach((order) => {
@@ -2035,64 +2038,85 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             const destPos = { lat: cust.lat, lng: cust.lng }
             bounds.extend(destPos)
             hasCoords = true
+            activeDeliveredOrderIds.add(order.id)
 
             const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
-            const destMarker = new win.google.maps.Marker({
-              position: destPos,
-              map,
-              title: `✓ ${seqText}Entregue: ${cust.name || 'Cliente'} (${order.tracking_code})`,
-              // pin verde #10B981 gerado via makeCustomerSvgIcon compacto
-              icon: (() => {
-                const generated = makeCustomerSvgIcon(
-                  cust.name,
-                  order.sequence,
-                  false,
-                  72,
-                  42,
-                  '#10B981',
-                  false,
-                )
-                return {
-                  url: generated.url,
-                  scaledSize: new win.google.maps.Size(
-                    generated.scaledSize.width,
-                    generated.scaledSize.height,
-                  ),
-                  anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
-                }
-              })(),
-            })
+            const markerTitle = `✓ ${seqText}Entregue: ${cust.name || 'Cliente'} (${order.tracking_code})`
+            const markerIcon = (() => {
+              const generated = makeCustomerSvgIcon(
+                cust.name,
+                order.sequence,
+                false,
+                72,
+                42,
+                '#10B981',
+                false,
+              )
+              return {
+                url: generated.url,
+                scaledSize: new win.google.maps.Size(
+                  generated.scaledSize.width,
+                  generated.scaledSize.height,
+                ),
+                anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
+              }
+            })()
 
-            // Hover: exibir tooltip compacto com endereço de entrega e status
-            destMarker.addListener('mouseover', () => {
-              const html = `
-                <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
-                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
-                    <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
-                    ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #dcfce7; color: #15803d; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+            let destMarker = customerMarkersMapRef.current.get(order.id)
+            if (destMarker) {
+              destMarker.setMap(map)
+              destMarker.setPosition(destPos)
+              destMarker.setTitle(markerTitle)
+              destMarker.setIcon(markerIcon)
+            } else {
+              destMarker = new win.google.maps.Marker({
+                position: destPos,
+                map,
+                title: markerTitle,
+                icon: markerIcon,
+              })
+
+              // Hover: exibir tooltip compacto com endereço de entrega e status
+              destMarker.addListener('mouseover', () => {
+                const html = `
+                  <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
+                      <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
+                      ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #dcfce7; color: #15803d; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+                    </div>
+                    <div style="font-size: 10px; color: #15803d; font-weight: 700; margin-bottom: 3px;">✓ Entregue (${order.tracking_code})</div>
+                    <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                      📍 ${cust.address || cust.street || `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}`}
+                    </div>
                   </div>
-                  <div style="font-size: 10px; color: #15803d; font-weight: 700; margin-bottom: 3px;">✓ Entregue (${order.tracking_code})</div>
-                  <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                    📍 ${cust.address || cust.street || `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}`}
-                  </div>
-                </div>
-              `
-              hoverInfoWindow.setContent(html)
-              hoverInfoWindow.open(map, destMarker)
-            })
+                `
+                hoverInfoWindow.setContent(html)
+                hoverInfoWindow.open(map, destMarker)
+              })
 
-            destMarker.addListener('mouseout', () => {
-              hoverInfoWindow.close()
-            })
+              destMarker.addListener('mouseout', () => {
+                hoverInfoWindow.close()
+              })
 
-            destMarker.addListener('click', () => {
-              hoverInfoWindow.close()
-              handleOpenOrderDetails(order)
-            })
+              destMarker.addListener('click', () => {
+                hoverInfoWindow.close()
+                handleOpenOrderDetails(order)
+              })
+
+              customerMarkersMapRef.current.set(order.id, destMarker)
+            }
 
             newMarkers.push(destMarker)
           }
         })
+
+      // Limpar marcadores de clientes que não estão mais nesta exibição
+      customerMarkersMapRef.current.forEach((marker, oId) => {
+        if (!activeDeliveredOrderIds.has(oId)) {
+          marker.setMap(null)
+          customerMarkersMapRef.current.delete(oId)
+        }
+      })
     } else {
       // Modo 'in_transit': Entregadores ativos + destinos em trânsito/pendentes
       // Pins: Entregadores com rota iniciada com interpolação suave (transição animada ~2-3s)
@@ -2390,6 +2414,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       // E o courier vinculado está no conjunto de entregadores com rota ativa (activeRouteCouriers)
       const nativeActiveCourierIds = new Set(activeRouteCouriers.map((c) => c.courier.id))
 
+      const activeTransitOrderIds = new Set<string>()
+
       todayOrders
         .filter((o) => {
           return (
@@ -2406,57 +2432,91 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             const destPos = { lat: cust.lat, lng: cust.lng }
             bounds.extend(destPos)
             hasCoords = true
+            activeTransitOrderIds.add(order.id)
 
             const isTransit = order.status === 'in_transit' || order.route_started
             const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
             const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
             const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
+            const markerTitle = `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`
+            const markerIcon = makeNativeCustomerSvg(cust.name, order.sequence, isTransit)
 
-            const destMarker = new win.google.maps.Marker({
-              position: destPos,
-              map,
-              title: `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`,
-              icon: makeNativeCustomerSvg(cust.name, order.sequence, isTransit),
-            })
+            let destMarker = customerMarkersMapRef.current.get(order.id)
+            if (destMarker) {
+              destMarker.setMap(map)
+              destMarker.setPosition(destPos)
+              destMarker.setTitle(markerTitle)
+              destMarker.setIcon(markerIcon)
+            } else {
+              destMarker = new win.google.maps.Marker({
+                position: destPos,
+                map,
+                title: markerTitle,
+                icon: markerIcon,
+              })
 
-            // Hover: tooltip compacto de cliente
-            destMarker.addListener('mouseover', () => {
-              const html = `
-                <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
-                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
-                    <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
-                    ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #ffedd5; color: #c2410c; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+              // Hover: tooltip compacto de cliente
+              destMarker.addListener('mouseover', () => {
+                const html = `
+                  <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
+                      <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
+                      ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #ffedd5; color: #c2410c; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+                    </div>
+                    <div style="font-size: 10px; color: ${isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
+                      ${isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
+                    </div>
+                    <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                      📍 ${cust.address || cust.street || `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}`}
+                    </div>
+                    ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
                   </div>
-                  <div style="font-size: 10px; color: ${isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
-                    ${isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
-                  </div>
-                  <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                    📍 ${cust.address || cust.street || `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}`}
-                  </div>
-                  ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
-                </div>
-              `
-              hoverInfoWindow.setContent(html)
-              hoverInfoWindow.open(map, destMarker)
-            })
+                `
+                hoverInfoWindow.setContent(html)
+                hoverInfoWindow.open(map, destMarker)
+              })
 
-            destMarker.addListener('mouseout', () => {
-              hoverInfoWindow.close()
-            })
+              destMarker.addListener('mouseout', () => {
+                hoverInfoWindow.close()
+              })
 
-            destMarker.addListener('click', () => {
-              hoverInfoWindow.close()
-              handleOpenOrderDetails(order)
-            })
+              destMarker.addListener('click', () => {
+                hoverInfoWindow.close()
+                handleOpenOrderDetails(order)
+              })
+
+              customerMarkersMapRef.current.set(order.id, destMarker)
+            }
 
             newMarkers.push(destMarker)
           }
         })
+
+      // Limpar marcadores de destinos que não estão mais nesta exibição
+      customerMarkersMapRef.current.forEach((marker, oId) => {
+        if (!activeTransitOrderIds.has(oId)) {
+          marker.setMap(null)
+          customerMarkersMapRef.current.delete(oId)
+        }
+      })
     }
+
+    // Limpar bases órfãs
+    const activeBaseCourierIds = new Set(
+      mapDisplayMode === 'delivered' ? [] : activeRoutesData.map((r) => `base-${r.courierId}`),
+    )
+    baseMarkersMapRef.current.forEach((marker, baseKey) => {
+      if (!activeBaseCourierIds.has(baseKey)) {
+        marker.setMap(null)
+        baseMarkersMapRef.current.delete(baseKey)
+      }
+    })
 
     setMarkersRef(newMarkers)
 
-    if (hasCoords && newMarkers.length > 0) {
+    // (a) fitBounds apenas no primeiro carregamento, nunca a cada ping subsequente
+    if (hasCoords && newMarkers.length > 0 && !hasInitialFitRef.current) {
+      hasInitialFitRef.current = true
       map.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 })
       const listener = win.google.maps.event.addListener(map, 'idle', () => {
         if (map.getZoom() > 15) map.setZoom(15)
