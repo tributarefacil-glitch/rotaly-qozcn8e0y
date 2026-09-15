@@ -280,9 +280,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setIsLoadingCompanyGate(false)
 
       const currentOpWindow = getOperationalWindow(new Date())
-      const windowStartIso = new Date(currentOpWindow.start).toISOString()
-      const windowEndIso = new Date(currentOpWindow.end).toISOString()
-      const ordersFilter = `(created >= '${windowStartIso}' && created <= '${windowEndIso}') || (route_started = true && (route_finished = false || route_finished = null)) || (route_released != true && (status = 'pending' || status = 'assigned'))`
+      const windowStart =
+        currentOpWindow.startPbString ||
+        new Date(currentOpWindow.start).toISOString().replace('T', ' ')
+      const windowEnd =
+        currentOpWindow.endPbString || new Date(currentOpWindow.end).toISOString().replace('T', ' ')
+      const ordersFilter = `(created >= '${windowStart}' && created <= '${windowEnd}') || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
 
       const [
         ordersData,

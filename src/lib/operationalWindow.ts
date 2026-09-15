@@ -4,6 +4,25 @@ export interface OperationalWindow {
   start: number
   end: number
   dateStr: string
+  /**
+   * Data/hora de início da janela operacional formatada para PocketBase:
+   * "YYYY-MM-DD HH:mm:ss.sssZ" (com espaço em vez de 'T', evitando descarte léxico no SQLite)
+   */
+  startPbString: string
+  /**
+   * Data/hora de término da janela operacional formatada para PocketBase:
+   * "YYYY-MM-DD HH:mm:ss.sssZ"
+   */
+  endPbString: string
+}
+
+/**
+ * Converte Date ou timestamp numérico para o formato nativo do PocketBase/SQLite:
+ * "YYYY-MM-DD HH:mm:ss.sssZ" (substitui o 'T' da ISO por espaço).
+ */
+export function formatPbTimestamp(dateOrTs: Date | number): string {
+  const d = typeof dateOrTs === 'number' ? new Date(dateOrTs) : dateOrTs
+  return d.toISOString().replace('T', ' ')
 }
 
 /**
@@ -40,8 +59,10 @@ export function getOperationalWindow(referenceDate: Date = new Date()): Operatio
   ).getTime()
 
   const dateStr = `${opDate.getFullYear()}-${String(opDate.getMonth() + 1).padStart(2, '0')}-${String(opDate.getDate()).padStart(2, '0')}`
+  const startPbString = new Date(start).toISOString().replace('T', ' ')
+  const endPbString = new Date(end).toISOString().replace('T', ' ')
 
-  return { start, end, dateStr }
+  return { start, end, dateStr, startPbString, endPbString }
 }
 
 /**

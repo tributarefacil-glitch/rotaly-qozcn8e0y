@@ -169,8 +169,23 @@ export const deliveryService = {
     expand = 'customer_id,courier_id,seller_id',
     _empresaId?: string,
   ) {
+    // Saneamento global e preventivo de filtros PocketBase:
+    // 1. Substitui qualquer padrão inválido de bool `(route_finished = false || route_finished = null)` por `route_finished != true`
+    // 2. Corrige data ISO com "T" em `created >= 'YYYY-MM-DDTHH:mm:ss'` substituindo 'T' por espaço para compatibilidade léxica SQLite
+    let sanitizedFilter = filter
+    if (sanitizedFilter) {
+      sanitizedFilter = sanitizedFilter
+        .replace(
+          /\(?route_finished\s*=\s*false\s*\|\|\s*route_finished\s*=\s*null\)?/g,
+          'route_finished != true',
+        )
+        .replace(/route_finished\s*=\s*false/g, 'route_finished != true')
+        .replace(/route_finished\s*=\s*null/g, 'route_finished != true')
+        .replace(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/g, '$1 $2')
+    }
+
     return pb.collection<OrderRecord>('orders').getFullList({
-      filter,
+      filter: sanitizedFilter,
       sort,
       expand,
       requestKey: null,
@@ -340,7 +355,9 @@ export const deliveryService = {
   ): Promise<OrderRecord[]> {
     if (!customerId) return []
     try {
-      const thresholdTime = new Date(Date.now() - hoursWindow * 60 * 60 * 1000).toISOString()
+      const thresholdTime = new Date(Date.now() - hoursWindow * 60 * 60 * 1000)
+        .toISOString()
+        .replace('T', ' ')
       const filter = `customer_id = '${customerId}' && created >= '${thresholdTime}' && status != 'cancelled' && status != 'delivered'`
       return await pb.collection<OrderRecord>('orders').getFullList({
         filter,
@@ -1315,7 +1332,7 @@ export const deliveryService = {
         })
       } else {
         ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
-          filter: `courier_id='${courierId}' && route_started=true && (route_finished=false || route_finished=null)`,
+          filter: `courier_id='${courierId}' && route_started=true && route_finished!=true`,
           requestKey: null,
         })
       }
@@ -1386,7 +1403,7 @@ export const deliveryService = {
 
       // 2. Obter pedidos ativos desse entregador (nunca mexe no TRK-2026-622)
       const courierOrders = await pb.collection<OrderRecord>('orders').getFullList({
-        filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished=false && tracking_code!='TRK-2026-622'`,
+        filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished!=true && tracking_code!='TRK-2026-622'`,
         sort: 'sequence,created',
         expand: 'customer_id',
         requestKey: null,
@@ -1596,7 +1613,7 @@ export const deliveryService = {
       // Fallback final: garantir que nenhum pedido fique com sequence = 0 mesmo em falha grave
       try {
         const fallbackOrders = await pb.collection<OrderRecord>('orders').getFullList({
-          filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished=false && tracking_code!='TRK-2026-622'`,
+          filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished!=true && tracking_code!='TRK-2026-622'`,
           sort: 'created',
           requestKey: null,
         })
