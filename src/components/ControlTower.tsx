@@ -1835,10 +1835,32 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         if (lines) {
           // Mutar polylines existentes com setPath sem recriar
           if (hasForward) {
-            lines.main?.setMap(map)
-            lines.main.setPath(rawFPath)
-            lines.inner?.setMap(map)
-            lines.inner.setPath(rawFPath)
+            if (!lines.main || !lines.inner) {
+              // Rota nasceu só com perna de retorno; criar as linhas principais agora
+              if (lines.main) lines.main?.setMap(null)
+              if (lines.inner) lines.inner?.setMap(null)
+              lines.main = new win.google.maps.Polyline({
+                path: rawFPath,
+                geodesic: true,
+                strokeColor: '#2563EB',
+                strokeOpacity: 0.95,
+                strokeWeight: 5,
+                map,
+              })
+              lines.inner = new win.google.maps.Polyline({
+                path: rawFPath,
+                geodesic: true,
+                strokeColor: '#93C5FD',
+                strokeOpacity: 0.85,
+                strokeWeight: 2,
+                map,
+              })
+            } else {
+              lines.main?.setMap(map)
+              lines.main.setPath(rawFPath)
+              lines.inner?.setMap(map)
+              lines.inner.setPath(rawFPath)
+            }
             fPoints.forEach((p: any) => bounds.extend(p))
             hasCoords = true
           } else {

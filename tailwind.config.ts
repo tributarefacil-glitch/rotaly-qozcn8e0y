@@ -1,21 +1,4 @@
 /* Tailwind config for the frontend react app. This is where the app theme should be defined: https://v2.tailwindcss.com/docs/configuration. */
-import * as fs from 'fs'
-import * as path from 'path'
-try {
-  const target = path.resolve(process.cwd(), 'src/components/ControlTower.tsx')
-  if (fs.existsSync(target)) {
-    let content = fs.readFileSync(target, 'utf8')
-    if (content.includes('lines.main.setMap(') || content.includes('lines.inner.setMap(') || content.includes('lines.returnLeg.setMap(') || content.includes('lines.dev.setMap(')) {
-      content = content
-        .replace(/lines\.main\.setMap\(/g, 'lines.main?.setMap(')
-        .replace(/lines\.inner\.setMap\(/g, 'lines.inner?.setMap(')
-        .replace(/lines\.returnLeg\.setMap\(/g, 'lines.returnLeg?.setMap(')
-        .replace(/lines\.dev\.setMap\(/g, 'lines.dev?.setMap(')
-      fs.writeFileSync(target, content, 'utf8')
-    }
-  }
-} catch (e) {}
-
 import type { Config } from 'tailwindcss'
 import animatePlugin from 'tailwindcss-animate'
 import typographyPlugin from '@tailwindcss/typography'
