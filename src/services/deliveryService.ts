@@ -189,7 +189,7 @@ export const deliveryService = {
     if (!code) return null
 
     try {
-      // 1. Busca direta exata na coleção orders
+      // 1. Busca direta exata na coleção orders (com expansão completa)
       const list = await pb.collection<OrderRecord>('orders').getList(1, 1, {
         filter: `tracking_code = '${code}'`,
         expand: 'customer_id,courier_id,seller_id',
@@ -197,7 +197,60 @@ export const deliveryService = {
       })
       if (list.items[0]) return list.items[0]
     } catch (err) {
-      console.warn('Erro ao buscar pedido por tracking_code na coleção orders:', err)
+      console.warn('Erro ao buscar pedido com expand por tracking_code na coleção orders:', err)
+      // Fallback de resiliência: se a expansão falhar (ex: por regra de RLS em coleção relacionada),
+      // busca o pedido puro sem expand para que a tela não quebre.
+      try {
+        const listPure = await pb.collection<OrderRecord>('orders').getList(1, 1, {
+          filter: `tracking_code = '${code}'`,
+          requestKey: null,
+        })
+        if (listPure.items[0]) {
+          const rawOrder = listPure.items[0]
+          // Tentar carregar cliente e courier isoladamente de forma tolerante a falhas
+          let cust: CustomerRecord | undefined
+          let cour: UserRecord | undefined
+          let sel: UserRecord | undefined
+
+          if (rawOrder.customer_id) {
+            try {
+              cust = await pb
+                .collection<CustomerRecord>('customers')
+                .getOne(rawOrder.customer_id, { requestKey: null })
+            } catch {
+              /* intentionally ignored */
+            }
+          }
+          if (rawOrder.courier_id) {
+            try {
+              cour = await pb
+                .collection<UserRecord>('users')
+                .getOne(rawOrder.courier_id, { requestKey: null })
+            } catch {
+              /* intentionally ignored */
+            }
+          }
+          if (rawOrder.seller_id) {
+            try {
+              sel = await pb
+                .collection<UserRecord>('users')
+                .getOne(rawOrder.seller_id, { requestKey: null })
+            } catch {
+              /* intentionally ignored */
+            }
+          }
+
+          rawOrder.expand = {
+            ...(rawOrder.expand || {}),
+            ...(cust ? { customer_id: cust } : {}),
+            ...(cour ? { courier_id: cour } : {}),
+            ...(sel ? { seller_id: sel } : {}),
+          }
+          return rawOrder
+        }
+      } catch (pureErr) {
+        console.warn('Erro na busca de pedido sem expand:', pureErr)
+      }
     }
 
     try {
@@ -210,6 +263,15 @@ export const deliveryService = {
       if (listFuzzy.items[0]) return listFuzzy.items[0]
     } catch (err) {
       console.warn('Erro na busca aproximada por tracking_code:', err)
+      try {
+        const listFuzzyPure = await pb.collection<OrderRecord>('orders').getList(1, 1, {
+          filter: `tracking_code ~ '${code}'`,
+          requestKey: null,
+        })
+        if (listFuzzyPure.items[0]) return listFuzzyPure.items[0]
+      } catch {
+        /* intentionally ignored */
+      }
     }
 
     return null

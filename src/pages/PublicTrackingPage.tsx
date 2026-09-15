@@ -101,10 +101,14 @@ export default function PublicTrackingPage() {
     setIsLoading(true)
     setErrorMsg(null)
     try {
-      const [orderData, routeInfo] = await Promise.all([
+      // Executa as consultas com tolerância a falhas individuais
+      const [orderResult, routeResult] = await Promise.allSettled([
         deliveryService.getOrderByTrackingCode(resolvedTrackingCode),
         deliveryService.getPublicTrackingRoute(resolvedTrackingCode),
       ])
+
+      const orderData = orderResult.status === 'fulfilled' ? orderResult.value : null
+      const routeInfo = routeResult.status === 'fulfilled' ? routeResult.value : null
 
       if (!orderData) {
         setErrorMsg(
@@ -116,18 +120,30 @@ export default function PublicTrackingPage() {
           setPublicRouteData(routeInfo)
         }
 
+        // Carrega localização e avaliações de modo resiliente e não-bloqueante
         if (orderData.courier_id) {
-          const loc = await deliveryService.getLatestLocationForCourier(orderData.courier_id)
-          setCourierLocation(loc)
+          try {
+            const loc = await deliveryService.getLatestLocationForCourier(orderData.courier_id)
+            if (loc) {
+              setCourierLocation(loc)
+            }
+          } catch (locErr) {
+            console.warn('Não foi possível obter localização do entregador:', locErr)
+          }
         }
+
         // Carrega review existente se já houver
-        const rev = await deliveryService.getReviewByOrderId(orderData.id)
-        if (rev) {
-          setExistingReview(rev)
-          setCourierRating(rev.courier_rating)
-          setSellerRating(rev.seller_rating)
-          setReviewComment(rev.comment || '')
-          setHasSubmittedReview(true)
+        try {
+          const rev = await deliveryService.getReviewByOrderId(orderData.id)
+          if (rev) {
+            setExistingReview(rev)
+            setCourierRating(rev.courier_rating)
+            setSellerRating(rev.seller_rating)
+            setReviewComment(rev.comment || '')
+            setHasSubmittedReview(true)
+          }
+        } catch (revErr) {
+          console.warn('Não foi possível verificar avaliações anteriores:', revErr)
         }
       }
     } catch (err) {

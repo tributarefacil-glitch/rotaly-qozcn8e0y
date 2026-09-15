@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-15T16:51:45.220Z",
+  "generatedAt": "2026-09-15T17:20:26.573Z",
   "collections": [
     {
       "name": "users",
@@ -112,8 +112,8 @@
       "name": "customers",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != \"\"",
-        "view": "@request.auth.id != \"\"",
+        "list": "",
+        "view": "",
         "create": "@request.auth.id != \"\"",
         "update": "@request.auth.id != \"\"",
         "delete": "@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")"
@@ -565,8 +565,8 @@
       "name": "locations",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != \"\"",
-        "view": "@request.auth.id != \"\"",
+        "list": "",
+        "view": "",
         "create": "@request.auth.id != \"\"",
         "update": "@request.auth.id != \"\"",
         "delete": "@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")"
