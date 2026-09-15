@@ -52,6 +52,8 @@ import {
   UNEXPECTED_STOP_THRESHOLD_METERS,
   haversineDistanceMeters,
 } from '@/lib/geo'
+import { getOperationalWindow, isTodayOrder } from '@/lib/operationalWindow'
+import { hasCourierActiveRoute, isOrderInActiveRoute } from '@/lib/activeRouteHelper'
 import {
   calculateRouteWorkShift,
   formatRemainingDuration,
@@ -339,24 +341,32 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   // Map markers computation
   const mapMarkers: MapMarkerItem[] = []
 
-  // REQUISITO: Status do entregador coerente (Em Rota apenas se houver rota iniciada/em curso; Presente/Disponível quando sem rota iniciada)
+  // REQUISITO: No mapa (SellerDashboard e LiveMap), os marcadores de entregadores só devem incluir
+  // couriers com rota em trânsito ativa (route_started===true && route_finished!==true).
+  // Suprimir os marcadores fora de rota (que antes apareciam como "Presente/Disponível").
+  // Utiliza a janela operacional (05h00 às 23h59) de @/lib/operationalWindow.ts.
+  const operationalWindow = getOperationalWindow(new Date())
+
   couriers.forEach((c) => {
     const courierLoc = locations.find((l) => l.user_id === c.id)
     if (!courierLoc) return
 
     const courierOrders = orders.filter((o) => o.courier_id === c.id)
-    const activeRouteOrders = courierOrders.filter(
-      (o) =>
-        o.route_started === true &&
-        o.route_finished !== true &&
-        (o.status === 'in_transit' || o.status === 'pending' || o.status === 'delivered'),
-    )
-    const inTransitOrders = courierOrders.filter(
-      (o) => o.status === 'in_transit' && o.route_started === true,
-    )
+
+    // Filtra estritamente pedidos na janela operacional do dia
+    const todayCourierOrders = courierOrders.filter((o) => isTodayOrder(o, operationalWindow))
+
+    // Pedidos em rota ativa do entregador usando o helper compartilhado
+    const activeRouteOrders = todayCourierOrders.filter((o) => isOrderInActiveRoute(o))
+    const inTransitOrders = activeRouteOrders.filter((o) => o.status === 'in_transit')
     const pendingOrdersInRoute = activeRouteOrders.filter((o) => o.status !== 'delivered')
-    const isReturningToBase = activeRouteOrders.length > 0 && pendingOrdersInRoute.length === 0
     const hasActiveRoute = activeRouteOrders.length > 0
+    const isReturningToBase = hasActiveRoute && pendingOrdersInRoute.length === 0
+
+    // Se o entregador não possui rota ativa em trânsito no dia, NÃO incluir marcador no mapa
+    if (!hasActiveRoute) {
+      return
+    }
 
     let courierTitle = `🧍 ${c.name} (Disponível)`
     let courierSubtitle = 'Status: Presente • Disponível'
@@ -459,6 +469,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
     mapMarkers.push({
       id: `courier-${c.id}`,
+      courier_id: c.id,
+      hasActiveRoute: true,
       title: courierTitle,
       subtitle: courierSubtitle,
       lat: courierLoc.lat,

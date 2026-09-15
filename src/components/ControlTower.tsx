@@ -970,18 +970,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
       // Entregas da rota iniciada atribuídas ao entregador que ainda não foram marcadas como route_finished
       const activeRouteOrdersForCourier = [
-        ...globalCourierTransit.filter(
-          (o) =>
-            o.route_started === true &&
-            o.route_finished !== true &&
-            (o.route_finished === false || o.route_finished == null),
-        ),
-        ...courierLocalOrders.filter(
-          (o) =>
-            o.route_started === true &&
-            o.route_finished !== true &&
-            (o.route_finished === false || o.route_finished == null),
-        ),
+        ...globalCourierTransit.filter((o) => isOrderInActiveRoute(o)),
+        ...courierLocalOrders.filter((o) => isOrderInActiveRoute(o)),
       ]
       const uniqueCourierRouteOrders = Array.from(
         new Map(activeRouteOrdersForCourier.map((o) => [o.id, o])).values(),
@@ -1537,6 +1527,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
       list.push({
         id: `courier-${item.courier.id}`,
+        courier_id: item.courier.id,
+        hasActiveRoute: true,
         title: `${emoji} ${courierName}${stateSuffix}${warningSuffix}`,
         subtitle: `${formatVehicle(item.vehicle)}${plate} • ${item.inTransitCount} em rota`,
         lat: item.lat,

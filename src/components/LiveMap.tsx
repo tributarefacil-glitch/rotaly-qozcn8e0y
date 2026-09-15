@@ -33,6 +33,7 @@ export interface MapMarkerItem {
   customer_address?: string
   total_price?: number
   estimated_arrival?: string
+  courier_id?: string
   courier_name?: string
   vehicle_type?: string
   delivery_sequence?: number
@@ -49,6 +50,7 @@ export interface MapMarkerItem {
   gps_status?: 'active' | 'disabled' | 'offline'
   gps_reason?: string
   offline_buffered?: boolean
+  hasActiveRoute?: boolean
   remainingRouteMinutes?: number
   projectedEndTimeFormatted?: string
   isOvertime?: boolean
@@ -416,13 +418,20 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       const isOutdated = locTime ? Date.now() - locTime > 2 * 60 * 1000 : false
       const isGpsDisabled = item.gps_status === 'disabled'
       const isSignalLost = item.gps_status === 'offline' || isOutdated
+      // REQUISITO: Suprimir alertas de "Sem sinal" fora de rota ativa
+      const isInActiveRoute = item.hasActiveRoute !== false
 
       let gpsBadgeText = '📡 GPS ativo'
       let gpsBadgeBg = '#ecfdf5'
       let gpsBadgeColor = '#047857'
       let gpsBadgeBorder = '#a7f3d0'
 
-      if (isGpsDisabled) {
+      if (!isInActiveRoute) {
+        gpsBadgeText = '⏸ Fora de rota'
+        gpsBadgeBg = '#f8fafc'
+        gpsBadgeColor = '#475569'
+        gpsBadgeBorder = '#cbd5e1'
+      } else if (isGpsDisabled) {
         if (item.gps_reason === 'permission_denied') {
           gpsBadgeText = '🚫 Permissão negada no aparelho'
         } else {
@@ -606,6 +615,38 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     }
   }
 
+  // REQUISITO ESTRITO: Entregadores só aparecem no mapa quando em rota ativa
+  // (hasActiveRoute !== false && item.type === 'courier').
+  // Para compatibilidade, se hasActiveRoute não estiver preenchido mas vier de tela já filtrada,
+  // permitimos, mas se hasActiveRoute for explicitamente false descartamos pin e telemetria.
+  const visibleMarkers = useMemo(() => {
+    return markers.filter((m) => {
+      if (m.type === 'courier') {
+        if (m.hasActiveRoute === false) return false
+      }
+      return true
+    })
+  }, [markers])
+
+  // Suprimir telemetria/polilinhas de entregadores que não estejam com rota ativa
+  const visibleRouteLines = useMemo(() => {
+    // Suprimir rotas de entregadores que não tenham marcadores visíveis em rota ativa
+    const activeCourierIds = new Set(
+      visibleMarkers
+        .filter((m) => m.type === 'courier')
+        .map((m) => m.courier_id || m.id.replace('courier-', '')),
+    )
+
+    return routeLines.filter((r) => {
+      // Se a linha de rota não tiver vínculo com entregador específico, preserva
+      const courierKey = (r as any).courierId || (r as any).courier_id
+      if (courierKey) {
+        return activeCourierIds.has(courierKey)
+      }
+      return true
+    })
+  }, [routeLines, visibleMarkers])
+
   const renderGoogleMarkers = () => {
     const google = getGoogle()
     if (!mapInstanceRef.current || !google?.maps) return
@@ -620,7 +661,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     // --- 1. KEYED DIFFING DE POLILINHAS ---
     const activePolylineKeys = new Set<string>()
 
-    routeLines.forEach((r, idx) => {
+    visibleRouteLines.forEach((r, idx) => {
       const coords = r.streetCoordinates || [r.origin, r.destination]
       if (coords.length < 2) return
 
@@ -704,7 +745,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     }
 
     // --- 2. CÍRCULO DE PRECISÃO ---
-    const courierItem = markers.find((m) => m.type === 'courier' && m.lat && m.lng)
+    const courierItem = visibleMarkers.find((m) => m.type === 'courier' && m.lat && m.lng)
     if (showAccuracyCircle && courierItem) {
       if (!googleAccuracyCircleRef.current) {
         googleAccuracyCircleRef.current = new google.maps.Circle({
@@ -730,7 +771,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     // --- 3. KEYED DIFFING DE MARCADORES (markerMapRef por ID) ---
     const currentMarkerIds = new Set<string>()
 
-    markers.forEach((item) => {
+    visibleMarkers.forEach((item) => {
       if (
         typeof item.lat !== 'number' ||
         typeof item.lng !== 'number' ||
@@ -946,7 +987,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     if (google?.maps && mapInstanceRef.current) {
       renderGoogleMarkers()
     }
-  }, [markers, selectedMarkerId, resolvedAddresses, routeLines])
+  }, [visibleMarkers, selectedMarkerId, resolvedAddresses, visibleRouteLines])
   // Fallback interactive visual mock map if Google Maps key is not provided or offline
   return (
     <div
@@ -1001,7 +1042,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             </defs>
 
             {/* Rotas viárias reais passadas via props */}
-            {routeLines.map((r, i) => {
+            {visibleRouteLines.map((r, i) => {
               const coords = r.streetCoordinates || [r.origin, r.destination]
               if (coords.length < 2) return null
 
@@ -1087,7 +1128,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
           {/* Fallback Interactive Marker Pins on Canvas */}
           <div className="relative w-full h-full">
-            {markers.map((m, idx) => {
+            {visibleMarkers.map((m, idx) => {
               // Convert lat/lng to approximate relative coordinates on SP center grid
               const relX = 50 + (m.lng - center.lng) * 1200
               const relY = 50 - (m.lat - center.lat) * 1200
@@ -1216,7 +1257,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                                 : false
                               const isGpsDisabled = m.gps_status === 'disabled'
                               const isSignalLost = m.gps_status === 'offline' || isOutdated
+                              const isInActiveRoute = m.hasActiveRoute !== false
 
+                              if (!isInActiveRoute) {
+                                return (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-900 text-slate-400 border-slate-700">
+                                    <span>⏸</span> Fora de rota
+                                  </span>
+                                )
+                              }
                               if (isGpsDisabled) {
                                 return (
                                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-rose-950/80 text-rose-400 border-rose-500/40">
