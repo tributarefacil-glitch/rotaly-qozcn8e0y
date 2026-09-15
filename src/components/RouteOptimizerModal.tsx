@@ -94,6 +94,7 @@ import {
   isGoogleMapsAuthError,
   fallbackGeocodeAddress,
 } from '@/lib/googleMaps'
+import { safeSetMap } from '@/lib/safeMapOps'
 import {
   calculateRouteWorkShift,
   formatRemainingDuration,
@@ -1870,7 +1871,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }, 2200)
 
       // Clear previous overlays
-      markersAndPolylinesRef.current.forEach((obj) => obj.setMap(null))
+      markersAndPolylinesRef.current.forEach((obj) => {
+        safeSetMap(obj, null)
+      })
       markersAndPolylinesRef.current = []
 
       const bounds = new google.maps.LatLngBounds()

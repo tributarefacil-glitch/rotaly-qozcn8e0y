@@ -20,6 +20,7 @@ import {
   reverseGeocodeCoordinates,
 } from '@/lib/googleMaps'
 import { parseSafeTimestamp } from '@/lib/operationalWindow'
+import { safeSetMap } from '@/lib/safeMapOps'
 
 export interface MapMarkerItem {
   id: string
@@ -76,7 +77,23 @@ export function getVehicleLabel(type?: string): string {
 }
 
 // Geradores exportados de SVG Data-URI para Google Maps nativo
+// Caches em memória para evitar reconstruir SVG e Data URIs a cada ping / re-render
+const courierSvgIconCache = new Map<
+  string,
+  { url: string; scaledSize: { width: number; height: number }; anchor: { x: number; y: number } }
+>()
+const customerSvgIconCache = new Map<
+  string,
+  { url: string; scaledSize: { width: number; height: number }; anchor: { x: number; y: number } }
+>()
+
+// Geradores exportados de SVG Data-URI para Google Maps nativo (com cache em memória)
 export function makeCourierSvgIcon(vehicle?: string, pinColor = '#0052CC', size = 44) {
+  const normVehicle = (vehicle || '').toLowerCase().trim()
+  const cacheKey = `${normVehicle}_${pinColor}_${size}`
+  const cached = courierSvgIconCache.get(cacheKey)
+  if (cached) return cached
+
   const emoji = getVehicleEmoji(vehicle)
   const half = Math.round(size / 2)
   const radius = half - 4
@@ -95,11 +112,13 @@ export function makeCourierSvgIcon(vehicle?: string, pinColor = '#0052CC', size 
     </svg>
   `.trim()
 
-  return {
+  const result = {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: { width: size, height: size },
     anchor: { x: half, y: half },
   }
+  courierSvgIconCache.set(cacheKey, result)
+  return result
 }
 
 export function makeCustomerSvgIcon(
@@ -111,17 +130,19 @@ export function makeCustomerSvgIcon(
   pinColorOverride?: string,
   showNameLabel = false,
 ) {
-  const pinColor = pinColorOverride || (isTransit ? '#FF6B35' : '#475569')
   const cleanName = (customerName || '').trim()
+  const displayName = cleanName.length > 12 ? cleanName.slice(0, 11) + '…' : cleanName
+  const cacheKey = `${showNameLabel ? displayName : ''}_${seq ?? ''}_${isTransit}_${width}_${height}_${pinColorOverride || ''}_${showNameLabel}`
+  const cached = customerSvgIconCache.get(cacheKey)
+  if (cached) return cached
+
+  const pinColor = pinColorOverride || (isTransit ? '#FF6B35' : '#475569')
   const hasName = showNameLabel && cleanName.length > 0
   const hasSeq = typeof seq === 'number' && seq > 0
   const effectiveWidth = hasName ? Math.max(width, 96) : 34
   const effectiveHeight = hasName ? height : 34
   const centerX = Math.round(effectiveWidth / 2)
   const pinLeft = centerX - 11 // pin is 22px wide
-
-  // Truncar nome com no máximo 12 caracteres para não poluir nem sobrepor outros pins
-  const displayName = cleanName.length > 12 ? cleanName.slice(0, 11) + '…' : cleanName
 
   // SVG compacto com tipografia reduzida e pin focado no badge numérico da sequência
   const svg = `
@@ -165,11 +186,13 @@ export function makeCustomerSvgIcon(
     </svg>
   `.trim()
 
-  return {
+  const result = {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: { width: effectiveWidth, height: effectiveHeight },
     anchor: { x: centerX, y: hasName ? effectiveHeight - 2 : effectiveHeight - 4 },
   }
+  customerSvgIconCache.set(cacheKey, result)
+  return result
 }
 
 export interface RouteGeometryItem {
@@ -372,6 +395,16 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [center])
+
+  // Limpeza segura contra vazamentos ou operações pós-desmontagem
+  useEffect(() => {
+    return () => {
+      liveCourierAnimFramesRef.current.forEach((frameId) => {
+        cancelAnimationFrame(frameId)
+      })
+      liveCourierAnimFramesRef.current.clear()
+    }
+  }, [])
 
   const initGoogleMap = () => {
     const google = getGoogle()
@@ -746,15 +779,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     // Remover apenas as polilinhas que não existem mais
     for (const [key, polyline] of googlePolylineMapRef.current.entries()) {
       if (!activePolylineKeys.has(key)) {
-        try {
-          polyline?.setMap?.(null)
-        } catch {
-          /* intentionally ignored */
-        }
+        safeSetMap(polyline, null)
         googlePolylineMapRef.current.delete(key)
       }
     }
-
     // --- 2. CÍRCULO DE PRECISÃO ---
     const courierItem = visibleMarkers.find((m) => m.type === 'courier' && m.lat && m.lng)
     if (showAccuracyCircle && courierItem) {
@@ -771,14 +799,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           clickable: false,
         })
       } else {
-        googleAccuracyCircleRef.current.setMap(mapInstanceRef.current)
+        if (typeof googleAccuracyCircleRef.current.setMap === 'function') {
+          googleAccuracyCircleRef.current.setMap(mapInstanceRef.current)
+        }
         googleAccuracyCircleRef.current.setCenter({ lat: courierItem.lat, lng: courierItem.lng })
         googleAccuracyCircleRef.current.setRadius(accuracyRadiusMeters)
       }
     } else if (googleAccuracyCircleRef.current) {
-      googleAccuracyCircleRef.current.setMap(null)
+      safeSetMap(googleAccuracyCircleRef.current, null)
     }
-
     // --- 3. KEYED DIFFING DE MARCADORES (markerMapRef por ID) ---
     const currentMarkerIds = new Set<string>()
 
@@ -802,7 +831,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       if (entry) {
         // Marcador já existe: atualizar apenas propriedades modificadas (sem recriar nem piscar)
         const marker = entry.marker
-        marker.setMap(mapInstanceRef.current)
+        if (marker && typeof marker.setMap === 'function') {
+          try {
+            marker.setMap(mapInstanceRef.current)
+          } catch {
+            /* safe ignore */
+          }
+        }
 
         // Se for entregador: interpolação suave se moveu
         if (item.type === 'courier') {
@@ -978,11 +1013,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     // Remover marcadores que deixaram de existir
     for (const [id, entry] of googleMarkerMapRef.current.entries()) {
       if (!currentMarkerIds.has(id)) {
-        try {
-          entry?.marker?.setMap?.(null)
-        } catch {
-          /* intentionally ignored */
-        }
+        safeSetMap(entry?.marker, null)
         try {
           if (entry?.clickInfoWindow) {
             entry.clickInfoWindow.close()
@@ -999,7 +1030,6 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         googleMarkerMapRef.current.delete(id)
       }
     }
-
     // (a) fitBounds apenas no primeiro carregamento, nunca a cada ping
     if (!hasInitialFitRef.current && visibleMarkers.length > 0) {
       const bounds = new google.maps.LatLngBounds()
