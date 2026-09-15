@@ -114,15 +114,27 @@ export default function CourierApp() {
     loadFuelAndAccountData()
   }, [user])
 
+  // Ref para controle de throttle/dedupe das chamadas de loadCourierOrders
+  const lastLoadOrdersTimestampRef = useRef<number>(0)
+  const isOrdersFetchingRef = useRef<boolean>(false)
+
   // Carrega apenas pedidos liberados pelo vendedor ("assigned" com route_released=true ou em rota)
-  const loadCourierOrders = async () => {
+  const loadCourierOrders = async (options?: { force?: boolean }) => {
+    const now = Date.now()
+    if (!options?.force && isOrdersFetchingRef.current) return
+    if (!options?.force && now - lastLoadOrdersTimestampRef.current < 2000) return
+
     try {
+      isOrdersFetchingRef.current = true
+      lastLoadOrdersTimestampRef.current = now
+
       if (!user?.id) {
         setOrders([])
         return
       }
-      // Regra: O cliente só fica disponível após o vendedor otimizar e liberar a rota (Salvar & Liberar Rota)
-      const courierFilter = `courier_id = '${user.id}' && (route_released = true || status = 'in_transit' || status = 'delivered' || status = 'address_error' || status = 'client_absent')`
+      // Regra: O cliente fica disponível após o vendedor otimizar e liberar a rota (Salvar & Liberar Rota)
+      // Inclui tanto route_released=true quanto status assigned/in_transit/delivered
+      const courierFilter = `courier_id = '${user.id}' && (route_released = true || status = 'assigned' || status = 'in_transit' || status = 'delivered' || status = 'address_error' || status = 'client_absent')`
       const allOrders = await deliveryService.getOrders(
         courierFilter,
         'sequence,-created',
@@ -132,13 +144,49 @@ export default function CourierApp() {
     } catch (err) {
       console.error('Error loading courier orders:', err)
     } finally {
+      isOrdersFetchingRef.current = false
       setIsLoading(false)
     }
   }
 
   useEffect(() => {
-    loadCourierOrders()
+    loadCourierOrders({ force: true })
   }, [user])
+
+  // REFORÇO DE RECEPÇÃO: Polling periódico a cada 30 segundos + foco de tela + reconexão de rede
+  useEffect(() => {
+    if (!user?.id) return
+
+    // 1. Polling a cada 30 segundos
+    const intervalTimer = setInterval(() => {
+      loadCourierOrders()
+    }, 30000)
+
+    // 2. Ao voltar para foco (visibilitychange / focus)
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        loadCourierOrders({ force: true })
+        loadFuelAndAccountData()
+      }
+    }
+
+    // 3. Ao voltar a ficar online
+    const handleNetworkOnline = () => {
+      loadCourierOrders({ force: true })
+      loadFuelAndAccountData()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus)
+    window.addEventListener('focus', handleVisibilityOrFocus)
+    window.addEventListener('online', handleNetworkOnline)
+
+    return () => {
+      clearInterval(intervalTimer)
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus)
+      window.removeEventListener('focus', handleVisibilityOrFocus)
+      window.removeEventListener('online', handleNetworkOnline)
+    }
+  }, [user?.id])
 
   // Realtime hook para pedidos
   useRealtime<OrderRecord>('orders', (e) => {
@@ -164,7 +212,7 @@ export default function CourierApp() {
           )
         }
       }
-      loadCourierOrders()
+      loadCourierOrders({ force: true })
       loadFuelAndAccountData()
     }
   })
@@ -221,10 +269,12 @@ export default function CourierApp() {
 
   // Pedidos da rota atual que já foram iniciados mas ainda NÃO foram finalizados na base
   // Regra do Usuário: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
+  // Proteção: apenas pedidos válidos e não cancelados contam como rota iniciada ativa.
   const activeStartedOrders = orders.filter(
     (o) =>
       o.route_started === true &&
-      (o.route_finished === false || o.route_finished === null || o.route_finished === undefined),
+      (o.route_finished === false || o.route_finished === null || o.route_finished === undefined) &&
+      o.status !== 'cancelled',
   )
 
   const hasActiveStartedRoute = activeStartedOrders.length > 0
@@ -259,13 +309,16 @@ export default function CourierApp() {
       }
     }
 
-    // Não há rota ativa iniciada: agrupar por lote de liberação/criação
-    // Se há múltiplos lotes de rotas liberadas, a primeira rota (mais antiga) é a apresentada; as seguintes aguardam na fila
+    // Não há rota ativa iniciada: pedidos liberados pelo vendedor prontos para aceite
+    // Regra: Qualquer pedido liberado e não iniciado (ou assigned) fica IMEDIATAMENTE disponível
+    // para o entregador aceitar a rota. Se existirem lotes diferentes, a rota mais recente liberada
+    // ou todos os pedidos liberados ficam visíveis para início imediato, sem ficar oculto.
     const unstartedReleased = orders.filter(
       (o) =>
         (o.route_released === true || o.status === 'assigned') &&
         !o.route_started &&
-        (o.status === 'assigned' || o.status === 'in_transit'),
+        o.status !== 'delivered' &&
+        o.status !== 'cancelled',
     )
 
     if (unstartedReleased.length === 0) {
@@ -276,34 +329,20 @@ export default function CourierApp() {
       }
     }
 
-    // Agrupamento de rotas por data/horário aproximado de liberação ou sequência
-    // Se todas têm a mesma liberação ou sem marcação, compõem a rota atual
-    // Ordenar por data de liberação / criação
-    const sorted = [...unstartedReleased].sort((a, b) => {
+    // Ordenar por sequência e liberação/criação
+    // Todas as entregas liberadas não iniciadas compõem a rota pronta para ser aceita
+    const currentSorted = [...unstartedReleased].sort((a, b) => {
+      const seqA = a.sequence ?? 9999
+      const seqB = b.sequence ?? 9999
+      if (seqA !== seqB) return seqA - seqB
       const timeA = new Date(a.route_released_at || a.created || 0).getTime()
       const timeB = new Date(b.route_released_at || b.created || 0).getTime()
       return timeA - timeB
     })
 
-    // Agrupamos na primeira rota os pedidos que pertencem ao mesmo lote (criados/liberados em janela próxima de 15 min)
-    const firstTimestamp = new Date(sorted[0].route_released_at || sorted[0].created || 0).getTime()
-    const currentBatch: OrderRecord[] = []
-    const queuedBatch: OrderRecord[] = []
-
-    for (const ord of sorted) {
-      const ordTime = new Date(ord.route_released_at || ord.created || 0).getTime()
-      if (Math.abs(ordTime - firstTimestamp) <= 15 * 60 * 1000) {
-        currentBatch.push(ord)
-      } else {
-        queuedBatch.push(ord)
-      }
-    }
-
-    const currentSorted = currentBatch.sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
-
     return {
       currentRouteOrders: currentSorted,
-      queuedOrders: queuedBatch,
+      queuedOrders: [],
       activeDeliveries: currentSorted,
     }
   }, [hasActiveStartedRoute, activeStartedOrders, orders])
