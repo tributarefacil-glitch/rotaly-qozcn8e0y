@@ -1819,14 +1819,24 @@ export const deliveryService = {
     const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
 
     // Filtrar ordens concluídas ou com rota iniciada
+    // BLINDAGEM DE INSUCESSO E ERRO DE SISTEMA:
+    // Pedidos cancelados, com insucesso (client_absent, address_error) ou erro de sistema
+    // NUNCA imputam km/custo aos relatórios e à conta de combustível.
+    const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
+
     const courierOrders = orders.filter((o) => {
       if (o.courier_id !== courier.id) return false
+      if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
+      const notesLower = o.notes ? o.notes.toLowerCase() : ''
+      if (notesLower.includes('erro de sistema')) return false
+      const baseLat = Number(o.start_base_lat) || 0
+      const baseLng = Number(o.start_base_lng) || 0
+      if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
+        return false
+      }
+
       const isStartedOrDelivered =
-        o.route_started === true ||
-        o.status === 'delivered' ||
-        o.status === 'in_transit' ||
-        o.status === 'address_error' ||
-        o.status === 'client_absent'
+        o.status === 'delivered' || (o.route_started === true && o.status === 'in_transit')
 
       if (!isStartedOrDelivered) return false
       if (periodFilter === 'all') return true
@@ -1896,16 +1906,22 @@ export const deliveryService = {
       const courierLocations = locations.filter((l) => l.user_id === courier.id)
       const courierEvents = offRouteEvents.filter((ev) => ev.courier_id === courier.id)
 
-      // Regra: Contabilizar km para todo pedido com rota iniciada ou entregue/parcial
-      const courierOrders = orders.filter(
-        (o) =>
-          o.courier_id === courier.id &&
-          (o.route_started === true ||
-            o.status === 'delivered' ||
-            o.status === 'in_transit' ||
-            o.status === 'address_error' ||
-            o.status === 'client_absent'),
-      )
+      // Regra: Contabilizar km exclusivamente para pedidos válidos entregues ou em trânsito
+      // Ignorar insucessos (client_absent, address_error, cancelled) e erros de sistema
+      const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
+
+      const courierOrders = orders.filter((o) => {
+        if (o.courier_id !== courier.id) return false
+        if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
+        const notesLower = o.notes ? o.notes.toLowerCase() : ''
+        if (notesLower.includes('erro de sistema')) return false
+        const baseLat = Number(o.start_base_lat) || 0
+        const baseLng = Number(o.start_base_lng) || 0
+        if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
+          return false
+        }
+        return o.status === 'delivered' || (o.route_started === true && o.status === 'in_transit')
+      })
 
       // Regra do Usuário: "O KM RODADO INICIA NA SAIDA DA BASE, CONTINUA CONTANDO EM TODAS ENTREGAS E FINALIZA NA BASE DE VOLTA"
       // Agrupar pedidos por lote de rota (mesmo route_started_at aproximado)
