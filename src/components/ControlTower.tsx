@@ -95,7 +95,11 @@ import {
   type RouteWorkShiftMetrics,
   type WorkShiftConfig,
 } from '@/lib/routeWorkShift'
-import { getOperationalWindow, isTodayOrder } from '@/lib/operationalWindow'
+import {
+  getOperationalWindow,
+  isNeutralizedSystemError,
+  isTodayOrder,
+} from '@/lib/operationalWindow'
 import { isOrderInActiveRoute } from '@/lib/activeRouteHelper'
 import type { AppSettingsRecord } from '@/types/delivery'
 
@@ -853,7 +857,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const todayStr = operationalWindow.dateStr
 
   const todayOrders = useMemo(() => {
-    return orders.filter((o) => isTodayOrder(o, operationalWindow))
+    return orders.filter((o) => !isNeutralizedSystemError(o) && isTodayOrder(o, operationalWindow))
   }, [orders, operationalWindow])
 
   // Helpers to categorize orders into kanban columns

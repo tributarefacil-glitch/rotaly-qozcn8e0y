@@ -50,6 +50,7 @@ import { deliveryService } from '@/services/deliveryService'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import {
   getOperationalWindow,
+  isNeutralizedSystemError,
   isTimestampInOperationalWindow,
   isTodayOrder,
   parseSafeTimestamp,
@@ -83,22 +84,28 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   const fuelConsumption = settings?.fuel_consumption_kml || 35.0
 
   // Filter orders by period usando a janela operacional oficial (05:00 - 23:59)
+  // E exclusão obrigatória de pedidos neutralizados como erro de sistema (não são cancelamentos nem entregas operacionais)
   const filteredOrders = useMemo(() => {
     const now = new Date()
     const currentWindow = getOperationalWindow(now)
 
     return orders.filter((o) => {
+      // Excluir expressamente qualquer pedido neutralizado como erro de sistema de todas as métricas
+      if (isNeutralizedSystemError(o)) {
+        return false
+      }
+
       if (period === 'today') {
         return isTodayOrder(o, currentWindow)
       }
 
       // Avalia o timestamp mais significativo do pedido para intervalos semanais/mensais
+      // Nota: order.updated removido para consistência temporal com isTodayOrder
       const relevantTs =
         parseSafeTimestamp(o.route_finished_at) ||
         parseSafeTimestamp(o.actual_arrival) ||
         parseSafeTimestamp(o.route_started_at) ||
         parseSafeTimestamp(o.created) ||
-        parseSafeTimestamp(o.updated) ||
         0
 
       if (period === 'week') {
@@ -118,9 +125,13 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     const total = filteredOrders.length
     const successful = filteredOrders.filter((o) => o.status === 'delivered').length
     const problem = filteredOrders.filter(
-      (o) => o.status === 'address_error' || o.status === 'client_absent',
+      (o) =>
+        !isNeutralizedSystemError(o) &&
+        (o.status === 'address_error' || o.status === 'client_absent'),
     ).length
-    const cancelled = filteredOrders.filter((o) => o.status === 'cancelled').length
+    const cancelled = filteredOrders.filter(
+      (o) => o.status === 'cancelled' && !isNeutralizedSystemError(o),
+    ).length
     const inTransit = filteredOrders.filter((o) => o.status === 'in_transit').length
     const pending = filteredOrders.filter((o) => o.status === 'pending').length
 
@@ -145,10 +156,13 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   const courierStats = useMemo(() => {
     return couriers.map((courier) => {
       const courierOrders = filteredOrders.filter((o) => o.courier_id === courier.id)
-      const count = courierOrders.length
-      const percentOfTotal = summary.total > 0 ? (count / summary.total) * 100 : 0
+      // CORREÇÃO: Gráfico de entregas por entregador deve contabilizar estritamente entregas concluídas (status === 'delivered')
       const deliveredCount = courierOrders.filter((o) => o.status === 'delivered').length
-      const successRate = count > 0 ? (deliveredCount / count) * 100 : 0
+      const count = deliveredCount
+      const percentOfTotal = summary.successful > 0 ? (count / summary.successful) * 100 : 0
+      const totalAssignedInPeriod = courierOrders.length
+      const successRate =
+        totalAssignedInPeriod > 0 ? (deliveredCount / totalAssignedInPeriod) * 100 : 0
 
       // Calculate average time in minutes (estimated or actual arrival)
       let totalMins = 0
@@ -297,10 +311,11 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     return filteredOrders
       .filter(
         (o) =>
-          o.status === 'address_error' ||
-          o.status === 'client_absent' ||
-          o.status === 'cancelled' ||
-          (o.completion_reason && o.completion_reason !== 'delivered'),
+          !isNeutralizedSystemError(o) &&
+          (o.status === 'address_error' ||
+            o.status === 'client_absent' ||
+            o.status === 'cancelled' ||
+            (o.completion_reason && o.completion_reason !== 'delivered')),
       )
       .map((o) => {
         let problemType = 'Outro Problema'

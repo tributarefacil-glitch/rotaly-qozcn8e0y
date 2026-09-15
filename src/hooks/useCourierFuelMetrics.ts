@@ -178,11 +178,14 @@ export function calculateCourierFuelMetrics(params: {
   // BLINDAGEM DE INSUCESSO E BASE INVÁLIDA:
   // Pedidos cancelados, com insucesso (client_absent, address_error, cancelled) ou com base inválida (0,0)
   // NUNCA imputam km/custo aos relatórios e à conta de combustível.
+  // Também EXCLUI pedidos neutralizados como erro de sistema.
   const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
 
   const allCourierOrders = orders.filter((o) => {
     if (o.courier_id !== courier.id) return false
     if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
+    const notesLower = o.notes ? o.notes.toLowerCase() : ''
+    if (notesLower.includes('erro de sistema')) return false
     // Descartar pedidos com base 0,0 que não foram saneados
     const baseLat = Number(o.start_base_lat) || 0
     const baseLng = Number(o.start_base_lng) || 0

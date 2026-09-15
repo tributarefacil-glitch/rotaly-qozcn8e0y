@@ -808,15 +808,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     return true
   })
 
-  // Basic Metrics
-  const totalOrders = orders.length
-  const reportTotalOrders = filteredReportOrders.length
-  const deliveredOrders = filteredReportOrders.filter((o) => o.status === 'delivered')
-  const addressErrorOrders = filteredReportOrders.filter((o) => o.status === 'address_error')
-  const clientAbsentOrders = filteredReportOrders.filter((o) => o.status === 'client_absent')
-  const inTransitOrders = filteredReportOrders.filter((o) => o.status === 'in_transit')
-  const pendingOrders = filteredReportOrders.filter((o) => o.status === 'pending')
-  const cancelledOrders = filteredReportOrders.filter((o) => o.status === 'cancelled')
+  // Basic Metrics (excluindo erros de sistema neutralizados de cancelamentos/ocorrências)
+  const isNeutralizedOrder = (o: OrderRecord) => {
+    const notesLower = o.notes ? o.notes.toLowerCase() : ''
+    return notesLower.includes('erro de sistema')
+  }
+  const cleanReportOrders = filteredReportOrders.filter((o) => !isNeutralizedOrder(o))
+  const totalOrders = orders.filter((o) => !isNeutralizedOrder(o)).length
+  const reportTotalOrders = cleanReportOrders.length
+  const deliveredOrders = cleanReportOrders.filter((o) => o.status === 'delivered')
+  const addressErrorOrders = cleanReportOrders.filter((o) => o.status === 'address_error')
+  const clientAbsentOrders = cleanReportOrders.filter((o) => o.status === 'client_absent')
+  const inTransitOrders = cleanReportOrders.filter((o) => o.status === 'in_transit')
+  const pendingOrders = cleanReportOrders.filter((o) => o.status === 'pending')
+  const cancelledOrders = cleanReportOrders.filter((o) => o.status === 'cancelled')
 
   // Total Value / Revenue
   const reportTotalValue = filteredReportOrders

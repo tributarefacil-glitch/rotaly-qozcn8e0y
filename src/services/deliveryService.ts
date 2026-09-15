@@ -1461,6 +1461,7 @@ export const deliveryService = {
       const totalStopsCount = roadResult.stops.length
       const totalRouteFuel = roadResult.estimated_fuel_cost
       let allocatedFuelSum = 0
+      const isBicycle = this.normalizeVehicleCategory(courier.vehicle_type) === 'bicicleta'
 
       // 6. Persistir novos valores de sequência (1..N, NUNCA 0) e métricas viárias em cada pedido
       const nowIso = new Date().toISOString()
@@ -1476,7 +1477,7 @@ export const deliveryService = {
 
         // Rateio exato do combustível da rota para cumprir regra "linha = cabeçalho"
         let legFuelCost: number
-        if (isBicycleCourier || totalRouteFuel <= 0) {
+        if (isBicycle || totalRouteFuel <= 0) {
           legFuelCost = 0
         } else if (!isLastStop) {
           legFuelCost =

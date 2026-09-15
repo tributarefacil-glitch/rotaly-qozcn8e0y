@@ -100,14 +100,25 @@ export function isTodayOrder(
 
   // Avaliar carimbos relevantes contra a janela do dia operacional
   // Prioriza o fechamento da entrega e marcos do ciclo operacional
+  // NOTA: order.updated foi removido para evitar que migrações ou updates de sistema
+  // em pedidos de dias passados os façam contar indevidamente como pedidos de hoje.
   const stamps = [
     order.route_finished_at,
     order.actual_arrival,
     order.route_started_at,
     order.route_released_at,
     order.created,
-    order.updated,
   ]
 
   return stamps.some((s) => isTimestampInOperationalWindow(s, windowRange))
+}
+
+/**
+ * Retorna true se o pedido foi neutralizado como erro de sistema (não é cancelamento operacional).
+ * Exclui pedidos cancelados por erro de rota não executada / neutralização técnica do sistema.
+ */
+export function isNeutralizedSystemError(order: OrderRecord): boolean {
+  if (!order) return false
+  const notesLower = order.notes ? order.notes.toLowerCase() : ''
+  return notesLower.includes('erro de sistema')
 }

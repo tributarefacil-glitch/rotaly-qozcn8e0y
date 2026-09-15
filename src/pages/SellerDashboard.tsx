@@ -52,7 +52,11 @@ import {
   UNEXPECTED_STOP_THRESHOLD_METERS,
   haversineDistanceMeters,
 } from '@/lib/geo'
-import { getOperationalWindow, isTodayOrder } from '@/lib/operationalWindow'
+import {
+  getOperationalWindow,
+  isNeutralizedSystemError,
+  isTodayOrder,
+} from '@/lib/operationalWindow'
 import { hasCourierActiveRoute, isOrderInActiveRoute } from '@/lib/activeRouteHelper'
 import {
   calculateRouteWorkShift,
@@ -353,8 +357,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
     const courierOrders = orders.filter((o) => o.courier_id === c.id)
 
-    // Filtra estritamente pedidos na janela operacional do dia
-    const todayCourierOrders = courierOrders.filter((o) => isTodayOrder(o, operationalWindow))
+    // Filtra estritamente pedidos na janela operacional do dia (excluindo erros de sistema neutralizados)
+    const todayCourierOrders = courierOrders.filter(
+      (o) => !isNeutralizedSystemError(o) && isTodayOrder(o, operationalWindow),
+    )
 
     // Pedidos em rota ativa do entregador usando o helper compartilhado
     const activeRouteOrders = todayCourierOrders.filter((o) => isOrderInActiveRoute(o))
@@ -721,11 +727,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   }
 
-  // Quick stats
-  const pendingCount = orders.filter((o) => o.status === 'pending').length
-  const inTransitCount = orders.filter((o) => o.status === 'in_transit').length
-  const deliveredCount = orders.filter((o) => o.status === 'delivered').length
-  const totalRevenue = orders
+  // Quick stats (excluindo erros de sistema neutralizados para refletir a realidade operacional)
+  const operationalOrders = orders.filter((o) => !isNeutralizedSystemError(o))
+  const pendingCount = operationalOrders.filter((o) => o.status === 'pending').length
+  const inTransitCount = operationalOrders.filter((o) => o.status === 'in_transit').length
+  const deliveredCount = operationalOrders.filter((o) => o.status === 'delivered').length
+  const totalRevenue = operationalOrders
     .filter((o) => o.status !== 'cancelled')
     .reduce((acc, o) => acc + (Number(o.total_price) || 0), 0)
 
