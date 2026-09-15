@@ -506,7 +506,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       }
       // Filtrar estritamente pedidos do dia para globalInTransitOrders
       const onlyTodayGlobal = (fetchedGlobalTransitOrders || []).filter((o) =>
-        isTodayOrder(o, todayStr),
+        isTodayOrder(o, operationalWindow),
       )
       setGlobalInTransitOrders(onlyTodayGlobal)
       if (!hasParentCouriers) {
@@ -841,41 +841,115 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
   }, [])
 
-  // Today's orders
-  // CAUSA 3: Usar data local para hoje de forma estritamente consistente entre lados.
-  // Para status 'delivered', compara a data local de created/actual_arrival/updated
-  // com a mesma conversão (.toLocaleDateString('sv') => 'YYYY-MM-DD').
-  // Em caso de dúvida ou ausência de data válida, INCLUIR o pedido (preferir mostrar a menos que filtrar).
-  const todayStr = useMemo(() => {
+  // REQUISITO DO USUÁRIO: "O DIA É CONTABILIZADO DAS 05H:00 DA MANHÃ AS 23:59 DE TODOS OS DIAS."
+  // Cálculo da janela do dia operacional corrente:
+  // Início = hoje 05:00:00.000 local; Fim = hoje 23:59:59.999 local.
+  // Se o horário atual for de madrugada (entre 00:00 e 04:59 local), a janela operacional
+  // ainda aberta é a do dia civil anterior (ontem 05:00 às 23:59), garantindo que fechamentos
+  // e rotas finalizadas de madrugada continuem visíveis até às 05:00 do novo ciclo.
+  const operationalWindow = useMemo(() => {
     const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  }, [])
+    const opDate = new Date(now)
 
-  // REQUISITO RIGOROSO: NA VISÃO TORRE DE CONTROLE MAPA, A VISÃO PRECISA SER DO DIA.
-  // Filtro isTodayOrder: route_started_at || route_released_at || actual_arrival || created -> data local === todayStr
-  // aplicado a todos os marcadores, trajetos, allCourierData e rotas ativas,
-  // impedindo vazamento de pedidos antigos não finalizados.
-  const isTodayOrder = (order: OrderRecord, targetTodayStr: string = todayStr): boolean => {
-    const toLocalDateStr = (dateVal?: string | Date | null): string => {
-      if (!dateVal) return ''
-      try {
-        const d = typeof dateVal === 'string' ? new Date(dateVal) : dateVal
-        if (isNaN(d.getTime())) return ''
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      } catch {
-        return ''
-      }
+    // Madrugada antes das 05h: pertence ao dia operacional iniciado ontem às 05h
+    if (now.getHours() < 5) {
+      opDate.setDate(opDate.getDate() - 1)
     }
 
-    const stamp =
-      order.route_started_at || order.route_released_at || order.actual_arrival || order.created
-    const localDate = toLocalDateStr(stamp)
-    return localDate === targetTodayStr
+    const start = new Date(
+      opDate.getFullYear(),
+      opDate.getMonth(),
+      opDate.getDate(),
+      5,
+      0,
+      0,
+      0,
+    ).getTime()
+
+    const end = new Date(
+      opDate.getFullYear(),
+      opDate.getMonth(),
+      opDate.getDate(),
+      23,
+      59,
+      59,
+      999,
+    ).getTime()
+
+    const dateStr = `${opDate.getFullYear()}-${String(opDate.getMonth() + 1).padStart(2, '0')}-${String(opDate.getDate()).padStart(2, '0')}`
+
+    return { start, end, dateStr }
+  }, [lastUpdated])
+
+  // Helper para converter carimbos de data do banco para timestamp numérico seguro
+  const parseSafeTimestamp = (dateVal?: string | Date | null): number => {
+    if (!dateVal) return 0
+    try {
+      if (dateVal instanceof Date) {
+        const t = dateVal.getTime()
+        return isNaN(t) ? 0 : t
+      }
+      if (typeof dateVal === 'string') {
+        const trimmed = dateVal.trim()
+        if (!trimmed) return 0
+        // Tratar formato padrão PocketBase "YYYY-MM-DD HH:mm:ss.sssZ" ou ISO direto
+        const normalized = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T')
+        const t = new Date(normalized).getTime()
+        if (!isNaN(t)) return t
+        const fallback = new Date(trimmed).getTime()
+        return isNaN(fallback) ? 0 : fallback
+      }
+      return 0
+    } catch {
+      return 0
+    }
+  }
+
+  // Helper que verifica se um timestamp está estritamente dentro da janela operacional 05:00 - 23:59
+  const isTimestampInOperationalWindow = (
+    dateVal?: string | Date | null,
+    windowRange: { start: number; end: number } = operationalWindow,
+  ): boolean => {
+    const ts = parseSafeTimestamp(dateVal)
+    if (ts <= 0) return false
+    return ts >= windowRange.start && ts <= windowRange.end
+  }
+
+  // todayStr mantido para compatibilidade de rotas e chamadas
+  const todayStr = operationalWindow.dateStr
+
+  // REQUISITO: NA VISÃO TORRE DE CONTROLE, EXIBIR PEDIDOS DO DIA CORRENTE (05:00 - 23:59).
+  // Filtro isTodayOrder:
+  // 1. Pedidos com rota em andamento (route_started = true && route_finished != true) ou status 'in_transit' pertencem à operação ativa!
+  // 2. Pedidos com qualquer marco de evento (created, route_released_at, route_started_at, actual_arrival, route_finished_at, updated) dentro da janela 05:00 - 23:59.
+  // 3. Pedidos/rotas de outros dias operacionais continuam estritamente fora.
+  const isTodayOrder = (
+    order: OrderRecord,
+    windowRange: { start: number; end: number } = operationalWindow,
+  ): boolean => {
+    // Pedidos em trânsito com rota iniciada e não finalizada pertencem à jornada ativa
+    const isActiveInRoute =
+      (order.route_started === true || order.status === 'in_transit') &&
+      order.route_finished !== true
+
+    if (isActiveInRoute) return true
+
+    // Avaliar carimbos relevantes contra a janela do dia operacional
+    const stamps = [
+      order.actual_arrival,
+      order.route_finished_at,
+      order.route_started_at,
+      order.route_released_at,
+      order.created,
+      order.updated,
+    ]
+
+    return stamps.some((s) => isTimestampInOperationalWindow(s, windowRange))
   }
 
   const todayOrders = useMemo(() => {
-    return orders.filter((o) => isTodayOrder(o, todayStr))
-  }, [orders, todayStr])
+    return orders.filter((o) => isTodayOrder(o, operationalWindow))
+  }, [orders, operationalWindow])
 
   // Helpers to categorize orders into kanban columns
   const getOrderKanbanCategory = (order: OrderRecord): KanbanColumnKey => {
@@ -930,7 +1004,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // 2. hasRouteStarted / activeInTransitOrders verificados contra a lista GLOBAL de pedidos em trânsito filtrada para o dia corrente
   const allCourierData = useMemo(() => {
     // Filtrar globalInTransitOrders estritamente pelo dia corrente (isTodayOrder) para impedir vazamento de pedidos antigos
-    const todayGlobalTransitOrders = globalInTransitOrders.filter((o) => isTodayOrder(o, todayStr))
+    const todayGlobalTransitOrders = globalInTransitOrders.filter((o) =>
+      isTodayOrder(o, operationalWindow),
+    )
 
     return couriers.map((courier) => {
       const courierLocs = locations.filter((l) => l.user_id === courier.id)
