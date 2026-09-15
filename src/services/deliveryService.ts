@@ -1064,8 +1064,8 @@ export const deliveryService = {
         city: 'Duque de Caxias',
         state: 'RJ',
         postal_code: '25230-085',
-        lat: -22.7001402,
-        lng: -43.2982834,
+        lat: -22.6990563,
+        lng: -43.296723,
         is_default: true,
         is_end_default: true,
         empresa_id: this.MATRIZ_EMPRESA_ID,
@@ -1338,8 +1338,8 @@ export const deliveryService = {
       const bases = await this.getBaseAddresses()
       const defaultBase = bases.find((b) => b.is_default) || bases[0]
       const originPoint = {
-        lat: courierOrders[0]?.start_base_lat || defaultBase?.lat || -22.7001402,
-        lng: courierOrders[0]?.start_base_lng || defaultBase?.lng || -43.2982834,
+        lat: courierOrders[0]?.start_base_lat || defaultBase?.lat || -22.6990563,
+        lng: courierOrders[0]?.start_base_lng || defaultBase?.lng || -43.296723,
       }
       const destinationPoint = {
         lat: courierOrders[0]?.end_address_lat || originPoint.lat,

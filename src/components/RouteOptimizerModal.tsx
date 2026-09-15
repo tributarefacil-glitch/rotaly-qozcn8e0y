@@ -1826,7 +1826,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     try {
       if (!mapInstanceRef.current) {
         mapInstanceRef.current = new google.maps.Map(mapContainerRef.current, {
-          center: { lat: -22.7001402, lng: -43.2982834 },
+          center: { lat: -22.6990563, lng: -43.296723 },
           zoom: 12,
           disableDefaultUI: false,
           zoomControl: true,
@@ -3509,8 +3509,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             const defaultBase =
                               baseAddresses.find((b) => b.is_default) || baseAddresses[0]
                             const fallbackBasePos = {
-                              lat: defaultBase?.lat || -22.7001402,
-                              lng: defaultBase?.lng || -43.2982834,
+                              lat: defaultBase?.lat || -22.6990563,
+                              lng: defaultBase?.lng || -43.296723,
                             }
 
                             const startPos =
@@ -4344,7 +4344,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       isFinite(minLat) && isFinite(maxLat) && isFinite(minLng) && isFinite(maxLng)
                     const centerLat = hasValidBounds
                       ? (minLat + maxLat) / 2
-                      : fallbackStartBase.lat || -22.7001402
+                      : fallbackStartBase.lat || -22.6990563
                     const centerLng = hasValidBounds
                       ? (minLng + maxLng) / 2
                       : fallbackStartBase.lng || -43.2982834
@@ -5155,8 +5155,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 const primaryOrder = courierOrders[0]
                 const defaultBase = baseAddresses.find((b) => b.is_default) || baseAddresses[0]
                 const fallbackBasePos = {
-                  lat: defaultBase?.lat || -22.7001402,
-                  lng: defaultBase?.lng || -43.2982834,
+                  lat: defaultBase?.lat || -22.6990563,
+                  lng: defaultBase?.lng || -43.296723,
                 }
 
                 const startPos =
