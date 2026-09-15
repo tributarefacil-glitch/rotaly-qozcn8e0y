@@ -48,6 +48,7 @@ import type {
   FuelAdvanceRecord,
 } from '@/types/delivery'
 import { playOffRouteWarningSound, sendBrowserPushNotification } from '@/lib/notificationSound'
+import { shouldDisplayToast } from '@/lib/notificationDedupe'
 import {
   DEVIATION_THRESHOLD_METERS,
   UNEXPECTED_STOP_THRESHOLD_METERS,
@@ -339,12 +340,15 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         }
 
         if (isOrderInActiveRoute) {
-          playOffRouteWarningSound()
-          sendBrowserPushNotification(e.record.title, e.record.message)
-          toast.error(e.record.title, {
-            description: e.record.message,
-            duration: 9000,
-          })
+          const dedupeKey = `notif-${e.record.id || `${e.record.type}-${e.record.order_id}-${e.record.created}`}`
+          if (shouldDisplayToast(dedupeKey)) {
+            playOffRouteWarningSound()
+            sendBrowserPushNotification(e.record.title, e.record.message)
+            toast.error(e.record.title, {
+              description: e.record.message,
+              duration: 9000,
+            })
+          }
         }
       }
     }

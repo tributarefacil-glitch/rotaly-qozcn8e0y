@@ -22,6 +22,7 @@ import { deliveryService } from '@/services/deliveryService'
 import type { NotificationRecord } from '@/types/delivery'
 import { useRealtime } from '@/hooks/use-realtime'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
+import { shouldDisplayToast } from '@/lib/notificationDedupe'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -72,10 +73,21 @@ export const Header: React.FC = () => {
         const newNotif = e.record
         setNotifications((prev) => [newNotif, ...prev])
         setUnreadCount((prev) => prev + 1)
-        toast.info(`🔔 ${newNotif.title}`, {
-          description: newNotif.message,
-          duration: 5000,
-        })
+
+        // REGRA DE DEDUPLICAÇÃO DE ALERTA:
+        // Notificações do tipo 'off_route' (desvios de rota e paradas suspeitas)
+        // já possuem camada dedicada de alerta vermelho no painel operacional (SellerDashboard/Torre).
+        // O Header não duplica o toast em azul para 'off_route'.
+        // Para os demais tipos, aplica chave de deduplicação idempotente.
+        const isOffRouteNotification = newNotif.type === 'off_route'
+        const dedupeKey = `notif-${newNotif.id || `${newNotif.type}-${newNotif.order_id}-${newNotif.created}`}`
+
+        if (!isOffRouteNotification && shouldDisplayToast(dedupeKey)) {
+          toast.info(`🔔 ${newNotif.title}`, {
+            description: newNotif.message,
+            duration: 5000,
+          })
+        }
       } else if (e.action === 'update') {
         setNotifications((prev) => prev.map((n) => (n.id === e.record.id ? e.record : n)))
         loadNotifications()

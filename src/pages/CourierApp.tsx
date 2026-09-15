@@ -32,6 +32,7 @@ import {
   playOffRouteWarningSound,
   sendBrowserPushNotification,
 } from '@/lib/notificationSound'
+import { shouldDisplayToast } from '@/lib/notificationDedupe'
 import type { NotificationRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -240,12 +241,15 @@ export default function CourierApp() {
   useRealtime<NotificationRecord>('notifications', (e) => {
     if (e.action === 'create' && (!e.record.user_id || e.record.user_id === user?.id)) {
       if (e.record.type === 'off_route') {
-        playOffRouteWarningSound()
-        sendBrowserPushNotification(e.record.title, e.record.message)
-        toast.error(e.record.title, {
-          description: e.record.message,
-          duration: 8000,
-        })
+        const dedupeKey = `notif-${e.record.id || `${e.record.type}-${e.record.order_id}-${e.record.created}`}`
+        if (shouldDisplayToast(dedupeKey)) {
+          playOffRouteWarningSound()
+          sendBrowserPushNotification(e.record.title, e.record.message)
+          toast.error(e.record.title, {
+            description: e.record.message,
+            duration: 8000,
+          })
+        }
       }
     }
   })

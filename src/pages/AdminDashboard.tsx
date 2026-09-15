@@ -1477,9 +1477,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </h3>
                     <p className="text-xs text-slate-500">
                       Ocorrências automáticas de telemetria:{' '}
-                      <strong>desvios superiores a 300 metros</strong> (não contabilizados no
-                      consumo de combustível) e <strong>paradas fora dos pontos previstos</strong>{' '}
-                      após o entregador iniciar a rota.
+                      <strong>desvios de rota &gt; 600 metros</strong> (auditoria de trajeto — o km
+                      oficial da rota não é alterado) e{' '}
+                      <strong>paradas fora dos pontos previstos</strong> após o entregador iniciar a
+                      rota.
                     </p>
                   </div>
 
@@ -1491,7 +1492,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       <SelectContent>
                         <SelectItem value="all">Todas as Ocorrências</SelectItem>
                         <SelectItem value="route_deviation">
-                          🚨 Desvio de Rota (&gt;600m - Sem KM)
+                          🚨 Desvio de Rota (&gt;600m - Auditoria)
                         </SelectItem>
                         <SelectItem value="unexpected_stop">🛑 Parada Não Prevista</SelectItem>
                       </SelectContent>
@@ -1536,7 +1537,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       </div>
                       <div>
                         <p className="text-xs text-slate-500 font-medium">
-                          Desvios &gt; 600m (Sem KM)
+                          Desvios &gt; 600m (Auditoria)
                         </p>
                         <h4 className="text-2xl font-black text-rose-600">
                           {offRouteEvents.filter((e) => e.event_type === 'route_deviation').length}

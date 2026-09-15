@@ -37,23 +37,48 @@ onRecordAfterCreateSuccess((e) => {
     return
   }
 
-  // Encontrar pedidos ativos deste entregador: rota iniciada e em trânsito
-  let activeOrders = []
+  // Encontrar pedidos da rota iniciada deste entregador (apenas pedidos de rotas abertas)
+  // 1. Pedidos pendentes de entrega (status 'in_transit' e status !== 'delivered')
+  let pendingOrders = []
   try {
-    activeOrders = $app.findRecordsByFilter(
+    pendingOrders = $app.findRecordsByFilter(
       'orders',
       `courier_id = '${courierId}' && route_started = true && status = 'in_transit'`,
-      '-updated',
-      10,
+      'sequence,created',
+      20,
       0,
     )
   } catch (err) {
-    console.log('Error finding orders for location check:', err)
-    e.next()
-    return
+    console.log('Error finding pending orders for location check:', err)
   }
 
-  if (activeOrders.length === 0) {
+  // Filtrar estritamente qualquer pedido que já esteja com status = 'delivered'
+  const strictlyPendingOrders = pendingOrders.filter((o) => o.getString('status') !== 'delivered')
+
+  // Se não houver entregas pendentes com status in_transit, verificar se há rota ativa em andamento retornando à base:
+  // Um pedido que tenha route_started = true e route_finished != true
+  let routeContextOrders = strictlyPendingOrders
+  let isReturningToBaseOnly = false
+
+  if (strictlyPendingOrders.length === 0) {
+    try {
+      const openRouteOrders = $app.findRecordsByFilter(
+        'orders',
+        `courier_id = '${courierId}' && route_started = true && (route_finished = false || route_finished = null)`,
+        '-updated',
+        1,
+        0,
+      )
+      if (openRouteOrders && openRouteOrders.length > 0) {
+        routeContextOrders = openRouteOrders
+        isReturningToBaseOnly = true
+      }
+    } catch (errRoute) {
+      console.log('Error finding open route for return-to-base check:', errRoute)
+    }
+  }
+
+  if (routeContextOrders.length === 0) {
     e.next()
     return
   }
@@ -88,11 +113,13 @@ onRecordAfterCreateSuccess((e) => {
     return calcHaversineMeters(pLat, pLng, projLat, projLng)
   }
 
-  // Obter pontos de interesse da rota ativa inteira:
+  // Obter pontos de interesse da rota ativa:
   // 1. Base de partida (start_base)
-  // 2. Destinos de todos os clientes da rota ativa / em trânsito
-  // 3. Base/destino final (end_address)
-  const anchorOrder = activeOrders[0]
+  // 2. Destinos de entregas estritamente PENDENTES (excluindo qualquer pedido status = 'delivered')
+  // 3. Base/destino final (end_address / start_base)
+  // Quando não houver paradas pendentes (isReturningToBaseOnly === true), o trecho de referência
+  // passa a ser exclusivamente [posição atual -> base (end_address/start_base)].
+  const anchorOrder = routeContextOrders[0]
   const sellerId = anchorOrder.getString('seller_id')
   const trackingCode = anchorOrder.getString('tracking_code')
 
@@ -101,31 +128,42 @@ onRecordAfterCreateSuccess((e) => {
   let endBaseLat = anchorOrder.getFloat('end_address_lat') || baseLat
   let endBaseLng = anchorOrder.getFloat('end_address_lng') || baseLng
 
-  // Coletar coordenadas de clientes da rota
   const routeWaypoints = []
-  if (baseLat !== null && baseLng !== null) {
-    routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
-  }
 
-  for (let i = 0; i < activeOrders.length; i++) {
-    const o = activeOrders[i]
-    const cId = o.getString('customer_id')
-    if (cId) {
-      try {
-        const cust = $app.findRecordById('customers', cId)
-        if (cust) {
-          const cLat = cust.getFloat('lat')
-          const cLng = cust.getFloat('lng')
-          if (cLat && cLng) {
-            routeWaypoints.push({ lat: cLat, lng: cLng, label: 'customer', orderId: o.id })
-          }
-        }
-      } catch (_) {}
+  if (isReturningToBaseOnly) {
+    // Retorno exclusivo à base: trecho de referência é apenas do entregador até a base de retorno
+    routeWaypoints.push({ lat: lat, lng: lng, label: 'courier_pos' })
+    if (endBaseLat !== null && endBaseLng !== null) {
+      routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
+    } else if (baseLat !== null && baseLng !== null) {
+      routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
     }
-  }
+  } else {
+    // Há entregas pendentes: base de partida -> clientes pendentes -> base de retorno
+    if (baseLat !== null && baseLng !== null) {
+      routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
+    }
 
-  if (endBaseLat !== null && endBaseLng !== null) {
-    routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
+    for (let i = 0; i < strictlyPendingOrders.length; i++) {
+      const o = strictlyPendingOrders[i]
+      const cId = o.getString('customer_id')
+      if (cId) {
+        try {
+          const cust = $app.findRecordById('customers', cId)
+          if (cust) {
+            const cLat = cust.getFloat('lat')
+            const cLng = cust.getFloat('lng')
+            if (cLat && cLng) {
+              routeWaypoints.push({ lat: cLat, lng: cLng, label: 'customer', orderId: o.id })
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (endBaseLat !== null && endBaseLng !== null) {
+      routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
+    }
   }
 
   // Calcular menor distância do ponto atual a qualquer parada programada ou corredor da rota planejada
@@ -351,7 +389,7 @@ onRecordAfterCreateSuccess((e) => {
           ev.set('lng', lng)
           ev.set(
             'notes',
-            `Desvio de rota superior a 600m detectado (+${Math.round(minDistanceToRouteCorridor)}m fora do corredor viário). Trecho não contabilizado no consumo de combustível.`,
+            `Desvio de rota superior a 600m detectado (+${Math.round(minDistanceToRouteCorridor)}m fora do corredor viário). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
           )
           $app.save(ev)
         } catch (errDev) {
@@ -368,7 +406,7 @@ onRecordAfterCreateSuccess((e) => {
           notif.set('title', '🚨 Alerta de Desvio de Rota (>600m)')
           notif.set(
             'message',
-            `Você está fora da rota do pedido ${trackingCode} (+${Math.round(minDistanceToRouteCorridor)}m). Trecho desconsiderado no cálculo de combustível.`,
+            `Você está fora do traçado previsto do pedido ${trackingCode} (+${Math.round(minDistanceToRouteCorridor)}m). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
           )
           notif.set('is_read', false)
           $app.save(notif)
@@ -385,7 +423,7 @@ onRecordAfterCreateSuccess((e) => {
             notif.set('title', '🚨 Desvio de Rota do Entregador (>600m)')
             notif.set(
               'message',
-              `O entregador ${courierName} desviou mais de 600m da rota do pedido ${trackingCode}. Trecho desconsiderado da medição de combustível.`,
+              `O entregador ${courierName} desviou mais de 600m do trajeto previsto do pedido ${trackingCode}. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
             )
             notif.set('is_read', false)
             $app.save(notif)
