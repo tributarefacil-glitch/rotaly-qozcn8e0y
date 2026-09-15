@@ -60,8 +60,8 @@ export default function ForgotPasswordPage() {
       setStep(2)
     } catch (err: unknown) {
       console.error('Password reset request error:', err)
-      const msg = getErrorMessage(err, 'Falha ao solicitar recuperação de senha.')
-      toast.error(msg)
+      const msg = getErrorMessage(err)
+      toast.error(msg || 'Falha ao solicitar recuperação de senha.')
     } finally {
       setIsLoading(false)
     }
@@ -94,8 +94,8 @@ export default function ForgotPasswordPage() {
       navigate('/login')
     } catch (err: unknown) {
       console.error('Password reset confirmation error:', err)
-      const msg = getErrorMessage(err, 'Token inválido ou expirado. Solicite uma nova redefinição.')
-      toast.error(msg)
+      const msg = getErrorMessage(err)
+      toast.error(msg || 'Token inválido ou expirado. Solicite uma nova redefinição.')
     } finally {
       setIsLoading(false)
     }

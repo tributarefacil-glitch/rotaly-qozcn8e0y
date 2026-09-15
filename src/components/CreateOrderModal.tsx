@@ -897,8 +897,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         }
       } catch (err: unknown) {
         console.error('Error saving customer:', err)
-        const detailedMsg = getErrorMessage(err, 'Erro ao salvar dados do cliente.')
-        toast.error(detailedMsg)
+        const detailedMsg = getErrorMessage(err)
+        toast.error(detailedMsg || 'Erro ao salvar dados do cliente.')
         setIsSubmitting(false)
         return
       }
@@ -1028,8 +1028,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setSelectedCoords(DEFAULT_CENTER)
     } catch (err: unknown) {
       console.error('Error creating order:', err)
-      const message = getErrorMessage(err, 'Falha ao registrar venda')
-      toast.error(message)
+      const message = getErrorMessage(err)
+      toast.error(message || 'Falha ao registrar venda')
     } finally {
       setIsSubmitting(false)
     }

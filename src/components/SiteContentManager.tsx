@@ -142,8 +142,8 @@ export const SiteContentManager: React.FC = () => {
       }, 4000)
     } catch (err) {
       console.error('Erro ao salvar conteúdo do site:', err)
-      const msg = getErrorMessage(err, 'Erro ao atualizar dados do site público.')
-      toast.error(`Falha ao salvar: ${msg}`)
+      const msg = getErrorMessage(err)
+      toast.error(`Falha ao salvar: ${msg || 'Erro ao atualizar dados do site público.'}`)
     } finally {
       setIsSaving(false)
     }

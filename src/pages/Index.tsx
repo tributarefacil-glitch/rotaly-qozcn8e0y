@@ -164,10 +164,8 @@ export default function Index() {
       redirectByRoleAndStatus(loggedUser.role || forcedRole, loggedUser.status)
     } catch (err: unknown) {
       console.error('Quick login error:', err)
-      const msg = getErrorMessage(
-        err,
-        'Credenciais inválidas. Verifique seu e-mail e senha cadastrados.',
-      )
+      const msg =
+        getErrorMessage(err) || 'Credenciais inválidas. Verifique seu e-mail e senha cadastrados.'
       setLoginError(msg)
       toast.error(msg)
     } finally {
@@ -201,10 +199,8 @@ export default function Index() {
       redirectByRoleAndStatus(loggedUser.role || selectedProfile || 'seller', loggedUser.status)
     } catch (err: unknown) {
       console.error('Login error:', err)
-      const msg = getErrorMessage(
-        err,
-        'E-mail ou senha inválidos. Verifique suas credenciais de acesso.',
-      )
+      const msg =
+        getErrorMessage(err) || 'E-mail ou senha inválidos. Verifique suas credenciais de acesso.'
       setLoginError(msg)
       toast.error(msg)
     } finally {
