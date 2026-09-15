@@ -475,13 +475,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Fetch initial/refreshed data (apenas quando não alimentado via props)
   const fetchData = async () => {
     // Se orders e couriers já vêm gerenciados pelas props do componente pai,
-    // não executar fetch duplicado para evitar condições de corrida com parâmetros vazios.
-    if (hasParentOrders && hasParentCouriers) {
-      return
-    }
-
+    // precisamos apenas carregar as ordens globais em trânsito se não fornecidas
     try {
-      // Pedidos carregados sem isolamento
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
 
       const [
@@ -509,7 +504,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       if (!hasParentOrders) {
         setOrders(fetchedOrders)
       }
-      setGlobalInTransitOrders(fetchedGlobalTransitOrders || [])
+      // Filtrar estritamente pedidos do dia para globalInTransitOrders
+      const onlyTodayGlobal = (fetchedGlobalTransitOrders || []).filter((o) =>
+        isTodayOrder(o, todayStr),
+      )
+      setGlobalInTransitOrders(onlyTodayGlobal)
       if (!hasParentCouriers) {
         setCouriers(fetchedCouriers)
       }
@@ -852,7 +851,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   }, [])
 
-  const todayOrders = useMemo(() => {
+  // REQUISITO RIGOROSO: NA VISÃO TORRE DE CONTROLE MAPA, A VISÃO PRECISA SER DO DIA.
+  // Filtro isTodayOrder: route_started_at || route_released_at || actual_arrival || created -> data local === todayStr
+  // aplicado a todos os marcadores, trajetos, allCourierData e rotas ativas,
+  // impedindo vazamento de pedidos antigos não finalizados.
+  const isTodayOrder = (order: OrderRecord, targetTodayStr: string = todayStr): boolean => {
     const toLocalDateStr = (dateVal?: string | Date | null): string => {
       if (!dateVal) return ''
       try {
@@ -864,53 +867,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       }
     }
 
-    return orders.filter((o) => {
-      // 1. Pedidos ativos/em andamento sempre visíveis na operação
-      if (
-        o.status === 'in_transit' ||
-        o.status === 'pending' ||
-        o.status === 'assigned' ||
-        o.route_started === true
-      ) {
-        return true
-      }
+    const stamp =
+      order.route_started_at || order.route_released_at || order.actual_arrival || order.created
+    const localDate = toLocalDateStr(stamp)
+    return localDate === targetTodayStr
+  }
 
-      // 2. Pedidos entregues: verificar data efetiva de entrega ou criação em fuso local
-      if (o.status === 'delivered') {
-        const deliveryStamp = o.actual_arrival || o.updated || o.created
-        if (!deliveryStamp) {
-          // Em caso de ausência de timestamp, incluir fail-safe
-          return true
-        }
-        const deliveryLocalDate = toLocalDateStr(deliveryStamp)
-        const createdLocalDate = toLocalDateStr(o.created)
-
-        // Se coincidir com a data de hoje por qualquer um dos carimbos, incluir
-        if (deliveryLocalDate === todayStr || createdLocalDate === todayStr) {
-          return true
-        }
-
-        // Se a data de entrega não puder ser determinada com precisão, manter incluído
-        if (!deliveryLocalDate && !createdLocalDate) {
-          return true
-        }
-
-        // Se o pedido foi atualizado hoje, manter incluído
-        if (toLocalDateStr(o.updated) === todayStr) {
-          return true
-        }
-
-        return false
-      }
-
-      // 3. Fallback para pedidos em outros status (ocorrências, etc): conferir data local ou incluir
-      const createdLocalDate = toLocalDateStr(o.created)
-      if (!createdLocalDate || createdLocalDate === todayStr) {
-        return true
-      }
-
-      return false
-    })
+  const todayOrders = useMemo(() => {
+    return orders.filter((o) => isTodayOrder(o, todayStr))
   }, [orders, todayStr])
 
   // Helpers to categorize orders into kanban columns
@@ -963,18 +927,23 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Map couriers data with latest GPS coordinates & active route status
   // CORREÇÃO A & B:
   // 1. Sem coordenadas inventadas: usar estritamente latestLoc.lat/lng ou start_base_lat/lng do pedido ativo
-  // 2. hasRouteStarted / activeInTransitOrders verificados contra a lista GLOBAL de pedidos em trânsito
+  // 2. hasRouteStarted / activeInTransitOrders verificados contra a lista GLOBAL de pedidos em trânsito filtrada para o dia corrente
   const allCourierData = useMemo(() => {
+    // Filtrar globalInTransitOrders estritamente pelo dia corrente (isTodayOrder) para impedir vazamento de pedidos antigos
+    const todayGlobalTransitOrders = globalInTransitOrders.filter((o) => isTodayOrder(o, todayStr))
+
     return couriers.map((courier) => {
       const courierLocs = locations.filter((l) => l.user_id === courier.id)
       const latestLoc = courierLocs[0]
 
-      // Pedidos atribuídos ao entregador na visão global (todos os pedidos do sistema)
-      const globalCourierTransit = globalInTransitOrders.filter((o) => o.courier_id === courier.id)
-      // Pedidos locais da loja (para métricas e kanban da loja)
+      // Pedidos atribuídos ao entregador na visão global do dia
+      const globalCourierTransit = todayGlobalTransitOrders.filter(
+        (o) => o.courier_id === courier.id,
+      )
+      // Pedidos locais da loja do dia (para métricas e kanban da loja)
       const courierLocalOrders = todayOrders.filter((o) => o.courier_id === courier.id)
 
-      // Rota ativa do entregador considerada tanto globalmente quanto localmente
+      // Rota ativa do entregador considerada tanto globalmente quanto localmente (estritamente do dia)
       const allTransitOrders = [
         ...globalCourierTransit,
         ...courierLocalOrders.filter((o) => o.status === 'in_transit' && o.route_started === true),
