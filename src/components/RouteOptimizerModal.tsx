@@ -397,9 +397,129 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   const [selectedIncludeOrderId, setSelectedIncludeOrderId] = useState<string>('')
   const [isSubmittingInclude, setIsSubmittingInclude] = useState(false)
 
+  // Modal: Editar Rota Ativa (excluir/incluir paradas com otimização automática ao salvar)
+  const [editRouteModalOpen, setEditRouteModalOpen] = useState(false)
+  const [targetCourierForEditRoute, setTargetCourierForEditRoute] = useState<UserRecord | null>(
+    null,
+  )
+  const [editRoutePendingStops, setEditRoutePendingStops] = useState<OrderRecord[]>([])
+  const [editRouteDeliveredStops, setEditRouteDeliveredStops] = useState<OrderRecord[]>([])
+  const [editRouteExcludedOrderIds, setEditRouteExcludedOrderIds] = useState<string[]>([])
+  const [editRouteIncludedOrderIds, setEditRouteIncludedOrderIds] = useState<string[]>([])
+  const [editRouteSearchAvailable, setEditRouteSearchAvailable] = useState('')
+  const [isSubmittingEditRoute, setIsSubmittingEditRoute] = useState(false)
+
   const [cancelRouteAlertOpen, setCancelRouteAlertOpen] = useState(false)
   const [targetCourierForCancel, setTargetCourierForCancel] = useState<UserRecord | null>(null)
   const [isSubmittingCancel, setIsSubmittingCancel] = useState(false)
+
+  // Abrir modal completo de Edição de Rota Ativa
+  const handleOpenEditRouteModal = (routeGroup: ActiveCourierRouteGroup) => {
+    setTargetCourierForEditRoute(routeGroup.courier)
+    setEditRoutePendingStops([...routeGroup.pendingStops])
+    setEditRouteDeliveredStops([...routeGroup.deliveredStops])
+    setEditRouteExcludedOrderIds([])
+    setEditRouteIncludedOrderIds([])
+    setEditRouteSearchAvailable('')
+    setEditRouteModalOpen(true)
+  }
+
+  // Toggle de exclusão de parada da rota
+  const handleToggleExcludeOrderFromRoute = (orderId: string) => {
+    setEditRouteExcludedOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId],
+    )
+  }
+
+  // Toggle de inclusão de entrega disponível na rota
+  const handleToggleIncludeOrderInEditRoute = (orderId: string) => {
+    setEditRouteIncludedOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId],
+    )
+  }
+
+  // Salvar Edição de Rota: aplica exclusões/inclusões + otimiza rota automaticamente + persiste
+  const handleConfirmSaveRouteEdit = async () => {
+    if (!targetCourierForEditRoute) return
+
+    // Validar se sobrará ao menos 1 parada ativa na rota
+    const remainingStopsCount =
+      editRoutePendingStops.length -
+      editRouteExcludedOrderIds.length +
+      editRouteIncludedOrderIds.length
+
+    if (remainingStopsCount === 0 && editRouteDeliveredStops.length === 0) {
+      toast.warning(
+        'A rota não pode ficar vazia. Se deseja desmanchar a rota por completo, utilize o botão "Cancelar Rota".',
+      )
+      return
+    }
+
+    try {
+      setIsSubmittingEditRoute(true)
+      const res = await deliveryService.editActiveRouteAndOptimize({
+        courierId: targetCourierForEditRoute.id,
+        removeOrderIds: editRouteExcludedOrderIds,
+        addOrderIds: editRouteIncludedOrderIds,
+        settings: appSettings,
+      })
+
+      // Atualizar localOrders no estado para refletir imediatamente as alterações
+      setLocalOrders((prev) =>
+        prev.map((o) => {
+          // Pedidos removidos: voltam para pending sem entregador
+          if (editRouteExcludedOrderIds.includes(o.id)) {
+            return {
+              ...o,
+              courier_id: undefined,
+              status: 'pending',
+              sequence: undefined,
+              route_released: false,
+              route_released_at: undefined,
+              route_started: false,
+              route_started_at: undefined,
+              route_finished: false,
+              route_finished_at: undefined,
+            }
+          }
+          // Pedidos adicionados: recebem courier_id e status da rota
+          if (editRouteIncludedOrderIds.includes(o.id)) {
+            const isRouteStarted =
+              editRoutePendingStops.some((s) => s.route_started) ||
+              editRouteDeliveredStops.some((s) => s.route_started)
+            return {
+              ...o,
+              courier_id: targetCourierForEditRoute.id,
+              route_released: true,
+              route_started: isRouteStarted,
+              status: isRouteStarted ? 'in_transit' : 'assigned',
+            }
+          }
+          return o
+        }),
+      )
+
+      // Limpar seleções de Step 2 caso algum pedido adicionado estivesse selecionado
+      if (editRouteIncludedOrderIds.length > 0) {
+        setSelectedOrderIds((prev) => prev.filter((id) => !editRouteIncludedOrderIds.includes(id)))
+      }
+
+      toast.success(
+        `Rota de ${targetCourierForEditRoute.name} editada e otimizada com sucesso! ${res.finalCount} parada(s) (${res.totalDistanceKm} km).`,
+      )
+
+      setEditRouteModalOpen(false)
+      setTargetCourierForEditRoute(null)
+      setEditRouteExcludedOrderIds([])
+      setEditRouteIncludedOrderIds([])
+      onRoutesApplied()
+    } catch (err: any) {
+      console.error('Erro ao salvar edição de rota:', err)
+      toast.error(`Falha ao salvar edição de rota: ${err?.message || 'Erro desconhecido'}`)
+    } finally {
+      setIsSubmittingEditRoute(false)
+    }
+  }
 
   // Abrir modal de inclusão de cliente em rota ativa
   const handleOpenIncludeCustomerModal = (courier: UserRecord) => {
@@ -3616,18 +3736,29 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             <Button
                               type="button"
                               size="sm"
+                              variant="default"
+                              onClick={() => handleOpenEditRouteModal(routeGroup)}
+                              className="h-7 text-[11px] px-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold flex items-center gap-1 shadow-sm flex-1"
+                              title="Editar rota: excluir/incluir clientes com reotimização automática"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              Editar Rota
+                            </Button>
+
+                            <Button
+                              type="button"
+                              size="sm"
                               variant="outline"
                               onClick={() => handleOpenIncludeCustomerModal(courier)}
                               disabled={strictlyPendingOrders.length === 0}
-                              className="h-7 text-[11px] px-2 text-indigo-700 border-indigo-300 hover:bg-indigo-50 dark:text-indigo-300 dark:border-indigo-800 dark:hover:bg-indigo-950/50 flex items-center gap-1 flex-1"
+                              className="h-7 text-[11px] px-2 text-indigo-700 border-indigo-300 hover:bg-indigo-50 dark:text-indigo-300 dark:border-indigo-800 dark:hover:bg-indigo-950/50 flex items-center gap-1"
                               title={
                                 strictlyPendingOrders.length === 0
                                   ? 'Nenhuma entrega pendente disponível para incluir'
                                   : 'Acrescentar cliente na rota em andamento deste entregador'
                               }
                             >
-                              <Plus className="h-3 w-3" />
-                              Incluir Cliente
+                              <Plus className="h-3 w-3" />+ Incluir Cliente
                             </Button>
 
                             <Button
@@ -3635,8 +3766,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                               size="sm"
                               variant="outline"
                               onClick={() => handleReoptimizeRoute(routeGroup)}
-                              className="h-7 text-[11px] px-2 text-blue-700 border-blue-300 hover:bg-blue-50 dark:text-blue-300 dark:border-blue-800 dark:hover:bg-blue-950/50 flex items-center gap-1 flex-1"
-                              title="Reabrir paradas e entregador para reotimizar rota"
+                              className="h-7 text-[11px] px-2 text-blue-700 border-blue-300 hover:bg-blue-50 dark:text-blue-300 dark:border-blue-800 dark:hover:bg-blue-950/50 flex items-center gap-1"
+                              title="Reabrir paradas e entregador no fluxo para reotimizar rota"
                             >
                               <RefreshCw className="h-3 w-3" />
                               Reotimizar Rota

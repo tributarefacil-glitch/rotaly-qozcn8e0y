@@ -1855,6 +1855,181 @@ export const deliveryService = {
     }
   },
 
+  /**
+   * Excluir um pedido da rota ativa do entregador
+   * - Retorna o pedido para o pool de pendentes:
+   *     courier_id = null
+   *     status = 'pending'
+   *     sequence = null
+   *     route_released = false
+   *     route_released_at = null
+   *     route_started = false
+   *     route_started_at = null
+   *     route_finished = false
+   *     route_finished_at = null
+   * - NUNCA permite excluir pedidos já concluídos ('delivered')
+   * - Se autoResequence = true, reexecuta o motor viário e salva a nova sequência dos pedidos restantes
+   */
+  async removeOrderFromActiveRoute(params: {
+    orderId: string
+    courierId: string
+    settings?: Partial<AppSettingsRecord> | null
+    autoResequence?: boolean
+  }): Promise<{ success: boolean; remainingCount: number }> {
+    const { orderId, courierId, settings, autoResequence = true } = params
+    try {
+      const order = await pb.collection<OrderRecord>('orders').getOne(orderId)
+      if (order.status === 'delivered') {
+        throw new Error('Entregas já concluídas não podem ser removidas da rota.')
+      }
+
+      await pb.collection('orders').update(orderId, {
+        courier_id: null,
+        status: 'pending',
+        sequence: null,
+        route_released: false,
+        route_released_at: null,
+        route_started: false,
+        route_started_at: null,
+        route_finished: false,
+        route_finished_at: null,
+      })
+
+      let remainingCount = 0
+      if (autoResequence) {
+        const reseqRes = await this.resequenceActiveRouteForCourier(courierId, settings)
+        remainingCount = reseqRes.sequencedCount
+      } else {
+        const remainingOrders = await pb.collection<OrderRecord>('orders').getFullList({
+          filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished!=true`,
+          requestKey: null,
+        })
+        remainingCount = remainingOrders.length
+      }
+
+      return { success: true, remainingCount }
+    } catch (err) {
+      console.error('Error removing order from active route:', err)
+      throw err
+    }
+  },
+
+  /**
+   * Edita uma rota ativa de um entregador em uma única operação transacional:
+   * 1. Remove os pedidos selecionados para exclusão (voltam para pendentes no pool)
+   * 2. Inclui novos pedidos selecionados na rota
+   * 3. OTIMIZA AUTOMATICAMENTE toda a rota viária (TSP determinístico + 2-Opt)
+   * 4. Persiste a nova sequência e métricas viárias nos pedidos
+   * 5. Preserva estritamente os pedidos já concluídos
+   * 6. Notifica o entregador com as atualizações
+   */
+  async editActiveRouteAndOptimize(params: {
+    courierId: string
+    removeOrderIds?: string[]
+    addOrderIds?: string[]
+    settings?: Partial<AppSettingsRecord> | null
+  }): Promise<{
+    success: boolean
+    removedCount: number
+    addedCount: number
+    finalCount: number
+    totalDistanceKm: number
+  }> {
+    const { courierId, removeOrderIds = [], addOrderIds = [], settings } = params
+    try {
+      // 1. Remover pedidos solicitados (garantindo que nenhum entregue seja desfeito)
+      let removedCount = 0
+      for (const orderId of removeOrderIds) {
+        try {
+          const ord = await pb.collection<OrderRecord>('orders').getOne(orderId)
+          if (ord.status !== 'delivered') {
+            await pb.collection('orders').update(orderId, {
+              courier_id: null,
+              status: 'pending',
+              sequence: null,
+              route_released: false,
+              route_released_at: null,
+              route_started: false,
+              route_started_at: null,
+              route_finished: false,
+              route_finished_at: null,
+            })
+            removedCount++
+          }
+        } catch (removeErr) {
+          console.warn(`Aviso ao remover pedido ${orderId} da rota:`, removeErr)
+        }
+      }
+
+      // 2. Identificar se a rota do entregador já está iniciada (route_started=true)
+      const existingActive = await pb.collection<OrderRecord>('orders').getFullList({
+        filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled'`,
+        requestKey: null,
+      })
+      const isRouteStarted = existingActive.some((o) => o.route_started === true)
+      const sampleOrder = existingActive[0]
+      const bases = await this.getBaseAddresses()
+      const defaultBase = bases.find((b) => b.is_default) || bases[0]
+      const nowIso = new Date().toISOString()
+
+      // 3. Adicionar novos pedidos à rota ativa
+      let addedCount = 0
+      for (const orderId of addOrderIds) {
+        try {
+          const updatePayload: Partial<OrderRecord> = {
+            courier_id: courierId,
+            route_released: true,
+            route_released_at: sampleOrder?.route_released_at || nowIso,
+            start_base_name: sampleOrder?.start_base_name || defaultBase?.name || 'Mais Saudavel',
+            start_base_address: sampleOrder?.start_base_address || defaultBase?.address,
+            start_base_lat: sampleOrder?.start_base_lat || defaultBase?.lat || -22.7001402,
+            start_base_lng: sampleOrder?.start_base_lng || defaultBase?.lng || -43.2982834,
+          }
+
+          if (isRouteStarted) {
+            updatePayload.route_started = true
+            updatePayload.route_started_at = sampleOrder?.route_started_at || nowIso
+            updatePayload.status = 'in_transit'
+          } else {
+            updatePayload.status = 'assigned'
+          }
+
+          await pb.collection('orders').update(orderId, updatePayload)
+          addedCount++
+        } catch (addErr) {
+          console.warn(`Aviso ao adicionar pedido ${orderId} na rota:`, addErr)
+        }
+      }
+
+      // 4. OTIMIZAÇÃO AUTOMÁTICA VIÁRIA E PERSISTÊNCIA DA SEQUÊNCIA
+      const reseqRes = await this.resequenceActiveRouteForCourier(courierId, settings)
+
+      // 5. Notificar o entregador se houver modificações
+      try {
+        await this.createNotification({
+          user_id: courierId,
+          title: '🔄 Rota Atualizada e Otimizada!',
+          message: `Sua rota foi reotimizada pela central (${reseqRes.sequencedCount} parada(s)). A nova sequência viária já está sincronizada no seu app.`,
+          type: 'order',
+          read: false,
+        })
+      } catch (notifErr) {
+        console.warn('Erro ao enviar notificação de rota atualizada:', notifErr)
+      }
+
+      return {
+        success: true,
+        removedCount,
+        addedCount,
+        finalCount: reseqRes.sequencedCount,
+        totalDistanceKm: reseqRes.totalDistanceKm,
+      }
+    } catch (err) {
+      console.error('Error editing and optimizing active route:', err)
+      throw err
+    }
+  },
+
   // Calculate Fuel Cost
   // Formula: Distância (km) * Preço do Litro (R$/L) / Consumo (km/L)
   calculateFuelCost(distanceKm: number, fuelPrice = 5.59, consumptionKml = 35.0): number {
