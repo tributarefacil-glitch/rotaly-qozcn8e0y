@@ -38,6 +38,10 @@ import {
   Activity,
   Check,
   ExternalLink,
+  Gauge,
+  Loader2,
+  Receipt,
+  UserCheck,
 } from 'lucide-react'
 import {
   OrderRecord,
@@ -49,18 +53,21 @@ import {
 import { deliveryService } from '@/services/deliveryService'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import {
+  formatPbTimestamp,
   getOperationalWindow,
   isNeutralizedSystemError,
   isTimestampInOperationalWindow,
   isTodayOrder,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
+import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { useToast } from '@/hooks/use-toast'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 
 interface ReportsSectionProps {
   orders: OrderRecord[]
   couriers: UserRecord[]
+  sellers?: UserRecord[]
   settings?: AppSettingsRecord | null
   offRouteEvents?: OffRouteEventRecord[]
   locations?: LocationRecord[]
@@ -69,13 +76,19 @@ interface ReportsSectionProps {
 export const ReportsSection: React.FC<ReportsSectionProps> = ({
   orders,
   couriers,
+  sellers: propSellers,
   settings,
   offRouteEvents = [],
   locations = [],
 }) => {
   const { toast } = useToast()
   // SELETOR DE PERÍODO: hoje, semana, mês, personalizado (todos)
-  const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all'>('today')
+  const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'all'>('month')
+  const [periodOrders, setPeriodOrders] = useState<OrderRecord[]>([])
+  const [isLoadingPeriodOrders, setIsLoadingPeriodOrders] = useState<boolean>(false)
+  const [loadedPeriod, setLoadedPeriod] = useState<string | null>(null)
+  const [sellersList, setSellersList] = useState<UserRecord[]>(propSellers || [])
+
   const [copiedLink, setCopiedLink] = useState(false)
   const [selectedCourierForModal, setSelectedCourierForModal] = useState<UserRecord | null>(null)
   const [isCourierModalOpen, setIsCourierModalOpen] = useState(false)
@@ -83,13 +96,94 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   const fuelPrice = settings?.fuel_price_per_liter || 5.59
   const fuelConsumption = settings?.fuel_consumption_kml || 35.0
 
+  // Se sellers não foi passado via props, carregar do deliveryService
+  React.useEffect(() => {
+    if (propSellers && propSellers.length > 0) {
+      setSellersList(propSellers)
+      return
+    }
+    let isMounted = true
+    deliveryService
+      .getSellers()
+      .then((s) => {
+        if (isMounted) setSellersList(s)
+      })
+      .catch((err) => console.warn('Erro ao carregar vendedores para relatórios:', err))
+    return () => {
+      isMounted = false
+    }
+  }, [propSellers])
+
+  // Carregar os pedidos do período diretamente do banco via paginação de ~200
+  React.useEffect(() => {
+    let isCancelled = false
+    const fetchPeriodData = async () => {
+      // Para 'today', se já temos initialOrders filtrados ou podemos buscar a janela operacional
+      const now = new Date()
+      let filter = ''
+
+      if (period === 'today') {
+        const opWindow = getOperationalWindow(now)
+        const startStr = opWindow.startPbString
+        const endStr = opWindow.endPbString
+        filter = `(created >= '${startStr}' && created <= '${endStr}') || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
+      } else if (period === 'week') {
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        const startStr = formatPbTimestamp(sevenDaysAgo)
+        filter = `created >= '${startStr}'`
+      } else if (period === 'month') {
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+        const startStr = formatPbTimestamp(thirtyDaysAgo)
+        filter = `created >= '${startStr}'`
+      } else {
+        // all: sem filtro de data
+        filter = ''
+      }
+
+      setIsLoadingPeriodOrders(true)
+      try {
+        const fetched = await deliveryService.getOrdersInBatches(
+          filter,
+          '-created',
+          'customer_id,courier_id,seller_id',
+          200,
+        )
+        if (!isCancelled) {
+          setPeriodOrders(fetched)
+          setLoadedPeriod(period)
+        }
+      } catch (err) {
+        console.error('Erro ao carregar pedidos do período:', err)
+        if (!isCancelled) {
+          // Fallback para orders em caso de falha de rede
+          setPeriodOrders(orders)
+          setLoadedPeriod(period)
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingPeriodOrders(false)
+        }
+      }
+    }
+
+    fetchPeriodData()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [period])
+
+  // Pedidos ativos baseados no carregamento direto do período
+  const activeOrdersPool =
+    periodOrders.length > 0 || loadedPeriod === period ? periodOrders : orders
+
   // Filter orders by period usando a janela operacional oficial (05:00 - 23:59)
-  // E exclusão obrigatória de pedidos neutralizados como erro de sistema (não são cancelamentos nem entregas operacionais)
+  // E exclusão obrigatória de pedidos neutralizados como erro de sistema
   const filteredOrders = useMemo(() => {
     const now = new Date()
     const currentWindow = getOperationalWindow(now)
 
-    return orders.filter((o) => {
+    return activeOrdersPool.filter((o) => {
       // Excluir expressamente qualquer pedido neutralizado como erro de sistema de todas as métricas
       if (isNeutralizedSystemError(o)) {
         return false
@@ -99,13 +193,14 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         return isTodayOrder(o, currentWindow)
       }
 
-      // Avalia o timestamp mais significativo do pedido para intervalos semanais/mensais
-      // Nota: order.updated removido para consistência temporal com isTodayOrder
+      // Avalia o timestamp do pedido para intervalos semanais/mensais
+      // Usando created como âncora principal (respeitando o filtro do período carregado),
+      // ou timestamps de conclusão de rota se existirem.
       const relevantTs =
+        parseSafeTimestamp(o.created) ||
         parseSafeTimestamp(o.route_finished_at) ||
         parseSafeTimestamp(o.actual_arrival) ||
         parseSafeTimestamp(o.route_started_at) ||
-        parseSafeTimestamp(o.created) ||
         0
 
       if (period === 'week') {
@@ -118,29 +213,32 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       }
       return true
     })
-  }, [orders, period])
+  }, [activeOrdersPool, period])
 
-  // MÉTRICA 1: Resumo do Período
+  // MÉTRICA 1: Resumo do Período com Regras Blindadas Rotaly
+  // Total Válido = pedidos do período EXCETO erros de sistema neutralizados
+  // Bem-sucedidas % = status='delivered' / total válido
+  // Com Problema % = (client_absent + address_error NÃO neutralizados) / total válido
+  // Canceladas % = cancelled (excluindo neutralizados) / total válido
   const summary = useMemo(() => {
-    const total = filteredOrders.length
+    // filteredOrders já exclui isNeutralizedSystemError(o)
+    const totalValido = filteredOrders.length
     const successful = filteredOrders.filter((o) => o.status === 'delivered').length
     const problem = filteredOrders.filter(
-      (o) =>
-        !isNeutralizedSystemError(o) &&
-        (o.status === 'address_error' || o.status === 'client_absent'),
+      (o) => o.status === 'address_error' || o.status === 'client_absent',
     ).length
-    const cancelled = filteredOrders.filter(
-      (o) => o.status === 'cancelled' && !isNeutralizedSystemError(o),
-    ).length
+    const cancelled = filteredOrders.filter((o) => o.status === 'cancelled').length
     const inTransit = filteredOrders.filter((o) => o.status === 'in_transit').length
-    const pending = filteredOrders.filter((o) => o.status === 'pending').length
+    const pending = filteredOrders.filter(
+      (o) => o.status === 'pending' || o.status === 'assigned',
+    ).length
 
-    const successRate = total > 0 ? (successful / total) * 100 : 0
-    const problemRate = total > 0 ? (problem / total) * 100 : 0
-    const cancelRate = total > 0 ? (cancelled / total) * 100 : 0
+    const successRate = totalValido > 0 ? (successful / totalValido) * 100 : 0
+    const problemRate = totalValido > 0 ? (problem / totalValido) * 100 : 0
+    const cancelRate = totalValido > 0 ? (cancelled / totalValido) * 100 : 0
 
     return {
-      total,
+      total: totalValido,
       successful,
       problem,
       cancelled,
@@ -152,12 +250,15 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     }
   }, [filteredOrders])
 
-  // MÉTRICA 2: Por Entregador
+  // MÉTRICA 2: Por Entregador (Gráfico & Resumos)
   const courierStats = useMemo(() => {
     return couriers.map((courier) => {
       const courierOrders = filteredOrders.filter((o) => o.courier_id === courier.id)
-      // CORREÇÃO: Gráfico de entregas por entregador deve contabilizar estritamente entregas concluídas (status === 'delivered')
       const deliveredCount = courierOrders.filter((o) => o.status === 'delivered').length
+      const problemCount = courierOrders.filter(
+        (o) => o.status === 'address_error' || o.status === 'client_absent',
+      ).length
+      const cancelledCount = courierOrders.filter((o) => o.status === 'cancelled').length
       const count = deliveredCount
       const percentOfTotal = summary.successful > 0 ? (count / summary.successful) * 100 : 0
       const totalAssignedInPeriod = courierOrders.length
@@ -187,13 +288,269 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       return {
         courier,
         count,
+        deliveredCount,
+        problemCount,
+        cancelledCount,
+        assignedCount: totalAssignedInPeriod,
         percentOfTotal: Number(percentOfTotal.toFixed(1)),
         successRate: Number(successRate.toFixed(1)),
         avgTimeMinutes,
         rating,
       }
     })
-  }, [couriers, filteredOrders, summary.total])
+  }, [filteredOrders, summary.successful])
+
+  // BREAKDOWN 1: VENDAS POR VENDEDOR
+  // Agrupar por seller_id (com expand users), nome, nº de pedidos, faturamento total (soma total_price em R$), ticket médio e % de participação.
+  const salesBySeller = useMemo(() => {
+    // Agrupamento por seller_id
+    const sellerMap = new Map<
+      string,
+      {
+        sellerId: string
+        sellerName: string
+        sellerEmail: string
+        ordersCount: number
+        totalRevenue: number
+      }
+    >()
+
+    // Total de faturamento do período para cálculo do % de participação
+    let periodTotalRevenue = 0
+
+    filteredOrders.forEach((order) => {
+      const sellerId = order.seller_id || 'sem_vendedor'
+      let sellerName = 'Não atribuído'
+      let sellerEmail = ''
+
+      if (order.expand?.seller_id) {
+        sellerName = order.expand.seller_id.name || order.expand.seller_id.email || 'Vendedor'
+        sellerEmail = order.expand.seller_id.email || ''
+      } else if (order.seller_id) {
+        const found = sellersList.find((s) => s.id === order.seller_id)
+        if (found) {
+          sellerName = found.name || found.email || 'Vendedor'
+          sellerEmail = found.email || ''
+        } else {
+          sellerName = `Vendedor (${order.seller_id.slice(0, 5)})`
+        }
+      }
+
+      const orderPrice =
+        typeof order.total_price === 'number' && order.total_price > 0 ? order.total_price : 0
+      periodTotalRevenue += orderPrice
+
+      const entry = sellerMap.get(sellerId) || {
+        sellerId,
+        sellerName,
+        sellerEmail,
+        ordersCount: 0,
+        totalRevenue: 0,
+      }
+      entry.ordersCount += 1
+      entry.totalRevenue += orderPrice
+      sellerMap.set(sellerId, entry)
+    })
+
+    const list = Array.from(sellerMap.values()).map((item) => {
+      const avgTicket = item.ordersCount > 0 ? item.totalRevenue / item.ordersCount : 0
+      const sharePercentage =
+        periodTotalRevenue > 0 ? (item.totalRevenue / periodTotalRevenue) * 100 : 0
+
+      return {
+        ...item,
+        avgTicket: Number(avgTicket.toFixed(2)),
+        sharePercentage: Number(sharePercentage.toFixed(1)),
+      }
+    })
+
+    // Ordenar por faturamento desc (ou pedidos desc)
+    list.sort((a, b) => b.totalRevenue - a.totalRevenue || b.ordersCount - a.ordersCount)
+
+    return {
+      items: list,
+      totalRevenue: periodTotalRevenue,
+      totalOrders: filteredOrders.length,
+    }
+  }, [filteredOrders, sellersList])
+
+  // BREAKDOWN 2: ENTREGAS POR ENTREGADOR
+  // Agrupar por courier_id (expand users), nome, atribuídas, concluídas (delivered), com problema, canceladas e taxa de sucesso.
+  const deliveriesByCourier = useMemo(() => {
+    // Mapeia tanto os couriers passados como eventuais courier_ids encontrados nos pedidos
+    const courierMap = new Map<
+      string,
+      {
+        courierId: string
+        courierName: string
+        courierEmail: string
+        vehicleType: string
+        vehiclePlate: string
+        assignedCount: number
+        deliveredCount: number
+        problemCount: number
+        cancelledCount: number
+        rawCourier?: UserRecord
+      }
+    >()
+
+    // Inicializar com couriers conhecidos
+    couriers.forEach((c) => {
+      courierMap.set(c.id, {
+        courierId: c.id,
+        courierName: c.name || c.email || 'Entregador',
+        courierEmail: c.email || '',
+        vehicleType: c.vehicle_type || 'moto',
+        vehiclePlate: c.vehicle_plate || '—',
+        assignedCount: 0,
+        deliveredCount: 0,
+        problemCount: 0,
+        cancelledCount: 0,
+        rawCourier: c,
+      })
+    })
+
+    // Contabilizar pedidos do período
+    filteredOrders.forEach((o) => {
+      const courierId = o.courier_id || 'sem_entregador'
+      let entry = courierMap.get(courierId)
+      if (!entry) {
+        let name = 'Não atribuído'
+        let email = ''
+        let vehicleType = 'moto'
+        let vehiclePlate = '—'
+        let raw: UserRecord | undefined = undefined
+
+        if (o.expand?.courier_id) {
+          name = o.expand.courier_id.name || o.expand.courier_id.email || 'Entregador'
+          email = o.expand.courier_id.email || ''
+          vehicleType = o.expand.courier_id.vehicle_type || 'moto'
+          vehiclePlate = o.expand.courier_id.vehicle_plate || '—'
+          raw = o.expand.courier_id as unknown as UserRecord
+        }
+        entry = {
+          courierId,
+          courierName: name,
+          courierEmail: email,
+          vehicleType,
+          vehiclePlate,
+          assignedCount: 0,
+          deliveredCount: 0,
+          problemCount: 0,
+          cancelledCount: 0,
+          rawCourier: raw,
+        }
+        courierMap.set(courierId, entry)
+      }
+
+      entry.assignedCount += 1
+      if (o.status === 'delivered') {
+        entry.deliveredCount += 1
+      } else if (o.status === 'address_error' || o.status === 'client_absent') {
+        entry.problemCount += 1
+      } else if (o.status === 'cancelled') {
+        entry.cancelledCount += 1
+      }
+    })
+
+    const list = Array.from(courierMap.values()).map((c) => {
+      const successRate = c.assignedCount > 0 ? (c.deliveredCount / c.assignedCount) * 100 : 0
+      return {
+        ...c,
+        successRate: Number(successRate.toFixed(1)),
+      }
+    })
+
+    // Ordenar por atribuídas desc
+    list.sort((a, b) => b.assignedCount - a.assignedCount)
+
+    return list
+  }, [filteredOrders])
+
+  // BREAKDOWN 3: HISTÓRICO DE KM E COMBUSTÍVEL POR ENTREGADOR
+  // KM oficial com hierarquia blindada: odômetro (km_odometro ou odometro_final - odometro_inicial quando > 0) > total_route_with_return_km > cálculo viário
+  // Combustível = soma total_route_fuel_cost, bicicleta = R$ 0, erros neutralizados zerados/fora.
+  const fuelAndKmByCourier = useMemo(() => {
+    return couriers.map((courier) => {
+      // Filtrar pedidos elegíveis do entregador no período
+      const courierOrders = filteredOrders.filter((o) => o.courier_id === courier.id)
+
+      // Invocar motor oficial de telemetria e combustível Rotaly
+      const metrics = calculateCourierFuelMetrics({
+        courier,
+        advances: [],
+        orders: filteredOrders, // contexto dos pedidos do período
+        locations,
+        offRouteEvents,
+        settings: settings || null,
+        periodFilter: 'all', // já está filtrado em filteredOrders
+      })
+
+      // Adicionalmente verificar os campos nativos do banco caso já estejam gravados
+      const rawFuelCostSum = courierOrders.reduce((sum, o) => {
+        if (courier.vehicle_type === 'bicicleta') return 0
+        if (typeof o.total_route_fuel_cost === 'number' && o.total_route_fuel_cost > 0) {
+          return sum + o.total_route_fuel_cost
+        }
+        return sum
+      }, 0)
+
+      // Odômetro total do entregador
+      const totalOdometer = courierOrders.reduce((sum, o) => {
+        if (typeof o.km_odometro === 'number' && o.km_odometro > 0) {
+          return sum + o.km_odometro
+        }
+        if (
+          typeof o.odometro_final === 'number' &&
+          typeof o.odometro_inicial === 'number' &&
+          o.odometro_final > o.odometro_inicial
+        ) {
+          return sum + (o.odometro_final - o.odometro_inicial)
+        }
+        return sum
+      }, 0)
+
+      // KM Histórico de rotas com retorno
+      const totalRoadReturnKm = courierOrders.reduce((sum, o) => {
+        if (typeof o.total_route_with_return_km === 'number' && o.total_route_with_return_km > 0) {
+          return sum + o.total_route_with_return_km
+        }
+        return sum
+      }, 0)
+
+      // Hierarquia oficial de KM: odômetro > total_route_with_return_km > métricas telemetria
+      let officialKm = metrics.totalOfficialKm
+      let kmSource = metrics.calculationSourceLabel || 'telemetria'
+
+      if (totalOdometer > 0) {
+        officialKm = Number(totalOdometer.toFixed(1))
+        kmSource = 'Odômetro da Moto'
+      } else if (totalRoadReturnKm > 0) {
+        officialKm = Number(Math.max(totalRoadReturnKm, officialKm).toFixed(1))
+        kmSource = 'Histórico Viário (c/ retorno)'
+      }
+
+      // Combustível: bicicleta = 0
+      let totalFuel = courier.vehicle_type === 'bicicleta' ? 0 : metrics.totalSpent
+      if (courier.vehicle_type !== 'bicicleta' && rawFuelCostSum > totalFuel) {
+        totalFuel = Number(rawFuelCostSum.toFixed(2))
+      }
+
+      return {
+        courier,
+        deliveredCount: metrics.deliveriesCount,
+        officialKm,
+        kmSource,
+        totalOdometer: Number(totalOdometer.toFixed(1)),
+        totalRoadReturnKm: Number(totalRoadReturnKm.toFixed(1)),
+        deviationKm: metrics.totalDeviationKm,
+        fuelCost: Number(totalFuel.toFixed(2)),
+        isBicycle: courier.vehicle_type === 'bicicleta',
+        vehicleType: courier.vehicle_type || 'moto',
+        vehiclePlate: courier.vehicle_plate || '—',
+      }
+    })
+  }, [couriers, filteredOrders, locations, offRouteEvents, settings])
 
   // MÉTRICA 3: Análise de Tempo (tempo médio, mínimo, máximo, horários de pico)
   const timeAnalysis = useMemo(() => {
@@ -275,7 +632,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         order: o,
         allCourierLocations: locations,
         courierEvents: offRouteEvents,
-        allCourierOrders: orders,
+        allCourierOrders: activeOrdersPool,
       })
 
       const orderKm = realTelemetry.officialRealKm
@@ -304,7 +661,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       avgCostPerDelivery: Number(avgCostPerDelivery.toFixed(2)),
       activeRouteOrdersCount: activeRouteOrders.length,
     }
-  }, [filteredOrders, couriers, settings, offRouteEvents, orders])
+  }, [filteredOrders, couriers, settings, offRouteEvents, activeOrdersPool, locations])
 
   // MÉTRICA 5: Problemas Registrados (tipo de problema, frequência, entregador)
   const problemRecords = useMemo(() => {
@@ -482,6 +839,13 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
           <ExternalLink className="h-3.5 w-3.5" />
         </Link>
       </div>
+
+      {isLoadingPeriodOrders && (
+        <div className="flex items-center justify-center p-3 rounded-lg bg-blue-50 border border-blue-200 text-[#0052CC] text-xs font-semibold gap-2 animate-pulse">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>Carregando dados históricos do período selecionado diretamente do banco...</span>
+        </div>
+      )}
 
       {/* 1. RESUMO DO PERÍODO */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -749,77 +1113,319 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         </Card>
       </div>
 
-      {/* 2. MÉTRICA POR ENTREGADOR (TABELA DETALHADA) */}
-      <Card className="shadow-sm">
-        <CardHeader className="pb-3 border-b">
-          <CardTitle className="text-base font-bold flex items-center gap-2">
-            <Users className="h-4 w-4 text-purple-600" />
-            2. Desempenho Detalhado por Entregador
-          </CardTitle>
-          <CardDescription className="text-xs">
-            Taxa de sucesso, tempo médio por corrida e avaliação por motorista
-          </CardDescription>
+      {/* 2. VENDAS POR VENDEDOR */}
+      <Card className="shadow-sm border-slate-200">
+        <CardHeader className="pb-3 border-b bg-slate-50/50">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900">
+                <Receipt className="h-4 w-4 text-[#0052CC]" />
+                Vendas por Vendedor
+              </CardTitle>
+              <CardDescription className="text-xs text-slate-500">
+                Faturamento total, pedidos gerados, ticket médio e participação de cada vendedor no
+                período
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold text-slate-600 bg-white px-2.5 py-1 rounded-md border shadow-sm">
+                Faturamento Total:{' '}
+                <strong className="text-emerald-700 font-mono">
+                  R${' '}
+                  {salesBySeller.totalRevenue.toLocaleString('pt-BR', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </strong>
+              </span>
+              <span className="text-xs text-slate-500">
+                {salesBySeller.items.length} vendedores
+              </span>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-gray-50 text-gray-500 uppercase border-b">
+              <thead className="bg-slate-50 text-slate-600 uppercase border-b">
                 <tr>
-                  <th className="py-3 px-4">Nome do Entregador</th>
-                  <th className="py-3 px-4">Total Entregas</th>
-                  <th className="py-3 px-4">% do Total</th>
-                  <th className="py-3 px-4">Taxa de Sucesso</th>
-                  <th className="py-3 px-4">Tempo Médio</th>
-                  <th className="py-3 px-4">Avaliação</th>
-                  <th className="py-3 px-4 text-right">Relatório de Combustível</th>
+                  <th className="py-3 px-4">Vendedor</th>
+                  <th className="py-3 px-4 text-center">Nº Pedidos</th>
+                  <th className="py-3 px-4">Faturamento (R$)</th>
+                  <th className="py-3 px-4">Ticket Médio</th>
+                  <th className="py-3 px-4">Participação (%)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {courierStats.map((item) => (
+              <tbody className="divide-y divide-slate-100">
+                {salesBySeller.items.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-center text-slate-400">
+                      Nenhum pedido com vendedor registrado no período selecionado.
+                    </td>
+                  </tr>
+                ) : (
+                  salesBySeller.items.map((seller) => (
+                    <tr key={seller.sellerId} className="hover:bg-slate-50 transition">
+                      <td className="py-3 px-4 font-semibold text-slate-900">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-[#0052CC] font-bold text-xs uppercase">
+                            {seller.sellerName.slice(0, 2)}
+                          </div>
+                          <div>
+                            <span className="block font-medium">{seller.sellerName}</span>
+                            {seller.sellerEmail && (
+                              <span className="block text-[11px] text-slate-400 font-normal">
+                                {seller.sellerEmail}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-bold text-slate-800 text-center">
+                        {seller.ordersCount}
+                      </td>
+                      <td className="py-3 px-4 font-mono font-bold text-emerald-700">
+                        R${' '}
+                        {seller.totalRevenue.toLocaleString('pt-BR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-700">
+                        R${' '}
+                        {seller.avgTicket.toLocaleString('pt-BR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-[#0052CC] rounded-full"
+                              style={{
+                                width: `${Math.min(100, Math.max(0, seller.sharePercentage))}%`,
+                              }}
+                            />
+                          </div>
+                          <span className="font-semibold text-slate-700">
+                            {seller.sharePercentage}%
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 3. ENTREGAS POR ENTREGADOR (BREAKDOWN COMPLETO) */}
+      <Card className="shadow-sm border-slate-200">
+        <CardHeader className="pb-3 border-b bg-slate-50/50">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900">
+                <Truck className="h-4 w-4 text-[#0052CC]" />
+                Entregas por Entregador
+              </CardTitle>
+              <CardDescription className="text-xs text-slate-500">
+                Total atribuídas, concluídas com sucesso (delivered), ocorrências com problema,
+                canceladas e taxa de sucesso
+              </CardDescription>
+            </div>
+            <span className="text-xs text-slate-500">
+              {deliveriesByCourier.length} entregadores ativos
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-600 uppercase border-b">
+                <tr>
+                  <th className="py-3 px-4">Entregador</th>
+                  <th className="py-3 px-4 text-center">Atribuídas</th>
+                  <th className="py-3 px-4 text-center">Concluídas</th>
+                  <th className="py-3 px-4 text-center">Com Problema</th>
+                  <th className="py-3 px-4 text-center">Canceladas</th>
+                  <th className="py-3 px-4">Taxa de Sucesso</th>
+                  <th className="py-3 px-4 text-right">Ação</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {deliveriesByCourier.map((item) => (
                   <tr
-                    key={item.courier.id}
-                    className="hover:bg-gray-50 cursor-pointer"
+                    key={item.courierId}
+                    className="hover:bg-slate-50 cursor-pointer transition"
                     onClick={() => {
-                      setSelectedCourierForModal(item.courier)
-                      setIsCourierModalOpen(true)
+                      if (item.rawCourier) {
+                        setSelectedCourierForModal(item.rawCourier)
+                        setIsCourierModalOpen(true)
+                      }
                     }}
                   >
-                    <td className="py-3 px-4 font-semibold text-gray-900">
+                    <td className="py-3 px-4 font-semibold text-slate-900">
                       <div className="flex items-center gap-2">
                         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-[#0052CC] font-bold text-xs uppercase">
-                          {item.courier.name ? item.courier.name.slice(0, 2) : 'EN'}
+                          {item.courierName ? item.courierName.slice(0, 2) : 'EN'}
                         </div>
                         <div>
-                          <span>{item.courier.name || item.courier.email}</span>
-                          <span className="block text-[10px] text-gray-400 font-normal">
-                            {item.courier.vehicle_plate || 'Sem placa'} •{' '}
-                            {item.courier.vehicle_type || 'moto'}
+                          <span>{item.courierName}</span>
+                          <span className="block text-[10px] text-slate-400 font-normal">
+                            {item.vehiclePlate} • {item.vehicleType}
                           </span>
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-4 font-bold text-gray-800">{item.count}</td>
-                    <td className="py-3 px-4 text-gray-600">{item.percentOfTotal}%</td>
+                    <td className="py-3 px-4 font-bold text-slate-800 text-center">
+                      {item.assignedCount}
+                    </td>
+                    <td className="py-3 px-4 font-bold text-emerald-700 text-center">
+                      {item.deliveredCount}
+                    </td>
+                    <td className="py-3 px-4 font-bold text-amber-600 text-center">
+                      {item.problemCount}
+                    </td>
+                    <td className="py-3 px-4 font-bold text-rose-600 text-center">
+                      {item.cancelledCount}
+                    </td>
                     <td className="py-3 px-4">
                       <Badge
                         variant="outline"
                         className={
                           item.successRate >= 90
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                            : 'bg-amber-50 text-amber-700 border-amber-300'
+                            : item.successRate >= 70
+                              ? 'bg-amber-50 text-amber-700 border-amber-300'
+                              : 'bg-rose-50 text-rose-700 border-rose-300'
                         }
                       >
                         {item.successRate}%
                       </Badge>
                     </td>
-                    <td className="py-3 px-4 text-gray-600 font-mono">
-                      ~{item.avgTimeMinutes} min
+                    <td className="py-3 px-4 text-right">
+                      {item.rawCourier && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedCourierForModal(item.rawCourier!)
+                            setIsCourierModalOpen(true)
+                          }}
+                          className="h-7 text-xs gap-1 border-blue-200 text-[#0052CC] hover:bg-blue-50 font-semibold"
+                        >
+                          <Fuel className="h-3.5 w-3.5 text-[#0052CC]" />
+                          KM & Combustível
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 4. HISTÓRICO DE KM E COMBUSTÍVEL POR ENTREGADOR */}
+      <Card className="shadow-sm border-slate-200">
+        <CardHeader className="pb-3 border-b bg-slate-50/50">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900">
+                <Gauge className="h-4 w-4 text-[#0052CC]" />
+                Histórico de KM e Combustível por Entregador
+              </CardTitle>
+              <CardDescription className="text-xs text-slate-500">
+                Hierarquia oficial de KM (Odômetro &gt; Histórico de Rota c/ Retorno &gt;
+                Telemetria) e reembolso de combustível (Bicicleta = R$ 0)
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 bg-white px-2.5 py-1 rounded-md border shadow-sm">
+                Total Período:{' '}
+                <strong className="text-emerald-700 font-mono">
+                  R$ {fuelAndKmByCourier.reduce((sum, c) => sum + c.fuelCost, 0).toFixed(2)}
+                </strong>
+              </span>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-600 uppercase border-b">
+                <tr>
+                  <th className="py-3 px-4">Entregador</th>
+                  <th className="py-3 px-4 text-center">Tipo / Placa</th>
+                  <th className="py-3 px-4 text-center">Entregas Efetivas</th>
+                  <th className="py-3 px-4">KM Oficial</th>
+                  <th className="py-3 px-4">Fonte do KM</th>
+                  <th className="py-3 px-4 text-right">Combustível Total (R$)</th>
+                  <th className="py-3 px-4 text-right">Detalhar</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {fuelAndKmByCourier.map((item) => (
+                  <tr
+                    key={item.courier.id}
+                    className="hover:bg-slate-50 cursor-pointer transition"
+                    onClick={() => {
+                      setSelectedCourierForModal(item.courier)
+                      setIsCourierModalOpen(true)
+                    }}
+                  >
+                    <td className="py-3 px-4 font-semibold text-slate-900">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-[#0052CC] font-bold text-xs uppercase">
+                          {item.courier.name ? item.courier.name.slice(0, 2) : 'EN'}
+                        </div>
+                        <div>
+                          <span>{item.courier.name || item.courier.email}</span>
+                          <span className="block text-[10px] text-slate-400 font-normal">
+                            {item.courier.email}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <Badge variant="outline" className="text-[10px] uppercase font-semibold">
+                        {item.vehicleType}
+                      </Badge>
+                      <span className="block text-[10px] text-slate-400 font-mono mt-0.5">
+                        {item.vehiclePlate}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center font-bold text-slate-800">
+                      {item.deliveredCount}
+                    </td>
+                    <td className="py-3 px-4 font-mono font-bold text-blue-700">
+                      {item.officialKm.toFixed(1)} km
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex items-center gap-1 text-amber-500 font-bold">
-                        <Star className="h-3.5 w-3.5 fill-amber-400" />
-                        <span>{item.rating.toFixed(1)}</span>
-                      </div>
+                      <Badge
+                        variant="outline"
+                        className={
+                          item.kmSource.includes('odômetro')
+                            ? 'bg-purple-50 text-purple-700 border-purple-200 text-[10px]'
+                            : item.kmSource.includes('viário')
+                              ? 'bg-blue-50 text-blue-700 border-blue-200 text-[10px]'
+                              : 'bg-slate-50 text-slate-600 border-slate-200 text-[10px]'
+                        }
+                      >
+                        {item.kmSource}
+                      </Badge>
+                    </td>
+                    <td className="py-3 px-4 text-right font-mono font-bold">
+                      {item.isBicycle ? (
+                        <span className="text-slate-400">R$ 0,00 (Bicicleta)</span>
+                      ) : (
+                        <span className="text-emerald-700">R$ {item.fuelCost.toFixed(2)}</span>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <Button
@@ -833,7 +1439,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
                         className="h-7 text-xs gap-1 border-blue-200 text-[#0052CC] hover:bg-blue-50 font-semibold"
                       >
                         <Fuel className="h-3.5 w-3.5 text-[#0052CC]" />
-                        Ver KM & Combustível
+                        Auditoria
                       </Button>
                     </td>
                   </tr>
@@ -1024,7 +1630,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
           setSelectedCourierForModal(null)
         }}
         courier={selectedCourierForModal}
-        orders={orders}
+        orders={activeOrdersPool}
         offRouteEvents={offRouteEvents}
         locations={locations}
         settings={settings || null}

@@ -192,6 +192,47 @@ export const deliveryService = {
     })
   },
 
+  /**
+   * Busca paginada completa em lotes de ~200 pedidos com loop até esgotar,
+   * garantindo que nenhum pedido do período seja descartado.
+   */
+  async getOrdersInBatches(
+    filter = '',
+    sort = '-created',
+    expand = 'customer_id,courier_id,seller_id',
+    batchSize = 200,
+  ): Promise<OrderRecord[]> {
+    let sanitizedFilter = filter
+    if (sanitizedFilter) {
+      sanitizedFilter = sanitizedFilter
+        .replace(
+          /\(?route_finished\s*=\s*false\s*\|\|\s*route_finished\s*=\s*null\)?/g,
+          'route_finished != true',
+        )
+        .replace(/route_finished\s*=\s*false/g, 'route_finished != true')
+        .replace(/route_finished\s*=\s*null/g, 'route_finished != true')
+        .replace(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/g, '$1 $2')
+    }
+
+    const allOrders: OrderRecord[] = []
+    let page = 1
+    let totalPages = 1
+
+    do {
+      const res = await pb.collection<OrderRecord>('orders').getList(page, batchSize, {
+        filter: sanitizedFilter,
+        sort,
+        expand,
+        requestKey: null,
+      })
+      allOrders.push(...res.items)
+      totalPages = res.totalPages
+      page++
+    } while (page <= totalPages)
+
+    return allOrders
+  },
+
   async getOrderById(id: string) {
     return pb.collection<OrderRecord>('orders').getOne(id, {
       expand: 'customer_id,courier_id,seller_id',

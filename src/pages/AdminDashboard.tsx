@@ -1649,6 +1649,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <ReportsSection
                   orders={orders}
                   couriers={couriers}
+                  sellers={sellers}
                   settings={settings}
                   offRouteEvents={offRouteEvents}
                   locations={locations}

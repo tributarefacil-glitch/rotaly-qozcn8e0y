@@ -144,5 +144,17 @@ export function isTodayOrder(
 export function isNeutralizedSystemError(order: OrderRecord): boolean {
   if (!order) return false
   const notesLower = order.notes ? order.notes.toLowerCase() : ''
-  return notesLower.includes('erro de sistema')
+  // Erros de sistema neutralizados (não são ocorrências legítimas de entrega nem cancelamentos operacionais)
+  // Exemplos reais do banco:
+  // - "Neutralizado — km e combustível zerados"
+  // - "Cancelado — erro de sistema"
+  // - "[neutralizado: erro de sistema - rota liberada e nunca iniciada]"
+  // - "neutralização de rota não executada"
+  return (
+    notesLower.includes('erro de sistema') ||
+    notesLower.includes('neutralizado — km e combustível zerados') ||
+    notesLower.includes('km e combustível zerados') ||
+    notesLower.includes('neutralizado: erro de sistema') ||
+    notesLower.includes('neutralização de rota não executada')
+  )
 }
