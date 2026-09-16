@@ -192,14 +192,10 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
 
     const isDelivered = reason === 'delivered'
 
-    // VALIDAÇÕES OBRIGATÓRIAS DO MÓDULO 2
-    // Se o motivo for "Finalizada" (delivered), foto e assinatura são OBRIGATÓRIAS
+    // VALIDAÇÕES DO MÓDULO 2:
+    // A foto da entrega é OPCIONAL a pedido da operação (entregador pode concluir sem foto).
+    // A assinatura digital permanece recomendada/obrigatória quando entregue ao cliente.
     if (isDelivered) {
-      if (!photoFile && !photoPreview) {
-        toast.error('Foto obrigatória! Por favor, tire a foto do cliente recebendo o produto.')
-        return
-      }
-
       if (!hasSignature && !signatureDataUrl) {
         toast.error('Assinatura obrigatória! O cliente deve assinar no quadro antes de confirmar.')
         return
@@ -347,7 +343,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       })
 
       if (reason === 'delivered') {
-        toast.success(`Pedido ${order.tracking_code} confirmado com foto e assinatura!`)
+        toast.success(`Pedido ${order.tracking_code} confirmado com sucesso!`)
       } else if (reason === 'address_error') {
         toast.warning(`Pedido ${order.tracking_code} finalizado: Erro de Endereço.`)
       } else {
@@ -429,9 +425,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               >
                 <CheckCircle2 className="h-5 w-5 mb-1 text-[#00AA44] animate-checkmark-bounce" />
                 <span className="text-xs font-heading">Finalizada</span>
-                <span className="text-[10px] text-slate-500 font-sans">
-                  Comprovante obrigatório
-                </span>
+                <span className="text-[10px] text-slate-500 font-sans">Assinatura coletada</span>
               </button>
 
               <button
@@ -496,11 +490,12 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                 <div className="flex items-center justify-between">
                   <Label className="font-heading text-xs font-bold text-[#1a1a1a] flex items-center gap-1.5">
                     <Camera className="h-4 w-4 text-[#0052CC]" />
-                    1. Foto do Cliente Recebendo o Produto <span className="text-[#E74C3C]">*</span>
+                    1. Foto do Cliente Recebendo o Produto{' '}
+                    <span className="text-slate-400 font-normal">(Opcional)</span>
                   </Label>
                   {photoPreview && (
                     <span className="text-[10px] font-bold text-[#00AA44] flex items-center gap-1">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Foto capturada
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Foto anexada
                     </span>
                   )}
                 </div>

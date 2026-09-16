@@ -94,10 +94,23 @@ export default function CourierApp() {
   const [lastSuccessfulPingTimestamp, setLastSuccessfulPingTimestamp] = useState<number>(Date.now())
   const [minutesSinceLastPing, setMinutesSinceLastPing] = useState<number>(0)
 
+  // Ref para controle de throttle/dedupe das chamadas de loadCourierOrders e loadFuelAndAccountData
+  const lastLoadOrdersTimestampRef = useRef<number>(0)
+  const isOrdersFetchingRef = useRef<boolean>(false)
+  const lastLoadFuelTimestampRef = useRef<number>(0)
+  const isFuelFetchingRef = useRef<boolean>(false)
+
   // Carregar dados de conta corrente e configurações para manter paridade com o motor de combustível
-  const loadFuelAndAccountData = async () => {
+  const loadFuelAndAccountData = async (options?: { force?: boolean }) => {
     if (!user?.id) return
+    const now = Date.now()
+    if (!options?.force && isFuelFetchingRef.current) return
+    if (!options?.force && now - lastLoadFuelTimestampRef.current < 5000) return
+
     try {
+      isFuelFetchingRef.current = true
+      lastLoadFuelTimestampRef.current = now
+
       const [userAdvances, appSettings, userLocations, userEvents] = await Promise.all([
         deliveryService.getFuelAdvances(`courier_id = '${user.id}'`, '-date,-created'),
         deliveryService.getSettings(),
@@ -110,22 +123,16 @@ export default function CourierApp() {
       setOffRouteEvents(userEvents)
     } catch (err) {
       console.warn('Erro ao carregar dados de telemetria e conta de combustível:', err)
+    } finally {
+      isFuelFetchingRef.current = false
     }
   }
-
-  useEffect(() => {
-    loadFuelAndAccountData()
-  }, [user])
-
-  // Ref para controle de throttle/dedupe das chamadas de loadCourierOrders
-  const lastLoadOrdersTimestampRef = useRef<number>(0)
-  const isOrdersFetchingRef = useRef<boolean>(false)
 
   // Carrega apenas pedidos liberados pelo vendedor ("assigned" com route_released=true ou em rota)
   const loadCourierOrders = async (options?: { force?: boolean }) => {
     const now = Date.now()
     if (!options?.force && isOrdersFetchingRef.current) return
-    if (!options?.force && now - lastLoadOrdersTimestampRef.current < 2000) return
+    if (!options?.force && now - lastLoadOrdersTimestampRef.current < 3000) return
 
     try {
       isOrdersFetchingRef.current = true
@@ -154,29 +161,35 @@ export default function CourierApp() {
 
   useEffect(() => {
     loadCourierOrders({ force: true })
-  }, [user])
+    loadFuelAndAccountData({ force: true })
+  }, [user?.id])
 
-  // REFORÇO DE RECEPÇÃO: Polling periódico a cada 30 segundos + foco de tela + reconexão de rede
+  // REFORÇO DE RECEPÇÃO ECONÔMICO:
+  // - Pausa polling de pedidos quando app está em background (document.hidden) para economizar bateria e rede
+  // - Retoma com força única ao voltar ao foco (visibilitychange / focus) ou online
   useEffect(() => {
     if (!user?.id) return
 
-    // 1. Polling a cada 30 segundos
+    // 1. Polling a cada 35 segundos APENAS se a janela estiver visível
     const intervalTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return // Economiza rede e bateria quando tela apagada / app em background
+      }
       loadCourierOrders()
-    }, 30000)
+    }, 35000)
 
-    // 2. Ao voltar para foco (visibilitychange / focus)
+    // 2. Ao voltar para foco (visibilitychange / focus) — dispara apenas 1 recarga com throttle
     const handleVisibilityOrFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         loadCourierOrders({ force: true })
-        loadFuelAndAccountData()
+        loadFuelAndAccountData({ force: true })
       }
     }
 
     // 3. Ao voltar a ficar online
     const handleNetworkOnline = () => {
       loadCourierOrders({ force: true })
-      loadFuelAndAccountData()
+      loadFuelAndAccountData({ force: true })
     }
 
     document.addEventListener('visibilitychange', handleVisibilityOrFocus)
@@ -373,6 +386,10 @@ export default function CourierApp() {
   const retryTimeoutRef = useRef<any>(null)
   const triggerImmediateGpsRef = useRef<(() => void) | null>(null)
   const wakeLockSentinelRef = useRef<any>(null)
+
+  // Geofence de chegada à base: confirmação por 2 leituras consecutivas <= 120m
+  const baseGeofenceHitCountRef = useRef<number>(0)
+  const isAutoFinishingRouteRef = useRef<boolean>(false)
 
   // Assinatura reativa da contagem do buffer offline e listeners de conectividade online/offline
   useEffect(() => {
@@ -832,31 +849,29 @@ export default function CourierApp() {
         o.status === 'cancelled',
     )
 
-  // Identificar coordenadas da base para guiar o retorno
+  // Identificar coordenadas da base para guiar o retorno (end_address_lat/lng ou start_base_lat/lng)
   const baseCoordinates = useMemo(() => {
     const anchor = currentRouteOrders[0] || orders[0]
+    const effectiveLat = anchor?.end_address_lat || anchor?.start_base_lat || -22.6990563
+    const effectiveLng = anchor?.end_address_lng || anchor?.start_base_lng || -43.296723
     return {
       name: anchor?.start_base_name || 'Base Operacional',
       address: anchor?.start_base_address || 'Base de Distribuição',
-      lat: anchor?.start_base_lat || -22.906847,
-      lng: anchor?.start_base_lng || -43.172896,
+      lat: effectiveLat,
+      lng: effectiveLng,
     }
   }, [currentRouteOrders, orders])
 
   // Distância do entregador até a base no momento (em metros)
   const distanceToBaseMeters = useMemo(() => {
     if (!currentCourierLocation || !baseCoordinates.lat || !baseCoordinates.lng) return null
-    const R = 6371000 // metros
-    const dLat = ((baseCoordinates.lat - currentCourierLocation.lat) * Math.PI) / 180
-    const dLng = ((baseCoordinates.lng - currentCourierLocation.lng) * Math.PI) / 180
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((currentCourierLocation.lat * Math.PI) / 180) *
-        Math.cos((baseCoordinates.lat * Math.PI) / 180) *
-        Math.sin(dLng / 2) *
-        Math.sin(dLng / 2)
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    return Math.round(R * c)
+    const dMeters = haversineDistanceMeters(
+      currentCourierLocation.lat,
+      currentCourierLocation.lng,
+      baseCoordinates.lat,
+      baseCoordinates.lng,
+    )
+    return Math.round(dMeters)
   }, [currentCourierLocation, baseCoordinates])
 
   // O primeiro cliente não finalizado da sequência é o único ativo
@@ -942,20 +957,24 @@ export default function CourierApp() {
     openExternalNavigation(baseCoordinates.address, baseCoordinates.lat, baseCoordinates.lng)
   }
 
-  // Ação: Finalizar Rota Inteira na Chegada à Base
-  // Regra do Usuário: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
-  const handleFinishFullRoute = async () => {
+  // Ação: Finalizar Rota Inteira na Chegada à Base (manual ou automático por geofence)
+  // Requisito da Dona da Operação: "quando o entregador finalizar a última entrega, ele não precisa clicar em nada.
+  // o sistema precisa carregar a rota de volta para base, ao chegar na base ele finaliza a rota inteira"
+  const handleFinishFullRoute = async (isAutomatic = false) => {
     if (!user?.id) {
-      toast.error('Entregador não autenticado.')
+      if (!isAutomatic) toast.error('Entregador não autenticado.')
       return
     }
 
     if (currentRouteOrders.length === 0) {
-      toast.info('Nenhuma rota ativa pendente de encerramento.')
+      if (!isAutomatic) toast.info('Nenhuma rota ativa pendente de encerramento.')
       return
     }
 
+    if (isFinishingRoute || isAutoFinishingRouteRef.current) return
+    isAutoFinishingRouteRef.current = true
     setIsFinishingRoute(true)
+
     try {
       const orderIdsToFinish = currentRouteOrders.map((o) => o.id)
       const odomFinalVal = odometroFinalInput
@@ -969,23 +988,68 @@ export default function CourierApp() {
             : undefined,
         foto_odometro_final: fotoOdometroFinal,
       })
-      toast.success(
-        '🏁 Rota finalizada com sucesso na base! Odômetro oficial apurado e você já está liberado para receber uma nova rota.',
-        {
-          duration: 5000,
-        },
-      )
+
+      if (isAutomatic) {
+        toast.success(
+          '🏁 Você chegou à base! Rota finalizada automaticamente. Quilometragem e combustível computados com sucesso.',
+          {
+            duration: 6000,
+          },
+        )
+      } else {
+        toast.success(
+          '🏁 Rota finalizada com sucesso na base! Odômetro oficial apurado e você já está liberado para receber uma nova rota.',
+          {
+            duration: 5000,
+          },
+        )
+      }
+
       setOdometroFinalInput('')
       setFotoOdometroFinal(null)
-      await loadCourierOrders()
-      await loadFuelAndAccountData()
+      baseGeofenceHitCountRef.current = 0
+      await loadCourierOrders({ force: true })
+      await loadFuelAndAccountData({ force: true })
     } catch (err) {
       console.error('Erro ao finalizar rota inteira:', err)
-      toast.error('Falha ao finalizar rota. Tente novamente.')
+      if (!isAutomatic) {
+        toast.error('Falha ao finalizar rota. Tente novamente.')
+      }
     } finally {
       setIsFinishingRoute(false)
+      isAutoFinishingRouteRef.current = false
     }
   }
+
+  // AUTO-FINALIZAÇÃO POR GEOFENCE:
+  // Se está na etapa de retorno à base (todas as entregas feitas) e o entregador chega à base
+  // (raio <= 120m confirmado em 2 leituras consecutivas para evitar falsos positivos por imprecisão de GPS)
+  useEffect(() => {
+    if (!isReturningToBase) {
+      baseGeofenceHitCountRef.current = 0
+      return
+    }
+
+    if (distanceToBaseMeters === null) return
+
+    const GEOFENCE_BASE_RADIUS_METERS = 120
+
+    if (distanceToBaseMeters <= GEOFENCE_BASE_RADIUS_METERS) {
+      baseGeofenceHitCountRef.current += 1
+      if (
+        baseGeofenceHitCountRef.current >= 2 &&
+        !isAutoFinishingRouteRef.current &&
+        !isFinishingRoute
+      ) {
+        handleFinishFullRoute(true)
+      }
+    } else {
+      // Se estiver mais longe que 180m, reinicia a contagem de proximidade
+      if (distanceToBaseMeters > 180) {
+        baseGeofenceHitCountRef.current = 0
+      }
+    }
+  }, [isReturningToBase, distanceToBaseMeters, isFinishingRoute])
 
   return (
     <div className="min-h-screen bg-white text-[#002855] flex flex-col pb-20 md:pb-6 font-sans">
@@ -1268,31 +1332,41 @@ export default function CourierApp() {
             <div className="p-3.5 rounded-xl bg-[#0A1128] border border-[#1E2B58] space-y-2">
               <div className="flex items-start gap-2.5">
                 <MapPin className="h-4 w-4 text-[#FF6B35] shrink-0 mt-0.5" />
-                <div className="min-w-0">
-                  <p className="text-xs font-bold text-white">{baseCoordinates.name}</p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-white">{baseCoordinates.name}</p>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      Geofence Ativo (120m)
+                    </span>
+                  </div>
                   <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
                     {baseCoordinates.address}
                   </p>
                   {distanceToBaseMeters !== null && (
-                    <p className="text-[11px] font-mono text-[#60A5FA] mt-1 font-semibold">
-                      Distância atual estimada:{' '}
-                      {distanceToBaseMeters >= 1000
-                        ? `${(distanceToBaseMeters / 1000).toFixed(1)} km`
-                        : `${distanceToBaseMeters} metros`}
+                    <p className="text-[11px] font-mono text-[#60A5FA] mt-1.5 font-semibold flex items-center gap-1.5">
+                      <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                      Distância atual da base:{' '}
+                      <span className="text-white font-bold">
+                        {distanceToBaseMeters >= 1000
+                          ? `${(distanceToBaseMeters / 1000).toFixed(1)} km`
+                          : `${distanceToBaseMeters} metros`}
+                      </span>
                     </p>
                   )}
                 </div>
               </div>
             </div>
 
-            {/* Regra de finalização explicada */}
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 leading-relaxed">
-              <p className="font-semibold flex items-center gap-1.5 text-amber-300 mb-1">
-                <Clock className="h-3.5 w-3.5" />
-                Todas as entregas da rota foram concluídas!
+            {/* Regra de finalização automática explicada */}
+            <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 leading-relaxed space-y-1.5">
+              <p className="font-bold flex items-center gap-1.5 text-emerald-300 text-sm">
+                <CheckCircle className="h-4 w-4 text-emerald-400" />
+                Todas as entregas concluídas! Retorne à base.
               </p>
-              No ponto de chegada na base, informe opcionalmente o odômetro final para registro e
-              finalize a rota inteira abaixo.
+              <p className="text-[11px] text-emerald-100/90 leading-relaxed">
+                Você não precisa clicar em nada. Ao se aproximar da base (~120m), o sistema finaliza
+                a rota inteira automaticamente com o cálculo oficial de km e combustível.
+              </p>
             </div>
 
             {/* Campos de Odômetro Final e Foto (Opcional - Nunca bloqueia) */}
@@ -1344,27 +1418,28 @@ export default function CourierApp() {
               </div>
             </div>
 
-            {/* Botões de Ação: Navegar até a base & Finalizar Rota Inteira */}
+            {/* Botões de Ação: Navegar até a base & Finalizar Rota Inteira (Fallback manual) */}
             <div className="space-y-2 pt-1">
               <Button
                 type="button"
                 onClick={handleNavigateToBase}
-                className="w-full h-12 bg-[#121E46] hover:bg-[#1A2A5E] text-[#60A5FA] font-bold text-xs rounded-xl border border-blue-400/30 flex items-center justify-center gap-2"
+                className="w-full h-12 bg-gradient-to-r from-[#0052CC] to-[#0066FF] hover:from-[#0047B3] hover:to-[#0052CC] text-white font-bold text-xs rounded-xl border border-blue-400/30 flex items-center justify-center gap-2 shadow-lg"
               >
-                <Navigation className="h-4 w-4" />
+                <Navigation className="h-4 w-4 text-[#60A5FA]" />
                 <span>Navegar até a Base (GPS / Waze)</span>
               </Button>
 
               <Button
                 type="button"
-                onClick={handleFinishFullRoute}
+                onClick={() => handleFinishFullRoute(false)}
                 disabled={isFinishingRoute}
-                className="w-full h-14 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-sm uppercase tracking-wider rounded-xl shadow-xl shadow-emerald-950/40 flex items-center justify-center gap-3 border border-emerald-400/40"
+                variant="outline"
+                className="w-full h-11 border-emerald-500/40 bg-emerald-950/20 hover:bg-emerald-900/40 text-emerald-300 font-semibold text-xs rounded-xl flex items-center justify-center gap-2"
               >
-                <CheckCircle className="h-5 w-5" />
+                <CheckCircle className="h-4 w-4 text-emerald-400" />
                 {isFinishingRoute
                   ? 'Finalizando Rota...'
-                  : 'Finalizar Rota Inteira (Chegada à Base)'}
+                  : 'Finalizar Manualmente (se geofence oscilar)'}
               </Button>
             </div>
           </div>
