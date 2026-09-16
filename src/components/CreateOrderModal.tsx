@@ -175,10 +175,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         if (suggestion) {
           setRouteSuggestion(suggestion)
           setSuggestionState('pending')
-          // Auto-select the courier if unassigned
-          if (courierId === 'unassigned') {
-            setCourierId(suggestion.courier_id)
-          }
+          // A sugestão de entregador deve ser APENAS exibida, exigindo clique em ACEITAR para atribuir
         }
       } catch (err) {
         console.warn('Erro ao sugerir rota inteligente:', err)
@@ -956,17 +953,17 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         }
       }
 
-      const createdOrder = await deliveryService.createOrder({
+      await deliveryService.createOrder({
         tracking_code: trackingCode,
         seller_id: user?.id,
         customer_id: finalCustomerId,
         courier_id: assignedCourier,
-        status: assignedCourier ? 'in_transit' : 'pending',
-        sequence: assignedCourier ? 1 : undefined, // sequence provisório para nunca ser 0
-        route_released: assignedCourier ? true : false,
-        route_released_at: assignedCourier ? now.toISOString() : undefined,
-        route_started: assignedCourier ? true : false,
-        route_started_at: assignedCourier ? now.toISOString() : undefined,
+        status: 'pending',
+        sequence: null as any,
+        route_released: false,
+        route_released_at: undefined,
+        route_started: false,
+        route_started_at: undefined,
         ...baseDataForOrder,
         priority,
         items: validItems,
@@ -976,21 +973,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         route_suggestion_status: suggestionStatus,
         route_suggestion_details: routeSuggestion || undefined,
         distance_km: routeSuggestion?.distance_km || undefined,
-        estimated_arrival: assignedCourier
-          ? new Date(now.getTime() + 45 * 60 * 1000).toISOString()
-          : undefined,
+        estimated_arrival: undefined,
       })
-
-      // Se atribuído diretamente a um entregador, disparar resequenciamento viário automático da rota ativa
-      // Executa de forma assíncrona para não bloquear a resposta do vendedor e garante sequência válida
-      if (assignedCourier && createdOrder?.id) {
-        deliveryService.resequenceActiveRouteForCourier(assignedCourier).catch((reseqErr) => {
-          console.warn(
-            'Erro ao resequenciar rota ativa após criação com entregador atribuído:',
-            reseqErr,
-          )
-        })
-      }
 
       // Trigger automatic in-app notification
       await deliveryService.createNotification({

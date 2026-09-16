@@ -1380,31 +1380,49 @@ export const deliveryService = {
 
       let updatedCount = 0
       for (const order of ordersToUpdate) {
+        const isDelivered = order.status === 'delivered'
         const hasFile = !!odometerData?.foto_odometro_final
         const odomFinal = odometerData?.odometro_final
         const hasOdom = typeof odomFinal === 'number' && odomFinal > 0
 
-        if (hasFile || hasOdom) {
-          const formData = new FormData()
-          formData.append('route_finished', 'true')
-          formData.append('route_finished_at', now)
-          if (hasOdom) {
-            formData.append('odometro_final', String(odomFinal))
-            const odomInit = order.odometro_inicial || 0
-            if (odomInit > 0 && odomFinal! > odomInit) {
-              const diff = Number((odomFinal! - odomInit).toFixed(1))
-              formData.append('km_odometro', String(diff))
-            }
-          }
-          if (hasFile) {
-            formData.append('foto_odometro_final', odometerData!.foto_odometro_final!)
-          }
-          await pb.collection('orders').update(order.id, formData)
-        } else {
+        // Regra de ouro estrutural: NENHUMA parada não entregue pode ser marcada como delivered.
+        // Paradas não confirmadas voltam para pending, courier_id: null, sequence: null,
+        // route_released: false, route_started: false (mesma regra de devolução de cancelamento de rota).
+        if (!isDelivered) {
           await pb.collection('orders').update(order.id, {
-            route_finished: true,
-            route_finished_at: now,
+            courier_id: null,
+            status: 'pending',
+            sequence: null,
+            route_released: false,
+            route_released_at: null,
+            route_started: false,
+            route_started_at: null,
+            route_finished: false,
+            route_finished_at: null,
           })
+        } else {
+          if (hasFile || hasOdom) {
+            const formData = new FormData()
+            formData.append('route_finished', 'true')
+            formData.append('route_finished_at', now)
+            if (hasOdom) {
+              formData.append('odometro_final', String(odomFinal))
+              const odomInit = order.odometro_inicial || 0
+              if (odomInit > 0 && odomFinal! > odomInit) {
+                const diff = Number((odomFinal! - odomInit).toFixed(1))
+                formData.append('km_odometro', String(diff))
+              }
+            }
+            if (hasFile) {
+              formData.append('foto_odometro_final', odometerData!.foto_odometro_final!)
+            }
+            await pb.collection('orders').update(order.id, formData)
+          } else {
+            await pb.collection('orders').update(order.id, {
+              route_finished: true,
+              route_finished_at: now,
+            })
+          }
         }
         updatedCount++
       }
