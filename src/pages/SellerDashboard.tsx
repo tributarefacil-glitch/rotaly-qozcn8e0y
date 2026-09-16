@@ -211,47 +211,49 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         new Date(currentOpWindow.start).toISOString().replace('T', ' ')
       const ordersFilter = `created >= '${windowStart}' || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
 
-      const [
-        ordersData,
-        custData,
-        couriersData,
-        locsData,
-        basesData,
-        settingsData,
-        eventsData,
-        fuelData,
-      ] = await Promise.all([
+      // ETAPA 1 (prioritária, imediata): getOrders + getCouriers + getLatestLocations
+      // Popula os estados críticos e libera imediatamente a renderização dos cards do Kanban, entregadores e mapa
+      const [ordersData, couriersData, locsData] = await Promise.all([
         deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
-        deliveryService.getCustomers(),
         deliveryService.getCouriers(),
         deliveryService.getLatestLocations(),
+      ])
+      setOrders(ordersData)
+      setCouriers(couriersData)
+      setLocations(locsData)
+      setIsLoading(false)
+
+      // ETAPA 2 (em segundo plano, sem bloquear UI): getCustomers, getBaseAddresses, getSettings, getOffRouteEvents, getFuelAdvances
+      Promise.all([
+        deliveryService.getCustomers(),
         deliveryService.getBaseAddresses(),
         deliveryService.getSettings(),
         deliveryService.getOffRouteEvents(),
         deliveryService.getFuelAdvances(),
       ])
-      setOrders(ordersData)
-      setCustomers(custData)
-      setCouriers(couriersData)
-      setLocations(locsData)
-      setFuelAdvances(fuelData)
-      setBaseAddresses(basesData)
-      setSettings(settingsData)
-      setOffRouteEvents(eventsData)
+        .then(([custData, basesData, settingsData, eventsData, fuelData]) => {
+          setCustomers(custData)
+          setFuelAdvances(fuelData)
+          setBaseAddresses(basesData)
+          setSettings(settingsData)
+          setOffRouteEvents(eventsData)
 
-      // Seleção robusta de base padrão
-      const defaultBase = basesData.find((b) => b.is_default) || basesData[0]
-      const defaultEnd = basesData.find((b) => b.is_end_default) || defaultBase
+          // Seleção robusta de base padrão
+          const defaultBase = basesData.find((b) => b.is_default) || basesData[0]
+          const defaultEnd = basesData.find((b) => b.is_end_default) || defaultBase
 
-      if (defaultBase) {
-        setSelectedBaseId(defaultBase.id)
-      }
-      if (defaultEnd) {
-        setSelectedEndAddressId(defaultEnd.id)
-      }
+          if (defaultBase) {
+            setSelectedBaseId(defaultBase.id)
+          }
+          if (defaultEnd) {
+            setSelectedEndAddressId(defaultEnd.id)
+          }
+        })
+        .catch((secErr) => {
+          console.warn('Erro ao carregar dados secundários do SellerDashboard:', secErr)
+        })
     } catch (err) {
       console.error('Error loading seller dashboard data:', err)
-    } finally {
       setIsLoading(false)
     }
   }

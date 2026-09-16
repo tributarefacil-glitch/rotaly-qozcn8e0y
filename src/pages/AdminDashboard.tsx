@@ -287,61 +287,70 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         currentOpWindow.endPbString || new Date(currentOpWindow.end).toISOString().replace('T', ' ')
       const ordersFilter = `(created >= '${windowStart}' && created <= '${windowEnd}') || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
 
-      const [
-        ordersData,
-        usersData,
-        couriersData,
-        sellersData,
-        notifsData,
-        appSettings,
-        advancesData,
-        eventsData,
-        reviewsData,
-        locationsData,
-      ] = await Promise.all([
+      // ETAPA 1 (imediata): pedidos + entregadores + telemetria de locais
+      // Libera imediatamente a renderização dos cards do Kanban, mapa e entregadores
+      const [ordersData, couriersData, locationsData] = await Promise.all([
         deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
-        deliveryService.getAllUsers(),
         deliveryService.getCouriers(),
+        deliveryService.getLatestLocations(),
+      ])
+      setOrders(ordersData)
+      setCouriers(couriersData)
+      setLocations(locationsData)
+      setIsLoading(false)
+
+      // ETAPA 2 (segundo plano): usuários, vendedores, notificações, configurações, adiantamentos, eventos e avaliações
+      Promise.all([
+        deliveryService.getAllUsers(),
         deliveryService.getSellers(),
         deliveryService.getNotifications(),
         deliveryService.getSettings(),
         deliveryService.getFuelAdvances(),
         deliveryService.getOffRouteEvents(),
         deliveryService.getReviews(),
-        deliveryService.getLatestLocations(),
       ])
-      setOrders(ordersData)
-      setUsers(usersData)
-      setCouriers(couriersData)
-      setSellers(sellersData)
-      setNotifications(notifsData)
-      setSettings(appSettings)
-      setFuelAdvances(advancesData)
-      // O cálculo pesado de combustível foi movido para execução LAZY (somente na aba de combustível)
-      // para não travar a abertura inicial do AdminDashboard.
-      setFuelAccounts([])
-      setOffRouteEvents(eventsData)
-      setReviews(reviewsData)
-      setLocations(locationsData)
-      const fallbackPrice = appSettings.fuel_price_per_liter || 5.59
-      setMotoPriceInput(String(appSettings.moto_fuel_price ?? fallbackPrice))
-      setMotoConsInput(
-        String(appSettings.moto_consumption_kml ?? appSettings.fuel_consumption_kml ?? 35.0),
-      )
-      setCarroPriceInput(String(appSettings.carro_fuel_price ?? fallbackPrice))
-      setCarroConsInput(String(appSettings.carro_consumption_kml ?? 12.0))
-      setCaminhaoPriceInput(String(appSettings.caminhao_fuel_price ?? fallbackPrice))
-      setCaminhaoConsInput(String(appSettings.caminhao_consumption_kml ?? 7.0))
+        .then(
+          ([
+            usersData,
+            sellersData,
+            notifsData,
+            appSettings,
+            advancesData,
+            eventsData,
+            reviewsData,
+          ]) => {
+            setUsers(usersData)
+            setSellers(sellersData)
+            setNotifications(notifsData)
+            setSettings(appSettings)
+            setFuelAdvances(advancesData)
+            setFuelAccounts([])
+            setOffRouteEvents(eventsData)
+            setReviews(reviewsData)
 
-      // Jornada de Trabalho
-      setWorkStartTimeInput(appSettings.work_start_time || '08:00')
-      setLunchStartTimeInput(appSettings.lunch_start_time || '12:00')
-      setLunchEndTimeInput(appSettings.lunch_end_time || '13:00')
-      setWorkEndTimeInput(appSettings.work_end_time || '18:30')
+            const fallbackPrice = appSettings.fuel_price_per_liter || 5.59
+            setMotoPriceInput(String(appSettings.moto_fuel_price ?? fallbackPrice))
+            setMotoConsInput(
+              String(appSettings.moto_consumption_kml ?? appSettings.fuel_consumption_kml ?? 35.0),
+            )
+            setCarroPriceInput(String(appSettings.carro_fuel_price ?? fallbackPrice))
+            setCarroConsInput(String(appSettings.carro_consumption_kml ?? 12.0))
+            setCaminhaoPriceInput(String(appSettings.caminhao_fuel_price ?? fallbackPrice))
+            setCaminhaoConsInput(String(appSettings.caminhao_consumption_kml ?? 7.0))
+
+            // Jornada de Trabalho
+            setWorkStartTimeInput(appSettings.work_start_time || '08:00')
+            setLunchStartTimeInput(appSettings.lunch_start_time || '12:00')
+            setLunchEndTimeInput(appSettings.lunch_end_time || '13:00')
+            setWorkEndTimeInput(appSettings.work_end_time || '18:30')
+          },
+        )
+        .catch((secErr) => {
+          console.warn('Erro ao carregar dados secundários do AdminDashboard:', secErr)
+        })
     } catch (err) {
       console.error('Error loading admin data:', err)
       setLoadError('Não foi possível carregar os dados desta seção')
-    } finally {
       setIsLoading(false)
     }
   }

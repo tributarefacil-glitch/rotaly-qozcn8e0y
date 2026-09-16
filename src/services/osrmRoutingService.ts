@@ -24,16 +24,18 @@ export interface OsrmRouteResult {
   isRealStreetRoute: boolean
 }
 
-// Cache em memória para evitar exceder rate limits públicos
+// Cache em memória persistente na sessão para evitar recálculos redundantes e respeitar rate limits públicos
+// Mesma chave de origem-destino (com precisão de ~11m) não recalcula na mesma sessão
 interface CacheEntry {
   result: OsrmRouteResult
   timestamp: number
 }
 
+// Map global em memória no módulo: dura por toda a sessão do app
 const routeCache = new Map<string, CacheEntry>()
-const CACHE_TTL_MS = 30 * 60 * 1000 // 30 minutos
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 horas (toda a sessão do navegador)
 
-function getCacheKey(origin: LatLngPoint, destination: LatLngPoint): string {
+export function getCacheKey(origin: LatLngPoint, destination: LatLngPoint): string {
   // Arredonda para 4 casas decimais (~11m de precisão) para consolidar cache
   return `${origin.lat.toFixed(4)},${origin.lng.toFixed(4)}->${destination.lat.toFixed(4)},${destination.lng.toFixed(4)}`
 }
