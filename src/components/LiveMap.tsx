@@ -450,12 +450,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
       const locTime = parseSafeTimestamp(item.location_timestamp)
       const minutesSinceLastPoint = locTime ? Math.floor((Date.now() - locTime) / 60000) : 0
-      const isOutdated =
-        locTime > 0 &&
-        Date.now() - locTime > 5 * 60 * 1000 &&
-        !(item.gps_status === 'active' && item.offline_buffered === false)
       const isGpsDisabled = item.gps_status === 'disabled'
-      const isSignalLost = item.gps_status === 'offline' || isOutdated
       // REQUISITO: Suprimir alertas de "Sem sinal" fora de rota ativa
       const isInActiveRoute = item.hasActiveRoute !== false
 
@@ -478,15 +473,24 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         gpsBadgeBg = '#fef2f2'
         gpsBadgeColor = '#b91c1c'
         gpsBadgeBorder = '#fecaca'
-      } else if (isSignalLost) {
-        if (item.gps_reason === 'weak_signal') {
-          gpsBadgeText = `📶 Sinal fraco (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
-        } else {
-          gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '<2 min'})`
-        }
+      } else if (item.gps_status === 'offline' || minutesSinceLastPoint > 10) {
+        // Faixa > 10 min: Sem sinal (vermelho/âmbar escuro)
+        gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '>10 min'})`
+        gpsBadgeBg = '#fef2f2'
+        gpsBadgeColor = '#b91c1c'
+        gpsBadgeBorder = '#fecaca'
+      } else if (minutesSinceLastPoint > 5) {
+        // Faixa 5 a 10 min: Última posição há X min (cinza/âmbar suave, sem parecer falha crítica)
+        gpsBadgeText = `⏸ Última posição há ${minutesSinceLastPoint} min`
         gpsBadgeBg = '#fffbeb'
         gpsBadgeColor = '#b45309'
         gpsBadgeBorder = '#fde68a'
+      } else {
+        // Faixa até 5 min: GPS ativo
+        gpsBadgeText = '📡 GPS ativo'
+        gpsBadgeBg = '#ecfdf5'
+        gpsBadgeColor = '#047857'
+        gpsBadgeBorder = '#a7f3d0'
       }
 
       // No iOS/iPhone e em aparelhos sem Battery API, battery_level reporta 0 ou undefined.
@@ -1326,12 +1330,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                               const minutesSinceLastPoint = locTime
                                 ? Math.floor((Date.now() - locTime) / 60000)
                                 : 0
-                              const isOutdated =
-                                locTime > 0 &&
-                                Date.now() - locTime > 5 * 60 * 1000 &&
-                                !(m.gps_status === 'active' && m.offline_buffered === false)
                               const isGpsDisabled = m.gps_status === 'disabled'
-                              const isSignalLost = m.gps_status === 'offline' || isOutdated
                               const isInActiveRoute = m.hasActiveRoute !== false
 
                               if (!isInActiveRoute) {
@@ -1348,14 +1347,21 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                                   </span>
                                 )
                               }
-                              if (isSignalLost) {
+                              if (m.gps_status === 'offline' || minutesSinceLastPoint > 10) {
                                 return (
-                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-amber-950/80 text-amber-400 border-amber-500/40">
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-rose-950/80 text-rose-400 border-rose-500/40">
                                     <span>📴</span> Sem sinal (
                                     {minutesSinceLastPoint > 0
                                       ? `${minutesSinceLastPoint} min`
-                                      : '<2 min'}
+                                      : '>10 min'}
                                     )
+                                  </span>
+                                )
+                              }
+                              if (minutesSinceLastPoint > 5) {
+                                return (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-amber-950/80 text-amber-300 border-amber-500/40">
+                                    <span>⏸</span> Última posição há {minutesSinceLastPoint} min
                                   </span>
                                 )
                               }

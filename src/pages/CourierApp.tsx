@@ -91,6 +91,8 @@ export default function CourierApp() {
     lat: number
     lng: number
   } | null>(null)
+  const [lastSuccessfulPingTimestamp, setLastSuccessfulPingTimestamp] = useState<number>(Date.now())
+  const [minutesSinceLastPing, setMinutesSinceLastPing] = useState<number>(0)
 
   // Carregar dados de conta corrente e configurações para manter paridade com o motor de combustível
   const loadFuelAndAccountData = async () => {
@@ -580,6 +582,8 @@ export default function CourierApp() {
 
         // Registrar timestamp do último ping online transmitido com sucesso
         offlineTelemetryBuffer.recordSuccessfulOnlinePing(user.id, now)
+        setLastSuccessfulPingTimestamp(now)
+        setMinutesSinceLastPing(0)
 
         // Sucesso: atualiza referência e reseta contador de retry
         lastRecordedGpsRef.current = { lat, lng, accuracy: accuracyVal, timestamp: now }
@@ -722,7 +726,7 @@ export default function CourierApp() {
     // Disparo inicial com maximumAge 0 para garantir que a Torre receba a coordenada fresca imediatamente
     requestFreshImmediatePosition()
 
-    // REAVALIAÇÃO QUANDO A TELA VOLTA / VISIBILITYCHANGE (item 3: flush de buffer E ping fresco com maximumAge: 0)
+    // REAVALIAÇÃO QUANDO A TELA VOLTA / VISIBILITYCHANGE (item 1: flush de buffer E ping fresco com maximumAge: 0)
     const handleResume = async () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
@@ -762,6 +766,10 @@ export default function CourierApp() {
       }
     }
 
+    const handleWindowFocus = () => {
+      handleResume()
+    }
+
     const handlePageShow = (e: PageTransitionEvent) => {
       // Quando a página é restaurada pelo bfcache do Safari iOS
       if (e.persisted || document.visibilityState === 'visible') {
@@ -770,6 +778,7 @@ export default function CourierApp() {
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleWindowFocus)
     window.addEventListener('pageshow', handlePageShow)
 
     return () => {
@@ -785,9 +794,29 @@ export default function CourierApp() {
       }
       triggerImmediateGpsRef.current = null
       document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleWindowFocus)
       window.removeEventListener('pageshow', handlePageShow)
     }
   }, [user, isGpsActive, hasActiveStartedRoute])
+
+  // Monitoramento periódico de "pings presos" em rota ativa (a cada 20 segundos)
+  useEffect(() => {
+    if (!hasActiveStartedRoute) {
+      setMinutesSinceLastPing(0)
+      return
+    }
+
+    const checkStalledPings = () => {
+      const now = Date.now()
+      const diffMs = now - lastSuccessfulPingTimestamp
+      const diffMins = Math.floor(diffMs / 60000)
+      setMinutesSinceLastPing(diffMins)
+    }
+
+    checkStalledPings()
+    const timer = setInterval(checkStalledPings, 20000)
+    return () => clearInterval(timer)
+  }, [hasActiveStartedRoute, lastSuccessfulPingTimestamp])
 
   // Se todas as entregas individuais da rota ativa já foram concluídas (ou não há mais activeDeliveries pendentes)
   // mas a rota ainda não foi finalizada na base, o entregador está na etapa de RETORNO À BASE!
@@ -1032,6 +1061,40 @@ export default function CourierApp() {
             </div>
           </div>
         </div>
+
+        {/* AVISO PERSISTENTE E AMIGÁVEL: DETECÇÃO DE PINGS PRESOS (> 3 MINUTOS) EM ROTA ATIVA */}
+        {hasActiveStartedRoute && minutesSinceLastPing >= 3 && (
+          <div className="rounded-xl border-2 border-amber-500 bg-amber-950/70 p-4 space-y-3 text-xs text-amber-100 shadow-2xl animate-pulse">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl shrink-0">📡</span>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-white text-sm leading-snug">
+                  Sinal interrompido há {minutesSinceLastPing} min
+                </p>
+                <p className="text-xs text-amber-200/90 mt-1 leading-relaxed">
+                  Abra o app e mantenha a tela ligada para continuar rastreando a entrega em tempo
+                  real na Torre de Controle.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1 border-t border-amber-500/30">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  if (triggerImmediateGpsRef.current) {
+                    triggerImmediateGpsRef.current()
+                    toast.info('Reativando GPS e enviando posição atual...')
+                  }
+                }}
+                className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs h-9 px-4 rounded-xl flex items-center gap-1.5 shadow"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Reativar Rastreamento Agora
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* INDICADOR VISÍVEL DE BUFFER OFFLINE: aviso persistente quando há pontos aguardando sincronização */}
         {pendingBufferedPoints > 0 && (
