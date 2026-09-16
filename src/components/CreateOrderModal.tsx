@@ -1764,7 +1764,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               disabled={isSubmitting}
               className="bg-blue-600 hover:bg-blue-700 text-white font-semibold"
             >
-              {isSubmitting ? 'Registrando...' : 'Emitir Pedido & Iniciar'}
+              {isSubmitting ? 'Registrando...' : 'Emitir Pedido'}
             </Button>
           </DialogFooter>
         </form>
