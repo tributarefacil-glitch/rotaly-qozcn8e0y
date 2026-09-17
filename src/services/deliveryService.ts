@@ -1,5 +1,6 @@
 import pb from '@/lib/pocketbase/client'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
   OrderRecord,
   CustomerRecord,
