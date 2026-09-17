@@ -558,8 +558,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     try {
       await deliveryService.updateOrder(orderId, {
         status: 'cancelled',
+        completion_reason: 'cancelado_vendedor',
       })
-      toast.warning('Entrega cancelada com sucesso.')
+      toast.warning('Entrega cancelada pelo vendedor com sucesso.')
       loadData()
     } catch (err) {
       console.error('Error cancelling order:', err)

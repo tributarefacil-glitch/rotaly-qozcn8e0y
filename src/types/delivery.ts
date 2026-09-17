@@ -142,7 +142,12 @@ export type OrderStatus =
   | 'client_absent'
   | 'cancelled'
 
-export type CompletionReason = 'delivered' | 'address_error' | 'client_absent' | 'other'
+export type CompletionReason =
+  | 'delivered'
+  | 'address_error'
+  | 'client_absent'
+  | 'cancelado_vendedor'
+  | 'other'
 export type OrderPriority = 'normal' | 'urgent' | 'high'
 
 export interface OrderItem {

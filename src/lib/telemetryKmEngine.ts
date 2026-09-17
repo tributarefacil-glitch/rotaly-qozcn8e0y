@@ -579,8 +579,9 @@ export function calculateRealKmForOrder(params: {
     const stepDist = haversineDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
     if (stepDist <= 0) continue
 
-    // Verificar se o segmento está em desvio (>300m)
-    // Critério 1: Ponto está próximo de um evento de desvio registrado nessa janela
+    // REGRA 5 DO USUÁRIO: Desvios/paradas a mais de 600 m da rota oficial não contam km/combustível:
+    // Usar limiar DEVIATION_THRESHOLD_METERS = 600, segregando esses trechos em km de desvio.
+    // Critério 1: Ponto está próximo de um evento de desvio oficial (>600m) registrado nessa janela
     const isNearDeviationEvent = offRouteEventsList.some((devEv) => {
       const d1 = haversineDistanceMeters(p1.lat, p1.lng, devEv.lat, devEv.lng)
       const d2 = haversineDistanceMeters(p2.lat, p2.lng, devEv.lat, devEv.lng)
@@ -607,7 +608,7 @@ export function calculateRealKmForOrder(params: {
     const isFarFromCorridor =
       distToCorridor1 > DEVIATION_THRESHOLD_METERS && distToCorridor2 > DEVIATION_THRESHOLD_METERS
 
-    // Critério 3: O ponto de GPS ocorreu dentro de uma parada inesperada
+    // Critério 3: O ponto de GPS ocorreu dentro de uma parada inesperada (>600m da rota ou evento de parada)
     const isInsideUnexpectedStop = unexpectedStopsList.some((stopEv) => {
       const dStop = haversineDistanceMeters(p2.lat, p2.lng, stopEv.lat, stopEv.lng)
       return dStop <= 100
@@ -652,28 +653,33 @@ export function calculateRealKmForOrder(params: {
   let adjustedDeviationKm = rawDeviationKm * curvatureFactor
 
   // 8. Conciliação com Odômetro Real e Distância Mínima Viária Planejada:
-  // Em trajetos reais urbanos/rodoviários onde a telemetria GPS comprova o percurso
-  // Se a rota foi concluída ('delivered') e o trajeto viário planejado for conhecido,
-  // garantimos que o cálculo oficial reflita fielmente o percurso rodado no asfalto com as curvas e acessos.
-  // IMPORTANTE: O fator 1.31x só se aplica quando a distância bruta está dentro da ordem de grandeza viária esperada
-  // (evita inflar se houver captura acidental de pings externos).
-  if (order.status === 'delivered') {
+  // REGRA 4 DO USUÁRIO: Sem sinal nunca reduz km do entregador: cobrir lacunas de GPS com o percurso viário do sistema.
+  // Garantir officialRealKm = max(km viário da rota, km bruto GPS) quando houver gaps.
+  // Aplica para entregas entregues ou com tentativa no local (client_absent, address_error, desistência no local).
+  const isCompletedOrAttempted =
+    order.status === 'delivered' ||
+    order.status === 'client_absent' ||
+    order.status === 'address_error' ||
+    (order.status === 'cancelled' && Boolean(order.route_started_at || order.actual_arrival))
+
+  if (isCompletedOrAttempted) {
     const isReasonableDistance = plannedBaseKm > 0 && rawOfficialKm <= plannedBaseKm * 2.5
     if (plannedBaseKm > 0 && rawOfficialKm >= plannedBaseKm * 0.85 && isReasonableDistance) {
       // Quando a corda GPS reta foi registrada em amostragem esparsa (~30s) e a entrega foi realizada
-      // com sucesso ao cliente dentro da rota planejada, incorpora o traçado viário completo (+31% sobre a corda reta).
+      // ou tentada no local dentro da rota planejada, incorpora o traçado viário completo (+31% sobre a corda reta).
       adjustedOfficialKm = Math.max(adjustedOfficialKm, rawOfficialKm * 1.31)
       if (rawDeviationKm > 0) {
         adjustedDeviationKm = rawDeviationKm * 1.31
       }
     } else if (plannedBaseKm > 0 && adjustedOfficialKm < plannedBaseKm) {
+      // Regra 4: Se o GPS registrou menos por perda de sinal, eleva ao km viário planejado
       adjustedOfficialKm = plannedBaseKm
     }
   }
 
-  // Garantir proporcionalidade para entregas concluídas com telemetria
+  // Garantir proporcionalidade para entregas com telemetria
   if (
-    order.status === 'delivered' &&
+    isCompletedOrAttempted &&
     adjustedOfficialKm < 1.0 &&
     rawTotalGpsKm >= 1.0 &&
     rawTotalGpsKm < 5.0
@@ -684,10 +690,11 @@ export function calculateRealKmForOrder(params: {
 
   const finalTotalGpsKm = adjustedOfficialKm + adjustedDeviationKm
 
-  // HIERARQUIA DE PRECEDÊNCIA EXIGIDA PELO USUÁRIO:
+  // HIERARQUIA DE PRECEDÊNCIA EXIGIDA PELO USUÁRIO (REGRAS 3, 4 E 6):
   // - PRIORIDADE 1: Odômetro da moto (odometro_final − odometro_inicial da rota), se informado.
   // - PRIORIDADE 2: Histórico viário das rotas do entregador (total_route_with_return_km da rota no banco: Base -> paradas -> retorno).
-  // - PRIORIDADE 3: GPS serve APENAS para auditoria de desvios (KM Desvios), nunca para reduzir o km oficial viário.
+  // - PRIORIDADE 3: GPS serve para apurar deslocamento e auditoria de desvios (>600m).
+  //   REGRA 4: Sem sinal NUNCA reduz km do entregador. officialRealKm = max(km viário da rota, km bruto GPS/ajustado).
   let finalOfficialKm = Number(adjustedOfficialKm.toFixed(1))
   let calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
 
@@ -696,12 +703,11 @@ export function calculateRealKmForOrder(params: {
     finalOfficialKm = odometerDifference
     calculationSource = 'odometro'
   } else if (routeTotalRoadKm > 0) {
-    // Prioridade 2: Histórico viário do banco (NUNCA reduzido por falha de GPS)
-    // O KM viário oficial é o traçado rodoviário real da rota (com retorno).
-    // Se a telemetria GPS apurada for maior (ex.: rota estendida autorizada), preserva o maior.
+    // Prioridade 2: Histórico viário do banco (Regra 4: max(km viário da rota, km GPS apurado))
     finalOfficialKm = Math.max(routeTotalRoadKm, finalOfficialKm)
     calculationSource = 'historico_viario'
   } else if (plannedTotalKm > 0) {
+    // Regra 4: Sem sinal nunca reduz km do entregador -> max(km planejado viário, km GPS)
     finalOfficialKm = Math.max(plannedTotalKm, finalOfficialKm)
     calculationSource = 'historico_viario'
   } else {

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-17T00:53:42.231Z",
+  "generatedAt": "2026-09-17T01:19:41.906Z",
   "collections": [
     {
       "name": "users",
@@ -361,7 +361,13 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["delivered", "address_error", "client_absent", "other"]
+          "selectValues": [
+            "delivered",
+            "address_error",
+            "client_absent",
+            "other",
+            "cancelado_vendedor"
+          ]
         },
         {
           "name": "sequence",

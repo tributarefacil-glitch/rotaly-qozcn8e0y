@@ -301,7 +301,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   }, [filteredOrders, summary.successful])
 
   // BREAKDOWN 1: VENDAS POR VENDEDOR
-  // Agrupar por seller_id (com expand users), nome, nº de pedidos, faturamento total (soma total_price em R$), ticket médio e % de participação.
+  // REGRAS 1 & 2 DO USUÁRIO: Estornar vendas não entregues do faturamento do vendedor.
+  // Pedidos cancelados (pelo vendedor ou cliente), com client_absent ou address_error
+  // NÃO contam como venda concluída do vendedor (totalRevenue = 0 / estornado).
   const salesBySeller = useMemo(() => {
     // Agrupamento por seller_id
     const sellerMap = new Map<
@@ -317,6 +319,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
 
     // Total de faturamento do período para cálculo do % de participação
     let periodTotalRevenue = 0
+    let deliveredOrdersCount = 0
 
     filteredOrders.forEach((order) => {
       const sellerId = order.seller_id || 'sem_vendedor'
@@ -336,9 +339,17 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         }
       }
 
-      const orderPrice =
+      // Estorno: apenas pedidos entregues com sucesso geram receita faturada para o vendedor.
+      // Cancelamento (loja ou desistência), cliente ausente e erro de endereço estornam a venda.
+      const isDeliveredSale = order.status === 'delivered' && !isNeutralizedSystemError(order)
+      const rawPrice =
         typeof order.total_price === 'number' && order.total_price > 0 ? order.total_price : 0
-      periodTotalRevenue += orderPrice
+      const orderPrice = isDeliveredSale ? rawPrice : 0
+
+      if (isDeliveredSale) {
+        periodTotalRevenue += orderPrice
+        deliveredOrdersCount += 1
+      }
 
       const entry = sellerMap.get(sellerId) || {
         sellerId,
@@ -347,7 +358,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         ordersCount: 0,
         totalRevenue: 0,
       }
-      entry.ordersCount += 1
+      if (isDeliveredSale) {
+        entry.ordersCount += 1
+      }
       entry.totalRevenue += orderPrice
       sellerMap.set(sellerId, entry)
     })
@@ -370,7 +383,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     return {
       items: list,
       totalRevenue: periodTotalRevenue,
-      totalOrders: filteredOrders.length,
+      totalOrders: deliveredOrdersCount,
     }
   }, [filteredOrders, sellersList])
 
@@ -469,9 +482,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
 
   // BREAKDOWN 3: HISTÓRICO DE KM E COMBUSTÍVEL POR ENTREGADOR
   // Usa o motor corrigido calculateCourierFuelMetrics com deduplicação por rota única:
-  // - KM e combustível SOMENTE de pedidos com status='delivered'
+  // - REGRAS 1 & 2: km/combustível incluem pedidos entregues e falhas no local (client_absent, address_error, desistência no local).
+  // - Cancelamento da loja/vendedor fica fora do km do entregador.
   // - Pedidos do mesmo ciclo route_started_at + route_finished_at contam o km/combustível da rota UMA VEZ
-  // - Cancelled/client_absent/address_error nunca somam em km, combustível ou faturamento
   // - Hierarquia oficial mantida no motor: odômetro > histórico viário de rotas > telemetria GPS
   const fuelAndKmByCourier = useMemo(() => {
     return couriers.map((courier) => {
@@ -567,19 +580,33 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   const costAnalysis = useMemo(() => {
     let totalKm = 0
     let totalCost = 0
-    // Blindagem de KM/Custo:
-    // Pedidos com status de insucesso (client_absent, address_error, cancelled)
-    // e pedidos com base 0,0 não imputam km/custo aos relatórios do dia.
-    const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
-
+    // REGRAS 1 & 2 DO USUÁRIO:
+    // Cancelamento pelo vendedor NÃO conta km/combustível.
+    // Falhas no local (client_absent, address_error, desistência no local) CONTAM km/combustível para o entregador.
     const activeRouteOrders = filteredOrders.filter((o) => {
-      if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
       const baseLat = Number(o.start_base_lat) || 0
       const baseLng = Number(o.start_base_lng) || 0
       if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
         return false
       }
-      return o.status === 'delivered' || (o.route_started === true && o.status === 'in_transit')
+      if (o.completion_reason === 'cancelado_vendedor') {
+        return false
+      }
+      if (isNeutralizedSystemError(o)) return false
+
+      if (o.status === 'delivered') return true
+      if (o.route_started === true && o.status === 'in_transit') return true
+      if (o.status === 'address_error' || o.status === 'client_absent') return true
+      if (o.status === 'cancelled') {
+        const notesLower = o.notes ? o.notes.toLowerCase() : ''
+        const isLocalDesistencia =
+          notesLower.includes('cancelamento: [desistência do cliente]') ||
+          notesLower.includes('desistência do cliente') ||
+          notesLower.includes('desistencia do cliente')
+        const hadAttempt = Boolean(o.route_started_at || o.actual_arrival)
+        return isLocalDesistencia && hadAttempt
+      }
+      return false
     })
 
     activeRouteOrders.forEach((o) => {

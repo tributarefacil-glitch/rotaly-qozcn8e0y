@@ -258,6 +258,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       let statusLabel = 'Em Espera'
       let statusColor = 'bg-slate-500/15 text-slate-300 border-slate-700'
 
+      const notesLower = o.notes ? o.notes.toLowerCase() : ''
+      const isDesistenciaCliente =
+        notesLower.includes('cancelamento: [desistência do cliente]') ||
+        notesLower.includes('desistência do cliente') ||
+        notesLower.includes('desistencia do cliente')
+
       if (o.status === 'delivered') {
         statusLabel = '✓ Entregue'
         statusColor = 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
@@ -265,14 +271,22 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         statusLabel = '🛵 Em Rota'
         statusColor = 'bg-amber-500/15 text-amber-400 border-amber-500/30'
       } else if (o.status === 'address_error') {
-        statusLabel = '⚠️ Erro de Endereço (Rota Parcial)'
+        statusLabel = '⚠️ Erro de Endereço'
         statusColor = 'bg-rose-500/15 text-rose-400 border-rose-500/30'
       } else if (o.status === 'client_absent') {
-        statusLabel = '⚠️ Cliente Ausente (Rota Parcial)'
+        statusLabel = '⚠️ Cliente Ausente'
         statusColor = 'bg-orange-500/15 text-orange-400 border-orange-500/30'
       } else if (o.status === 'cancelled') {
-        statusLabel = 'Cancelado'
-        statusColor = 'bg-slate-700/30 text-slate-400 border-slate-700'
+        if (isDesistenciaCliente && (o.route_started_at || o.actual_arrival)) {
+          statusLabel = '⚠️ Desistência do Cliente'
+          statusColor = 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+        } else if (o.completion_reason === 'cancelado_vendedor') {
+          statusLabel = 'Cancelado Loja'
+          statusColor = 'bg-slate-700/30 text-slate-400 border-slate-700'
+        } else {
+          statusLabel = 'Cancelado'
+          statusColor = 'bg-slate-700/30 text-slate-400 border-slate-700'
+        }
       } else if (o.status === 'assigned') {
         statusLabel = 'Atribuído / Preparando'
         statusColor = 'bg-blue-500/15 text-blue-400 border-blue-500/30'
@@ -350,12 +364,15 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       // Filtro de status
       if (statusFilter !== 'all') {
         if (statusFilter === 'partial') {
-          if (item.status !== 'address_error' && item.status !== 'client_absent') return false
+          const isLocalAttemptFail =
+            item.status === 'address_error' ||
+            item.status === 'client_absent' ||
+            item.statusLabel === '⚠️ Desistência do Cliente'
+          if (!isLocalAttemptFail) return false
         } else if (item.status !== statusFilter) {
           return false
         }
       }
-
       // Filtro de busca
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim()

@@ -2131,15 +2131,12 @@ export const deliveryService = {
 
     const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
 
-    // Filtrar ordens concluídas ou com rota iniciada
-    // BLINDAGEM DE INSUCESSO E ERRO DE SISTEMA:
-    // Pedidos cancelados, com insucesso (client_absent, address_error) ou erro de sistema
-    // NUNCA imputam km/custo aos relatórios e à conta de combustível.
-    const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
-
-    const courierOrders = orders.filter((o) => {
+    // Filtrar ordens atribuídas ao entregador elegíveis para km e combustível
+    // REGRAS 1 & 2 DO USUÁRIO:
+    // - Cancelamento pelo vendedor: não conta para o entregador.
+    // - client_absent, address_error e desistência do cliente no local: km e combustível CONTAM para o entregador.
+    const isEligibleOrder = (o: OrderRecord): boolean => {
       if (o.courier_id !== courier.id) return false
-      if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
       const notesLower = o.notes ? o.notes.toLowerCase() : ''
       if (notesLower.includes('erro de sistema')) return false
       const baseLat = Number(o.start_base_lat) || 0
@@ -2148,10 +2145,32 @@ export const deliveryService = {
         return false
       }
 
-      const isStartedOrDelivered =
-        o.status === 'delivered' || (o.route_started === true && o.status === 'in_transit')
+      // Regra 1: Cancelamento da loja/vendedor -> NÃO conta
+      if (o.completion_reason === 'cancelado_vendedor') {
+        return false
+      }
 
-      if (!isStartedOrDelivered) return false
+      if (o.status === 'delivered') return true
+      if (o.route_started === true && o.status === 'in_transit') return true
+
+      // Regra 2: Entregador foi até o cliente e a entrega falhou
+      if (o.status === 'address_error' || o.status === 'client_absent') {
+        return true
+      }
+      if (o.status === 'cancelled') {
+        const isLocalDesistencia =
+          notesLower.includes('cancelamento: [desistência do cliente]') ||
+          notesLower.includes('desistência do cliente') ||
+          notesLower.includes('desistencia do cliente')
+        const hadAttempt = Boolean(o.route_started_at || o.actual_arrival)
+        return isLocalDesistencia && hadAttempt
+      }
+
+      return false
+    }
+
+    const courierOrders = orders.filter((o) => {
+      if (!isEligibleOrder(o)) return false
       if (periodFilter === 'all') return true
 
       const oDate = new Date(o.created || Date.now())
@@ -2219,13 +2238,11 @@ export const deliveryService = {
       const courierLocations = locations.filter((l) => l.user_id === courier.id)
       const courierEvents = offRouteEvents.filter((ev) => ev.courier_id === courier.id)
 
-      // Regra: Contabilizar km exclusivamente para pedidos válidos entregues ou em trânsito
-      // Ignorar insucessos (client_absent, address_error, cancelled) e erros de sistema
-      const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
-
+      // Regras 1 & 2 do Usuário:
+      // - Cancelamento da loja/vendedor (completion_reason 'cancelado_vendedor'): NÃO conta para o entregador
+      // - Falhas no local (client_absent, address_error, desistência no local): CONTAM para o entregador
       const courierOrders = orders.filter((o) => {
         if (o.courier_id !== courier.id) return false
-        if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
         const notesLower = o.notes ? o.notes.toLowerCase() : ''
         if (notesLower.includes('erro de sistema')) return false
         const baseLat = Number(o.start_base_lat) || 0
@@ -2233,7 +2250,21 @@ export const deliveryService = {
         if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
           return false
         }
-        return o.status === 'delivered' || (o.route_started === true && o.status === 'in_transit')
+        if (o.completion_reason === 'cancelado_vendedor') {
+          return false
+        }
+        if (o.status === 'delivered') return true
+        if (o.route_started === true && o.status === 'in_transit') return true
+        if (o.status === 'address_error' || o.status === 'client_absent') return true
+        if (o.status === 'cancelled') {
+          const isLocalDesistencia =
+            notesLower.includes('cancelamento: [desistência do cliente]') ||
+            notesLower.includes('desistência do cliente') ||
+            notesLower.includes('desistencia do cliente')
+          const hadAttempt = Boolean(o.route_started_at || o.actual_arrival)
+          return isLocalDesistencia && hadAttempt
+        }
+        return false
       })
 
       // Regra do Usuário: "O KM RODADO INICIA NA SAIDA DA BASE, CONTINUA CONTANDO EM TODAS ENTREGAS E FINALIZA NA BASE DE VOLTA"

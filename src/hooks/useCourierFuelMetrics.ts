@@ -81,7 +81,7 @@ export interface CourierFuelCalculationResult {
   // Detalhamento por entrega elegível
   orderCalculations: CourierOrderTelemetryCalculation[]
   // Detalhamento consolidado por rotas únicas deduplicadas
-  routesSummary: CourierRouteAuditSummary[]
+  routesSummary?: CourierRouteAuditSummary[]
   // Objeto compatível com CourierFuelAccount
   fuelAccount: CourierFuelAccount | null
   // Fonte oficial do cálculo
@@ -198,32 +198,62 @@ export function calculateCourierFuelMetrics(params: {
     return true
   })
 
-  // 3. Filtrar ordens atribuídas ao entregador que tenham sido entregues com sucesso.
-  // BLINDAGEM DE INSUCESSO E BASE INVÁLIDA:
-  // Pedidos cancelados, com insucesso (client_absent, address_error, cancelled) ou com base inválida (0,0)
-  // NUNCA imputam km/custo aos relatórios e à conta de combustível.
-  // Também EXCLUI pedidos neutralizados como erro de sistema.
-  const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
-
-  // Regra A: km oficial e combustível somam SOMENTE pedidos entregues (status=delivered).
-  // Cancelled, client_absent e address_error ficam FORA de km, combustível e faturamento.
-  // Regra blindada: erros de sistema fora das métricas.
-  const allCourierOrders = orders.filter((o) => {
+  // 3. Filtrar ordens atribuídas ao entregador elegíveis para km e combustível.
+  // REGRA 1 & 2 DO USUÁRIO:
+  // - Cancelamento pelo VENDEDOR (completion_reason 'cancelado_vendedor' ou cancelled na base sem deslocamento):
+  //   NÃO conta para o entregador (km=0, combustível=0) e estorna do vendedor.
+  // - Tentativa local onde o entregador foi até o cliente e falhou:
+  //   (status 'client_absent', 'address_error', ou 'cancelled' com desistência do cliente no local):
+  //   KM e COMBUSTÍVEL CONTAM para o entregador.
+  // - Erros de sistema continuam neutralizados.
+  const isCourierEligibleOrder = (o: OrderRecord): boolean => {
     if (o.courier_id !== courier.id) return false
-    if (o.status !== 'delivered') return false
     const notesLower = o.notes ? o.notes.toLowerCase() : ''
     if (notesLower.includes('erro de sistema')) return false
+
     // Descartar pedidos com base 0,0 que não foram saneados
     const baseLat = Number(o.start_base_lat) || 0
     const baseLng = Number(o.start_base_lng) || 0
     if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
       return false
     }
-    return true
-  })
+
+    // Regra 1: Cancelamento explícito da loja/vendedor -> NÃO conta para entregador
+    if (o.completion_reason === 'cancelado_vendedor') {
+      return false
+    }
+
+    // Pedido entregue com sucesso
+    if (o.status === 'delivered') return true
+
+    // Regra 2: Entregador foi até o cliente e a entrega falhou
+    // - Erro de endereço / Rota errada no local
+    // - Cliente ausente no local
+    if (o.status === 'address_error' || o.status === 'client_absent') {
+      return true
+    }
+
+    // Cancelamento com tentativa local (ex.: desistência do cliente no local)
+    // Identificado por notes começando por "Cancelamento: [Desistência do Cliente]"
+    // ou tentativa de deslocamento registrada (route_started_at presente / actual_arrival preenchido)
+    if (o.status === 'cancelled') {
+      const isLocalDesistencia =
+        notesLower.includes('cancelamento: [desistência do cliente]') ||
+        notesLower.includes('desistência do cliente') ||
+        notesLower.includes('desistencia do cliente')
+      const hadAttempt = Boolean(o.route_started_at || o.actual_arrival)
+      if (isLocalDesistencia && hadAttempt) {
+        return true
+      }
+      return false
+    }
+
+    return false
+  }
+
+  const allCourierOrders = orders.filter(isCourierEligibleOrder)
 
   const eligibleOrders = allCourierOrders.filter((o) => {
-    if (o.status !== 'delivered') return false
     if (periodFilter === 'all') return true
 
     const oDate = new Date(o.created || Date.now())
