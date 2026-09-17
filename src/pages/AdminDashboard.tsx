@@ -475,6 +475,42 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       if (settings.lunch_start_time) setLunchStartTimeInput(settings.lunch_start_time)
       if (settings.lunch_end_time) setLunchEndTimeInput(settings.lunch_end_time)
       if (settings.work_end_time) setWorkEndTimeInput(settings.work_end_time)
+
+      const fallbackPrice = settings.fuel_price_per_liter || 5.59
+      if (settings.moto_fuel_price != null) {
+        setMotoPriceInput(String(settings.moto_fuel_price))
+      } else {
+        setMotoPriceInput(String(fallbackPrice))
+      }
+      if (settings.moto_consumption_kml != null) {
+        setMotoConsInput(String(settings.moto_consumption_kml))
+      } else if (settings.fuel_consumption_kml != null) {
+        setMotoConsInput(String(settings.fuel_consumption_kml))
+      } else {
+        setMotoConsInput('35.0')
+      }
+
+      if (settings.carro_fuel_price != null) {
+        setCarroPriceInput(String(settings.carro_fuel_price))
+      } else {
+        setCarroPriceInput(String(fallbackPrice))
+      }
+      if (settings.carro_consumption_kml != null) {
+        setCarroConsInput(String(settings.carro_consumption_kml))
+      } else {
+        setCarroConsInput('12.0')
+      }
+
+      if (settings.caminhao_fuel_price != null) {
+        setCaminhaoPriceInput(String(settings.caminhao_fuel_price))
+      } else {
+        setCaminhaoPriceInput(String(fallbackPrice))
+      }
+      if (settings.caminhao_consumption_kml != null) {
+        setCaminhaoConsInput(String(settings.caminhao_consumption_kml))
+      } else {
+        setCaminhaoConsInput('7.0')
+      }
     }
   }, [settings])
 
@@ -635,13 +671,35 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         return
       }
 
-      const updated = await deliveryService.updateSettings(payload)
-      setSettings(updated as AppSettingsRecord)
+      const updated = (await deliveryService.updateSettings(payload)) as AppSettingsRecord
+      if (updated) {
+        setSettings(updated)
+        const fallbackPrice = updated.fuel_price_per_liter || 5.59
+        if (category === 'moto') {
+          setMotoPriceInput(String(updated.moto_fuel_price ?? fallbackPrice))
+          setMotoConsInput(
+            String(updated.moto_consumption_kml ?? updated.fuel_consumption_kml ?? 35.0),
+          )
+        } else if (category === 'carro') {
+          setCarroPriceInput(String(updated.carro_fuel_price ?? fallbackPrice))
+          setCarroConsInput(String(updated.carro_consumption_kml ?? 12.0))
+        } else {
+          setCaminhaoPriceInput(String(updated.caminhao_fuel_price ?? fallbackPrice))
+          setCaminhaoConsInput(String(updated.caminhao_consumption_kml ?? 7.0))
+        }
+      }
+
       const label = category === 'moto' ? 'Moto' : category === 'carro' ? 'Carro' : 'Caminhão'
       toast.success(`Parâmetros de ${label} salvos com sucesso!`)
-    } catch (err) {
+      await loadData()
+    } catch (err: unknown) {
       console.error('Error saving category settings:', err)
-      toast.error('Erro ao salvar parâmetros da categoria.')
+      const errorMsg = getErrorMessage(err)
+      toast.error(
+        errorMsg
+          ? `Erro ao salvar parâmetros da categoria: ${errorMsg}`
+          : 'Erro ao salvar parâmetros da categoria.',
+      )
     } finally {
       setSavingCategory(null)
     }
