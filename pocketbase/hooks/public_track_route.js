@@ -42,24 +42,31 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
       } catch (_) {}
     }
 
+    // Dados do pedido para resposta pública (sempre disponíveis mesmo se não liberado ou pendente)
+    const baseResponse = {
+      order_id: targetOrder.id,
+      tracking_code: trackingCode,
+      status: targetStatus,
+      sequence: targetSequence,
+      courier_id: courierId,
+      route_released: targetOrder.getBool('route_released'),
+      route_started: targetOrder.getBool('route_started'),
+      estimated_arrival: targetOrder.getString('estimated_arrival'),
+      destination: targetCustomer
+        ? {
+            name: targetCustomer.getString('name'),
+            lat: targetCustomer.getFloat('lat'),
+            lng: targetCustomer.getFloat('lng'),
+            address: targetCustomer.getString('address'),
+          }
+        : null,
+      stops_before: [],
+      total_stops_before: 0,
+    }
+
     // Se a entrega já foi finalizada ou cancelada, ou se não tem entregador
     if (targetStatus === 'delivered' || targetStatus === 'cancelled' || !courierId) {
-      return e.json(200, {
-        tracking_code: trackingCode,
-        status: targetStatus,
-        sequence: targetSequence,
-        courier_id: courierId,
-        destination: targetCustomer
-          ? {
-              name: targetCustomer.getString('name'),
-              lat: targetCustomer.getFloat('lat'),
-              lng: targetCustomer.getFloat('lng'),
-              address: targetCustomer.getString('address'),
-            }
-          : null,
-        stops_before: [],
-        total_stops_before: 0,
-      })
+      return e.json(200, baseResponse)
     }
 
     // Buscar pedidos anteriores do mesmo entregador que ainda estão pendentes/em trânsito
@@ -116,18 +123,7 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
     stopsBefore.sort((a, b) => a.sequence - b.sequence)
 
     return e.json(200, {
-      tracking_code: trackingCode,
-      status: targetStatus,
-      sequence: targetSequence,
-      courier_id: courierId,
-      destination: targetCustomer
-        ? {
-            name: targetCustomer.getString('name'),
-            lat: targetCustomer.getFloat('lat'),
-            lng: targetCustomer.getFloat('lng'),
-            address: targetCustomer.getString('address'),
-          }
-        : null,
+      ...baseResponse,
       stops_before: stopsBefore,
       total_stops_before: stopsBefore.length,
     })

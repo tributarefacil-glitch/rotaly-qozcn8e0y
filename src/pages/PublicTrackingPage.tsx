@@ -186,8 +186,25 @@ export default function PublicTrackingPage() {
 
   // Realtime updates for order status and courier locations
   useRealtime<OrderRecord>('orders', (e) => {
-    if (order && e.record.id === order.id) {
-      setOrder((prev) => (prev ? { ...prev, ...e.record } : null))
+    if (
+      (order && e.record.id === order.id) ||
+      (resolvedTrackingCode &&
+        e.record.tracking_code &&
+        e.record.tracking_code.toUpperCase() === resolvedTrackingCode.toUpperCase())
+    ) {
+      setOrder((prev) => (prev ? { ...prev, ...e.record } : (e.record as any)))
+      // Se atribuiu courier agora, busca a localização mais recente dele
+      if (
+        e.record.courier_id &&
+        (!courierLocation || courierLocation.user_id !== e.record.courier_id)
+      ) {
+        deliveryService
+          .getLatestLocationForCourier(e.record.courier_id)
+          .then((loc) => {
+            if (loc) setCourierLocation(loc)
+          })
+          .catch(() => {})
+      }
     }
   })
 

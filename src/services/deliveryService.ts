@@ -247,11 +247,13 @@ export const deliveryService = {
 
     try {
       // 1. Busca direta exata na coleção orders (com expansão completa)
+      // Nota: o query param tracking_code é passado explicitamente para satisfazer a regra @request.query.tracking_code
       const list = await pb.collection<OrderRecord>('orders').getList(1, 1, {
         filter: `tracking_code = '${code}'`,
         expand: 'customer_id,courier_id,seller_id',
+        tracking_code: code,
         requestKey: null,
-      })
+      } as any)
       if (list.items[0]) return list.items[0]
     } catch (err) {
       console.warn('Erro ao buscar pedido com expand por tracking_code na coleção orders:', err)
@@ -260,8 +262,9 @@ export const deliveryService = {
       try {
         const listPure = await pb.collection<OrderRecord>('orders').getList(1, 1, {
           filter: `tracking_code = '${code}'`,
+          tracking_code: code,
           requestKey: null,
-        })
+        } as any)
         if (listPure.items[0]) {
           const rawOrder = listPure.items[0]
           // Tentar carregar cliente e courier isoladamente de forma tolerante a falhas
@@ -313,22 +316,79 @@ export const deliveryService = {
     try {
       // 2. Fallback caso a formatação tenha espaçamento ou case ligeiramente diferente
       const listFuzzy = await pb.collection<OrderRecord>('orders').getList(1, 1, {
-        filter: `tracking_code ~ '${code}'`,
+        filter: `tracking_code ~ '${code}' || tracking_code = '${code}'`,
         expand: 'customer_id,courier_id,seller_id',
+        tracking_code: code,
         requestKey: null,
-      })
+      } as any)
       if (listFuzzy.items[0]) return listFuzzy.items[0]
     } catch (err) {
       console.warn('Erro na busca aproximada por tracking_code:', err)
       try {
         const listFuzzyPure = await pb.collection<OrderRecord>('orders').getList(1, 1, {
-          filter: `tracking_code ~ '${code}'`,
+          filter: `tracking_code ~ '${code}' || tracking_code = '${code}'`,
+          tracking_code: code,
           requestKey: null,
-        })
+        } as any)
         if (listFuzzyPure.items[0]) return listFuzzyPure.items[0]
       } catch {
         /* intentionally ignored */
       }
+    }
+
+    // 3. Fallback adicional de alta resiliência: se a busca direta por orders falhou,
+    // tenta obter o pedido com as informações básicas a partir do endpoint público de rota (/backend/v1/public-track/:code/route)
+    try {
+      const publicRoute = await this.getPublicTrackingRoute(code)
+      if (publicRoute && publicRoute.destination) {
+        const orderId = (publicRoute as any).order_id || `pub_${code}`
+        const synthesizedOrder: Partial<OrderRecord> = {
+          id: orderId,
+          tracking_code: code,
+          status: (publicRoute.status as any) || 'in_transit',
+          sequence: publicRoute.sequence,
+          courier_id: publicRoute.courier_id,
+          estimated_arrival: (publicRoute as any).estimated_arrival || '',
+          route_released: (publicRoute as any).route_released ?? true,
+          route_started: (publicRoute as any).route_started ?? true,
+          created: new Date().toISOString(),
+          updated: new Date().toISOString(),
+          collectionId: 'orders',
+          collectionName: 'orders',
+          expand: {
+            customer_id: {
+              id: `cust_${code}`,
+              name: publicRoute.destination.name,
+              address: publicRoute.destination.address,
+              lat: publicRoute.destination.lat,
+              lng: publicRoute.destination.lng,
+              phone: '',
+              created: '',
+              updated: '',
+              collectionId: 'customers',
+              collectionName: 'customers',
+            } as any,
+          },
+        }
+
+        // Tenta carregar entregador se courier_id existir
+        if (publicRoute.courier_id) {
+          try {
+            const cour = await pb
+              .collection<UserRecord>('users')
+              .getOne(publicRoute.courier_id, { requestKey: null })
+            if (cour && synthesizedOrder.expand) {
+              synthesizedOrder.expand.courier_id = cour
+            }
+          } catch {
+            /* intentionally ignored */
+          }
+        }
+
+        return synthesizedOrder as OrderRecord
+      }
+    } catch (routeFallbackErr) {
+      console.warn('Erro no fallback pelo endpoint público de rota:', routeFallbackErr)
     }
 
     return null

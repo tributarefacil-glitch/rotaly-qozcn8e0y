@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-17T12:27:14.176Z",
+  "generatedAt": "2026-09-17T15:28:30.265Z",
   "collections": [
     {
       "name": "users",
@@ -244,8 +244,8 @@
       "name": "orders",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\" || (@request.auth.role = \"seller\" && seller_id = @request.auth.id) || (@request.auth.role = \"courier\" && courier_id = @request.auth.id) || route_released = true)",
-        "view": "@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\" || (@request.auth.role = \"seller\" && seller_id = @request.auth.id) || (@request.auth.role = \"courier\" && courier_id = @request.auth.id) || route_released = true)",
+        "list": "(@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\" || (@request.auth.role = \"seller\" && seller_id = @request.auth.id) || (@request.auth.role = \"courier\" && courier_id = @request.auth.id))) || (@request.query.tracking_code != \"\" && tracking_code = @request.query.tracking_code) || route_released = true",
+        "view": "(@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\" || (@request.auth.role = \"seller\" && seller_id = @request.auth.id) || (@request.auth.role = \"courier\" && courier_id = @request.auth.id))) || tracking_code != \"\" || route_released = true",
         "create": "@request.auth.id != \"\"",
         "update": "@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\" || (@request.auth.role = \"seller\" && seller_id = @request.auth.id) || (@request.auth.role = \"courier\" && courier_id = @request.auth.id))",
         "delete": "@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")"
