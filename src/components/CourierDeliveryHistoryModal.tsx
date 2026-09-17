@@ -95,6 +95,7 @@ interface CourierDeliveryHistoryModalProps {
   offRouteEvents?: OffRouteEventRecord[]
   locations?: LocationRecord[]
   settings: AppSettingsRecord | null
+  initialPeriodFilter?: 'all' | 'today' | 'week' | 'month'
 }
 
 export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalProps> = ({
@@ -106,8 +107,18 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   offRouteEvents = [],
   locations: externalLocations,
   settings,
+  initialPeriodFilter = 'month',
 }) => {
-  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>('all')
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>(
+    initialPeriodFilter,
+  )
+
+  // Sincronizar período padrão quando o modal for aberto ou initialPeriodFilter mudar
+  React.useEffect(() => {
+    if (isOpen) {
+      setPeriodFilter(initialPeriodFilter)
+    }
+  }, [isOpen, initialPeriodFilter])
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedItemForDetails, setSelectedItemForDetails] =
@@ -357,8 +368,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
         if (item.dateObj < sevenDaysAgo) return false
       } else if (periodFilter === 'month') {
-        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-        if (item.dateObj < thirtyDaysAgo) return false
+        const isCurrentMonth =
+          item.dateObj.getMonth() === now.getMonth() &&
+          item.dateObj.getFullYear() === now.getFullYear()
+        if (!isCurrentMonth) return false
       }
 
       // Filtro de status
@@ -727,7 +740,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                   <SelectItem value="all">Todo Histórico</SelectItem>
                   <SelectItem value="today">Hoje</SelectItem>
                   <SelectItem value="week">Últimos 7 dias</SelectItem>
-                  <SelectItem value="month">Últimos 30 dias</SelectItem>
+                  <SelectItem value="month">Este Mês</SelectItem>
                 </SelectContent>
               </Select>
 
