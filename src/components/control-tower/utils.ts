@@ -146,15 +146,15 @@ export function formatVehicle(type?: string): string {
 export function renderVehicleIcon(type?: string): React.ReactNode {
   const norm = (type || '').toLowerCase().trim()
   if (norm === 'carro' || norm === 'car' || norm === 'van') {
-    return <Car className="h-4 w-4 text-blue-400" />
+    return React.createElement(Car, { className: 'h-4 w-4 text-blue-400' })
   }
   if (norm === 'caminhao' || norm === 'caminhão' || norm === 'truck') {
-    return <Truck className="h-4 w-4 text-purple-400" />
+    return React.createElement(Truck, { className: 'h-4 w-4 text-purple-400' })
   }
   if (norm === 'bicicleta' || norm === 'bicycle' || norm === 'bike') {
-    return <span className="text-sm select-none leading-none">🚲</span>
+    return React.createElement('span', { className: 'text-sm select-none leading-none' }, '🚲')
   }
-  return <span className="text-sm select-none leading-none">🛵</span>
+  return React.createElement('span', { className: 'text-sm select-none leading-none' }, '🛵')
 }
 
 export function getOrderKanbanCategory(order: OrderRecord): KanbanColumnKey {

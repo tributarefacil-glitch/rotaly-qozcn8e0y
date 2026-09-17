@@ -103,6 +103,14 @@ import {
 } from '@/lib/operationalWindow'
 import { isOrderInActiveRoute } from '@/lib/activeRouteHelper'
 import type { AppSettingsRecord } from '@/types/delivery'
+import {
+  ControlTowerDeliveredNotice,
+  ControlTowerHeroBanner,
+  ControlTowerFilters,
+} from '@/components/control-tower/ControlTowerCards'
+import { ControlTowerColumns } from '@/components/control-tower/ControlTowerColumns'
+import { ControlTowerMap } from '@/components/control-tower/ControlTowerMap'
+import { ControlTowerModals } from '@/components/control-tower/ControlTowerModals'
 
 interface ControlTowerProps {
   orders?: OrderRecord[]
@@ -479,18 +487,44 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }
 
   // Determina se o componente pai (SellerDashboard / AdminDashboard) já está fornecendo os dados via props
-  // Contingência: se initialOrders ou initialCouriers vierem vazios (length === 0), a Torre busca os dados de forma autônoma
-  const hasParentOrders = Array.isArray(initialOrders)
-    ? initialOrders.length > 0
-    : Boolean(initialOrders)
-  const hasParentCouriers = Array.isArray(initialCouriers)
-    ? initialCouriers.length > 0
-    : Boolean(initialCouriers)
+  // Se initialOrders !== undefined || initialCouriers !== undefined, o pai gerencia os dados
+  const hasParentData = initialOrders !== undefined || initialCouriers !== undefined
+  const [parentFallbackAutonomous, setParentFallbackAutonomous] = useState(false)
+  const parentDataTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Contingência de 3.500 ms: se o pai gerencia os dados mas após 3,5s ainda estiver com 0 registros, a Torre assume busca autônoma
+  useEffect(() => {
+    if (!hasParentData) return
+    const ordersCount = Array.isArray(initialOrders) ? initialOrders.length : 0
+    const couriersCount = Array.isArray(initialCouriers) ? initialCouriers.length : 0
+
+    if (ordersCount === 0 && couriersCount === 0 && !parentFallbackAutonomous) {
+      parentDataTimeoutRef.current = setTimeout(() => {
+        console.info('Torre de Controle: fallback autônomo ativado após 3.5s sem dados do pai')
+        setParentFallbackAutonomous(true)
+      }, 3500)
+    } else if (ordersCount > 0 || couriersCount > 0) {
+      if (parentDataTimeoutRef.current) {
+        clearTimeout(parentDataTimeoutRef.current)
+        parentDataTimeoutRef.current = null
+      }
+      if (parentFallbackAutonomous) {
+        setParentFallbackAutonomous(false)
+      }
+    }
+
+    return () => {
+      if (parentDataTimeoutRef.current) {
+        clearTimeout(parentDataTimeoutRef.current)
+      }
+    }
+  }, [initialOrders, initialCouriers, hasParentData, parentFallbackAutonomous])
+
+  // Deve buscar de forma autônoma se NÃO houver gerenciamento pelo pai OU se o fallback autônomo foi ativado
+  const shouldFetchAutonomously = !hasParentData || parentFallbackAutonomous
 
   // Fetch initial/refreshed data (apenas quando não alimentado via props)
   const fetchData = async () => {
-    // Se orders e couriers já vêm gerenciados pelas props do componente pai,
-    // precisamos apenas carregar as ordens globais em trânsito se não fornecidas
     try {
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
       const currentOpWindow = getOperationalWindow(new Date())
@@ -505,7 +539,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         fetchedDeviations,
         fetchedSettings,
       ] = await Promise.all([
-        !hasParentOrders
+        shouldFetchAutonomously
           ? deliveryService.getOrders(
               fallbackOrdersFilter,
               '-created',
@@ -517,13 +551,13 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           '-created',
           'customer_id,courier_id,seller_id',
         ),
-        !hasParentCouriers ? deliveryService.getCouriers() : Promise.resolve(couriers),
+        shouldFetchAutonomously ? deliveryService.getCouriers() : Promise.resolve(couriers),
         deliveryService.getLatestLocations(),
         deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
         deliveryService.getSettings().catch(() => null),
       ])
 
-      if (!hasParentOrders) {
+      if (shouldFetchAutonomously) {
         setOrders(fetchedOrders)
       }
       // Filtrar estritamente pedidos do dia para globalInTransitOrders
@@ -531,7 +565,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         isTodayOrder(o, operationalWindow),
       )
       setGlobalInTransitOrders(onlyTodayGlobal)
-      if (!hasParentCouriers) {
+      if (shouldFetchAutonomously) {
         setCouriers(fetchedCouriers)
       }
       setLocations(fetchedLocations)
@@ -546,20 +580,20 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }
 
   // Sincronização inicial e periódica:
-  // Executa busca autônoma se props não foram fornecidas pelo componente pai ou vieram vazias ([]).
+  // Executa busca autônoma apenas se props não foram fornecidas pelo componente pai ou se o fallback ativou
   useEffect(() => {
-    if (!hasParentOrders || !hasParentCouriers) {
+    if (shouldFetchAutonomously) {
       fetchData()
       const interval = setInterval(() => {
         fetchData()
       }, 30000)
       return () => clearInterval(interval)
     }
-  }, [user?.id, user?.role, currentCompany?.id, hasParentOrders, hasParentCouriers])
+  }, [user?.id, user?.role, currentCompany?.id, shouldFetchAutonomously])
 
   useEffect(() => {
     const handleCompanyChange = () => {
-      if (!hasParentOrders || !hasParentCouriers) {
+      if (shouldFetchAutonomously) {
         fetchData()
       }
     }
@@ -567,7 +601,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     return () => {
       window.removeEventListener('rotaly_company_changed', handleCompanyChange)
     }
-  }, [hasParentOrders, hasParentCouriers])
+  }, [shouldFetchAutonomously])
 
   // Sync with incoming props com comparação estável por conteúdo (IDs + timestamps)
   const prevOrdersHashRef = useRef<string>('')
@@ -3118,1200 +3152,118 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   return (
     <div className="space-y-6 text-slate-100 font-sans">
       {/* BANNER DE AVISO DE ENTREGA CONCLUÍDA EM TEMPO REAL */}
-      {latestDeliveredNotice && (
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-950 via-teal-900 to-emerald-900 border-2 border-emerald-400 p-4 sm:p-5 shadow-2xl animate-in slide-in-from-top-4 duration-300">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-full bg-emerald-500/30 border border-emerald-400 text-emerald-300 flex items-center justify-center shrink-0">
-                <Check className="h-6 w-6 text-emerald-300 stroke-[3]" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge className="bg-emerald-500 text-slate-950 font-black text-xs uppercase px-2 py-0.5">
-                    NOVA ENTREGA CONCLUÍDA AGORA
-                  </Badge>
-                  <span className="font-mono text-xs font-bold text-emerald-200">
-                    {latestDeliveredNotice.trackingCode}
-                  </span>
-                </div>
-                <h3 className="text-base font-bold text-white mt-0.5">
-                  Destinatário:{' '}
-                  <span className="text-emerald-200">{latestDeliveredNotice.customerName}</span>
-                  <span className="text-slate-300 text-xs font-normal ml-2">
-                    • Finalizado por:{' '}
-                    <strong className="text-white">{latestDeliveredNotice.courierName}</strong>
-                  </span>
-                </h3>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 self-end sm:self-center">
-              <Button
-                size="sm"
-                onClick={() => {
-                  const targetOrder = orders.find((o) => o.id === latestDeliveredNotice.orderId)
-                  if (targetOrder) handleOpenOrderDetails(targetOrder)
-                }}
-                className="h-8 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs rounded-lg shadow"
-              >
-                Ver Detalhes
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setLatestDeliveredNotice(null)}
-                className="h-8 text-xs text-slate-300 hover:text-white hover:bg-emerald-800/40"
-              >
-                Fechar
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ControlTowerDeliveredNotice
+        notice={latestDeliveredNotice}
+        onOpenDetails={(orderId) => {
+          const targetOrder = orders.find((o) => o.id === orderId)
+          if (targetOrder) handleOpenOrderDetails(targetOrder)
+        }}
+        onClose={() => setLatestDeliveredNotice(null)}
+      />
 
       {/* 1. VUUPT-INSPIRED HERO BANNER "ACOMPANHE EM TEMPO REAL" */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0A1128] via-[#0E1E4A] to-[#122B68] border border-[#1E2B58] p-5 sm:p-6 shadow-xl">
-        <div className="absolute top-0 right-0 -mt-8 -mr-8 w-64 h-64 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 left-1/3 -mb-8 w-48 h-48 rounded-full bg-emerald-500/10 blur-2xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0052CC]/30 border border-[#60A5FA]/40 text-[#60A5FA] text-xs font-bold tracking-wide">
-              <span className="flex h-2 w-2 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
-              </span>
-              <span>SISTEMA DE MONITORAMENTO LOGÍSTICO EM TEMPO REAL</span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white font-heading">
-                Torre de Controle
-              </h1>
-              <Badge className="bg-[#0052CC] text-white hover:bg-[#0052CC] font-bold text-xs uppercase px-2.5 py-0.5 shadow-sm">
-                Rotaly • Dark Navy
-              </Badge>
-            </div>
-
-            <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-              Painel estilo Kanban logístico (inspirado no modelo VUUPT): clique no card de cada
-              cliente para abrir o drawer com o entregador responsável, rota e previsão de chegada
-              em tempo real via PocketBase.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* View Switcher: Split / Kanban / Map */}
-            <div className="bg-slate-100 p-1 rounded-xl border border-slate-200 flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setActiveTab('split')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  activeTab === 'split'
-                    ? 'bg-[#0052CC] text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
-                }`}
-              >
-                <Columns3 className="h-3.5 w-3.5" />
-                <span>Kanban + Mapa</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('kanban')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  activeTab === 'kanban'
-                    ? 'bg-[#0052CC] text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
-                }`}
-              >
-                <Columns3 className="h-3.5 w-3.5" />
-                <span>Apenas Kanban</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('map')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                  activeTab === 'map'
-                    ? 'bg-[#0052CC] text-white shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
-                }`}
-              >
-                <MapIcon className="h-3.5 w-3.5" />
-                <span>Apenas Mapa</span>
-              </button>
-            </div>
-
-            <div className="flex items-center text-xs text-slate-600 bg-white border border-slate-200 px-3 py-2 rounded-xl shadow-xs">
-              <Clock className="w-3.5 h-3.5 mr-1.5 text-slate-400" />
-              <span>10s • {lastUpdated.toLocaleTimeString('pt-BR')}</span>
-            </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setIsLoading(true)
-                fetchData().finally(() => setIsLoading(false))
-              }}
-              disabled={isLoading}
-              className="h-9 gap-1.5 text-xs bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:text-[#002855] rounded-xl"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              Atualizar
-            </Button>
-          </div>
-        </div>
-
-        {/* Banner "Acompanhe em tempo real" pills */}
-        <div className="mt-5 pt-4 border-t border-[#1E2B58]/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-          <div className="bg-[#070D1E]/60 border border-slate-700/50 rounded-xl p-2.5 flex items-center justify-between">
-            <span className="text-slate-400 font-medium">Aguardando Início:</span>
-            <span className="font-bold font-mono text-slate-200 text-sm">{metrics.pending}</span>
-          </div>
-          <div className="bg-[#070D1E]/60 border border-blue-500/30 rounded-xl p-2.5 flex items-center justify-between">
-            <span className="text-blue-300 font-medium">Em Trânsito:</span>
-            <span className="font-bold font-mono text-blue-400 text-sm">{metrics.inTransit}</span>
-          </div>
-          <div className="bg-[#070D1E]/60 border border-emerald-500/30 rounded-xl p-2.5 flex items-center justify-between">
-            <span className="text-emerald-300 font-medium">Entregues hoje:</span>
-            <span className="font-bold font-mono text-emerald-400 text-sm">
-              {metrics.delivered}
-            </span>
-          </div>
-          <div className="bg-[#070D1E]/60 border border-rose-500/30 rounded-xl p-2.5 flex items-center justify-between">
-            <span className="text-rose-300 font-medium">Exceções / Falhas:</span>
-            <span className="font-bold font-mono text-rose-400 text-sm">{metrics.issues}</span>
-          </div>
-        </div>
-      </div>
+      <ControlTowerHeroBanner
+        metrics={metrics}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        lastUpdated={lastUpdated}
+        isLoading={isLoading}
+        onRefresh={() => {
+          setIsLoading(true)
+          fetchData().finally(() => setIsLoading(false))
+        }}
+      />
 
       {/* 2. BARRA DE FILTROS & BUSCA RÁPIDA */}
-      <div className="rounded-xl border border-slate-200 bg-white p-3.5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow-sm">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-            Filtros do Fluxo:
-          </span>
-
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-8 text-xs w-[160px] bg-slate-50 border-slate-200 text-slate-800">
-              <SelectValue placeholder="Coluna / Status" />
-            </SelectTrigger>
-            <SelectContent className="bg-white border-slate-200 text-slate-800">
-              <SelectItem value="all">Todas as Colunas</SelectItem>
-              <SelectItem value="pending">Aguardando Início</SelectItem>
-              <SelectItem value="in_transit">Em Trânsito</SelectItem>
-              <SelectItem value="delivered">Entregue</SelectItem>
-              <SelectItem value="issues">Exceções / Problemas</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={courierFilter} onValueChange={setCourierFilter}>
-            <SelectTrigger className="h-8 text-xs w-[180px] bg-slate-50 border-slate-200 text-slate-800">
-              <SelectValue placeholder="Entregador" />
-            </SelectTrigger>
-            <SelectContent className="bg-white border-slate-200 text-slate-800">
-              <SelectItem value="all">Todos os Entregadores</SelectItem>
-              {couriers.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name || c.email}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="relative min-w-[220px]">
-          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
-          <Input
-            placeholder="Buscar por cliente, rastreio, rua..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-8 h-8 text-xs bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 rounded-lg focus:border-[#00A3FF] focus:bg-white"
-          />
-        </div>
-      </div>
+      <ControlTowerFilters
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
+        courierFilter={courierFilter}
+        setCourierFilter={setCourierFilter}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        couriers={couriers}
+      />
 
       {/* 3. KANBAN LOGÍSTICO (COLUNAS HORIZONTAIS ESTILO VUUPT) */}
       {(activeTab === 'kanban' || activeTab === 'split') && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Columns3 className="h-4 w-4 text-[#60A5FA]" />
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-200">
-                Fluxo de Entregas por Status (Kanban VUUPT)
-              </h2>
-            </div>
-            <span className="text-xs text-slate-400">
-              Arraste lateralmente • {filteredOrders.length} cards carregados
-            </span>
-          </div>
-
-          <div className="flex gap-4 overflow-x-auto pb-4 pt-1 snap-x scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-            {KANBAN_COLUMNS.map((col) => {
-              const columnOrders = kanbanColumnsData[col.key]
-
-              return (
-                <div
-                  key={col.key}
-                  className={`w-[320px] sm:w-[340px] shrink-0 rounded-2xl border ${col.borderColor} ${col.columnBg} shadow-lg flex flex-col max-h-[720px] overflow-hidden`}
-                >
-                  {/* Cabeçalho colorido da coluna */}
-                  <div className={`p-3.5 ${col.headerBg} flex items-center justify-between`}>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="h-3 w-3 rounded-full shrink-0 shadow-sm"
-                        style={{ backgroundColor: col.indicatorColor }}
-                      />
-                      <div>
-                        <h3 className="font-heading text-sm font-bold text-white tracking-wide">
-                          {col.title}
-                        </h3>
-                        <p className="text-[10px] text-slate-400">{col.subtitle}</p>
-                      </div>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className={`text-xs font-mono font-bold ${col.badgeBg} ${col.badgeText} border-transparent`}
-                    >
-                      {columnOrders.length}
-                    </Badge>
-                  </div>
-
-                  {/* Lista de Cards da Coluna */}
-                  <div className="p-3 space-y-3 overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-slate-800">
-                    {columnOrders.length === 0 ? (
-                      <div className="p-6 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl bg-[#070D1E]/40">
-                        Nenhuma entrega nesta etapa
-                      </div>
-                    ) : (
-                      columnOrders.map((order) => {
-                        const cust = order.expand?.customer_id
-                        const courier = order.expand?.courier_id
-                        const etaTime = getEtaDisplay(order)
-
-                        // Styling per card based on column
-                        const isRecentlyDelivered = latestDeliveredNotice?.orderId === order.id
-                        const borderAccent = isRecentlyDelivered
-                          ? 'border-l-4 border-l-emerald-400 ring-2 ring-emerald-400 animate-pulse'
-                          : col.key === 'delivered'
-                            ? 'border-l-4 border-l-emerald-500'
-                            : col.key === 'issues'
-                              ? 'border-l-4 border-l-rose-500'
-                              : col.key === 'in_transit'
-                                ? 'border-l-4 border-l-blue-500'
-                                : 'border-l-4 border-l-slate-400'
-
-                        const bgTint = isRecentlyDelivered
-                          ? 'bg-emerald-950/80 hover:bg-emerald-900/90'
-                          : col.key === 'delivered'
-                            ? 'bg-[#0f2425]/90 hover:bg-[#133031]'
-                            : col.key === 'issues'
-                              ? 'bg-[#29131e]/90 hover:bg-[#341827]'
-                              : col.key === 'in_transit'
-                                ? 'bg-[#0f1f45]/90 hover:bg-[#132857]'
-                                : 'bg-[#0e1738]/90 hover:bg-[#121e46]'
-
-                        return (
-                          <div
-                            key={order.id}
-                            onClick={() => handleOpenOrderDetails(order)}
-                            className={`rounded-xl p-3.5 border border-slate-700/60 ${borderAccent} ${bgTint} cursor-pointer transition-all duration-200 shadow-md hover:shadow-xl hover:-translate-y-0.5 group`}
-                          >
-                            {/* Linha superior: Rastreio & ETA / Horário de Entrega */}
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-mono text-xs font-black text-[#60A5FA] group-hover:text-white transition">
-                                {order.tracking_code}
-                              </span>
-                              <div className="flex items-center gap-1 text-[11px] text-slate-300 font-mono bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-700/50">
-                                <Clock className="h-3 w-3 text-slate-400" />
-                                <span>
-                                  {order.status === 'delivered' && order.actual_arrival
-                                    ? `Entregue às ${new Date(order.actual_arrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-                                    : etaTime}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Nome do Cliente */}
-                            <div className="mt-2">
-                              <h4 className="text-sm font-bold text-white truncate">
-                                {cust?.name || 'Cliente sem nome'}
-                              </h4>
-                              <p className="text-[11px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
-                                <MapPin className="h-3 w-3 text-slate-500 shrink-0" />
-                                <span>{cust?.address || 'Endereço não cadastrado'}</span>
-                              </p>
-                            </div>
-
-                            {/* Informações do Entregador Responsável */}
-                            <div className="mt-3 pt-2.5 border-t border-slate-700/50 flex items-center justify-between">
-                              {courier ? (
-                                <div className="flex items-center gap-1.5 text-xs text-slate-200">
-                                  {renderVehicleIcon(courier.vehicle_type)}
-                                  <span className="font-semibold truncate max-w-[150px]">
-                                    {courier.name || courier.email}
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-[11px] text-slate-500 italic">
-                                  Sem entregador
-                                </span>
-                              )}
-
-                              <div className="flex items-center gap-1">
-                                {order.sequence && (
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[9px] px-1.5 py-0 bg-blue-500/20 text-[#60A5FA] border-blue-500/30 font-bold"
-                                  >
-                                    #{order.sequence}
-                                  </Badge>
-                                )}
-                                <ChevronRight className="h-4 w-4 text-slate-500 group-hover:text-white group-hover:translate-x-0.5 transition" />
-                              </div>
-                            </div>
-
-                            {/* Badges de ocorrência se houver */}
-                            {col.key === 'issues' && (
-                              <div className="mt-2 text-[10px] text-rose-300 bg-rose-950/60 border border-rose-800/60 px-2 py-1 rounded font-medium truncate flex items-center gap-1">
-                                <AlertTriangle className="h-3 w-3 text-rose-400 shrink-0" />
-                                <span>
-                                  {order.completion_reason === 'address_error' ||
-                                  order.status === 'address_error'
-                                    ? 'Erro de Endereço'
-                                    : order.completion_reason === 'client_absent' ||
-                                        order.status === 'client_absent'
-                                      ? 'Cliente Ausente'
-                                      : order.notes || 'Atenção necessária'}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
+        <ControlTowerColumns
+          columns={KANBAN_COLUMNS}
+          kanbanColumnsData={kanbanColumnsData}
+          totalOrdersCount={filteredOrders.length}
+          latestDeliveredNotice={latestDeliveredNotice}
+          activeRoutesData={activeRoutesData}
+          onSelectOrder={handleOpenOrderDetails}
+        />
       )}
 
       {/* 4. MAPA DE TELEMETRIA EM TEMPO REAL */}
       {(activeTab === 'map' || activeTab === 'split') && (
-        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-          <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Activity className="h-5 w-5 text-[#60A5FA]" />
-              <h3 className="font-heading text-base font-bold text-white">
-                Mapa de Rastreamento &amp; Frotas em Tempo Real
-              </h3>
-            </div>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-blue-500 inline-block" />
-                <span className="text-slate-300">Em Rota (no mapa)</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 inline-block" />
-                <span className="text-slate-300">Disponível (na lista)</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-orange-500 inline-block" />
-                <span className="text-slate-300">Destino de Entrega</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 min-h-[460px]">
-            {/* Mapa Interativo Principal: Google Maps nativo ou Canvas Vetorial de Contingência (LiveMap) */}
-            <div className="relative w-full h-[400px] lg:h-[540px] bg-[#070D1E] overflow-hidden">
-              {mapsLoaded && !mapsError ? (
-                <>
-                  <div ref={mapContainerRef} className="w-full h-full" />
-
-                  {/* Abas sobre o mapa no canto superior direito */}
-                  <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-[#0A1128]/90 backdrop-blur-md p-1 rounded-xl border border-[#1E2B58] shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => setMapDisplayMode('in_transit')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                        mapDisplayMode === 'in_transit'
-                          ? 'bg-blue-600 text-white shadow'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                      }`}
-                    >
-                      <span>🛵 Em Rota ({activeRouteCouriers.length})</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMapDisplayMode('delivered')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                        mapDisplayMode === 'delivered'
-                          ? 'bg-emerald-600 text-white shadow'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                      }`}
-                    >
-                      <span>✓ Entregues ({metrics.delivered})</span>
-                    </button>
-                  </div>
-
-                  {/* Painel de status no canto superior esquerdo do Google Maps */}
-                  <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5 max-w-[340px]">
-                    {mapDisplayMode === 'delivered' ? (
-                      <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
-                        <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                        <span className="font-semibold text-white truncate text-[11px]">
-                          {metrics.delivered} entregas concluídas
-                        </span>
-                      </div>
-                    ) : activeRouteCouriers.length === 0 ? (
-                      <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
-                        <span className="flex h-2 w-2 rounded-full bg-blue-400" />
-                        <span className="font-semibold text-white truncate text-[11px]">
-                          0 entregadores em rota
-                        </span>
-                      </div>
-                    ) : (
-                      /* Pílula com o total + lista detalhada de cada entregador em rota (nome, tempo para terminar e voltar à base) */
-                      <div className="bg-[#0A1128]/95 backdrop-blur-sm rounded-lg border border-[#1E2B58] shadow-lg text-xs overflow-hidden flex flex-col">
-                        <div className="px-2.5 py-1 border-b border-[#1E2B58]/70 flex items-center justify-between gap-2 bg-[#0E1738]/60">
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
-                            <span className="font-bold text-white text-[11px]">
-                              {activeRouteCouriers.length}{' '}
-                              {activeRouteCouriers.length === 1
-                                ? 'entregador em rota'
-                                : 'entregadores em rota'}
-                            </span>
-                          </div>
-                          <span className="text-[9.5px] text-slate-400 font-mono">
-                            Toque para detalhes
-                          </span>
-                        </div>
-
-                        <div className="flex flex-col divide-y divide-[#1E2B58]/50">
-                          {activeRouteCouriers.map((item) => {
-                            const rInfo = activeRoutesData.find(
-                              (r) => r.courierId === item.courier.id,
-                            )
-                            const shift = rInfo?.shiftMetrics
-                            const courierName =
-                              item.courier.name || item.courier.email || 'Entregador'
-                            const vehicleEmoji = getVehicleEmoji(item.vehicle)
-
-                            return (
-                              <button
-                                key={`top-shift-${item.courier.id}`}
-                                type="button"
-                                onClick={() => setSelectedCourier(item.courier)}
-                                className="w-full text-left px-2.5 py-1.5 hover:bg-blue-950/40 transition flex flex-col gap-0.5 focus:outline-none"
-                                title="Clique para ver detalhes do entregador"
-                              >
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="font-bold text-white text-[11px] truncate flex items-center gap-1">
-                                    <span>{vehicleEmoji}</span>
-                                    <span className="truncate">{courierName}</span>
-                                  </span>
-                                  <span className="text-[9.5px] text-slate-400 font-mono shrink-0">
-                                    ({item.inTransitCount} entrega
-                                    {item.inTransitCount === 1 ? '' : 's'})
-                                  </span>
-                                </div>
-
-                                <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
-                                  {(() => {
-                                    const lTime = parseSafeTimestamp(item.location_timestamp)
-                                    const isFrozen =
-                                      item.gps_status === 'offline' ||
-                                      (lTime > 0 &&
-                                        Date.now() - lTime > 5 * 60 * 1000 &&
-                                        !(
-                                          item.gps_status === 'active' &&
-                                          item.offline_buffered === false
-                                        ))
-                                    if (isFrozen) {
-                                      const timeStr = lTime
-                                        ? new Date(lTime).toLocaleTimeString('pt-BR', {
-                                            hour: '2-digit',
-                                            minute: '2-digit',
-                                          })
-                                        : '--:--'
-                                      return (
-                                        <span className="text-amber-400 font-semibold truncate text-[10px]">
-                                          📴 Posição congelada às {timeStr} • Aguardando sinal...
-                                        </span>
-                                      )
-                                    }
-                                    if (shift) {
-                                      return (
-                                        <>
-                                          <span className="font-semibold truncate">
-                                            ⏱ {shift.remainingFormatted}
-                                          </span>
-                                          <span className="text-slate-300 shrink-0 font-medium">
-                                            Volta: ~{shift.projectedEndTimeFormatted}
-                                          </span>
-                                        </>
-                                      )
-                                    }
-                                    return (
-                                      <span className="text-slate-400 italic text-[10px]">
-                                        Calculando tempo de rota...
-                                      </span>
-                                    )
-                                  })()}
-                                </div>
-
-                                {shift && (
-                                  <div className="pt-0.5">
-                                    {shift.isOvertime ? (
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
-                                        {shift.badgeText}
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
-                                        {shift.badgeText}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Alertas ativos na Torre: Desvios ou Paradas detectadas (dispensáveis) */}
-                    {mapDisplayMode === 'in_transit' &&
-                      !isDeviationBannerDismissed &&
-                      activeRoutesData.some((r) => r.isDeviated) && (
-                        <div className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/60 shadow-md text-[10.5px] font-bold text-rose-300 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <AlertOctagon className="h-3.5 w-3.5 text-rose-400 shrink-0" />
-                            <span className="truncate">
-                              {activeRoutesData.filter((r) => r.isDeviated).length} desvio(s) de
-                              rota
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setIsDeviationBannerDismissed(true)}
-                            className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
-                            title="Dispensar alerta"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      )}
-
-                    {mapDisplayMode === 'in_transit' &&
-                      !isStopBannerDismissed &&
-                      activeRoutesData.some((r) => r.isUnexpectedStop) && (
-                        <div className="bg-amber-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-amber-500/60 shadow-md text-[10.5px] font-bold text-amber-300 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                            <span className="truncate">
-                              {activeRoutesData.filter((r) => r.isUnexpectedStop).length} parada(s)
-                              fora
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setIsStopBannerDismissed(true)}
-                            className="text-amber-400 hover:text-white text-xs px-1 hover:bg-amber-900/60 rounded"
-                            title="Dispensar alerta"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      )}
-
-                    {/* Alertas de GPS desligado ou Permissão negada na Torre */}
-                    {mapDisplayMode === 'in_transit' &&
-                      activeRouteCouriers
-                        .filter(
-                          (c) =>
-                            c.gps_status === 'disabled' &&
-                            !dismissedGpsAlertIds.includes(`gps-${c.courier.id}`),
-                        )
-                        .map((c) => {
-                          const isPermDenied = c.gps_reason === 'permission_denied'
-                          return (
-                            <div
-                              key={`gps-banner-${c.courier.id}`}
-                              className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/70 shadow-md text-[10.5px] font-bold text-rose-200 flex items-center justify-between gap-2 animate-pulse"
-                            >
-                              <div className="flex items-center gap-1.5 truncate">
-                                <span className="text-sm shrink-0">
-                                  {isPermDenied ? '🚫' : '📡'}
-                                </span>
-                                <span className="truncate">
-                                  {isPermDenied
-                                    ? `Permissão negada no aparelho: ${c.courier.name || c.courier.email}`
-                                    : `GPS desligado: ${c.courier.name || c.courier.email}`}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setDismissedGpsAlertIds((prev) => [
-                                    ...prev,
-                                    `gps-${c.courier.id}`,
-                                  ])
-                                }
-                                className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
-                                title="Dispensar alerta"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          )
-                        })}
-
-                    {/* Alertas de Perda de sinal (>5 min) na Torre */}
-                    {mapDisplayMode === 'in_transit' &&
-                      activeRouteCouriers
-                        .filter((c) => {
-                          if (c.gps_status === 'disabled') return false
-                          if (c.gps_status === 'active' && c.offline_buffered === false)
-                            return false
-                          const locTime = parseSafeTimestamp(c.location_timestamp)
-                          const isSignalLost =
-                            c.gps_status === 'offline' ||
-                            (locTime > 0 && Date.now() - locTime > 5 * 60 * 1000)
-                          return (
-                            isSignalLost && !dismissedGpsAlertIds.includes(`sig-${c.courier.id}`)
-                          )
-                        })
-                        .map((c) => (
-                          <div
-                            key={`sig-banner-${c.courier.id}`}
-                            className="bg-amber-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-amber-500/70 shadow-md text-[10.5px] font-bold text-amber-200 flex items-center justify-between gap-2"
-                          >
-                            <div className="flex items-center gap-1.5 truncate">
-                              <span className="text-sm shrink-0">📴</span>
-                              <span className="truncate">
-                                Perda de sinal: {c.courier.name || c.courier.email}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setDismissedGpsAlertIds((prev) => [...prev, `sig-${c.courier.id}`])
-                              }
-                              className="text-amber-400 hover:text-white text-xs px-1 hover:bg-amber-900/60 rounded"
-                              title="Dispensar alerta"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                  </div>
-
-                  {/* Legenda explicativa enxuta e recolhível no rodapé do Google Maps nativo */}
-                  <div className="absolute bottom-2.5 left-2.5 z-10 bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-xl text-[10px] text-slate-200 flex items-center gap-2 font-sans">
-                    {mapDisplayMode === 'delivered' ? (
-                      <>
-                        <span className="flex items-center gap-1 font-medium">
-                          <span className="h-2 w-2 rounded-full bg-[#10B981] inline-block shadow-sm" />
-                          <span className="text-emerald-400 font-bold">Entregue</span>
-                        </span>
-                        <span className="border-l border-slate-700/80 pl-2 text-slate-400 font-mono text-[9.5px]">
-                          Total: {metrics.delivered}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center gap-2">
-                          <span className="flex items-center gap-1 font-medium text-blue-300">
-                            <span className="h-1.5 w-3 rounded-full bg-blue-600 inline-block" />
-                            Rota
-                          </span>
-                          <span className="flex items-center gap-1 font-medium text-sky-400 border-l border-slate-700/80 pl-2">
-                            <span className="h-1.5 w-3 rounded-full bg-[#60A5FA] border border-dashed border-[#2563EB] inline-block" />
-                            Volta à base
-                          </span>
-                          <span className="flex items-center gap-1 font-medium text-rose-400 border-l border-slate-700/80 pl-2">
-                            <span className="h-1.5 w-3 rounded-full bg-rose-500 inline-block" />
-                            Desvio &gt;600m
-                          </span>
-                          <span className="border-l border-slate-700/80 pl-2 text-slate-300 flex items-center gap-1">
-                            <span>🛵/🚗</span>
-                            <span>Entregador</span>
-                          </span>
-                        </div>
-
-                        {/* Botão de expansão para ver detalhes da legenda se desejado */}
-                        <button
-                          type="button"
-                          onClick={() => setIsLegendExpanded(!isLegendExpanded)}
-                          className="ml-1 text-slate-400 hover:text-white text-[9px] underline focus:outline-none"
-                        >
-                          {isLegendExpanded ? 'Menos' : 'Mais'}
-                        </button>
-
-                        {isLegendExpanded && (
-                          <span className="border-l border-slate-700/80 pl-2 text-slate-400 flex items-center gap-1">
-                            <span className="flex h-3 w-3 items-center justify-center rounded-full bg-[#FF6B35] text-[8px] font-bold text-white">
-                              1
-                            </span>
-                            <span>Parada</span>
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <div className="relative w-full h-full flex flex-col">
-                  {/* Abas sobre o mapa e botão Retry no canto superior direito do mapa vetorial */}
-                  <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 bg-[#0A1128]/90 backdrop-blur-md p-1 rounded-xl border border-[#1E2B58] shadow-lg">
-                      <button
-                        type="button"
-                        onClick={() => setMapDisplayMode('in_transit')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                          mapDisplayMode === 'in_transit'
-                            ? 'bg-blue-600 text-white shadow'
-                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <span>🛵 Em Rota ({activeRouteCouriers.length})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMapDisplayMode('delivered')}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                          mapDisplayMode === 'delivered'
-                            ? 'bg-emerald-600 text-white shadow'
-                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <span>✓ Entregues ({metrics.delivered})</span>
-                      </button>
-                    </div>
-
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleRetryMaps}
-                      className="h-8 px-2.5 text-xs bg-slate-900/90 text-slate-200 border-slate-700 hover:bg-slate-800 hover:text-white rounded-lg shadow-md gap-1.5 backdrop-blur"
-                      title="Tentar carregar Google Maps novamente"
-                    >
-                      <RefreshCw className="h-3 w-3" />
-                      <span className="hidden sm:inline">Tentar Google Maps</span>
-                    </Button>
-                  </div>
-
-                  {/* Status e avisos no canto superior esquerdo também no Canvas vetorial */}
-                  <div className="absolute top-3 left-3 z-20 flex flex-col gap-1.5 max-w-[340px] pointer-events-auto">
-                    {mapDisplayMode === 'delivered' ? (
-                      <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
-                        <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                        <span className="font-semibold text-white truncate text-[11px]">
-                          {metrics.delivered} entregas concluídas
-                        </span>
-                      </div>
-                    ) : activeRouteCouriers.length === 0 ? (
-                      <div className="bg-[#0A1128]/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-[#1E2B58] shadow-md text-xs flex items-center gap-2">
-                        <span className="flex h-2 w-2 rounded-full bg-blue-400" />
-                        <span className="font-semibold text-white truncate text-[11px]">
-                          0 entregadores em rota
-                        </span>
-                      </div>
-                    ) : (
-                      /* Pílula com o total + lista detalhada de cada entregador em rota (nome, tempo para terminar e voltar à base) */
-                      <div className="bg-[#0A1128]/95 backdrop-blur-sm rounded-lg border border-[#1E2B58] shadow-lg text-xs overflow-hidden flex flex-col">
-                        <div className="px-2.5 py-1 border-b border-[#1E2B58]/70 flex items-center justify-between gap-2 bg-[#0E1738]/60">
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-2 w-2 rounded-full bg-blue-400 animate-ping" />
-                            <span className="font-bold text-white text-[11px]">
-                              {activeRouteCouriers.length}{' '}
-                              {activeRouteCouriers.length === 1
-                                ? 'entregador em rota'
-                                : 'entregadores em rota'}
-                            </span>
-                          </div>
-                          <span className="text-[9.5px] text-slate-400 font-mono">
-                            Toque para detalhes
-                          </span>
-                        </div>
-
-                        <div className="flex flex-col divide-y divide-[#1E2B58]/50">
-                          {activeRouteCouriers.map((item) => {
-                            const rInfo = activeRoutesData.find(
-                              (r) => r.courierId === item.courier.id,
-                            )
-                            const shift = rInfo?.shiftMetrics
-                            const courierName =
-                              item.courier.name || item.courier.email || 'Entregador'
-                            const vehicleEmoji = getVehicleEmoji(item.vehicle)
-
-                            return (
-                              <button
-                                key={`canvas-top-shift-${item.courier.id}`}
-                                type="button"
-                                onClick={() => setSelectedCourier(item.courier)}
-                                className="w-full text-left px-2.5 py-1.5 hover:bg-blue-950/40 transition flex flex-col gap-0.5 focus:outline-none"
-                                title="Clique para ver detalhes do entregador"
-                              >
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="font-bold text-white text-[11px] truncate flex items-center gap-1">
-                                    <span>{vehicleEmoji}</span>
-                                    <span className="truncate">{courierName}</span>
-                                  </span>
-                                  <span className="text-[9.5px] text-slate-400 font-mono shrink-0">
-                                    ({item.inTransitCount} entrega
-                                    {item.inTransitCount === 1 ? '' : 's'})
-                                  </span>
-                                </div>
-
-                                <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
-                                  {(() => {
-                                    const lTime = parseSafeTimestamp(item.location_timestamp)
-                                    const isFrozen =
-                                      item.gps_status === 'offline' ||
-                                      (lTime > 0 &&
-                                        Date.now() - lTime > 5 * 60 * 1000 &&
-                                        !(
-                                          item.gps_status === 'active' &&
-                                          item.offline_buffered === false
-                                        ))
-                                    if (isFrozen) {
-                                      const timeStr = lTime
-                                        ? new Date(lTime).toLocaleTimeString('pt-BR', {
-                                            hour: '2-digit',
-                                            minute: '2-digit',
-                                          })
-                                        : '--:--'
-                                      return (
-                                        <span className="text-amber-400 font-semibold truncate text-[10px]">
-                                          📴 Posição congelada às {timeStr} • Aguardando sinal...
-                                        </span>
-                                      )
-                                    }
-                                    if (shift) {
-                                      return (
-                                        <>
-                                          <span className="font-semibold truncate">
-                                            ⏱ {shift.remainingFormatted}
-                                          </span>
-                                          <span className="text-slate-300 shrink-0 font-medium">
-                                            Volta: ~{shift.projectedEndTimeFormatted}
-                                          </span>
-                                        </>
-                                      )
-                                    }
-                                    return (
-                                      <span className="text-slate-400 italic text-[10px]">
-                                        Calculando tempo de rota...
-                                      </span>
-                                    )
-                                  })()}
-                                </div>
-
-                                {shift && (
-                                  <div className="pt-0.5">
-                                    {shift.isOvertime ? (
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
-                                        {shift.badgeText}
-                                      </span>
-                                    ) : (
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50">
-                                        {shift.badgeText}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {mapDisplayMode === 'in_transit' &&
-                      !isDeviationBannerDismissed &&
-                      activeRoutesData.some((r) => r.isDeviated) && (
-                        <div className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/60 shadow-md text-[10.5px] font-bold text-rose-300 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <AlertOctagon className="h-3.5 w-3.5 text-rose-400 shrink-0" />
-                            <span className="truncate">
-                              {activeRoutesData.filter((r) => r.isDeviated).length} desvio(s) de
-                              rota
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setIsDeviationBannerDismissed(true)}
-                            className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
-                            title="Dispensar alerta"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      )}
-
-                    {mapDisplayMode === 'in_transit' &&
-                      !isStopBannerDismissed &&
-                      activeRoutesData.some((r) => r.isUnexpectedStop) && (
-                        <div className="bg-amber-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-amber-500/60 shadow-md text-[10.5px] font-bold text-amber-300 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                            <span className="truncate">
-                              {activeRoutesData.filter((r) => r.isUnexpectedStop).length} parada(s)
-                              fora
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setIsStopBannerDismissed(true)}
-                            className="text-amber-400 hover:text-white text-xs px-1 hover:bg-amber-900/60 rounded"
-                            title="Dispensar alerta"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      )}
-
-                    {/* Alertas de GPS desligado no canvas */}
-                    {mapDisplayMode === 'in_transit' &&
-                      activeRouteCouriers
-                        .filter(
-                          (c) =>
-                            c.gps_status === 'disabled' &&
-                            !dismissedGpsAlertIds.includes(`gps-${c.courier.id}`),
-                        )
-                        .map((c) => {
-                          const isPermDenied = c.gps_reason === 'permission_denied'
-                          return (
-                            <div
-                              key={`canvas-gps-banner-${c.courier.id}`}
-                              className="bg-rose-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-rose-500/70 shadow-md text-[10.5px] font-bold text-rose-200 flex items-center justify-between gap-2 animate-pulse"
-                            >
-                              <div className="flex items-center gap-1.5 truncate">
-                                <span className="text-sm shrink-0">
-                                  {isPermDenied ? '🚫' : '📡'}
-                                </span>
-                                <span className="truncate">
-                                  {isPermDenied
-                                    ? `Permissão negada no aparelho: ${c.courier.name || c.courier.email}`
-                                    : `GPS desligado: ${c.courier.name || c.courier.email}`}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setDismissedGpsAlertIds((prev) => [
-                                    ...prev,
-                                    `gps-${c.courier.id}`,
-                                  ])
-                                }
-                                className="text-rose-400 hover:text-white text-xs px-1 hover:bg-rose-900/60 rounded"
-                                title="Dispensar alerta"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          )
-                        })}
-
-                    {/* Alertas de Perda de sinal (>5 min) no canvas */}
-                    {mapDisplayMode === 'in_transit' &&
-                      activeRouteCouriers
-                        .filter((c) => {
-                          if (c.gps_status === 'disabled') return false
-                          if (c.gps_status === 'active' && c.offline_buffered === false)
-                            return false
-                          const locTime = parseSafeTimestamp(c.location_timestamp)
-                          const isSignalLost =
-                            c.gps_status === 'offline' ||
-                            (locTime > 0 && Date.now() - locTime > 5 * 60 * 1000)
-                          return (
-                            isSignalLost && !dismissedGpsAlertIds.includes(`sig-${c.courier.id}`)
-                          )
-                        })
-                        .map((c) => (
-                          <div
-                            key={`canvas-sig-banner-${c.courier.id}`}
-                            className="bg-amber-950/95 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-amber-500/70 shadow-md text-[10.5px] font-bold text-amber-200 flex items-center justify-between gap-2"
-                          >
-                            <div className="flex items-center gap-1.5 truncate">
-                              <span className="text-sm shrink-0">📴</span>
-                              <span className="truncate">
-                                Perda de sinal: {c.courier.name || c.courier.email}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setDismissedGpsAlertIds((prev) => [...prev, `sig-${c.courier.id}`])
-                              }
-                              className="text-amber-400 hover:text-white text-xs px-1 hover:bg-amber-900/60 rounded"
-                              title="Dispensar alerta"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                  </div>
-
-                  {/* Canvas vetorial de contingência idêntico ao LiveMap.tsx com marcadores interativos e rotas viárias */}
-                  <LiveMap
-                    markers={controlTowerMapMarkers}
-                    center={
-                      activeRouteCouriers[0]
-                        ? { lat: activeRouteCouriers[0].lat, lng: activeRouteCouriers[0].lng }
-                        : { lat: -22.906847, lng: -43.172896 }
-                    }
-                    zoom={13}
-                    height="100%"
-                    routeLines={
-                      mapDisplayMode === 'delivered'
-                        ? []
-                        : activeRoutesData
-                            .filter(
-                              (routeData) =>
-                                Boolean(routeData.order?.route_started) &&
-                                routeData.order?.route_finished !== true,
-                            )
-                            .flatMap((routeData) => {
-                              const lines: any[] = []
-                              const fPoints = routeData.forwardPoints || routeData.points
-                              if (fPoints && fPoints.length >= 2) {
-                                lines.push({
-                                  origin: fPoints[0] || routeData.courierPos,
-                                  destination: routeData.custPos,
-                                  courierPosition: routeData.courierPos,
-                                  streetCoordinates: fPoints,
-                                  isDeviated: Boolean(
-                                    routeData.order?.route_started &&
-                                    routeData.order?.route_finished !== true &&
-                                    routeData.isDeviated,
-                                  ),
-                                  isReturnLeg: false,
-                                })
-                              }
-                              const retPoints = routeData.returnPoints
-                              if (retPoints && retPoints.length >= 2) {
-                                lines.push({
-                                  origin: retPoints[0],
-                                  destination: retPoints[retPoints.length - 1],
-                                  courierPosition: routeData.courierPos,
-                                  streetCoordinates: retPoints,
-                                  isDeviated: Boolean(
-                                    (!fPoints || fPoints.length < 2) &&
-                                    routeData.order?.route_started &&
-                                    routeData.order?.route_finished !== true &&
-                                    routeData.isDeviated,
-                                  ),
-                                  isReturnLeg: true,
-                                })
-                              }
-                              return lines
-                            })
-                    }
-                    onSelectMarker={(m) => {
-                      if (m.type === 'courier') {
-                        const courierId = m.id.replace('courier-', '')
-                        const targetCourier = couriers.find((c) => c.id === courierId)
-                        if (targetCourier) setSelectedCourier(targetCourier)
-                      } else {
-                        const orderId = m.id.replace('order-', '')
-                        const targetOrder = orders.find((o) => o.id === orderId)
-                        if (targetOrder) handleOpenOrderDetails(targetOrder)
-                      }
-                    }}
-                    customLegend={
-                      mapDisplayMode === 'delivered' ? (
-                        <div className="flex items-center gap-2 text-[10px] text-slate-200">
-                          <div className="flex items-center gap-1">
-                            <span className="h-2 w-2 rounded-full bg-[#10B981] inline-block shadow-sm"></span>
-                            <span className="font-semibold text-emerald-400">Entregue</span>
-                          </div>
-                          <div className="border-l border-slate-700 pl-2 text-slate-400 font-mono text-[9.5px]">
-                            Total: {metrics.delivered}
-                          </div>
-                        </div>
-                      ) : undefined
-                    }
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <ControlTowerMap
+          mapContainerRef={mapContainerRef}
+          mapsLoaded={mapsLoaded}
+          mapsError={mapsError}
+          handleRetryMaps={handleRetryMaps}
+          mapDisplayMode={mapDisplayMode}
+          setMapDisplayMode={setMapDisplayMode}
+          activeRouteCouriers={activeRouteCouriers}
+          metrics={metrics}
+          activeRoutesData={activeRoutesData}
+          setSelectedCourier={setSelectedCourier}
+          isDeviationBannerDismissed={isDeviationBannerDismissed}
+          setIsDeviationBannerDismissed={setIsDeviationBannerDismissed}
+          isStopBannerDismissed={isStopBannerDismissed}
+          setIsStopBannerDismissed={setIsStopBannerDismissed}
+          dismissedGpsAlertIds={dismissedGpsAlertIds}
+          setDismissedGpsAlertIds={setDismissedGpsAlertIds}
+          isLegendExpanded={isLegendExpanded}
+          setIsLegendExpanded={setIsLegendExpanded}
+          controlTowerMapMarkers={controlTowerMapMarkers}
+          couriers={couriers}
+          orders={orders}
+          handleOpenOrderDetails={handleOpenOrderDetails}
+        />
       )}
 
-      {/* 5. DRAWER / SHEET DE DETALHE EM TEMPO REAL AO CLICAR NO CARD DO CLIENTE */}
-      <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
-        <SheetContent
-          side="right"
-          className="w-full sm:max-w-md md:max-w-lg bg-white border-l border-slate-200 text-[#002855] p-0 flex flex-col overflow-hidden"
-        >
-          {selectedOrder && (
-            <>
-              {/* Drawer Header */}
-              <div className="p-5 border-b border-[#1E2B58] bg-[#070D1E]/80">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-black text-[#60A5FA]">
-                        {selectedOrder.tracking_code}
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 w-6 p-0 text-slate-400 hover:text-white"
-                        title="Copiar link de rastreio"
-                        onClick={() => copyTracking(selectedOrder.tracking_code)}
-                      >
-                        {copiedCode === selectedOrder.tracking_code ? (
-                          <Check className="h-3.5 w-3.5 text-emerald-400" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </Button>
-                    </div>
-                    <SheetTitle className="text-xl font-black text-white font-heading mt-1">
-                      {selectedOrder.expand?.customer_id?.name || 'Cliente'}
-                    </SheetTitle>
-                    <SheetDescription className="text-xs text-slate-400 mt-0.5">
-                      Monitoramento em tempo real com GPS e trajeto
-                    </SheetDescription>
-                  </div>
+      {/* 5, 6 & 7. MODALS: DETALHES DO PEDIDO, CONFIRMAÇÃO DE REMOÇÃO E DETALHES DO ENTREGADOR */}
+      <ControlTowerModals
+        isDrawerOpen={isDrawerOpen}
+        setIsDrawerOpen={setIsDrawerOpen}
+        selectedOrder={selectedOrder}
+        copiedCode={copiedCode}
+        copyTracking={copyTracking}
+        orderCourierInfo={orderCourierInfo}
+        openWhatsApp={openWhatsApp}
+        makePhoneCall={makePhoneCall}
+        activeRoutesData={activeRoutesData}
+        drawerDeviationInfo={drawerDeviationInfo}
+        drawerUnexpectedStop={drawerUnexpectedStop}
+        shareTrackingViaWhatsApp={shareTrackingViaWhatsApp}
+        selectedOrderRouteData={selectedOrderRouteData}
+        basePos={basePos}
+        handleNavigateToOrder={handleNavigateToOrder}
+        handleRemoveCustomerPrompt={(order) => setOrderToRemoveFromRoute(order)}
+        orderToRemoveFromRoute={orderToRemoveFromRoute}
+        setOrderToRemoveFromRoute={setOrderToRemoveFromRoute}
+        isRemovingOrderFromRoute={isRemovingOrderFromRoute}
+        handleConfirmRemoveOrderFromRoute={handleConfirmRemoveOrderFromRoute}
+        selectedCourier={selectedCourier}
+        setSelectedCourier={setSelectedCourier}
+        allCourierData={allCourierData}
+        appSettings={appSettings}
+        fetchData={fetchData}
+        onRefresh={onRefresh}
+      />
+    </div>
+  )
+}
 
-                  {/* Status Badge */}
-                  <div>
-                    {selectedOrder.status === 'delivered' ? (
-                      <Badge className="bg-emerald-600 text-white font-bold text-xs">
-                        ✓ Entregue
-                      </Badge>
-                    ) : selectedOrder.status === 'in_transit' || selectedOrder.route_started ? (
-                      <Badge className="bg-blue-600 text-white font-bold text-xs animate-pulse">
-                        🛵 Em Trânsito
-                      </Badge>
-                    ) : selectedOrder.status === 'address_error' ||
-                      selectedOrder.status === 'client_absent' ? (
-                      <Badge className="bg-rose-600 text-white font-bold text-xs">
-                        ⚠️ Ocorrência
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="border-slate-600 text-slate-300 font-bold text-xs"
-                      >
-                        Aguardando Início
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Drawer Body (Scrollable) */}
+/* REMOVED_DUPLICATE_DRAWER_MODALS_START */
+const _removedDuplicateBlocks = () => {
+  return null
+}
+/* REMOVED_DUPLICATE_DRAWER_MODALS_END */
+/*
               <div className="flex-1 overflow-y-auto p-5 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
                 {/* CARD 1: QUAL ENTREGADOR ESTÁ COM A ENTREGA */}
                 <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 space-y-3">
@@ -5466,36 +4418,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                         Otimizar e Resequenciar Rota Agora (Menor Trajeto)
                       </Button>
                     </div>
-
-                    {/* Contato Direto */}
-                    <div className="pt-2 flex gap-2">
-                      <Button
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs"
-                        size="sm"
-                        onClick={() => openWhatsApp(selectedCourier.phone)}
-                      >
-                        <MessageCircle className="h-4 w-4 mr-1.5" />
-                        Conversar no WhatsApp
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 border-[#1E2B58] bg-[#070D1E] hover:bg-[#121E46] text-slate-200 text-xs"
-                        onClick={() => makePhoneCall(selectedCourier.phone)}
-                      >
-                        <Phone className="h-4 w-4 mr-1.5" />
-                        Ligar para Entregador
-                      </Button>
-                    </div>
                   </div>
                 </>
               )
             })()}
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
+*/
+
 export const ControlTower: React.FC<ControlTowerProps> = (props) => {
   return (
     <ControlTowerErrorBoundary>
@@ -5505,3 +4433,4 @@ export const ControlTower: React.FC<ControlTowerProps> = (props) => {
 }
 
 export default ControlTower
+
