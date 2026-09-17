@@ -40,6 +40,28 @@ export interface CourierOrderTelemetryCalculation {
   jointPartnerTrackingCodes?: string[]
 }
 
+export interface CourierRouteAuditSummary {
+  routeKey: string
+  dateStr: string
+  dateObj: Date
+  routeStartedAt?: string
+  routeFinishedAt?: string
+  deliveriesCount: number
+  orders: OrderRecord[]
+  orderCalculations: CourierOrderTelemetryCalculation[]
+  routeKm: number
+  fuelCost: number
+  litersSpent: number
+  deviationKm: number
+  totalGpsKm: number
+  offRouteCount: number
+  unexpectedStopsCount: number
+  isRealTelemetry: boolean
+  hasReturnKm: boolean
+  startBaseAddress?: string
+  trackingCodes: string[]
+}
+
 export interface CourierFuelCalculationResult {
   courier: UserRecord | null
   // Resumo de Conta Corrente e Combustível (Exatamente idêntico ao Admin)
@@ -58,6 +80,8 @@ export interface CourierFuelCalculationResult {
   vehicleCategory: 'moto' | 'carro' | 'caminhao' | 'bicicleta'
   // Detalhamento por entrega elegível
   orderCalculations: CourierOrderTelemetryCalculation[]
+  // Detalhamento consolidado por rotas únicas deduplicadas
+  routesSummary: CourierRouteAuditSummary[]
   // Objeto compatível com CourierFuelAccount
   fuelAccount: CourierFuelAccount | null
   // Fonte oficial do cálculo
@@ -418,36 +442,7 @@ export function calculateCourierFuelMetrics(params: {
   let jointSavedFuelCost = 0
 
   const orderCalculations: CourierOrderTelemetryCalculation[] = eligibleOrders.map((order) => {
-    let key: string
-    if (order.route_started_at) {
-      const oTime = new Date(order.route_started_at).getTime()
-      let matchedKey: string | null = null
-      for (const k of routeBatches.keys()) {
-        if (k.startsWith('batch_')) {
-          const batchTime = Number(k.replace('batch_', '')) * (10 * 60 * 1000)
-          if (Math.abs(oTime - batchTime) <= 15 * 60 * 1000) {
-            matchedKey = k
-            break
-          }
-        }
-      }
-      key = matchedKey || `batch_${Math.floor(oTime / (10 * 60 * 1000))}`
-    } else if (order.created) {
-      const cTime = new Date(order.created).getTime()
-      let matchedKey: string | null = null
-      for (const k of routeBatches.keys()) {
-        if (k.startsWith('batch_created_')) {
-          const batchTime = Number(k.replace('batch_created_', '')) * (15 * 60 * 1000)
-          if (Math.abs(cTime - batchTime) <= 15 * 60 * 1000) {
-            matchedKey = k
-            break
-          }
-        }
-      }
-      key = matchedKey || `batch_created_${Math.floor(cTime / (15 * 60 * 1000))}`
-    } else {
-      key = `single_${order.id}`
-    }
+    const key = getRouteBatchKey(order)
 
     const batchTelemetry =
       batchTelemetryMap.get(key) ||
@@ -583,19 +578,16 @@ export function calculateCourierFuelMetrics(params: {
     }
   })
 
-  // Regra "linha = cabeçalho":
+  // Regra "linha = cabeçalho" e Paridade 100% de Rotas Únicas:
   // Os totais consolidados somam diretamente a soma de cada linha calculada (orderCalculations)
-  // garantindo exatidão estrita e paridade 100% entre tabela e cabeçalho:
-  // totalKm = Σ kmRodado e totalFuelCost = Σ fuelCost (Gasto Rota Oficial = KM Real × R$ 0,1854/km)
+  // ou a soma das rotas únicas deduplicadas (que bate exatamente com a soma dos pedidos rateados)
   totalOfficialKm = Number(orderCalculations.reduce((acc, c) => acc + c.officialKm, 0).toFixed(1))
   totalDeviationKm = Number(orderCalculations.reduce((acc, c) => acc + c.deviationKm, 0).toFixed(1))
   totalOdometerKm = Number(orderCalculations.reduce((acc, c) => acc + c.totalGpsKm, 0).toFixed(1))
   totalLiters = Number(orderCalculations.reduce((acc, c) => acc + c.litersSpent, 0).toFixed(2))
 
-  // Gasto Rota Oficial = KM Real × Custo por KM (R$ 6,49 / 35 km/L = R$ 0,1854/km para moto)
-  const costPerKm = consumptionKml > 0 ? pricePerLiter / consumptionKml : 0
-  if (!isBicycle && costPerKm > 0) {
-    totalSpent = Number((totalOfficialKm * costPerKm).toFixed(2))
+  if (isBicycle) {
+    totalSpent = 0
   } else {
     totalSpent = Number(orderCalculations.reduce((acc, c) => acc + c.fuelCost, 0).toFixed(2))
   }

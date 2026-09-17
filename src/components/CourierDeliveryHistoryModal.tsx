@@ -162,15 +162,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     return deliveryService.getVehicleFuelParams(settings, courier?.vehicle_type)
   }, [settings, courier])
 
-  // Filtrar as ordens vinculadas ao entregador
-  // Cancelados NÃO entram na lista de pedidos válidos (não somam km, combustível nem contagem de telemetria)
-  const courierOrders = useMemo(() => {
-    if (!courier?.id) return []
-    return orders.filter((o) => o.courier_id === courier.id && o.status !== 'cancelled')
-  }, [orders, courier])
-
   // Executar o motor consolidado de telemetria e combustível (o mesmo motor do useCourierFuelMetrics)
   // Agrupa por lotes de rota, desconta desvios/paradas de rota e rateia proporcionalmente sem duplicações
+  // Passamos `orders` diretamente para manter o contexto completo dos pedidos, com filtro periodFilter='all'
   const consolidatedMetrics = useMemo(() => {
     if (!courier) return null
 
@@ -194,13 +188,14 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
     return calculateCourierFuelMetrics({
       courier,
-      orders: courierOrders,
+      orders,
       locations: allLocations,
       offRouteEvents,
       advances: advancesList,
       settings,
+      periodFilter: 'all',
     })
-  }, [courier, courierOrders, allLocations, offRouteEvents, fuelAccount, settings])
+  }, [courier, orders, allLocations, offRouteEvents, fuelAccount, settings])
 
   // Eventos de desvio e paradas do entregador para exibição na auditoria do modal:
   const courierEvents = useMemo(() => {

@@ -468,13 +468,13 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   }, [filteredOrders])
 
   // BREAKDOWN 3: HISTÓRICO DE KM E COMBUSTÍVEL POR ENTREGADOR
-  // KM oficial com hierarquia blindada: odômetro (km_odometro ou odometro_final - odometro_inicial quando > 0) > total_route_with_return_km > cálculo viário
-  // Combustível = soma total_route_fuel_cost, bicicleta = R$ 0, erros neutralizados zerados/fora.
+  // Usa o motor corrigido calculateCourierFuelMetrics com deduplicação por rota única:
+  // - KM e combustível SOMENTE de pedidos com status='delivered'
+  // - Pedidos do mesmo ciclo route_started_at + route_finished_at contam o km/combustível da rota UMA VEZ
+  // - Cancelled/client_absent/address_error nunca somam em km, combustível ou faturamento
+  // - Hierarquia oficial mantida no motor: odômetro > histórico viário de rotas > telemetria GPS
   const fuelAndKmByCourier = useMemo(() => {
     return couriers.map((courier) => {
-      // Filtrar pedidos elegíveis do entregador no período
-      const courierOrders = filteredOrders.filter((o) => o.courier_id === courier.id)
-
       // Invocar motor oficial de telemetria e combustível Rotaly
       const metrics = calculateCourierFuelMetrics({
         courier,
@@ -486,66 +486,21 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         periodFilter: 'all', // já está filtrado em filteredOrders
       })
 
-      // Adicionalmente verificar os campos nativos do banco caso já estejam gravados
-      const rawFuelCostSum = courierOrders.reduce((sum, o) => {
-        if (courier.vehicle_type === 'bicicleta') return 0
-        if (typeof o.total_route_fuel_cost === 'number' && o.total_route_fuel_cost > 0) {
-          return sum + o.total_route_fuel_cost
-        }
-        return sum
-      }, 0)
-
-      // Odômetro total do entregador
-      const totalOdometer = courierOrders.reduce((sum, o) => {
-        if (typeof o.km_odometro === 'number' && o.km_odometro > 0) {
-          return sum + o.km_odometro
-        }
-        if (
-          typeof o.odometro_final === 'number' &&
-          typeof o.odometro_inicial === 'number' &&
-          o.odometro_final > o.odometro_inicial
-        ) {
-          return sum + (o.odometro_final - o.odometro_inicial)
-        }
-        return sum
-      }, 0)
-
-      // KM Histórico de rotas com retorno
-      const totalRoadReturnKm = courierOrders.reduce((sum, o) => {
-        if (typeof o.total_route_with_return_km === 'number' && o.total_route_with_return_km > 0) {
-          return sum + o.total_route_with_return_km
-        }
-        return sum
-      }, 0)
-
-      // Hierarquia oficial de KM: odômetro > total_route_with_return_km > métricas telemetria
-      let officialKm = metrics.totalOfficialKm
-      let kmSource = metrics.calculationSourceLabel || 'telemetria'
-
-      if (totalOdometer > 0) {
-        officialKm = Number(totalOdometer.toFixed(1))
-        kmSource = 'Odômetro da Moto'
-      } else if (totalRoadReturnKm > 0) {
-        officialKm = Number(Math.max(totalRoadReturnKm, officialKm).toFixed(1))
-        kmSource = 'Histórico Viário (c/ retorno)'
-      }
-
-      // Combustível: bicicleta = 0
-      let totalFuel = courier.vehicle_type === 'bicicleta' ? 0 : metrics.totalSpent
-      if (courier.vehicle_type !== 'bicicleta' && rawFuelCostSum > totalFuel) {
-        totalFuel = Number(rawFuelCostSum.toFixed(2))
-      }
+      const isBicycle = courier.vehicle_type === 'bicicleta'
+      const officialKm = metrics.totalOfficialKm
+      const kmSource = metrics.calculationSourceLabel || 'Histórico Viário de Rotas'
+      const totalFuel = isBicycle ? 0 : metrics.totalSpent
 
       return {
         courier,
         deliveredCount: metrics.deliveriesCount,
         officialKm,
         kmSource,
-        totalOdometer: Number(totalOdometer.toFixed(1)),
-        totalRoadReturnKm: Number(totalRoadReturnKm.toFixed(1)),
+        totalOdometer: metrics.totalOdometerKm,
+        totalRoadReturnKm: metrics.totalOfficialKm,
         deviationKm: metrics.totalDeviationKm,
         fuelCost: Number(totalFuel.toFixed(2)),
-        isBicycle: courier.vehicle_type === 'bicicleta',
+        isBicycle,
         vehicleType: courier.vehicle_type || 'moto',
         vehiclePlate: courier.vehicle_plate || '—',
       }
