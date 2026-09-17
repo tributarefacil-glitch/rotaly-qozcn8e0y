@@ -2100,7 +2100,14 @@ export const deliveryService = {
     return pb.collection<FuelAdvanceRecord>('fuel_advances').delete(id)
   },
 
+  // Motor único oficial de cálculo de KM, combustível e conta corrente de entregadores
+  // Delega diretamente para calculateCourierFuelMetrics garantindo pipeline unificado
+  calculateCourierFuelMetrics(options: Parameters<typeof calculateCourierFuelMetrics>[0]) {
+    return calculateCourierFuelMetrics(options)
+  },
+
   // 6. Obter extrato de conta corrente de combustível de um entregador individual
+  // Consome 100% o motor único calculateCourierFuelMetrics eliminando divergências
   getCourierFuelAccount(
     courier: UserRecord,
     advances: FuelAdvanceRecord[],
@@ -2110,116 +2117,37 @@ export const deliveryService = {
     locations: LocationRecord[] = [],
     offRouteEvents: OffRouteEventRecord[] = [],
   ): CourierFuelAccount {
-    const fuelParams = this.getVehicleFuelParams(settings, courier.vehicle_type)
-    const { pricePerLiter, consumptionKml } = fuelParams
-
-    const now = new Date()
-
-    // Filtrar adiantamentos
-    const courierAdvances = advances.filter((a) => {
-      if (a.courier_id !== courier.id) return false
-      if (periodFilter === 'all') return true
-      const advDate = new Date(a.date || a.created || Date.now())
-      if (periodFilter === 'week') {
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-        return advDate >= sevenDaysAgo
-      }
-      if (periodFilter === 'month') {
-        return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
-      }
-      return true
+    const metrics = calculateCourierFuelMetrics({
+      courier,
+      advances,
+      orders,
+      locations,
+      offRouteEvents,
+      settings,
+      periodFilter,
     })
 
-    const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+    const isBicycle =
+      metrics.vehicleCategory === 'bicicleta' ||
+      this.normalizeVehicleCategory(courier.vehicle_type) === 'bicicleta'
 
-    // Filtrar ordens atribuídas ao entregador elegíveis para km e combustível
-    // REGRAS 1 & 2 DO USUÁRIO:
-    // - Cancelamento pelo vendedor: não conta para o entregador.
-    // - client_absent, address_error e desistência do cliente no local: km e combustível CONTAM para o entregador.
-    const isEligibleOrder = (o: OrderRecord): boolean => {
-      if (o.courier_id !== courier.id) return false
-      const notesLower = o.notes ? o.notes.toLowerCase() : ''
-      if (notesLower.includes('erro de sistema')) return false
-      const baseLat = Number(o.start_base_lat) || 0
-      const baseLng = Number(o.start_base_lng) || 0
-      if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
-        return false
-      }
-
-      // Regra 1: Cancelamento da loja/vendedor -> NÃO conta
-      if (o.completion_reason === 'cancelado_vendedor') {
-        return false
-      }
-
-      if (o.status === 'delivered') return true
-      if (o.route_started === true && o.status === 'in_transit') return true
-
-      // Regra 2: Entregador foi até o cliente e a entrega falhou
-      if (o.status === 'address_error' || o.status === 'client_absent') {
-        return true
-      }
-      if (o.status === 'cancelled') {
-        const isLocalDesistencia =
-          notesLower.includes('cancelamento: [desistência do cliente]') ||
-          notesLower.includes('desistência do cliente') ||
-          notesLower.includes('desistencia do cliente')
-        const hadAttempt = Boolean(o.route_started_at || o.actual_arrival)
-        return isLocalDesistencia && hadAttempt
-      }
-
-      return false
-    }
-
-    const courierOrders = orders.filter((o) => {
-      if (!isEligibleOrder(o)) return false
-      if (periodFilter === 'all') return true
-
-      const oDate = new Date(o.created || Date.now())
-      if (periodFilter === 'week') {
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-        return oDate >= sevenDaysAgo
-      }
-      if (periodFilter === 'month') {
-        return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear()
-      }
-      return true
-    })
-
-    const courierLocations = locations.filter((l) => l.user_id === courier.id)
-    const courierEvents = offRouteEvents.filter((ev) => ev.courier_id === courier.id)
-    const allCourierOrders = orders.filter((o) => o.courier_id === courier.id)
-
-    // Calcular km oficial real de cada ordem usando motor de telemetria se disponível
-    const totalRouteKm = courierOrders.reduce((sum, o) => {
-      return (
-        sum +
-        (typeof o.real_km === 'number' && o.real_km > 0
-          ? o.real_km
-          : (o.distance_km || 0) + (o.return_trip_km || 0))
-      )
-    }, 0)
-
-    const isBicycle = fuelParams.category === 'bicicleta'
-    const totalSpent =
-      !isBicycle && consumptionKml > 0 && pricePerLiter > 0
-        ? (totalRouteKm * pricePerLiter) / consumptionKml
-        : 0
-    const balance = totalAdvances - totalSpent
+    const totalSpent = isBicycle ? 0 : metrics.totalSpent
+    const balance = metrics.balance
 
     return {
       courier,
-      totalAdvances: Number(totalAdvances.toFixed(2)),
-      totalRouteKm: Number(totalRouteKm.toFixed(1)),
-      totalSpent: Number(totalSpent.toFixed(2)),
-      balance: Number(balance.toFixed(2)),
-      advanceCount: courierAdvances.length,
-      deliveriesCount: courierOrders.length,
+      totalAdvances: metrics.totalAdvances,
+      totalRouteKm: metrics.totalOfficialKm,
+      totalSpent,
+      balance,
+      advanceCount: metrics.advanceCount,
+      deliveriesCount: metrics.deliveriesCount,
+      calculationSource: metrics.calculationSource,
     }
   },
 
   // Compute Real-time Courier Current Account
-  // Regra: Soma dos Adiantamentos - Gasto em Rotas Oficiais (KM Real de GPS quando disponível, descontados desvios e paradas)
-  // Usando parâmetros de consumo e preço específicos do tipo de veículo do entregador (moto, carro ou caminhão)
+  // Consome o motor único oficial para todos os entregadores
   async getCourierFuelAccounts(): Promise<CourierFuelAccount[]> {
     const [couriers, advances, orders, settings, locations, offRouteEvents] = await Promise.all([
       this.getCouriers(),
@@ -2230,90 +2158,17 @@ export const deliveryService = {
       this.getOffRouteEvents(),
     ])
 
-    const { calculateRealKmForOrder } = await import('@/lib/telemetryKmEngine')
-
-    return couriers.map((courier) => {
-      const courierAdvances = advances.filter((a) => a.courier_id === courier.id)
-      const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
-
-      const courierLocations = locations.filter((l) => l.user_id === courier.id)
-      const courierEvents = offRouteEvents.filter((ev) => ev.courier_id === courier.id)
-
-      // Regras 1 & 2 do Usuário:
-      // - Cancelamento da loja/vendedor (completion_reason 'cancelado_vendedor'): NÃO conta para o entregador
-      // - Falhas no local (client_absent, address_error, desistência no local): CONTAM para o entregador
-      const courierOrders = orders.filter((o) => {
-        if (o.courier_id !== courier.id) return false
-        const notesLower = o.notes ? o.notes.toLowerCase() : ''
-        if (notesLower.includes('erro de sistema')) return false
-        const baseLat = Number(o.start_base_lat) || 0
-        const baseLng = Number(o.start_base_lng) || 0
-        if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
-          return false
-        }
-        if (o.completion_reason === 'cancelado_vendedor') {
-          return false
-        }
-        if (o.status === 'delivered') return true
-        if (o.route_started === true && o.status === 'in_transit') return true
-        if (o.status === 'address_error' || o.status === 'client_absent') return true
-        if (o.status === 'cancelled') {
-          const isLocalDesistencia =
-            notesLower.includes('cancelamento: [desistência do cliente]') ||
-            notesLower.includes('desistência do cliente') ||
-            notesLower.includes('desistencia do cliente')
-          const hadAttempt = Boolean(o.route_started_at || o.actual_arrival)
-          return isLocalDesistencia && hadAttempt
-        }
-        return false
-      })
-
-      // Regra do Usuário: "O KM RODADO INICIA NA SAIDA DA BASE, CONTINUA CONTANDO EM TODAS ENTREGAS E FINALIZA NA BASE DE VOLTA"
-      // Agrupar pedidos por lote de rota (mesmo route_started_at aproximado)
-      const routeBatches = new Map<string, OrderRecord[]>()
-      courierOrders.forEach((o) => {
-        const key = o.route_started_at
-          ? `batch_${Math.floor(new Date(o.route_started_at).getTime() / (10 * 60 * 1000))}`
-          : `single_${o.id}`
-        const list = routeBatches.get(key) || []
-        list.push(o)
-        routeBatches.set(key, list)
-      })
-
-      let totalRouteKm = 0
-      routeBatches.forEach((batchOrders) => {
-        const anchorOrder = batchOrders[0]
-        const batchTelemetry = calculateRealKmForOrder({
-          order: anchorOrder,
-          allCourierLocations: courierLocations,
-          courierEvents,
-          allCourierOrders: batchOrders,
-        })
-        totalRouteKm += batchTelemetry.officialRealKm
-      })
-
-      const { pricePerLiter, consumptionKml, category } = this.getVehicleFuelParams(
-        settings,
-        courier.vehicle_type,
-      )
-
-      const isBicycle = category === 'bicicleta'
-      const totalSpent =
-        !isBicycle && consumptionKml > 0 && pricePerLiter > 0
-          ? (totalRouteKm * pricePerLiter) / consumptionKml
-          : 0
-      const balance = totalAdvances - totalSpent
-
-      return {
+    return couriers.map((courier) =>
+      this.getCourierFuelAccount(
         courier,
-        totalAdvances,
-        totalRouteKm: Number(totalRouteKm.toFixed(1)),
-        totalSpent: Number(totalSpent.toFixed(2)),
-        balance: Number(balance.toFixed(2)),
-        advanceCount: courierAdvances.length,
-        deliveriesCount: courierOrders.length,
-      }
-    })
+        advances,
+        orders,
+        settings,
+        'all',
+        locations,
+        offRouteEvents,
+      ),
+    )
   },
 
   // Reviews (Avaliação de Entregador e Vendedor no Rastreio Público)

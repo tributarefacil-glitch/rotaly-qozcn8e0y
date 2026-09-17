@@ -885,6 +885,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   }, [isReportsTabActive, filteredReportOrders, locations, offRouteEvents, orders, users, settings])
 
   // Recalcular fuelAccounts de forma LAZY — somente quando a aba de combustível ou o modal de histórico estiverem ativos
+  // Consome EXCLUSIVAMENTE o motor único calculateCourierFuelMetrics via deliveryService
   const isFuelViewActive = activeTab === 'fuel' || isCourierHistoryModalOpen
 
   const currentFuelAccounts = useMemo(() => {
@@ -892,39 +893,15 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       return []
     }
     return couriers.map((courier) => {
-      const metrics = calculateCourierFuelMetrics({
+      return deliveryService.getCourierFuelAccount(
         courier,
-        advances: fuelAdvances,
+        fuelAdvances,
         orders,
+        settings,
+        fuelPeriodFilter,
         locations,
         offRouteEvents,
-        settings,
-        periodFilter: fuelPeriodFilter,
-      })
-      let acc = metrics.fuelAccount
-      if (!acc) {
-        acc = deliveryService.getCourierFuelAccount(
-          courier,
-          fuelAdvances,
-          orders,
-          settings,
-          fuelPeriodFilter,
-          locations,
-          offRouteEvents,
-        )
-      }
-      // Garantir que advances esteja preenchido e fórmula do saldo esteja consistente
-      if (acc) {
-        if (!acc.advances || acc.advances.length === 0) {
-          acc.advances = fuelAdvances.filter((a) => a.courier_id === courier.id)
-        }
-        if (acc.advances.length > 0 && acc.totalAdvances === 0) {
-          acc.totalAdvances = acc.advances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
-        }
-        // Fórmula obrigatória: saldo = Total Adiantado - Combustível Gasto
-        acc.balance = Number((acc.totalAdvances - acc.totalSpent).toFixed(2))
-      }
-      return acc
+      )
     })
   }, [
     isFuelViewActive,
@@ -1367,13 +1344,23 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 </div>
                               </div>
 
-                              {/* KM Oficial vs KM Desvios com Badge da Fonte */}
+                              {/* KM Oficial vs KM Desvios com Badge da Fonte Real (Odômetro / Rota Viária / GPS) */}
                               <div className="flex items-center justify-between pt-0.5 text-[10px]">
                                 <Badge
                                   variant="outline"
-                                  className="text-[9px] px-1.5 py-0.2 border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 font-bold"
+                                  className={`text-[9px] px-1.5 py-0.2 font-bold ${
+                                    acc.calculationSource === 'odometro'
+                                      ? 'border-indigo-400 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30'
+                                      : acc.calculationSource === 'gps'
+                                        ? 'border-emerald-400 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
+                                        : 'border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30'
+                                  }`}
                                 >
-                                  🗺️ Histórico Viário de Rotas
+                                  {acc.calculationSource === 'odometro'
+                                    ? '🏍️ Odômetro da Moto'
+                                    : acc.calculationSource === 'gps'
+                                      ? '🛰️ Telemetria GPS'
+                                      : '🗺️ Histórico Viário de Rotas'}
                                 </Badge>
                                 <span className="text-slate-500 font-mono">
                                   KM Oficial:{' '}
@@ -2766,11 +2753,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                           setSelectedCourierForHistory(c)
                                           setIsCourierHistoryModalOpen(true)
                                         }}
-                                        className="h-7 text-[11px] gap-1 text-amber-500 border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20 hover:bg-amber-100"
-                                        title="Ver histórico de entregas, km e combustível"
+                                        className="h-7 text-[11px] gap-1 text-amber-600 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-100 font-semibold"
+                                        title="Auditoria & Histórico de KM, Combustível e Telemetria"
                                       >
                                         <Fuel className="h-3 w-3" />
-                                        Histórico
+                                        Auditoria
                                       </Button>
                                     </div>
                                   </td>

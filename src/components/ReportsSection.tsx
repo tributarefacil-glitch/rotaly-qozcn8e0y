@@ -1512,13 +1512,15 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
                     order.return_trip_km > 0
                       ? order.return_trip_km
                       : 0
+                  // Regras oficiais: cancelado_vendedor e base zerada = 0
+                  // Não inventar 4.2 km — usar valores reais cadastrados na ordem
+                  const isCanceladoVendedor = order.completion_reason === 'cancelado_vendedor'
                   const dist =
-                    isUnsuccessful || isZeroBase
+                    isCanceladoVendedor || isZeroBase
                       ? 0
-                      : baseDist > 0 || returnDist > 0
-                        ? baseDist + returnDist
-                        : 4.2
-                  const cost = fuelConsumption > 0 ? (dist * fuelPrice) / fuelConsumption : 0
+                      : (order.distance_km || 0) + (order.return_trip_km || 0)
+                  const cost =
+                    dist > 0 && fuelConsumption > 0 ? (dist * fuelPrice) / fuelConsumption : 0
 
                   return (
                     <tr key={order.id} className="hover:bg-gray-50">
