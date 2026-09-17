@@ -203,18 +203,132 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
   // Settings State: Moto, Carro e Caminhão (Preço do litro e consumo km/L)
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
-  const [motoPriceInput, setMotoPriceInput] = useState('5.59')
-  const [motoConsInput, setMotoConsInput] = useState('35.0')
-  const [carroPriceInput, setCarroPriceInput] = useState('5.59')
-  const [carroConsInput, setCarroConsInput] = useState('12.0')
-  const [caminhaoPriceInput, setCaminhaoPriceInput] = useState('5.59')
-  const [caminhaoConsInput, setCaminhaoConsInput] = useState('7.0')
+
+  // Draft unificado para os 10 campos de configurações operacionais
+  interface SettingsDraft {
+    motoPrice: string
+    motoCons: string
+    carroPrice: string
+    carroCons: string
+    caminhaoPrice: string
+    caminhaoCons: string
+    workStart: string
+    lunchStart: string
+    lunchEnd: string
+    workEnd: string
+  }
+
+  const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>({
+    motoPrice: '5.59',
+    motoCons: '35.0',
+    carroPrice: '5.59',
+    carroCons: '12.0',
+    caminhaoPrice: '5.59',
+    caminhaoCons: '7.0',
+    workStart: '08:00',
+    lunchStart: '12:00',
+    lunchEnd: '13:00',
+    workEnd: '18:30',
+  })
+
+  // Aliases controlados para compatibilidade com os inputs e cálculos existentes
+  const motoPriceInput = settingsDraft.motoPrice
+  const motoConsInput = settingsDraft.motoCons
+  const carroPriceInput = settingsDraft.carroPrice
+  const carroConsInput = settingsDraft.carroCons
+  const caminhaoPriceInput = settingsDraft.caminhaoPrice
+  const caminhaoConsInput = settingsDraft.caminhaoCons
+  const workStartTimeInput = settingsDraft.workStart
+  const lunchStartTimeInput = settingsDraft.lunchStart
+  const lunchEndTimeInput = settingsDraft.lunchEnd
+  const workEndTimeInput = settingsDraft.workEnd
+
+  // Rastreamento de quais campos foram modificados pelo usuário e estão "sujos" (pendentes de salvar)
+  const dirtyFieldsRef = useRef<Set<keyof SettingsDraft>>(new Set())
+  const isInitialSettingsLoadedRef = useRef<boolean>(false)
+
+  const markFieldDirty = (field: keyof SettingsDraft) => {
+    dirtyFieldsRef.current.add(field)
+  }
+
+  const setMotoPriceInput = (val: string) => {
+    markFieldDirty('motoPrice')
+    setSettingsDraft((prev) => ({ ...prev, motoPrice: val }))
+  }
+  const setMotoConsInput = (val: string) => {
+    markFieldDirty('motoCons')
+    setSettingsDraft((prev) => ({ ...prev, motoCons: val }))
+  }
+  const setCarroPriceInput = (val: string) => {
+    markFieldDirty('carroPrice')
+    setSettingsDraft((prev) => ({ ...prev, carroPrice: val }))
+  }
+  const setCarroConsInput = (val: string) => {
+    markFieldDirty('carroCons')
+    setSettingsDraft((prev) => ({ ...prev, carroCons: val }))
+  }
+  const setCaminhaoPriceInput = (val: string) => {
+    markFieldDirty('caminhaoPrice')
+    setSettingsDraft((prev) => ({ ...prev, caminhaoPrice: val }))
+  }
+  const setCaminhaoConsInput = (val: string) => {
+    markFieldDirty('caminhaoCons')
+    setSettingsDraft((prev) => ({ ...prev, caminhaoCons: val }))
+  }
+  const setWorkStartTimeInput = (val: string) => {
+    markFieldDirty('workStart')
+    setSettingsDraft((prev) => ({ ...prev, workStart: val }))
+  }
+  const setLunchStartTimeInput = (val: string) => {
+    markFieldDirty('lunchStart')
+    setSettingsDraft((prev) => ({ ...prev, lunchStart: val }))
+  }
+  const setLunchEndTimeInput = (val: string) => {
+    markFieldDirty('lunchEnd')
+    setSettingsDraft((prev) => ({ ...prev, lunchEnd: val }))
+  }
+  const setWorkEndTimeInput = (val: string) => {
+    markFieldDirty('workEnd')
+    setSettingsDraft((prev) => ({ ...prev, workEnd: val }))
+  }
+
+  // Helper para converter AppSettingsRecord em formato SettingsDraft
+  const convertRecordToDraft = (appSettings: AppSettingsRecord): SettingsDraft => {
+    const fallbackPrice = appSettings.fuel_price_per_liter || 5.59
+    return {
+      motoPrice: String(appSettings.moto_fuel_price ?? fallbackPrice),
+      motoCons: String(
+        appSettings.moto_consumption_kml ?? appSettings.fuel_consumption_kml ?? 35.0,
+      ),
+      carroPrice: String(appSettings.carro_fuel_price ?? fallbackPrice),
+      carroCons: String(appSettings.carro_consumption_kml ?? 12.0),
+      caminhaoPrice: String(appSettings.caminhao_fuel_price ?? fallbackPrice),
+      caminhaoCons: String(appSettings.caminhao_consumption_kml ?? 7.0),
+      workStart: appSettings.work_start_time || '08:00',
+      lunchStart: appSettings.lunch_start_time || '12:00',
+      lunchEnd: appSettings.lunch_end_time || '13:00',
+      workEnd: appSettings.work_end_time || '18:30',
+    }
+  }
+
+  // Sincroniza campos do draft a partir do registro do servidor preservando campos com edições não salvas
+  const syncDraftFromServer = (rec: AppSettingsRecord, forceAll = false) => {
+    const serverDraft = convertRecordToDraft(rec)
+    setSettingsDraft((prev) => {
+      const next = { ...prev }
+      ;(Object.keys(serverDraft) as (keyof SettingsDraft)[]).forEach((key) => {
+        if (forceAll || !dirtyFieldsRef.current.has(key)) {
+          next[key] = serverDraft[key]
+        }
+      })
+      return next
+    })
+    if (forceAll) {
+      dirtyFieldsRef.current.clear()
+    }
+  }
 
   // Work Shift Settings (Jornada de Trabalho da Empresa)
-  const [workStartTimeInput, setWorkStartTimeInput] = useState('08:00')
-  const [lunchStartTimeInput, setLunchStartTimeInput] = useState('12:00')
-  const [lunchEndTimeInput, setLunchEndTimeInput] = useState('13:00')
-  const [workEndTimeInput, setWorkEndTimeInput] = useState('18:30')
   const [isSavingShiftSettings, setIsSavingShiftSettings] = useState(false)
 
   const [isSavingSettings, setIsSavingSettings] = useState(false)
@@ -321,8 +435,19 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setLocations(locationsData)
       setIsLoading(false)
 
-      // ETAPA 2 (segundo plano): usuários, vendedores, notificações, configurações, adiantamentos, eventos e avaliações
-      Promise.all([
+      // ETAPA 2: usuários, vendedores, notificações, configurações, adiantamentos, eventos e avaliações
+      // CORREÇÃO (A): aguardar com await para eliminar race condition em que loadData() concorrente
+      // resolvia fora de ordem e repopulava inputs com snapshots defasados
+      const [
+        usersData,
+        sellersData,
+        notifsData,
+        appSettings,
+        advancesData,
+        eventsData,
+        reviewsData,
+        customersData,
+      ] = await Promise.all([
         deliveryService.getAllUsers(),
         deliveryService.getSellers(),
         deliveryService.getNotifications(),
@@ -332,47 +457,25 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         deliveryService.getReviews(),
         deliveryService.getCustomers(),
       ])
-        .then(
-          ([
-            usersData,
-            sellersData,
-            notifsData,
-            appSettings,
-            advancesData,
-            eventsData,
-            reviewsData,
-            customersData,
-          ]) => {
-            setUsers(usersData)
-            setSellers(sellersData)
-            setNotifications(notifsData)
-            setSettings(appSettings)
-            setFuelAdvances(advancesData)
-            setFuelAccounts([])
-            setOffRouteEvents(eventsData)
-            setReviews(reviewsData)
-            setCustomers(customersData)
 
-            const fallbackPrice = appSettings.fuel_price_per_liter || 5.59
-            setMotoPriceInput(String(appSettings.moto_fuel_price ?? fallbackPrice))
-            setMotoConsInput(
-              String(appSettings.moto_consumption_kml ?? appSettings.fuel_consumption_kml ?? 35.0),
-            )
-            setCarroPriceInput(String(appSettings.carro_fuel_price ?? fallbackPrice))
-            setCarroConsInput(String(appSettings.carro_consumption_kml ?? 12.0))
-            setCaminhaoPriceInput(String(appSettings.caminhao_fuel_price ?? fallbackPrice))
-            setCaminhaoConsInput(String(appSettings.caminhao_consumption_kml ?? 7.0))
+      setUsers(usersData)
+      setSellers(sellersData)
+      setNotifications(notifsData)
+      setSettings(appSettings)
+      setFuelAdvances(advancesData)
+      setFuelAccounts([])
+      setOffRouteEvents(eventsData)
+      setReviews(reviewsData)
+      setCustomers(customersData)
 
-            // Jornada de Trabalho
-            setWorkStartTimeInput(appSettings.work_start_time || '08:00')
-            setLunchStartTimeInput(appSettings.lunch_start_time || '12:00')
-            setLunchEndTimeInput(appSettings.lunch_end_time || '13:00')
-            setWorkEndTimeInput(appSettings.work_end_time || '18:30')
-          },
-        )
-        .catch((secErr) => {
-          console.warn('Erro ao carregar dados secundários do AdminDashboard:', secErr)
-        })
+      // CORREÇÃO (B): sincroniza o draft a partir do servidor somente se ainda for carga inicial
+      // ou apenas para campos que NÃO estejam "sujos" com edições do usuário
+      if (!isInitialSettingsLoadedRef.current) {
+        syncDraftFromServer(appSettings, true)
+        isInitialSettingsLoadedRef.current = true
+      } else {
+        syncDraftFromServer(appSettings, false)
+      }
     } catch (err) {
       console.error('Error loading admin data:', err)
       setLoadError('Não foi possível carregar os dados desta seção')
@@ -468,72 +571,30 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     }
   }, [])
 
-  // Sincronizar inputs controlados sempre que settings mudar do backend
+  // CORREÇÃO (B): Sincronizar inputs controlados quando settings mudar do backend
+  // SOMENTE para campos que NÃO estejam com edições pendentes locais do usuário
   useEffect(() => {
     if (settings) {
-      if (settings.work_start_time) setWorkStartTimeInput(settings.work_start_time)
-      if (settings.lunch_start_time) setLunchStartTimeInput(settings.lunch_start_time)
-      if (settings.lunch_end_time) setLunchEndTimeInput(settings.lunch_end_time)
-      if (settings.work_end_time) setWorkEndTimeInput(settings.work_end_time)
-
-      const fallbackPrice = settings.fuel_price_per_liter || 5.59
-      if (settings.moto_fuel_price != null) {
-        setMotoPriceInput(String(settings.moto_fuel_price))
+      if (!isInitialSettingsLoadedRef.current) {
+        syncDraftFromServer(settings, true)
+        isInitialSettingsLoadedRef.current = true
       } else {
-        setMotoPriceInput(String(fallbackPrice))
-      }
-      if (settings.moto_consumption_kml != null) {
-        setMotoConsInput(String(settings.moto_consumption_kml))
-      } else if (settings.fuel_consumption_kml != null) {
-        setMotoConsInput(String(settings.fuel_consumption_kml))
-      } else {
-        setMotoConsInput('35.0')
-      }
-
-      if (settings.carro_fuel_price != null) {
-        setCarroPriceInput(String(settings.carro_fuel_price))
-      } else {
-        setCarroPriceInput(String(fallbackPrice))
-      }
-      if (settings.carro_consumption_kml != null) {
-        setCarroConsInput(String(settings.carro_consumption_kml))
-      } else {
-        setCarroConsInput('12.0')
-      }
-
-      if (settings.caminhao_fuel_price != null) {
-        setCaminhaoPriceInput(String(settings.caminhao_fuel_price))
-      } else {
-        setCaminhaoPriceInput(String(fallbackPrice))
-      }
-      if (settings.caminhao_consumption_kml != null) {
-        setCaminhaoConsInput(String(settings.caminhao_consumption_kml))
-      } else {
-        setCaminhaoConsInput('7.0')
+        syncDraftFromServer(settings, false)
       }
     }
   }, [settings])
 
-  // Assinar realtime da coleção app_settings para refletir qualquer alteração instantaneamente
+  // Assinar realtime da coleção app_settings para refletir qualquer alteração sem sobrescrever edições ativas
   useRealtime<AppSettingsRecord>('app_settings', (e) => {
     if (e.action === 'update' || e.action === 'create') {
       const rec = e.record
       setSettings(rec)
-      if (rec.work_start_time) setWorkStartTimeInput(rec.work_start_time)
-      if (rec.lunch_start_time) setLunchStartTimeInput(rec.lunch_start_time)
-      if (rec.lunch_end_time) setLunchEndTimeInput(rec.lunch_end_time)
-      if (rec.work_end_time) setWorkEndTimeInput(rec.work_end_time)
-      if (rec.moto_fuel_price != null) setMotoPriceInput(String(rec.moto_fuel_price))
-      if (rec.moto_consumption_kml != null) setMotoConsInput(String(rec.moto_consumption_kml))
-      if (rec.carro_fuel_price != null) setCarroPriceInput(String(rec.carro_fuel_price))
-      if (rec.carro_consumption_kml != null) setCarroConsInput(String(rec.carro_consumption_kml))
-      if (rec.caminhao_fuel_price != null) setCaminhaoPriceInput(String(rec.caminhao_fuel_price))
-      if (rec.caminhao_consumption_kml != null)
-        setCaminhaoConsInput(String(rec.caminhao_consumption_kml))
+      syncDraftFromServer(rec, false)
     }
   })
 
   // Save Admin Settings (all categories in batch)
+  // CORREÇÃO (C): Alinhado com recarregamento completo loadData(), sincronização total e limpeza de dirty
   const handleSaveAllFuelSettings = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     setIsSavingSettings(true)
@@ -561,7 +622,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         return
       }
 
-      const updated = await deliveryService.updateSettings({
+      const updated = (await deliveryService.updateSettings({
         fuel_price_per_liter: motoPrice,
         fuel_consumption_kml: motoCons,
         moto_fuel_price: motoPrice,
@@ -570,13 +631,29 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         carro_consumption_kml: carroCons,
         caminhao_fuel_price: caminhaoPrice,
         caminhao_consumption_kml: caminhaoCons,
-      })
+      })) as AppSettingsRecord
 
-      setSettings(updated as AppSettingsRecord)
+      // Atualiza o estado oficial e sincroniza todos os 6 campos de combustível
+      setSettings(updated)
+      ;(
+        [
+          'motoPrice',
+          'motoCons',
+          'carroPrice',
+          'carroCons',
+          'caminhaoPrice',
+          'caminhaoCons',
+        ] as (keyof SettingsDraft)[]
+      ).forEach((k) => dirtyFieldsRef.current.delete(k))
+      syncDraftFromServer(updated, false)
       toast.success('Todos os parâmetros de combustível (Moto, Carro, Caminhão) foram salvos!')
+      await loadData()
     } catch (err) {
       console.error('Error saving settings:', err)
-      toast.error('Erro ao salvar configurações.')
+      const errorMsg = getErrorMessage(err)
+      toast.error(
+        errorMsg ? `Erro ao salvar configurações: ${errorMsg}` : 'Erro ao salvar configurações.',
+      )
     } finally {
       setIsSavingSettings(false)
     }
@@ -619,10 +696,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       // Atualizar inputs com o retorno garantido do backend
       if (updated) {
         setSettings(updated)
-        setWorkStartTimeInput(updated.work_start_time || workStartTimeInput.trim())
-        setLunchStartTimeInput(updated.lunch_start_time || lunchStartTimeInput.trim())
-        setLunchEndTimeInput(updated.lunch_end_time || lunchEndTimeInput.trim())
-        setWorkEndTimeInput(updated.work_end_time || workEndTimeInput.trim())
+        ;(['workStart', 'lunchStart', 'lunchEnd', 'workEnd'] as (keyof SettingsDraft)[]).forEach(
+          (k) => dirtyFieldsRef.current.delete(k),
+        )
+        syncDraftFromServer(updated, false)
       }
       toast.success('Jornada de trabalho da empresa atualizada com sucesso!')
       await loadData()
@@ -638,7 +715,36 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   }
 
   // Save specific category individually
+  // CORREÇÃO (C): Alerta caso haja alterações pendentes em outros cards de veículos
   const handleSaveIndividualCategory = async (category: 'moto' | 'carro' | 'caminhao') => {
+    // Verificar se há edições pendentes em outros cards
+    const otherDirtyCategories: string[] = []
+    if (
+      category !== 'moto' &&
+      (dirtyFieldsRef.current.has('motoPrice') || dirtyFieldsRef.current.has('motoCons'))
+    ) {
+      otherDirtyCategories.push('Moto')
+    }
+    if (
+      category !== 'carro' &&
+      (dirtyFieldsRef.current.has('carroPrice') || dirtyFieldsRef.current.has('carroCons'))
+    ) {
+      otherDirtyCategories.push('Carro')
+    }
+    if (
+      category !== 'caminhao' &&
+      (dirtyFieldsRef.current.has('caminhaoPrice') || dirtyFieldsRef.current.has('caminhaoCons'))
+    ) {
+      otherDirtyCategories.push('Caminhão')
+    }
+
+    if (otherDirtyCategories.length > 0) {
+      toast.warning(
+        `Atenção: alterações não salvas em ${otherDirtyCategories.join(' e ')} permanecerão locais. Use "Salvar Todos em Lote" para gravar tudo.`,
+        { duration: 4500 },
+      )
+    }
+
     setSavingCategory(category)
     try {
       let price = 0
@@ -674,19 +780,18 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       const updated = (await deliveryService.updateSettings(payload)) as AppSettingsRecord
       if (updated) {
         setSettings(updated)
-        const fallbackPrice = updated.fuel_price_per_liter || 5.59
+        // Limpar dirty fields apenas da categoria salva
         if (category === 'moto') {
-          setMotoPriceInput(String(updated.moto_fuel_price ?? fallbackPrice))
-          setMotoConsInput(
-            String(updated.moto_consumption_kml ?? updated.fuel_consumption_kml ?? 35.0),
-          )
+          dirtyFieldsRef.current.delete('motoPrice')
+          dirtyFieldsRef.current.delete('motoCons')
         } else if (category === 'carro') {
-          setCarroPriceInput(String(updated.carro_fuel_price ?? fallbackPrice))
-          setCarroConsInput(String(updated.carro_consumption_kml ?? 12.0))
+          dirtyFieldsRef.current.delete('carroPrice')
+          dirtyFieldsRef.current.delete('carroCons')
         } else {
-          setCaminhaoPriceInput(String(updated.caminhao_fuel_price ?? fallbackPrice))
-          setCaminhaoConsInput(String(updated.caminhao_consumption_kml ?? 7.0))
+          dirtyFieldsRef.current.delete('caminhaoPrice')
+          dirtyFieldsRef.current.delete('caminhaoCons')
         }
+        syncDraftFromServer(updated, false)
       }
 
       const label = category === 'moto' ? 'Moto' : category === 'carro' ? 'Carro' : 'Caminhão'
