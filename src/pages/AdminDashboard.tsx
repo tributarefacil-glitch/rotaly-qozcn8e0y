@@ -1362,7 +1362,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   <span className="text-[9px] text-slate-400 block mt-0.5">
                                     {isBicycle
                                       ? 'Telemetria apurada'
-                                      : `${totalRouteKmNum.toFixed(1)} km reais oficiais`}
+                                      : `${totalRouteKmNum.toFixed(1)} km`}
                                   </span>
                                 </div>
                               </div>
@@ -1371,12 +1371,15 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                               <div className="flex items-center justify-between pt-0.5 text-[10px]">
                                 <Badge
                                   variant="outline"
-                                  className="text-[9px] px-1.5 py-0.2 border-blue-400 text-blue-400 bg-blue-950/30 font-bold"
+                                  className="text-[9px] px-1.5 py-0.2 border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 font-bold"
                                 >
                                   🗺️ Histórico Viário de Rotas
                                 </Badge>
-                                <span className="text-slate-400 font-mono">
-                                  KM Oficial: <strong>{totalRouteKmNum.toFixed(1)} km</strong>
+                                <span className="text-slate-500 font-mono">
+                                  KM Oficial:{' '}
+                                  <strong className="text-slate-700 dark:text-slate-200">
+                                    {totalRouteKmNum.toFixed(1)} km
+                                  </strong>
                                 </span>
                               </div>
 
@@ -3158,7 +3161,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[#002855] font-mono font-bold">
-                    v0.0.213
+                    v0.0.218
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">

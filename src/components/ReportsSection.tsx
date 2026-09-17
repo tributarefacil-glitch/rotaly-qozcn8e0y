@@ -576,74 +576,35 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     }
   }, [filteredOrders])
 
-  // MÉTRICA 4: Análise de Custo por Tipo de Veículo com KM Real Rodado (descontados desvios e paradas)
+  // MÉTRICA 4: Análise de Custo Operacional alimentada pelo MESMO motor oficial (calculateCourierFuelMetrics)
+  // Consistência total com os cards, saldo e tabela de KM e combustível:
+  // - Apenas entregas válidas (delivered + falhas no local comprovadas)
+  // - cancelado_vendedor e erros de sistema totalmente excluídos
+  // - Rota única por ciclo (evita somar km ou combustível duplicado)
+  // - Desvios >600m segregados em KM Desvios
+  // - Bicicleta = R$ 0 de combustível
   const costAnalysis = useMemo(() => {
     let totalKm = 0
     let totalCost = 0
-    // REGRAS 1 & 2 DO USUÁRIO:
-    // Cancelamento pelo vendedor NÃO conta km/combustível.
-    // Falhas no local (client_absent, address_error, desistência no local) CONTAM km/combustível para o entregador.
-    const activeRouteOrders = filteredOrders.filter((o) => {
-      const baseLat = Number(o.start_base_lat) || 0
-      const baseLng = Number(o.start_base_lng) || 0
-      if (baseLat === 0 && baseLng === 0 && !o.start_base_name && !o.start_base_address) {
-        return false
-      }
-      if (o.completion_reason === 'cancelado_vendedor') {
-        return false
-      }
-      if (isNeutralizedSystemError(o)) return false
+    let totalDeliveries = 0
 
-      if (o.status === 'delivered') return true
-      if (o.route_started === true && o.status === 'in_transit') return true
-      if (o.status === 'address_error' || o.status === 'client_absent') return true
-      if (o.status === 'cancelled') {
-        const notesLower = o.notes ? o.notes.toLowerCase() : ''
-        const isLocalDesistencia =
-          notesLower.includes('cancelamento: [desistência do cliente]') ||
-          notesLower.includes('desistência do cliente') ||
-          notesLower.includes('desistencia do cliente')
-        const hadAttempt = Boolean(o.route_started_at || o.actual_arrival)
-        return isLocalDesistencia && hadAttempt
-      }
-      return false
+    fuelAndKmByCourier.forEach((item) => {
+      totalKm += item.officialKm
+      totalCost += item.fuelCost
+      totalDeliveries += item.deliveredCount
     })
 
-    activeRouteOrders.forEach((o) => {
-      const realTelemetry = calculateRealKmForOrder({
-        order: o,
-        allCourierLocations: locations,
-        courierEvents: offRouteEvents,
-        allCourierOrders: activeOrdersPool,
-      })
-
-      const orderKm = realTelemetry.officialRealKm
-      totalKm += orderKm
-
-      const courier = couriers.find((c) => c.id === o.courier_id) || o.expand?.courier_id
-      const vehicleType = courier?.vehicle_type || 'moto'
-      const { pricePerLiter, consumptionKml, category } = deliveryService.getVehicleFuelParams(
-        settings,
-        vehicleType,
-      )
-
-      if (category !== 'bicicleta' && consumptionKml > 0 && pricePerLiter > 0) {
-        totalCost += (orderKm * pricePerLiter) / consumptionKml
-      }
-    })
-
-    const costPerKm = totalKm > 0 ? totalCost / totalKm : 0.16
-    const avgCostPerDelivery =
-      activeRouteOrders.length > 0 ? totalCost / activeRouteOrders.length : 0
+    const costPerKm = totalKm > 0 ? totalCost / totalKm : 0.19
+    const avgCostPerDelivery = totalDeliveries > 0 ? totalCost / totalDeliveries : 0
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
       costPerKm: Number(costPerKm.toFixed(2)),
       totalCost: Number(totalCost.toFixed(2)),
       avgCostPerDelivery: Number(avgCostPerDelivery.toFixed(2)),
-      activeRouteOrdersCount: activeRouteOrders.length,
+      activeRouteOrdersCount: totalDeliveries,
     }
-  }, [filteredOrders, couriers, settings, offRouteEvents, activeOrdersPool, locations])
+  }, [fuelAndKmByCourier])
 
   // MÉTRICA 5: Problemas Registrados (tipo de problema, frequência, entregador)
   const problemRecords = useMemo(() => {

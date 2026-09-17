@@ -179,9 +179,7 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
               {isBicycle ? `${totalOfficialKmNum.toFixed(1)} km` : `R$ ${totalSpentNum.toFixed(2)}`}
             </span>
             <span className="text-[9px] text-slate-400 block mt-0.5">
-              {isBicycle
-                ? 'Telemetria GPS apurada'
-                : `${totalOfficialKmNum.toFixed(1)} km reais oficiais`}
+              {isBicycle ? 'Telemetria GPS apurada' : `${totalOfficialKmNum.toFixed(1)} km`}
             </span>
           </div>
         </div>
@@ -189,7 +187,7 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
         {/* KM Oficial vs KM Desvios & Odômetro Real */}
         <div className="grid grid-cols-2 gap-2 text-[10px] pt-0.5">
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
-            <span className="text-slate-500 dark:text-slate-400">KM Real Oficial:</span>
+            <span className="text-slate-500 dark:text-slate-400">KM Oficial:</span>
             <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
               {totalOfficialKmNum.toFixed(1)} km
             </span>
