@@ -72,6 +72,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
+import { useAuth } from '@/contexts/AuthContext'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import {
   BaseAddressAutocomplete,
@@ -184,6 +185,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   locations,
   onRoutesApplied,
 }) => {
+  const { user } = useAuth()
   // Estado local sincronizado de pedidos e clientes para atualização e exclusão instantâneas no modal
   const [localOrders, setLocalOrders] = useState<OrderRecord[]>(initialOrders)
   const [localCustomers, setLocalCustomers] = useState<CustomerRecord[]>(initialCustomers)
@@ -212,13 +214,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Pending orders eligible for routing optimization
   // Regras de Negócio:
   // 1. Somente clientes com venda/entrega PENDENTE cadastrada pelo vendedor (pedidos criados e ainda não incluídos em rota liberada/atribuída). Cliente sem venda/entrega pendente NÃO aparece.
-  // 2. Após "Salvar & Liberar Rota", as entregas incluídas na rota SAEM da Etapa 2 (não aparecem mais como pendentes na busca de uma nova otimização).
-  // 3. Se a rota for desfeita/cancelada e a entrega voltar para pendente (sem rota liberada nem iniciada), ela reaparece na busca.
-  // 4. REOTIMIZAÇÃO: Pedidos já selecionados (selectedOrderIds) que pertencem a uma rota que está sendo reotimizada também ficam disponíveis na Etapa 2.
+  // 2. Restrição de perfil: quando o usuário for vendedor (role 'seller'), visualizar ESTRITAMENTE suas próprias vendas (order.seller_id === user.id). Administrador tem a visão geral.
+  // 3. Após "Salvar & Liberar Rota", as entregas incluídas na rota SAEM da Etapa 2 (não aparecem mais como pendentes na busca de uma nova otimização).
+  // 4. Se a rota for desfeita/cancelada e a entrega voltar para pendente (sem rota liberada nem iniciada), ela reaparece na busca.
+  // 5. REOTIMIZAÇÃO: Pedidos já selecionados (selectedOrderIds) que pertencem a uma rota que está sendo reotimizada também ficam disponíveis na Etapa 2.
   const pendingOrders = useMemo(() => {
     return localOrders.filter((o) => {
       // Pedidos entregues ou cancelados nunca devem aparecer
       if (o.status === 'delivered' || o.status === 'cancelled') return false
+      // Restrição rigorosa por perfil: vendedor só vê suas próprias vendas
+      if (user?.role === 'seller' && user?.id && o.seller_id !== user.id) return false
       // Se este pedido foi pré-selecionado para reotimização de rota, mantê-lo visível na Etapa 2!
       if (selectedOrderIds.includes(o.id)) return true
       // Se a rota foi liberada (route_released = true), NÃO aparece na Etapa 2
@@ -233,7 +238,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       // Retorna pedidos pendentes de roteirização
       return o.status === 'pending' || !o.courier_id
     })
-  }, [localOrders, selectedOrderIds])
+  }, [localOrders, selectedOrderIds, user?.role, user?.id])
 
   // Wizard active step: 'couriers' | 'orders' | 'review'
   const [wizardStep, setWizardStep] = useState<'couriers' | 'orders' | 'review'>('couriers')
@@ -626,9 +631,12 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   // Pedidos disponíveis para inclusão avulsa em rota ativa:
   // Deve listar TODOS os pedidos pendentes disponíveis, incluindo os que estão atualmente
   // selecionados/marcados na Etapa 2 (selectedOrderIds) ou pendentes sem rota ativa/liberada.
+  // Quando vendedor logado, restrito a o.seller_id === user.id.
   const strictlyPendingOrders = useMemo(() => {
     return localOrders.filter((o) => {
       if (o.status === 'delivered' || o.status === 'cancelled') return false
+      // Restrição por perfil seller
+      if (user?.role === 'seller' && user?.id && o.seller_id !== user.id) return false
       // Se já está com rota liberada ou já iniciada, já está rodando em outra rota ativa
       if (o.route_released || o.route_started) return false
       if (o.status === 'in_transit' || o.status === 'address_error' || o.status === 'client_absent')
@@ -640,7 +648,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       // Pedido pendente ou sem entregador
       return o.status === 'pending' || !o.courier_id
     })
-  }, [localOrders, selectedOrderIds])
+  }, [localOrders, selectedOrderIds, user?.role, user?.id])
 
   // Reotimizar Rota: pré-seleciona o entregador na Etapa 1 e as paradas pendentes da rota na Etapa 2
   const handleReoptimizeRoute = (routeGroup: ActiveCourierRouteGroup) => {

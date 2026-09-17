@@ -122,7 +122,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
   const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
-  const [onlyMySales, setOnlyMySales] = useState<boolean>(false)
+  const [onlyMySales, setOnlyMySales] = useState<boolean>(user?.role === 'seller')
   const [searchQuery, setSearchQuery] = useState('')
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isCreateCourierModalOpen, setIsCreateCourierModalOpen] = useState(false)
@@ -209,7 +209,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       const windowStart =
         currentOpWindow.startPbString ||
         new Date(currentOpWindow.start).toISOString().replace('T', ' ')
-      const ordersFilter = `created >= '${windowStart}' || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
+      let ordersFilter = `created >= '${windowStart}' || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
+
+      // Regra de visibilidade por perfil: Vendedor visualiza estritamente suas próprias vendas
+      if (user?.role === 'seller' && user?.id) {
+        ordersFilter = `seller_id = '${user.id}' && (${ordersFilter})`
+      }
 
       // ETAPA 1 (prioritária, imediata): getOrders + getCouriers + getLatestLocations
       // Popula os estados críticos e libera imediatamente a renderização dos cards do Kanban, entregadores e mapa
@@ -538,10 +543,15 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   })
 
-  // Filtered orders list — por padrão, mostra TODOS os pedidos da empresa ativa sem restrição de vendedor ou data
+  // Filtered orders list — para seller, restringe obrigatoriamente a order.seller_id === user?.id
   const filteredOrders = orders.filter((o) => {
     const matchesStatus = selectedStatus === 'all' ? true : o.status === selectedStatus
-    const matchesSeller = onlyMySales ? o.seller_id === user?.id : true
+    const matchesSeller =
+      user?.role === 'seller'
+        ? o.seller_id === user?.id
+        : onlyMySales
+          ? o.seller_id === user?.id
+          : true
     const customerName = o.expand?.customer_id?.name || ''
     const matchesSearch =
       o.tracking_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -742,8 +752,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   }
 
-  // Quick stats (excluindo erros de sistema neutralizados para refletir a realidade operacional)
-  const operationalOrders = orders.filter((o) => !isNeutralizedSystemError(o))
+  // Quick stats (excluindo erros de sistema neutralizados e filtrando por seller_id quando perfil seller)
+  const operationalOrders = orders.filter((o) => {
+    if (isNeutralizedSystemError(o)) return false
+    if (user?.role === 'seller' && user?.id && o.seller_id !== user.id) return false
+    return true
+  })
   const pendingCount = operationalOrders.filter((o) => o.status === 'pending').length
   const inTransitCount = operationalOrders.filter((o) => o.status === 'in_transit').length
   const deliveredCount = operationalOrders.filter((o) => o.status === 'delivered').length
@@ -1599,7 +1613,14 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                       </TabsList>
                     </Tabs>
 
-                    {user?.role === 'seller' && (
+                    {user?.role === 'seller' ? (
+                      <div
+                        className="h-9 px-2.5 text-xs font-semibold rounded-lg border bg-[#FF6B35] text-white border-[#FF6B35] flex items-center gap-1 shadow-sm select-none"
+                        title="Vendedor visualiza apenas suas próprias vendas"
+                      >
+                        ✓ Minhas Vendas (Ativo)
+                      </div>
+                    ) : (
                       <Button
                         type="button"
                         variant="outline"
@@ -1610,7 +1631,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                             ? 'bg-[#FF6B35] text-white border-[#FF6B35] hover:bg-[#E5531E]'
                             : 'bg-[#0A1128] text-slate-300 border-[#1E2B58] hover:bg-[#121E46] hover:text-white'
                         }`}
-                        title="Alternar entre ver todos os pedidos da filial ou apenas os criados por mim"
+                        title="Filtrar apenas as minhas vendas"
                       >
                         {onlyMySales ? '✓ Minhas Vendas' : 'Minhas Vendas'}
                       </Button>
