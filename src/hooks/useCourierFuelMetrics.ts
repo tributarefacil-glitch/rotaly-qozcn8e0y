@@ -181,9 +181,12 @@ export function calculateCourierFuelMetrics(params: {
   // Também EXCLUI pedidos neutralizados como erro de sistema.
   const UNSUCCESSFUL_STATUSES = new Set(['cancelled', 'client_absent', 'address_error'])
 
+  // Regra A: km oficial e combustível somam SOMENTE pedidos entregues (status=delivered).
+  // Cancelled, client_absent e address_error ficam FORA de km, combustível e faturamento.
+  // Regra blindada: erros de sistema fora das métricas.
   const allCourierOrders = orders.filter((o) => {
     if (o.courier_id !== courier.id) return false
-    if (UNSUCCESSFUL_STATUSES.has(o.status as string)) return false
+    if (o.status !== 'delivered') return false
     const notesLower = o.notes ? o.notes.toLowerCase() : ''
     if (notesLower.includes('erro de sistema')) return false
     // Descartar pedidos com base 0,0 que não foram saneados
@@ -196,14 +199,7 @@ export function calculateCourierFuelMetrics(params: {
   })
 
   const eligibleOrders = allCourierOrders.filter((o) => {
-    // Apenas pedidos efetivamente entregues computam o gasto e km oficial concluído
-    const isStartedOrDelivered =
-      (o.status as string) === 'delivered' ||
-      (o.route_started === true &&
-        !UNSUCCESSFUL_STATUSES.has(o.status as string) &&
-        ((o.status as string) === 'in_transit' || (o.status as string) === 'delivered'))
-
-    if (!isStartedOrDelivered) return false
+    if (o.status !== 'delivered') return false
     if (periodFilter === 'all') return true
 
     const oDate = new Date(o.created || Date.now())
@@ -230,16 +226,35 @@ export function calculateCourierFuelMetrics(params: {
   // a telemetria GPS mede a rota completa do entregador (Base -> Entregas -> Retorno à Base).
   // O KM de combustível da rota é o percurso real completo, e para cada entrega exibimos a sua cota ou valor correspondente.
 
-  // Agrupamento por lote de rota (pedidos com mesmo route_started_at ou janela próxima de despacho)
+  // Agrupamento por lote de rota (pedidos com mesmo route_started_at + route_finished_at, ou janela temporal)
+  // Regra B: Deduplicação por rota: dentro de um mesmo entregador, pedidos que compartilham a mesma rota
+  // (mesmo route_started_at + route_finished_at, ou mesmo start_base + janela de tempo)
+  // devem ter o km/combustível da rota contado UMA VEZ só, não por pedido.
+  const getRouteBatchKey = (o: OrderRecord): string => {
+    if (o.route_started_at && o.route_finished_at) {
+      return `route_${o.route_started_at}_${o.route_finished_at}`
+    }
+    if (o.route_started_at) {
+      const oTime = new Date(o.route_started_at).getTime()
+      return `batch_${Math.floor(oTime / (15 * 60 * 1000))}`
+    }
+    if (o.created) {
+      const cTime = new Date(o.created).getTime()
+      return `batch_created_${Math.floor(cTime / (15 * 60 * 1000))}`
+    }
+    return `single_${o.id}`
+  }
+
   const routeBatches = new Map<string, OrderRecord[]>()
   eligibleOrders.forEach((o) => {
-    // Se pedidos tiverem route_started_at em horários próximos (<15min), pertencem à mesma rota
     let assignedKey: string | null = null
-    if (o.route_started_at) {
+    if (o.route_started_at && o.route_finished_at) {
+      assignedKey = `route_${o.route_started_at}_${o.route_finished_at}`
+    } else if (o.route_started_at) {
       const oTime = new Date(o.route_started_at).getTime()
       for (const existingKey of routeBatches.keys()) {
         if (existingKey.startsWith('batch_')) {
-          const batchTime = Number(existingKey.replace('batch_', '')) * (10 * 60 * 1000)
+          const batchTime = Number(existingKey.replace('batch_', '')) * (15 * 60 * 1000)
           if (Math.abs(oTime - batchTime) <= 15 * 60 * 1000) {
             assignedKey = existingKey
             break
@@ -247,10 +262,9 @@ export function calculateCourierFuelMetrics(params: {
         }
       }
       if (!assignedKey) {
-        assignedKey = `batch_${Math.floor(oTime / (10 * 60 * 1000))}`
+        assignedKey = `batch_${Math.floor(oTime / (15 * 60 * 1000))}`
       }
     } else if (o.created) {
-      // Se pedidos sem route_started_at foram criados/despachados na mesma janela de 15min
       const cTime = new Date(o.created).getTime()
       for (const existingKey of routeBatches.keys()) {
         if (existingKey.startsWith('batch_created_')) {
