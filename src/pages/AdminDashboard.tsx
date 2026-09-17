@@ -34,6 +34,7 @@ import {
   Gauge,
   PieChart,
   Save,
+  MapPin,
   MapPinOff,
   UserX,
   Wallet,
@@ -57,6 +58,8 @@ import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistory
 import { CreateSellerModal } from '@/components/CreateSellerModal'
 import { EditSellerModal } from '@/components/EditSellerModal'
 import { SiteContentManager } from '@/components/SiteContentManager'
+import { CreateCustomerModal } from '@/components/CreateCustomerModal'
+import { CustomerAddressAuditModal } from '@/components/CustomerAddressAuditModal'
 import { Globe, KeyRound, Lock } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
@@ -79,6 +82,7 @@ import type {
   OffRouteEventRecord,
   CourierFuelAccount,
   FuelPaymentMethod,
+  CustomerRecord,
 } from '@/types/delivery'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { Button } from '@/components/ui/button'
@@ -3396,9 +3400,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       {/* Modal de Cadastro/Edição de Clientes com Geocodificação Google */}
       <CreateCustomerModal
         open={isCreateCustomerModalOpen}
-        onOpenChange={setIsCreateCustomerModalOpen}
+        onOpenChange={(open) => {
+          setIsCreateCustomerModalOpen(open)
+          if (!open) {
+            setCustomerToEdit(null)
+          }
+        }}
         customerToEdit={customerToEdit}
-        onSuccess={() => {
+        onCustomerCreated={() => {
           loadData()
           setIsCreateCustomerModalOpen(false)
           setCustomerToEdit(null)

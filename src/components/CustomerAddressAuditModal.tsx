@@ -15,7 +15,9 @@ import {
   reverseGeocodeGoogleRestApi,
   fallbackReverseGeocode,
   normalizeTextForComparison,
+  geocodeAddressWithValidation,
 } from '@/lib/googleMaps'
+import { deliveryService } from '@/services/deliveryService'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -39,6 +41,13 @@ export interface SuspectCustomerItem {
   isMissingCoords?: boolean
 }
 
+export interface BatchGeocodeResultReport {
+  total: number
+  success: number
+  failed: number
+  skipped: number
+}
+
 interface CustomerAddressAuditModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -59,6 +68,25 @@ export function CustomerAddressAuditModal({
   const [suspects, setSuspects] = useState<SuspectCustomerItem[]>([])
   const [hasRunOnce, setHasRunOnce] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
+
+  const [isBatchGeocoding, setIsBatchGeocoding] = useState(false)
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 })
+  const [batchReport, setBatchReport] = useState<BatchGeocodeResultReport | null>(null)
+
+  const missingCoordsCustomers = (customers || []).filter((c) => {
+    if (
+      c.lat === undefined ||
+      c.lng === undefined ||
+      c.lat === null ||
+      c.lng === null ||
+      (c.lat === 0 && c.lng === 0)
+    ) {
+      return true
+    }
+    const isFallbackRj =
+      Math.abs(Number(c.lat) - -22.906847) < 0.0005 && Math.abs(Number(c.lng) - -43.172896) < 0.0005
+    return isFallbackRj
+  })
 
   const handleStartAudit = async () => {
     setIsRunningAudit(true)

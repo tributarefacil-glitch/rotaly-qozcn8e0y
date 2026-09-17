@@ -43,9 +43,12 @@ import {
   Link2,
   Crosshair,
   AlertTriangle,
+  AlertCircle,
   MapPin,
   Move,
+  RefreshCw,
 } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 
 import { useEffect } from 'react'
@@ -524,6 +527,18 @@ export function CreateCustomerModal({
     ],
   )
 
+  const getFullFormattedAddress = () => {
+    const parts: string[] = []
+    if (streetAndNumber.trim()) parts.push(streetAndNumber.trim())
+    if (complement.trim()) parts.push(complement.trim())
+    if (neighborhood.trim()) parts.push(neighborhood.trim())
+    if (city.trim()) {
+      parts.push(ufState ? `${city.trim()} - ${ufState}` : city.trim())
+    }
+    if (postalCode.trim()) parts.push(`CEP: ${postalCode.trim()}`)
+    return parts.join(', ')
+  }
+
   // Dispara geocodificação sob demanda no blur dos campos de endereço (rua, número, cidade)
   const handleAddressFieldsBlur = () => {
     if (addressDebounceRef.current) clearTimeout(addressDebounceRef.current)
@@ -707,18 +722,6 @@ export function CreateCustomerModal({
     toast.error(
       'Não foi possível identificar coordenadas no link colado. Cole o link do Google Maps.',
     )
-  }
-
-  const getFullFormattedAddress = () => {
-    const parts: string[] = []
-    if (streetAndNumber.trim()) parts.push(streetAndNumber.trim())
-    if (complement.trim()) parts.push(complement.trim())
-    if (neighborhood.trim()) parts.push(neighborhood.trim())
-    if (city.trim()) {
-      parts.push(ufState ? `${city.trim()} - ${ufState}` : city.trim())
-    }
-    if (postalCode.trim()) parts.push(`CEP: ${postalCode.trim()}`)
-    return parts.join(', ')
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
