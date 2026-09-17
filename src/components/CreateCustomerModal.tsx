@@ -81,16 +81,23 @@ export function CreateCustomerModal({
   const [lng, setLng] = useState<number | undefined>(undefined)
   const [hasPrecisionWarning, setHasPrecisionWarning] = useState(false)
   const [precisionWarningDismissed, setPrecisionWarningDismissed] = useState(false)
+  const [precisionWarningText, setPrecisionWarningText] = useState('')
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
   const [isLoadingViaCep, setIsLoadingViaCep] = useState(false)
   const [isSearchingPhone, setIsSearchingPhone] = useState(false)
   const [isLoadingLocationLink, setIsLoadingLocationLink] = useState(false)
+  const [isGeocodingAddress, setIsGeocodingAddress] = useState(false)
+  const [googleNormalizedAddress, setGoogleNormalizedAddress] = useState<string>('')
+  const [geocodeLocationType, setGeocodeLocationType] = useState<string>('')
+  const [initialSavedCoords, setInitialSavedCoords] = useState<{ lat?: number; lng?: number }>({})
+  const [initialSavedAddress, setInitialSavedAddress] = useState<string>('')
   const [matchedExistingCustomer, setMatchedExistingCustomer] = useState<CustomerRecord | null>(
     null,
   )
   const [locationLinkInput, setLocationLinkInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const phoneDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Referências para o mini-mapa com pino interativo e arrastável
   const miniMapContainerRef = useRef<HTMLDivElement | null>(null)
@@ -126,12 +133,22 @@ export function CreateCustomerModal({
       setPostalCode(customerToEdit.postal_code || '')
       setLat(customerToEdit.lat)
       setLng(customerToEdit.lng)
-      // Se já estava com fallback Centro do RJ, alertar
+      setInitialSavedCoords({ lat: customerToEdit.lat, lng: customerToEdit.lng })
+      setInitialSavedAddress(customerToEdit.address || customerToEdit.street || '')
+      // Se já estava com fallback Centro do RJ ou sem coordenada, alertar
       const isFallback =
-        Math.abs((customerToEdit.lat || 0) - -22.906847) < 0.0001 &&
-        Math.abs((customerToEdit.lng || 0) - -43.172896) < 0.0001
+        !customerToEdit.lat ||
+        !customerToEdit.lng ||
+        (Math.abs((customerToEdit.lat || 0) - -22.906847) < 0.0001 &&
+          Math.abs((customerToEdit.lng || 0) - -43.172896) < 0.0001)
       setHasPrecisionWarning(isFallback)
+      setPrecisionWarningText(
+        isFallback
+          ? 'Cliente com coordenada padrão de contingência ou ausente. Calibre via Google Maps.'
+          : '',
+      )
       setPrecisionWarningDismissed(false)
+      setGoogleNormalizedAddress(customerToEdit.address || '')
       setAddressSearchQuery(customerToEdit.address || '')
       setMatchedExistingCustomer(customerToEdit)
       setLocationLinkInput('')
@@ -155,8 +172,14 @@ export function CreateCustomerModal({
     setPostalCode('')
     setLat(undefined)
     setLng(undefined)
+    setInitialSavedCoords({})
+    setInitialSavedAddress('')
     setHasPrecisionWarning(false)
     setPrecisionWarningDismissed(false)
+    setPrecisionWarningText('')
+    setGoogleNormalizedAddress('')
+    setGeocodeLocationType('')
+    setIsPinManuallyAdjusted(false)
     setAddressSearchQuery('')
     setMatchedExistingCustomer(null)
     setLocationLinkInput('')
@@ -249,23 +272,45 @@ export function CreateCustomerModal({
       setStreetAndNumber(result.address.split(',')[0] || result.address)
     }
 
-    setAddressSearchQuery(result.address || result.name || '')
+    const fullFormatted = result.parsed?.formattedAddress || result.address || result.name || ''
+    setAddressSearchQuery(fullFormatted)
+    setGoogleNormalizedAddress(fullFormatted)
+
+    if (result.parsed?.locationType) {
+      setGeocodeLocationType(result.parsed.locationType)
+    }
 
     if (typeof result.lat === 'number' && typeof result.lng === 'number') {
       const isFallback =
         Math.abs(result.lat - -22.906847) < 0.0001 && Math.abs(result.lng - -43.172896) < 0.0001
+      const isApprox = Boolean(result.parsed?.isApproximate)
+
       if (isFallback) {
         setHasPrecisionWarning(true)
+        setPrecisionWarningText(
+          'Coordenada genérica de contingência retornada. Ajuste o pino no mapa.',
+        )
         setPrecisionWarningDismissed(false)
         toast.warning('Endereço não geocodificado com precisão — revise no mapa antes de salvar')
+      } else if (isApprox) {
+        setLat(result.lat)
+        setLng(result.lng)
+        setHasPrecisionWarning(true)
+        setPrecisionWarningText(
+          'Google Maps localizou com precisão aproximada (centro de via/bairro). Arraste o pino para calibrar exatamente no imóvel.',
+        )
+        setPrecisionWarningDismissed(false)
+        toast.warning('Precisão aproximada detectada no Google Maps — confira o pino no mapa.')
       } else {
         setHasPrecisionWarning(false)
         setPrecisionWarningDismissed(false)
+        setPrecisionWarningText('')
         setLat(result.lat)
         setLng(result.lng)
       }
     } else {
       setHasPrecisionWarning(true)
+      setPrecisionWarningText('Não foi possível obter coordenadas para este endereço.')
       setPrecisionWarningDismissed(false)
       toast.warning('Endereço não geocodificado com precisão — revise no mapa antes de salvar')
     }
@@ -364,6 +409,136 @@ export function CreateCustomerModal({
     }
   }, [open])
 
+  // Executa geocodificação sob demanda ou debounced dos campos estruturados de endereço
+  const handleGeocodeFields = useCallback(
+    async (manualTrigger = false) => {
+      const full = getFullFormattedAddress() || streetAndNumber.trim()
+      if (!full || full.length < 5) return
+
+      // Se estamos em modo edição e o endereço não foi alterado em relação ao original salvo
+      // e já temos coordenadas válidas salvas, blindar para não regerar sem necessidade
+      if (
+        isEditMode &&
+        !manualTrigger &&
+        initialSavedCoords.lat &&
+        initialSavedCoords.lng &&
+        initialSavedAddress &&
+        initialSavedAddress.trim().toLowerCase() === full.trim().toLowerCase()
+      ) {
+        return
+      }
+
+      setIsGeocodingAddress(true)
+      try {
+        const expected = {
+          city: city.trim(),
+          postalCode: postalCode.trim(),
+          street: streetAndNumber.trim(),
+          neighborhood: neighborhood.trim(),
+        }
+
+        const geo = await geocodeAddressWithValidation(full, expected, {
+          lat: lat || -22.68,
+          lng: lng || -43.3,
+        })
+
+        if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+          const isFallback =
+            Math.abs(geo.lat - -22.906847) < 0.0001 && Math.abs(geo.lng - -43.172896) < 0.0001
+          const isApprox = Boolean(geo.parsed?.isApproximate)
+
+          if (geo.parsed.formattedAddress) {
+            setGoogleNormalizedAddress(geo.parsed.formattedAddress)
+          }
+          if (geo.parsed.locationType) {
+            setGeocodeLocationType(geo.parsed.locationType)
+          }
+
+          if (isFallback) {
+            setHasPrecisionWarning(true)
+            setPrecisionWarningText(
+              'O Google Maps retornou uma coordenada genérica. Ajuste o pino no mapa.',
+            )
+            setPrecisionWarningDismissed(false)
+            if (manualTrigger) {
+              toast.warning(
+                'Endereço não geocodificado com precisão — revise no mapa antes de salvar',
+              )
+            }
+          } else {
+            setLat(geo.lat)
+            setLng(geo.lng)
+            setIsPinManuallyAdjusted(false)
+
+            if (isApprox) {
+              setHasPrecisionWarning(true)
+              setPrecisionWarningText(
+                'Google Maps identificou a via/bairro com precisão aproximada. Arraste o pino para fixar o imóvel exato.',
+              )
+              setPrecisionWarningDismissed(false)
+              if (manualTrigger) {
+                toast.warning('Localizado com precisão aproximada no Google Maps. Confira no mapa.')
+              }
+            } else if (geo.parsed.validationWarning) {
+              setHasPrecisionWarning(true)
+              setPrecisionWarningText(geo.parsed.validationWarning)
+              setPrecisionWarningDismissed(false)
+              if (manualTrigger) toast.warning(geo.parsed.validationWarning)
+            } else {
+              setHasPrecisionWarning(false)
+              setPrecisionWarningDismissed(false)
+              setPrecisionWarningText('')
+              if (manualTrigger) {
+                toast.success('Coordenadas calibradas com precisão pelo Google Maps!')
+              }
+            }
+          }
+        } else {
+          setHasPrecisionWarning(true)
+          setPrecisionWarningText(
+            'Google Maps não encontrou coordenadas exatas para este endereço.',
+          )
+          setPrecisionWarningDismissed(false)
+          if (manualTrigger) {
+            toast.warning('Endereço não localizado pelo Google Maps. Ajuste o pino manualmente.')
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao geocodificar campos estruturados:', err)
+        if (manualTrigger) toast.error('Falha de conexão com a API de Geocodificação.')
+      } finally {
+        setIsGeocodingAddress(false)
+      }
+    },
+    [
+      city,
+      postalCode,
+      streetAndNumber,
+      neighborhood,
+      ufState,
+      lat,
+      lng,
+      isEditMode,
+      initialSavedCoords,
+      initialSavedAddress,
+    ],
+  )
+
+  // Dispara geocodificação sob demanda no blur dos campos de endereço (rua, número, cidade)
+  const handleAddressFieldsBlur = () => {
+    if (addressDebounceRef.current) clearTimeout(addressDebounceRef.current)
+    addressDebounceRef.current = setTimeout(() => {
+      handleGeocodeFields(false)
+    }, 600)
+  }
+
+  // Verifica se o endereço textual foi modificado em relação ao salvo no cliente
+  const isAddressModifiedFromSaved =
+    isEditMode &&
+    Boolean(initialSavedAddress) &&
+    (getFullFormattedAddress() || streetAndNumber.trim()).trim().toLowerCase() !==
+      initialSavedAddress.trim().toLowerCase()
+
   // Lookup CEP via ViaCEP com geocodificação anti-erro
   const handleCepChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     let raw = e.target.value.replace(/\D/g, '')
@@ -399,26 +574,49 @@ export function CreateCustomerModal({
             if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
               const isFallback =
                 Math.abs(geo.lat - -22.906847) < 0.0001 && Math.abs(geo.lng - -43.172896) < 0.0001
+              const isApprox = Boolean(geo.parsed?.isApproximate)
+
+              if (geo.parsed.formattedAddress) {
+                setGoogleNormalizedAddress(geo.parsed.formattedAddress)
+              }
+              if (geo.parsed.locationType) {
+                setGeocodeLocationType(geo.parsed.locationType)
+              }
+
               if (isFallback) {
                 setHasPrecisionWarning(true)
+                setPrecisionWarningText(
+                  'Endereço não geocodificado com precisão — revise no mapa antes de salvar.',
+                )
                 setPrecisionWarningDismissed(false)
                 toast.warning(
                   'Endereço não geocodificado com precisão — revise no mapa antes de salvar',
                 )
+              } else if (isApprox) {
+                setLat(geo.lat)
+                setLng(geo.lng)
+                setHasPrecisionWarning(true)
+                setPrecisionWarningText(
+                  'Precisão aproximada do CEP. Arraste o pino para calibrar exatamente no imóvel.',
+                )
+                setPrecisionWarningDismissed(false)
               } else {
                 setLat(geo.lat)
                 setLng(geo.lng)
                 if (geo.parsed.validationWarning) {
                   setHasPrecisionWarning(true)
+                  setPrecisionWarningText(geo.parsed.validationWarning)
                   setPrecisionWarningDismissed(false)
                   toast.warning(geo.parsed.validationWarning)
                 } else {
                   setHasPrecisionWarning(false)
                   setPrecisionWarningDismissed(false)
+                  setPrecisionWarningText('')
                 }
               }
             } else {
               setHasPrecisionWarning(true)
+              setPrecisionWarningText('Endereço do CEP não geocodificado pelo Google Maps.')
               setPrecisionWarningDismissed(false)
               toast.warning(
                 'Endereço não geocodificado com precisão — revise no mapa antes de salvar',
@@ -547,14 +745,17 @@ export function CreateCustomerModal({
 
     const phonesToValidate = [mainPhone, phone2.trim() || undefined, phone3.trim() || undefined]
 
-    // Validação estrita: nunca gravar silenciosamente coordenadas default/contingência (-22.906847, -43.172896)
+    // Tentar geocodificar se ainda não tem coordenada ou se coordenada é fallback Centro RJ
+    let finalLat = lat
+    let finalLng = lng
+
     const isDefaultFallback =
-      !lat || !lng || (Math.abs(lat - -22.906847) < 0.0001 && Math.abs(lng - -43.172896) < 0.0001)
+      !finalLat ||
+      !finalLng ||
+      (Math.abs(finalLat - -22.906847) < 0.0001 && Math.abs(finalLng - -43.172896) < 0.0001)
 
     if (isDefaultFallback) {
       // Tentar geocodificar o endereço com validação anti-erro antes de rejeitar
-      let resolvedLat: number | undefined = undefined
-      let resolvedLng: number | undefined = undefined
       try {
         const expected = {
           city: city.trim(),
@@ -568,35 +769,35 @@ export function CreateCustomerModal({
             Math.abs(geocoded.lat - -22.906847) < 0.0001 &&
             Math.abs(geocoded.lng - -43.172896) < 0.0001
           if (!isStillFallback) {
-            resolvedLat = geocoded.lat
-            resolvedLng = geocoded.lng
-            setLat(resolvedLat)
-            setLng(resolvedLng)
+            finalLat = geocoded.lat
+            finalLng = geocoded.lng
+            setLat(finalLat)
+            setLng(finalLng)
             setHasPrecisionWarning(false)
+            if (geocoded.parsed.formattedAddress) {
+              setGoogleNormalizedAddress(geocoded.parsed.formattedAddress)
+            }
           }
         }
       } catch (e) {
         console.warn('Tentativa de geocodificação no submit falhou:', e)
       }
-
-      if (!resolvedLat || !resolvedLng) {
-        setHasPrecisionWarning(true)
-        if (!precisionWarningDismissed) {
-          toast.error(
-            'Endereço não geocodificado com precisão — revise no mapa antes de salvar. Cole o link do Google Maps ou ajuste o pino.',
-            { duration: 7000 },
-          )
-          return
-        }
-      }
     }
 
-    let finalLat = lat
-    let finalLng = lng
-
-    // Sanity check: se coordenadas foram ajustadas manualmente ou capturadas,
-    // validar contra o endereço textual geocodificado; se distar > 3 km, alertar sem bloquear
-    if (fullAddress && finalLat && finalLng && !isPinManuallyAdjusted) {
+    // Se ainda assim não possui coordenadas válidas, alertar mas permitir salvar (nunca bloquear o salvamento)
+    if (!finalLat || !finalLng) {
+      if (!precisionWarningDismissed) {
+        setHasPrecisionWarning(true)
+        setPrecisionWarningText(
+          'Cliente sem coordenadas válidas calibradas. O cadastro será marcado como pendente de geocodificação.',
+        )
+        toast.warning(
+          'Aviso: Cliente salvo sem coordenadas calibradas. Ficará pendente de geocodificação.',
+          { duration: 5000 },
+        )
+      }
+    } else if (fullAddress && !isPinManuallyAdjusted) {
+      // Sanity check de distância se as coordenadas foram obtidas automaticamente
       try {
         const expected = {
           city: city.trim(),
@@ -627,11 +828,6 @@ export function CreateCustomerModal({
       } catch (err) {
         console.warn('Erro ao verificar sanidade de coordenadas vs endereço:', err)
       }
-    }
-
-    if (!finalLat || !finalLng) {
-      toast.error('Endereço não geocodificado com precisão — revise no mapa antes de salvar')
-      return
     }
 
     const payload: Partial<CustomerRecord> = {
@@ -750,12 +946,14 @@ export function CreateCustomerModal({
               <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <div className="flex-1 space-y-1">
                 <p className="font-semibold text-amber-300">
-                  Endereço não geocodificado com precisão — revise no mapa antes de salvar
+                  {precisionWarningText ||
+                    'Endereço não geocodificado com precisão — revise no mapa antes de salvar'}
                 </p>
                 <p className="text-[11px] text-amber-200/90 leading-relaxed">
-                  O sistema evitou gravar a coordenada genérica do Centro do RJ para evitar erros de
-                  cálculo de km e combustível. Por favor, cole um link do Google Maps/WhatsApp
-                  abaixo ou confirme que deseja salvar com o endereço atual.
+                  Doutrina de Coordenada Travada: cada entrega exige o pin do cliente exato no
+                  Google Maps para o cálculo correto de km e combustível. Você pode arrastar o pino
+                  no mapa abaixo, digitar latitude/longitude ou confirmar o salvamento para calibrar
+                  depois na tela de Verificação.
                 </p>
                 <div className="pt-1 flex items-center gap-2">
                   <Button
@@ -961,14 +1159,35 @@ export function CreateCustomerModal({
           {/* Campos de Endereço Detalhados */}
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
             <div className="sm:col-span-8">
-              <Label className="text-xs font-semibold text-slate-300">
-                Rua e Número <span className="text-[#FF6B35]">*</span>
-              </Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-slate-300">
+                  Rua e Número <span className="text-[#FF6B35]">*</span>
+                </Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleGeocodeFields(true)}
+                  disabled={isGeocodingAddress || !streetAndNumber.trim()}
+                  className="h-5 px-1.5 text-[11px] text-[#60A5FA] hover:text-white hover:bg-[#1E2B58]/60 flex items-center gap-1 font-medium"
+                >
+                  {isGeocodingAddress ? (
+                    <>
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> Geocodificando...
+                    </>
+                  ) : (
+                    <>
+                      <Crosshair className="h-2.5 w-2.5" /> Geocodificar Google
+                    </>
+                  )}
+                </Button>
+              </div>
               <Input
                 placeholder="Ex: Av. Paulista, 1000"
                 value={streetAndNumber}
                 onChange={(e) => setStreetAndNumber(e.target.value)}
-                className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500"
+                onBlur={handleAddressFieldsBlur}
+                className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                 required
               />
             </div>
@@ -989,7 +1208,8 @@ export function CreateCustomerModal({
                 placeholder="Ex: Bela Vista"
                 value={neighborhood}
                 onChange={(e) => setNeighborhood(e.target.value)}
-                className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500"
+                onBlur={handleAddressFieldsBlur}
+                className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
               />
             </div>
 
@@ -999,7 +1219,8 @@ export function CreateCustomerModal({
                 placeholder="Ex: Rio de Janeiro"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
-                className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500"
+                onBlur={handleAddressFieldsBlur}
+                className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
               />
             </div>
 
@@ -1034,13 +1255,57 @@ export function CreateCustomerModal({
             </div>
           </div>
 
-          {/* Endereço formatado preview */}
-          {streetAndNumber && (
-            <div className="flex items-center gap-1.5 p-2 rounded-lg bg-[#070D1E] border border-[#1E2B58] text-slate-300 text-[11px]">
-              <Sparkles className="h-3.5 w-3.5 text-[#60A5FA] shrink-0" />
-              <span className="truncate">
-                Endereço formatado: <strong>{getFullFormattedAddress()}</strong>
-              </span>
+          {/* Alerta de re-geocodificação recomendada quando endereço for alterado em edição */}
+          {isAddressModifiedFromSaved && (
+            <div className="flex items-center justify-between p-2.5 rounded-lg bg-blue-500/10 border border-blue-500/40 text-blue-300 text-xs">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-blue-400 shrink-0" />
+                <span>
+                  O endereço foi alterado! Recomendamos recalibrar a coordenada Google para manter o
+                  cálculo de km exato.
+                </span>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => handleGeocodeFields(true)}
+                disabled={isGeocodingAddress}
+                className="h-6 text-[11px] bg-blue-500/20 border-blue-400/40 text-white hover:bg-blue-500/40 shrink-0"
+              >
+                {isGeocodingAddress ? 'Calibrando...' : 'Recalibrar Pino'}
+              </Button>
+            </div>
+          )}
+
+          {/* Endereço formatado preview normalizado pelo Google / formulário */}
+          {(googleNormalizedAddress || streetAndNumber) && (
+            <div className="p-2.5 rounded-lg bg-[#070D1E] border border-[#1E2B58] space-y-1 text-[11px]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-slate-300">
+                  <Sparkles className="h-3.5 w-3.5 text-[#60A5FA] shrink-0" />
+                  <span className="font-semibold text-slate-200">
+                    {googleNormalizedAddress
+                      ? 'Endereço Normalizado Google Maps:'
+                      : 'Endereço Montado:'}
+                  </span>
+                </div>
+                {geocodeLocationType && (
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] uppercase font-mono ${
+                      geocodeLocationType === 'ROOFTOP'
+                        ? 'border-emerald-500/50 text-emerald-400 bg-emerald-500/10'
+                        : 'border-amber-500/50 text-amber-300 bg-amber-500/10'
+                    }`}
+                  >
+                    Precisão: {geocodeLocationType}
+                  </Badge>
+                )}
+              </div>
+              <p className="font-mono text-slate-300 pl-5 break-words">
+                {googleNormalizedAddress || getFullFormattedAddress()}
+              </p>
             </div>
           )}
 
@@ -1049,12 +1314,27 @@ export function CreateCustomerModal({
             <div className="flex items-center justify-between">
               <Label className="text-xs font-bold text-white flex items-center gap-1.5">
                 <MapPin className="h-3.5 w-3.5 text-[#FF6B35]" />
-                Posicionamento do Pino no Mapa
+                Posicionamento do Pino no Mapa (Doutrina de Coordenada Travada)
               </Label>
-              <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                <Move className="h-3 w-3 text-[#60A5FA]" />
-                Arraste o pino ou clique no mapa para calibrar
-              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleGeocodeFields(true)}
+                  disabled={isGeocodingAddress || !streetAndNumber.trim()}
+                  className="h-6 text-[11px] text-[#60A5FA] hover:text-white hover:bg-[#1E2B58]"
+                >
+                  <RefreshCw
+                    className={`h-3 w-3 mr-1 ${isGeocodingAddress ? 'animate-spin' : ''}`}
+                  />
+                  Re-geocodificar
+                </Button>
+                <span className="text-[11px] text-slate-400 hidden sm:flex items-center gap-1">
+                  <Move className="h-3 w-3 text-[#60A5FA]" />
+                  Arraste o pino para calibrar
+                </span>
+              </div>
             </div>
 
             <div
@@ -1064,22 +1344,74 @@ export function CreateCustomerModal({
               {(!lat || !lng) && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-[#070D1E]/90 z-10 text-slate-400 text-xs">
                   <MapPin className="h-6 w-6 text-slate-500 mb-1 animate-pulse" />
-                  <p>Preencha o CEP ou busque o endereço acima para exibir o pino no mapa.</p>
+                  <p>Preencha a Rua, CEP ou busque o endereço acima para fixar o pino no mapa.</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleGeocodeFields(true)}
+                    className="mt-2 text-xs h-7 border-[#1E2B58] text-[#60A5FA] hover:bg-[#1E2B58]"
+                  >
+                    Tentar Geocodificar Agora
+                  </Button>
                 </div>
               )}
+            </div>
+
+            {/* Ajuste manual direto de Coordenadas Lat/Lng */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-[#1E2B58]/40">
+              <div>
+                <Label className="text-[10px] text-slate-400 font-mono">Latitude Manual</Label>
+                <Input
+                  placeholder="-22.906847"
+                  value={lat !== undefined ? String(lat) : ''}
+                  onChange={(e) => {
+                    const parsed = parseFloat(e.target.value)
+                    if (!isNaN(parsed)) {
+                      setLat(parsed)
+                      setIsPinManuallyAdjusted(true)
+                      setHasPrecisionWarning(false)
+                    } else if (e.target.value === '') {
+                      setLat(undefined)
+                    }
+                  }}
+                  className="mt-0.5 h-7 text-xs font-mono bg-[#070D1E] border-[#1E2B58] text-white"
+                />
+              </div>
+              <div>
+                <Label className="text-[10px] text-slate-400 font-mono">Longitude Manual</Label>
+                <Input
+                  placeholder="-43.172896"
+                  value={lng !== undefined ? String(lng) : ''}
+                  onChange={(e) => {
+                    const parsed = parseFloat(e.target.value)
+                    if (!isNaN(parsed)) {
+                      setLng(parsed)
+                      setIsPinManuallyAdjusted(true)
+                      setHasPrecisionWarning(false)
+                    } else if (e.target.value === '') {
+                      setLng(undefined)
+                    }
+                  }}
+                  className="mt-0.5 h-7 text-xs font-mono bg-[#070D1E] border-[#1E2B58] text-white"
+                />
+              </div>
             </div>
 
             {typeof lat === 'number' && typeof lng === 'number' && (
               <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
                 <span className="font-mono text-slate-300">
-                  Coordenadas: {lat.toFixed(6)}, {lng.toFixed(6)}
+                  Fixado em: {lat.toFixed(6)}, {lng.toFixed(6)}
                 </span>
                 {isPinManuallyAdjusted ? (
                   <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                    ✓ Pino ajustado manualmente
+                    ✓ Pino calibrado manualmente (travado)
                   </span>
                 ) : (
-                  <span className="text-slate-400">Posição obtida por geocodificação</span>
+                  <span className="text-slate-400 flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                    Geocodificado via Google Maps (travado)
+                  </span>
                 )}
               </div>
             )}

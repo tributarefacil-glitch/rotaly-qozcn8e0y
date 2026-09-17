@@ -36,6 +36,7 @@ export interface SuspectCustomerItem {
   returnedAddress?: string
   distanceDeltaKm?: number
   reason: string
+  isMissingCoords?: boolean
 }
 
 interface CustomerAddressAuditModalProps {
@@ -43,6 +44,7 @@ interface CustomerAddressAuditModalProps {
   onOpenChange: (open: boolean) => void
   customers: CustomerRecord[]
   onEditCustomer: (customer: CustomerRecord) => void
+  onRefreshCustomers?: () => void
 }
 
 export function CustomerAddressAuditModal({
@@ -50,6 +52,7 @@ export function CustomerAddressAuditModal({
   onOpenChange,
   customers,
   onEditCustomer,
+  onRefreshCustomers,
 }: CustomerAddressAuditModalProps) {
   const [isRunningAudit, setIsRunningAudit] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
@@ -58,28 +61,36 @@ export function CustomerAddressAuditModal({
   const [searchTerm, setSearchTerm] = useState('')
 
   const handleStartAudit = async () => {
-    // Filtrar clientes que possuem coordenadas gravadas
-    const candidates = customers.filter(
-      (c) => typeof c.lat === 'number' && typeof c.lng === 'number' && (c.lat !== 0 || c.lng !== 0),
-    )
-
-    if (candidates.length === 0) {
-      toast.info('Nenhum cliente com coordenadas cadastradas para auditar.')
-      return
-    }
-
     setIsRunningAudit(true)
-    setProgress({ current: 0, total: candidates.length })
+    setProgress({ current: 0, total: customers.length })
     const detected: SuspectCustomerItem[] = []
 
-    for (let i = 0; i < candidates.length; i++) {
-      const c = candidates[i]
-      setProgress({ current: i + 1, total: candidates.length })
+    for (let i = 0; i < customers.length; i++) {
+      const c = customers[i]
+      setProgress({ current: i + 1, total: customers.length })
+
+      const recordedCity = (c.city || '').trim()
+      const recordedAddress = (c.address || c.street || '').toLowerCase()
+
+      // 0. Clientes sem coordenadas ou zeradas
+      if (
+        c.lat === undefined ||
+        c.lng === undefined ||
+        c.lat === null ||
+        c.lng === null ||
+        (c.lat === 0 && c.lng === 0)
+      ) {
+        detected.push({
+          customer: c,
+          recordedCity: recordedCity || 'Não informada',
+          reason: 'Pendente de geocodificação: cliente sem coordenadas registradas.',
+          isMissingCoords: true,
+        })
+        continue
+      }
 
       const cLat = Number(c.lat)
       const cLng = Number(c.lng)
-      const recordedCity = (c.city || '').trim()
-      const recordedAddress = (c.address || c.street || '').toLowerCase()
 
       // 1. Checagem rápida de fallback comum conhecido (Centro do RJ: -22.906847, -43.172896)
       if (Math.abs(cLat - -22.906847) < 0.0005 && Math.abs(cLng - -43.172896) < 0.0005) {
@@ -89,6 +100,7 @@ export function CustomerAddressAuditModal({
             recordedCity: recordedCity || 'Não informada',
             returnedCity: 'Centro do Rio de Janeiro (Fallback)',
             reason: 'Coordenada genérica de fallback (Centro RJ) detectada.',
+            isMissingCoords: true,
           })
           continue
         }
@@ -144,6 +156,93 @@ export function CustomerAddressAuditModal({
     }
   }
 
+  // Geocodificar em lote SOMENTE clientes sem coordenada ou com fallback genérico (doutrina Vuupt/Rotaly)
+  // Nunca altera coordenadas já válidas em lote sem confirmação individual do usuário.
+  const handleBatchGeocodeMissing = async () => {
+    if (missingCoordsCustomers.length === 0) {
+      toast.info('Não há clientes com coordenadas pendentes na base.')
+      return
+    }
+
+    setIsBatchGeocoding(true)
+    setBatchProgress({ current: 0, total: missingCoordsCustomers.length })
+    let successCount = 0
+    let failedCount = 0
+    let skippedCount = 0
+
+    for (let i = 0; i < missingCoordsCustomers.length; i++) {
+      const c = missingCoordsCustomers[i]
+      setBatchProgress({ current: i + 1, total: missingCoordsCustomers.length })
+
+      const addressToSearch =
+        c.address ||
+        `${c.street || ''}, ${c.neighborhood || ''}, ${c.city || ''} - ${c.state || ''}`
+
+      if (!addressToSearch.trim() || addressToSearch.length < 5) {
+        skippedCount++
+        continue
+      }
+
+      try {
+        const expected = {
+          city: c.city,
+          postalCode: c.postal_code,
+          street: c.street,
+          neighborhood: c.neighborhood,
+        }
+        const geo = await geocodeAddressWithValidation(addressToSearch, expected, {
+          lat: -22.68,
+          lng: -43.3,
+        })
+
+        if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+          const isFallback =
+            Math.abs(geo.lat - -22.906847) < 0.0001 && Math.abs(geo.lng - -43.172896) < 0.0001
+          if (!isFallback) {
+            const updatePayload: Partial<CustomerRecord> = {
+              lat: geo.lat,
+              lng: geo.lng,
+            }
+            if (geo.parsed.formattedAddress && !c.address) {
+              updatePayload.address = geo.parsed.formattedAddress
+            }
+            await deliveryService.updateCustomer(c.id, updatePayload)
+            successCount++
+          } else {
+            failedCount++
+          }
+        } else {
+          failedCount++
+        }
+      } catch (err) {
+        console.warn(`[BatchGeocode] Falha para cliente ${c.id}:`, err)
+        failedCount++
+      }
+
+      // Pequena pausa para respeitar quotas da API
+      if (i % 3 === 0) {
+        await new Promise((r) => setTimeout(r, 120))
+      }
+    }
+
+    const report: BatchGeocodeResultReport = {
+      total: missingCoordsCustomers.length,
+      success: successCount,
+      failed: failedCount,
+      skipped: skippedCount,
+    }
+
+    setBatchReport(report)
+    setIsBatchGeocoding(false)
+    if (onRefreshCustomers) {
+      onRefreshCustomers()
+    }
+
+    toast.success(
+      `Geocodificação em lote finalizada: ${successCount} atualizados, ${failedCount} não localizados, ${skippedCount} sem endereço.`,
+    )
+  }
+
   const filteredSuspects = suspects.filter((s) => {
     if (!searchTerm.trim()) return true
     const term = searchTerm.toLowerCase()
@@ -176,50 +275,120 @@ export function CustomerAddressAuditModal({
         </DialogHeader>
 
         <div className="space-y-4 pt-2">
-          {/* Caixa explicativa de blindagem */}
+          {/* Caixa explicativa de blindagem e doutrina Vuupt */}
           <div className="p-3.5 rounded-xl bg-[#0A1128] border border-[#1E2B58] text-xs text-slate-300 space-y-1.5">
             <p className="font-semibold text-white flex items-center gap-1.5">
               <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-              Regra de Segurança: Nenhuma coordenada é regravada em massa automaticamente
+              Doutrina de Coordenada Travada: km só é preciso se o pin do cliente estiver certo
             </p>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              O utilitário apenas lista divergências para confirmação manual da equipe. Ao clicar em
-              &quot;Revisar Cadastro&quot;, o modal de edição abrirá com o mini-mapa interativo para
-              que o operador confirme o pino correto com total precisão.
+              Clientes sem coordenadas válidas ou com fallback genérico geram distorções no cálculo
+              de combustível e rotas. Você pode rodar a ação <strong>
+                Geocodificar Pendentes
+              </strong>{' '}
+              para buscar coordenadas automáticas via Google Maps apenas para quem não tem pino, ou
+              auditar divergências para ajuste manual no mapa.
             </p>
           </div>
+
+          {/* Painel de Estatística de Pendências */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="p-3 rounded-xl bg-[#070D1E] border border-[#1E2B58]">
+              <span className="text-[11px] text-slate-400">Total na Base</span>
+              <p className="text-lg font-bold text-white font-mono">{customers.length}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-[#070D1E] border border-amber-500/30">
+              <span className="text-[11px] text-amber-300">Pendentes de Coordenada</span>
+              <p className="text-lg font-bold text-amber-400 font-mono">
+                {missingCoordsCustomers.length}
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-[#070D1E] border border-emerald-500/30">
+              <span className="text-[11px] text-emerald-300">Coordenadas Válidas</span>
+              <p className="text-lg font-bold text-emerald-400 font-mono">
+                {customers.length - missingCoordsCustomers.length}
+              </p>
+            </div>
+          </div>
+
+          {/* Relatório de Lote quando executado */}
+          {batchReport && (
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/40 text-emerald-300 text-xs space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                Relatório da Geocodificação em Lote Google Maps:
+              </p>
+              <div className="grid grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
+                <span>Sucesso: {batchReport.success}</span>
+                <span className="text-amber-400">Não localizados: {batchReport.failed}</span>
+                <span className="text-slate-400">Sem endereço: {batchReport.skipped}</span>
+              </div>
+            </div>
+          )}
 
           {/* Painel de Ação e Progresso */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 rounded-xl bg-[#070D1E] border border-[#1E2B58]">
             <div className="text-xs text-slate-300">
-              <span>Total de clientes na base: </span>
-              <strong className="text-white">{customers.length}</strong>
               {isRunningAudit && (
-                <span className="ml-3 text-[#60A5FA] font-medium inline-flex items-center gap-1">
+                <span className="text-[#60A5FA] font-medium inline-flex items-center gap-1">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Verificando {progress.current} de {progress.total}...
+                  Auditando {progress.current} de {progress.total}...
+                </span>
+              )}
+              {isBatchGeocoding && (
+                <span className="text-emerald-400 font-medium inline-flex items-center gap-1">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Geocodificando {batchProgress.current} de {batchProgress.total} via Google...
+                </span>
+              )}
+              {!isRunningAudit && !isBatchGeocoding && (
+                <span>
+                  {missingCoordsCustomers.length > 0
+                    ? `${missingCoordsCustomers.length} cliente(s) aguardando calibragem Google.`
+                    : 'Todos os clientes possuem coordenadas registradas.'}
                 </span>
               )}
             </div>
 
-            <Button
-              type="button"
-              disabled={isRunningAudit}
-              onClick={handleStartAudit}
-              className="h-8 px-4 text-xs font-bold bg-[#0052CC] hover:bg-[#003E99] text-white flex items-center gap-1.5 shadow-sm"
-            >
-              {isRunningAudit ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Auditando...
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  {hasRunOnce ? 'Repetir Verificação' : 'Iniciar Verificação'}
-                </>
-              )}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                disabled={isRunningAudit || isBatchGeocoding || missingCoordsCustomers.length === 0}
+                onClick={handleBatchGeocodeMissing}
+                className="h-8 px-3 text-xs font-bold bg-[#22C55E] hover:bg-[#1CA24D] text-white flex items-center gap-1.5 shadow-sm"
+              >
+                {isBatchGeocoding ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Geocodificando...
+                  </>
+                ) : (
+                  <>
+                    <MapPin className="h-3.5 w-3.5" />
+                    Geocodificar Pendentes ({missingCoordsCustomers.length})
+                  </>
+                )}
+              </Button>
+
+              <Button
+                type="button"
+                disabled={isRunningAudit || isBatchGeocoding}
+                onClick={handleStartAudit}
+                className="h-8 px-3 text-xs font-bold bg-[#0052CC] hover:bg-[#003E99] text-white flex items-center gap-1.5 shadow-sm"
+              >
+                {isRunningAudit ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Auditando...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {hasRunOnce ? 'Repetir Auditoria' : 'Auditar Divergências'}
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
 
           {/* Barra de Busca de Suspeitos */}
@@ -270,7 +439,14 @@ export function CustomerAddressAuditModal({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <h4 className="font-bold text-xs text-white">{item.customer.name}</h4>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-xs text-white">{item.customer.name}</h4>
+                            {item.isMissingCoords && (
+                              <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/40 text-[9px] h-4">
+                                Sem Pin
+                              </Badge>
+                            )}
+                          </div>
                           <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                             <MapPin className="h-3 w-3 text-[#FF6B35] shrink-0" />
                             {item.customer.address || item.customer.street || 'Sem endereço'}
@@ -286,7 +462,7 @@ export function CustomerAddressAuditModal({
                           className="h-7 px-2.5 text-[11px] font-bold bg-[#0052CC] hover:bg-[#003E99] text-white flex items-center gap-1"
                         >
                           <Edit className="h-3 w-3" />
-                          Revisar Cadastro
+                          Revisar e Calibrar
                         </Button>
                       </div>
 
@@ -304,17 +480,21 @@ export function CustomerAddressAuditModal({
                           <span className="text-slate-400">
                             Coordenada:{' '}
                             <span className="font-mono text-slate-200">
-                              {item.customer.lat?.toFixed(5)}, {item.customer.lng?.toFixed(5)}
+                              {item.customer.lat !== undefined && item.customer.lng !== undefined
+                                ? `${item.customer.lat.toFixed(5)}, ${item.customer.lng.toFixed(5)}`
+                                : 'Ausente (0, 0)'}
                             </span>
                           </span>
-                          <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${item.customer.lat},${item.customer.lng}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[#60A5FA] hover:underline inline-flex items-center gap-0.5"
-                          >
-                            Ver no Google Maps <ExternalLink className="h-2.5 w-2.5" />
-                          </a>
+                          {item.customer.lat && item.customer.lng && (
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${item.customer.lat},${item.customer.lng}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#60A5FA] hover:underline inline-flex items-center gap-0.5"
+                            >
+                              Ver no Google Maps <ExternalLink className="h-2.5 w-2.5" />
+                            </a>
+                          )}
                         </div>
                       </div>
                     </div>

@@ -132,6 +132,8 @@ export interface ParsedAddress {
   lng?: number
   source?: 'google' | 'nominatim' | 'viacep'
   validationWarning?: string
+  locationType?: 'ROOFTOP' | 'RANGE_INTERPOLATED' | 'GEOMETRIC_CENTER' | 'APPROXIMATE' | string
+  isApproximate?: boolean
 }
 
 export interface GeocodeValidationExpected {
@@ -1091,6 +1093,9 @@ export async function geocodeAddressGoogleRest(
         bestResult.formatted_address,
       )
 
+      const locationType = bestResult.geometry?.location_type || 'APPROXIMATE'
+      const isApproximate = locationType === 'APPROXIMATE' || locationType === 'GEOMETRIC_CENTER'
+
       return {
         lat: loc.lat,
         lng: loc.lng,
@@ -1100,6 +1105,8 @@ export async function geocodeAddressGoogleRest(
           lat: loc.lat,
           lng: loc.lng,
           source: 'google',
+          locationType,
+          isApproximate,
         },
       }
     }
@@ -1333,6 +1340,10 @@ export async function geocodeAddressUnified(
                 best.address_components || [],
                 best.formatted_address,
               )
+              const locationType = best.geometry?.location_type || 'APPROXIMATE'
+              const isApproximate =
+                locationType === 'APPROXIMATE' || locationType === 'GEOMETRIC_CENTER'
+
               resolve({
                 lat,
                 lng,
@@ -1342,6 +1353,8 @@ export async function geocodeAddressUnified(
                   lat,
                   lng,
                   source: 'google',
+                  locationType,
+                  isApproximate,
                 },
               })
             } else {

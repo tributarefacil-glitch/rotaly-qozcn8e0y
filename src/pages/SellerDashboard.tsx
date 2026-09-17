@@ -2026,6 +2026,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           setCustomerToEdit(c)
           setIsCreateCustomerModalOpen(true)
         }}
+        onRefreshCustomers={loadData}
       />
       {/* Multi-Courier Route Optimizer Assistant Modal */}
       <RouteOptimizerModal

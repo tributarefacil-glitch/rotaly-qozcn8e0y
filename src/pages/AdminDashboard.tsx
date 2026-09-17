@@ -154,6 +154,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'site-content'
     | 'couriers'
     | 'sellers'
+    | 'customers'
     | null
 
   const [activeTab, setActiveTab] = useState<
@@ -166,6 +167,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'site-content'
     | 'couriers'
     | 'sellers'
+    | 'customers'
   >(tabFromQuery || defaultTab)
 
   useEffect(() => {
@@ -182,6 +184,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         'site-content',
         'couriers',
         'sellers',
+        'customers',
       ].includes(qTab)
     ) {
       setActiveTab(qTab)
@@ -251,6 +254,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
   // New user modal state
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false)
+  const [isCustomerAddressAuditModalOpen, setIsCustomerAddressAuditModalOpen] = useState(false)
+  const [isCreateCustomerModalOpen, setIsCreateCustomerModalOpen] = useState(false)
+  const [customerToEdit, setCustomerToEdit] = useState<CustomerRecord | null>(null)
+  const [customers, setCustomers] = useState<CustomerRecord[]>([])
   const [newUserName, setNewUserName] = useState('')
   const [newUserEmail, setNewUserEmail] = useState('')
   const [newUserPhone, setNewUserPhone] = useState('')
@@ -308,6 +315,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         deliveryService.getFuelAdvances(),
         deliveryService.getOffRouteEvents(),
         deliveryService.getReviews(),
+        deliveryService.getCustomers(),
       ])
         .then(
           ([
@@ -318,6 +326,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
             advancesData,
             eventsData,
             reviewsData,
+            customersData,
           ]) => {
             setUsers(usersData)
             setSellers(sellersData)
@@ -327,6 +336,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
             setFuelAccounts([])
             setOffRouteEvents(eventsData)
             setReviews(reviewsData)
+            setCustomers(customersData)
 
             const fallbackPrice = appSettings.fuel_price_per_liter || 5.59
             setMotoPriceInput(String(appSettings.moto_fuel_price ?? fallbackPrice))
@@ -1042,6 +1052,24 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   Trocar Senha
                 </Button>
                 <Button
+                  onClick={() => setIsCustomerAddressAuditModalOpen(true)}
+                  variant="outline"
+                  className="h-9 gap-2 text-xs border-amber-400 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 rounded-xl font-semibold"
+                >
+                  <MapPin className="h-4 w-4 text-amber-600" />
+                  Verificar Endereços no Mapa
+                </Button>
+                <Button
+                  onClick={() => {
+                    setCustomerToEdit(null)
+                    setIsCreateCustomerModalOpen(true)
+                  }}
+                  className="h-9 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm rounded-xl transition duration-100"
+                >
+                  <UserPlus className="h-4 w-4 text-white" />
+                  Cadastrar Cliente
+                </Button>
+                <Button
                   onClick={() => setIsNewUserModalOpen(true)}
                   className="h-9 gap-2 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs shadow-sm rounded-xl transition duration-100"
                 >
@@ -1050,7 +1078,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 </Button>
               </div>
             </div>
-            {/* MAIN TABS (Overview, Relatórios, Configurações, Entregadores, Vendedores) */}
+            {/* MAIN TABS (Overview, Relatórios, Configurações, Entregadores, Vendedores, Clientes) */}
             <Tabs
               value={activeTab}
               onValueChange={(v) =>
@@ -1064,7 +1092,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     | 'settings'
                     | 'site-content'
                     | 'couriers'
-                    | 'sellers',
+                    | 'sellers'
+                    | 'customers',
                 )
               }
               className="space-y-6"
@@ -1137,6 +1166,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 >
                   <Users className="h-3.5 w-3.5 mr-1.5 text-[#00A3FF]" />
                   Vendedores ({sellers.length})
+                </TabsTrigger>
+                <TabsTrigger
+                  value="customers"
+                  className="text-xs font-semibold text-slate-700 data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg"
+                >
+                  <MapPin className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
+                  Clientes ({customers.length})
                 </TabsTrigger>
               </TabsList>
 
@@ -2963,6 +2999,153 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   </CardContent>
                 </Card>
               </TabsContent>
+
+              {/* ABA: CLIENTES (Com Geocodificação Google e Doutrina de Coordenada Travada) */}
+              <TabsContent value="customers" className="space-y-4">
+                <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <CardHeader className="pb-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <MapPin className="h-4 w-4 text-emerald-600" />
+                          Base de Clientes Cadastrados ({customers.length})
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Doutrina Vuupt/Rotaly: Toda entrega nasce com coordenada calibrada via
+                          Google e travada no cadastro.
+                        </CardDescription>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setIsCustomerAddressAuditModalOpen(true)}
+                          className="h-8 gap-1.5 text-xs text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100"
+                        >
+                          <MapPin className="h-3.5 w-3.5 text-amber-600" />
+                          Verificar Endereços no Mapa
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            setCustomerToEdit(null)
+                            setIsCreateCustomerModalOpen(true)
+                          }}
+                          className="h-8 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                        >
+                          <PlusCircle className="h-3.5 w-3.5" />
+                          Novo Cliente
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 uppercase tracking-wider">
+                            <th className="py-2.5 px-3 font-semibold">Cliente</th>
+                            <th className="py-2.5 px-3 font-semibold">Telefone / Doc</th>
+                            <th className="py-2.5 px-3 font-semibold">Endereço</th>
+                            <th className="py-2.5 px-3 font-semibold">Coordenada Google</th>
+                            <th className="py-2.5 px-3 font-semibold text-right">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {customers.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="py-8 text-center text-slate-400">
+                                Nenhum cliente cadastrado ainda.
+                              </td>
+                            </tr>
+                          ) : (
+                            customers.map((c) => {
+                              const hasCoords =
+                                typeof c.lat === 'number' &&
+                                typeof c.lng === 'number' &&
+                                !(c.lat === 0 && c.lng === 0) &&
+                                !(
+                                  Math.abs(c.lat - -22.906847) < 0.0001 &&
+                                  Math.abs(c.lng - -43.172896) < 0.0001
+                                )
+
+                              return (
+                                <tr
+                                  key={c.id}
+                                  className="hover:bg-slate-50/60 dark:hover:bg-slate-800/50 transition-colors"
+                                >
+                                  <td className="py-3 px-3 font-semibold text-slate-900 dark:text-white">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-300 font-bold text-xs">
+                                        {c.name ? c.name.slice(0, 2).toUpperCase() : 'CL'}
+                                      </div>
+                                      <div>
+                                        <p className="font-bold text-slate-900 dark:text-white">
+                                          {c.name || 'Sem nome'}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500">
+                                          {c.bairro || c.neighborhood || c.city || ''}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-slate-600 dark:text-slate-300">
+                                    <div>
+                                      <p>{c.phone || 'Sem telefone'}</p>
+                                      {c.document && (
+                                        <p className="text-[10px] text-slate-400 font-mono">
+                                          {c.document}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-slate-600 dark:text-slate-300 max-w-xs truncate">
+                                    {c.address || c.street || 'Não informado'}
+                                  </td>
+                                  <td className="py-3 px-3">
+                                    {hasCoords ? (
+                                      <div className="space-y-0.5">
+                                        <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-300 text-[10px] font-bold">
+                                          ✓ Calibrado Google
+                                        </Badge>
+                                        <p className="font-mono text-[10px] text-slate-400">
+                                          {c.lat?.toFixed(5)}, {c.lng?.toFixed(5)}
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <Badge className="bg-rose-500/15 text-rose-600 border-rose-300 text-[10px] font-bold">
+                                        Pendente Geocodificação
+                                      </Badge>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-3 text-right">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                        setCustomerToEdit(c)
+                                        setIsCreateCustomerModalOpen(true)
+                                      }}
+                                      className="h-7 px-2.5 text-blue-600 border-blue-200 hover:bg-blue-50 text-[11px] gap-1 font-semibold"
+                                    >
+                                      <Edit3 className="h-3 w-3" />
+                                      Editar &amp; Calibrar
+                                    </Button>
+                                  </td>
+                                </tr>
+                              )
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
             </Tabs>
 
             {/* ================= RODAPÉ / DIAGNÓSTICO DO SISTEMA ================= */}
@@ -2971,7 +3154,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[#002855] font-mono font-bold">
-                    v0.0.170
+                    v0.0.213
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">
@@ -3210,9 +3393,32 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         </DialogContent>
       </Dialog>
 
+      {/* Modal de Cadastro/Edição de Clientes com Geocodificação Google */}
+      <CreateCustomerModal
+        open={isCreateCustomerModalOpen}
+        onOpenChange={setIsCreateCustomerModalOpen}
+        customerToEdit={customerToEdit}
+        onSuccess={() => {
+          loadData()
+          setIsCreateCustomerModalOpen(false)
+          setCustomerToEdit(null)
+        }}
+      />
+
+      {/* Modal de Auditoria e Verificação de Endereços no Mapa (Doutrina Vuupt/Rotaly) */}
+      <CustomerAddressAuditModal
+        open={isCustomerAddressAuditModalOpen}
+        onOpenChange={setIsCustomerAddressAuditModalOpen}
+        customers={customers}
+        onEditCustomer={(c) => {
+          setCustomerToEdit(c)
+          setIsCreateCustomerModalOpen(true)
+        }}
+        onRefreshCustomers={loadData}
+      />
+
       {/* Floating AI Assistant */}
       <AiLogisticsAssistant />
-
       {/* ================= MODAL: VIEW DOCUMENTS & SELFIE ================= */}
       <Dialog open={isDocsModalOpen} onOpenChange={setIsDocsModalOpen}>
         <DialogContent className="max-w-2xl">
