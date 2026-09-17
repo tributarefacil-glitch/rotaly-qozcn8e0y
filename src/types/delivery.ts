@@ -343,7 +343,7 @@ export interface CourierFuelAccount {
   advanceCount: number
   deliveriesCount: number
   advances?: FuelAdvanceRecord[]
-  calculationSource?: 'odometro' | 'gps' | 'road'
+  calculationSource?: 'odometro' | 'gps' | 'road' | 'historico_viario'
 }
 
 export type GpsFailureReason =

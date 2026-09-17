@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   BarChart3,
   TrendingUp,
@@ -67,7 +67,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
 import { getMyCompany, type ResolvedCompany } from '@/lib/companyResolver'
-import { getOperationalWindow } from '@/lib/operationalWindow'
+import { getOperationalWindow, formatPbTimestamp } from '@/lib/operationalWindow'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
@@ -223,6 +223,12 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   // Fuel Advances & Current Accounts State (REQUISITO 5)
   const [fuelAdvances, setFuelAdvances] = useState<FuelAdvanceRecord[]>([])
   const [fuelAccounts, setFuelAccounts] = useState<CourierFuelAccount[]>([])
+  const [fuelHistoryOrders, setFuelHistoryOrders] = useState<OrderRecord[]>([])
+  const [isLoadingFuelOrders, setIsLoadingFuelOrders] = useState(false)
+  const [loadedFuelPeriod, setLoadedFuelPeriod] = useState<string | null>(null)
+  const fuelOrdersCacheRef = useRef<Map<string, { data: OrderRecord[]; timestamp: number }>>(
+    new Map(),
+  )
   const [selectedCourierForFuelFilter, setSelectedCourierForFuelFilter] = useState<string>('all')
   const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week'>('month')
   const [isNewFuelAdvanceModalOpen, setIsNewFuelAdvanceModalOpen] = useState(false)
@@ -279,6 +285,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     try {
       setIsLoading(true)
       setLoadError(null)
+
+      // Se a aba de combustível estiver ativa, recarrega o histórico de combustível também
+      if (activeTab === 'fuel' || isCourierHistoryModalOpen) {
+        fetchFuelHistoryOrders(true)
+      }
 
       // A) Modo Empresa Única: Rotaly Operações (Matriz)
       const resolvedInfo: ResolvedCompany = {
@@ -401,7 +412,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setIsNewFuelAdvanceModalOpen(false)
       setAdvanceAmount('')
       setAdvanceNotes('')
-      loadData()
+      await Promise.all([loadData(), fetchFuelHistoryOrders(true)])
     } catch (err) {
       console.error('Error creating fuel advance:', err)
       toast.error('Erro ao cadastrar adiantamento de combustível.')
@@ -416,7 +427,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     try {
       await deliveryService.deleteFuelAdvance(id)
       toast.success('Adiantamento excluído com sucesso.')
-      loadData()
+      await Promise.all([loadData(), fetchFuelHistoryOrders(true)])
     } catch (err) {
       console.error('Error deleting advance:', err)
       toast.error('Erro ao excluir adiantamento.')
@@ -884,10 +895,74 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     return { totalKmRodada: km, totalFuelCostCalculated: fuel }
   }, [isReportsTabActive, filteredReportOrders, locations, offRouteEvents, orders, users, settings])
 
-  // Recalcular fuelAccounts de forma LAZY — somente quando a aba de combustível ou o modal de histórico estiverem ativos
-  // Consome EXCLUSIVAMENTE o motor único calculateCourierFuelMetrics via deliveryService
+  // Carregamento sob demanda dos pedidos históricos de combustível com cache em memória (5 min)
   const isFuelViewActive = activeTab === 'fuel' || isCourierHistoryModalOpen
 
+  const fetchFuelHistoryOrders = useCallback(
+    async (forceRefresh = false) => {
+      const cacheKey = fuelPeriodFilter
+      const now = Date.now()
+      const cached = fuelOrdersCacheRef.current.get(cacheKey)
+
+      if (!forceRefresh && cached && now - cached.timestamp < 5 * 60 * 1000) {
+        setFuelHistoryOrders(cached.data)
+        setLoadedFuelPeriod(fuelPeriodFilter)
+        return
+      }
+
+      let filter = ''
+      const currentDate = new Date()
+
+      if (fuelPeriodFilter === 'month') {
+        const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+        const startStr = formatPbTimestamp(firstDayOfMonth)
+        filter = `created >= '${startStr}'`
+      } else if (fuelPeriodFilter === 'week') {
+        const sevenDaysAgo = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000)
+        const startStr = formatPbTimestamp(sevenDaysAgo)
+        filter = `created >= '${startStr}'`
+      } else {
+        filter = ''
+      }
+
+      setIsLoadingFuelOrders(true)
+      try {
+        const fetched = await deliveryService.getOrdersInBatches(
+          filter,
+          '-created',
+          'customer_id,courier_id,seller_id',
+          200,
+        )
+        fuelOrdersCacheRef.current.set(cacheKey, { data: fetched, timestamp: Date.now() })
+        setFuelHistoryOrders(fetched)
+        setLoadedFuelPeriod(fuelPeriodFilter)
+      } catch (err) {
+        console.error('Erro ao carregar pedidos de combustível do período:', err)
+        // Fallback para orders do dia em caso de falha de rede
+        setFuelHistoryOrders((prev) => (prev.length > 0 ? prev : orders))
+        setLoadedFuelPeriod(fuelPeriodFilter)
+      } finally {
+        setIsLoadingFuelOrders(false)
+      }
+    },
+    [fuelPeriodFilter, orders],
+  )
+
+  useEffect(() => {
+    if (isFuelViewActive) {
+      fetchFuelHistoryOrders()
+    }
+  }, [isFuelViewActive, fuelPeriodFilter, fetchFuelHistoryOrders])
+
+  // Pedidos ativos para o cálculo de combustível: se já carregou ou está em cache, usa fuelHistoryOrders
+  const activeFuelOrdersPool =
+    fuelHistoryOrders.length > 0 || loadedFuelPeriod === fuelPeriodFilter
+      ? fuelHistoryOrders
+      : orders
+
+  // Recalcular fuelAccounts de forma LAZY — somente quando a aba de combustível ou o modal de histórico estiverem ativos
+  // Consome EXCLUSIVAMENTE o motor único calculateCourierFuelMetrics via deliveryService
+  // e é alimentado por fuelHistoryOrders (dataset histórico completo sob demanda)
   const currentFuelAccounts = useMemo(() => {
     if (!isFuelViewActive) {
       return []
@@ -896,7 +971,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       return deliveryService.getCourierFuelAccount(
         courier,
         fuelAdvances,
-        orders,
+        activeFuelOrdersPool,
         settings,
         fuelPeriodFilter,
         locations,
@@ -907,7 +982,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     isFuelViewActive,
     couriers,
     fuelAdvances,
-    orders,
+    activeFuelOrdersPool,
     settings,
     fuelPeriodFilter,
     locations,
@@ -1177,6 +1252,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                       <Wallet className="h-5 w-5 text-emerald-600" />
                       Controle Financeiro de Combustível (Pagamento Antecipado)
+                      {isLoadingFuelOrders && (
+                        <RefreshCw className="h-4 w-4 text-[#00A3FF] animate-spin ml-1" />
+                      )}
                     </h3>
                     <p className="text-xs text-slate-500">
                       Conta corrente por entregador em tempo real:{' '}
@@ -1185,13 +1263,27 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </p>
                   </div>
 
-                  <Button
-                    onClick={() => setIsNewFuelAdvanceModalOpen(true)}
-                    className="h-9 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/25 self-start sm:self-center"
-                  >
-                    <PlusCircle className="h-4 w-4" />
-                    Cadastrar Adiantamento / Pagamento
-                  </Button>
+                  <div className="flex items-center gap-2 self-start sm:self-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fetchFuelHistoryOrders(true)}
+                      disabled={isLoadingFuelOrders}
+                      className="h-9 gap-1.5 text-xs text-slate-700 border-slate-200 bg-white hover:bg-slate-50 rounded-xl"
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 text-[#00A3FF] ${isLoadingFuelOrders ? 'animate-spin' : ''}`}
+                      />
+                      Atualizar Combustível
+                    </Button>
+                    <Button
+                      onClick={() => setIsNewFuelAdvanceModalOpen(true)}
+                      className="h-9 gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/25"
+                    >
+                      <PlusCircle className="h-4 w-4" />
+                      Cadastrar Adiantamento / Pagamento
+                    </Button>
+                  </div>
                 </div>
 
                 {/* CARDS DE CONTA CORRENTE DOS ENTREGADORES */}
@@ -1210,7 +1302,15 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 relative">
+                    {isLoadingFuelOrders && (
+                      <div className="col-span-full py-8 flex flex-col items-center justify-center gap-2 bg-slate-50/70 dark:bg-slate-900/40 rounded-xl border border-slate-200/80 dark:border-slate-800">
+                        <RefreshCw className="h-6 w-6 text-[#00A3FF] animate-spin" />
+                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          Carregando histórico de entregas e cálculo oficial de combustível...
+                        </span>
+                      </div>
+                    )}
                     {currentFuelAccounts
                       .filter((acc) => acc && acc.courier && acc.courier.id)
                       .map((acc) => {
@@ -3838,7 +3938,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               })()
             : null
         }
-        orders={orders}
+        orders={activeFuelOrdersPool}
         offRouteEvents={offRouteEvents}
         locations={locations}
         settings={settings}
