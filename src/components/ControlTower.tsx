@@ -87,6 +87,7 @@ import {
 import { asyncPool } from '@/lib/promisePool'
 import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificationSound'
 import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
+import { formatTimeInTz, formatDateInTz } from '@/lib/operationalWindow'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { getMyCompany } from '@/lib/companyResolver'
@@ -975,7 +976,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     return couriers.map((courier) => {
       const courierLocs = locations.filter((l) => l.user_id === courier.id)
-      const latestLoc = courierLocs[0]
+      const latestLoc =
+        courierLocs.length > 1
+          ? [...courierLocs].sort(
+              (a, b) =>
+                parseSafeTimestamp(b.updated || b.created) -
+                parseSafeTimestamp(a.updated || a.created),
+            )[0]
+          : courierLocs[0]
 
       // Pedidos atribuídos ao entregador na visão global do dia
       const globalCourierTransit = todayGlobalTransitOrders.filter(
@@ -1334,10 +1342,31 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             })
 
           // SE POSIÇÃO ESTÁ CONGELADA (>2min) ou rota não iniciada, SUPRIMIR FALSOS ALARMES DE DESVIO/PARADA
+          // Requisitos adicionais de blindagem:
+          // (a) Avaliar apenas sinais GPS recentes (descartar sinais de minutos atrás)
+          // (b) Debounce: exigir 3 leituras CONSECUTIVAS fora da rota (antes eram 2) antes de alarmar
+          // (c) Descartar pings com accuracy > 50m (hoje entravam até 100m)
+          // (d) Limiar de 600m mantido blindado
+          const currentReadingTimestamp = locTime > 0 ? locTime : Date.now()
+          const locAgeMs = Date.now() - currentReadingTimestamp
+          const isGpsRecent = locAgeMs <= 3 * 60 * 1000
+
+          const isAccuracyAcceptable =
+            item.accuracy === undefined || item.accuracy === null || item.accuracy <= 50
+
+          const previousCached = activeRoutesCacheRef.current.get(item.courier.id)
+          const prevConsecutive =
+            (previousCached?.result as any)?.consecutiveDeviations ??
+            (previousCached?.result?.isDeviated ? 2 : 0)
+          const isCurrentReadingDeviated =
+            isAccuracyAcceptable && nearest.distanceMeters > DEVIATION_THRESHOLD_METERS
+          const consecutiveDeviations = isCurrentReadingDeviated ? prevConsecutive + 1 : 0
+
+          // Exigir 3 leituras consecutivas fora da rota antes de disparar alarme de desvio
+          const confirmedDeviation = hasDeviationEvent || consecutiveDeviations >= 3
+
           const isDeviated =
-            !isGpsFrozen &&
-            hasActiveRouteStarted &&
-            (hasDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
+            !isGpsFrozen && isGpsRecent && hasActiveRouteStarted && confirmedDeviation
 
           // CORREÇÃO 3: Alerta "parada fora"
           // Não disparar falso alarme se o entregador estiver parado a <= 600m do último cliente entregue (lastDeliveredPos)
@@ -1386,14 +1415,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const nowTime = Date.now()
           const etaNextDeliveryDate = new Date(nowTime + etaMinutesNextClient * 60 * 1000)
           const etaReturnBaseDate = new Date(nowTime + etaMinutesReturnBase * 60 * 1000)
-          const etaNextDeliveryTime = etaNextDeliveryDate.toLocaleTimeString('pt-BR', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-          const etaReturnBaseTime = etaReturnBaseDate.toLocaleTimeString('pt-BR', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })
+          const etaNextDeliveryTime = formatTimeInTz(etaNextDeliveryDate)
+          const etaReturnBaseTime = formatTimeInTz(etaReturnBaseDate)
 
           // Configuração de jornada da empresa para cálculo de carga horária e janela de almoço
           const shiftConfig: WorkShiftConfig | undefined = appSettings
@@ -1428,6 +1451,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             returnBasePos,
             isGpsFrozen,
             isDeviated,
+            consecutiveDeviations,
             deviationMeters: Math.round(nearest.distanceMeters),
             nearestPointOnRoute: nearest.nearestPoint,
             isUnexpectedStop,
@@ -2337,12 +2361,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             gpsBadgeColor = '#b91c1c'
             gpsBadgeBorder = '#fecaca'
           } else if (isSignalLost) {
-            const locTimeFormatted = locTime
-              ? new Date(locTime).toLocaleTimeString('pt-BR', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-              : '--:--'
+            const locTimeFormatted = formatTimeInTz(locTime, true)
             gpsBadgeText = `📴 Posição congelada às ${locTimeFormatted}`
             gpsBadgeBg = '#fffbeb'
             gpsBadgeColor = '#b45309'
@@ -2936,8 +2955,26 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         return true
       })
 
+      const courierLocList = locations.filter((l) => l.user_id === courierData.courier.id)
+      const latestLocForDrawer =
+        courierLocList.length > 1
+          ? [...courierLocList].sort(
+              (a, b) =>
+                parseSafeTimestamp(b.updated || b.created) -
+                parseSafeTimestamp(a.updated || a.created),
+            )[0]
+          : courierLocList[0]
+
+      const locAgeMs =
+        Date.now() -
+        (latestLocForDrawer
+          ? parseSafeTimestamp(latestLocForDrawer.updated || latestLocForDrawer.created)
+          : 0)
+      const isGpsRecent = locAgeMs <= 3 * 60 * 1000
+
       const isOffRoute =
         isSelectedOrderInActiveRoute &&
+        isGpsRecent &&
         (hasSystemDeviationEvent || nearest.distanceMeters > DEVIATION_THRESHOLD_METERS)
       const isDeviatedStrict = isSelectedOrderInActiveRoute && isOffRoute
       setDrawerDeviationInfo({
@@ -3138,9 +3175,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
 
     if (order.estimated_arrival) {
-      const d = new Date(order.estimated_arrival)
-      if (!isNaN(d.getTime())) {
-        return `Entrega ~${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+      const formatted = formatTimeInTz(order.estimated_arrival)
+      if (formatted && formatted !== '--:--') {
+        return `Entrega ~${formatted}`
       }
     }
     if (order.estimated_duration_minutes) {

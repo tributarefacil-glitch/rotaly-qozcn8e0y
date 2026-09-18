@@ -4,6 +4,7 @@ import { OrderRecord, UserRecord, LocationRecord, AppSettingsRecord } from '@/ty
 import { getVehicleLabel } from '@/components/LiveMap'
 import { LatLngPoint } from '@/services/osrmRoutingService'
 import { RouteWorkShiftMetrics } from '@/lib/routeWorkShift'
+import { formatTimeInTz } from '@/lib/operationalWindow'
 
 export interface ControlTowerProps {
   orders?: OrderRecord[]
@@ -207,9 +208,9 @@ export function getEtaDisplay(
   }
 
   if (order.estimated_arrival) {
-    const d = new Date(order.estimated_arrival)
-    if (!isNaN(d.getTime())) {
-      return `Entrega ~${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+    const formatted = formatTimeInTz(order.estimated_arrival)
+    if (formatted && formatted !== '--:--') {
+      return `Entrega ~${formatted}`
     }
   }
   if (order.estimated_duration_minutes) {

@@ -612,7 +612,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           </span>
         </div>
 
-        ${item.estimated_arrival ? `<p style="font-size: 10px; margin: 3px 0 0; color: #0284c7; font-weight: 500;">⏱️ Previsão: ${new Date(item.estimated_arrival).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>` : ''}
+        ${item.estimated_arrival ? `<p style="font-size: 10px; margin: 3px 0 0; color: #0284c7; font-weight: 500;">⏱️ Previsão: ${new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).format(new Date(item.estimated_arrival))}</p>` : ''}
         ${
           item.tracking_code
             ? `
@@ -1479,10 +1479,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                               <Clock className="h-3 w-3 shrink-0 text-sky-400" />
                               <span>
                                 Previsão:{' '}
-                                {new Date(m.estimated_arrival).toLocaleTimeString([], {
+                                {new Intl.DateTimeFormat('pt-BR', {
+                                  timeZone: 'America/Sao_Paulo',
                                   hour: '2-digit',
                                   minute: '2-digit',
-                                })}
+                                }).format(new Date(m.estimated_arrival))}
                               </span>
                             </div>
                           )}

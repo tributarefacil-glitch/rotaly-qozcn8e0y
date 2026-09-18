@@ -12,6 +12,7 @@ import {
 import { Columns3, Map as MapIcon, Clock, RefreshCw, Search, Check } from 'lucide-react'
 import { UserRecord, OrderRecord } from '@/types/delivery'
 import { ControlTowerMetrics } from './utils'
+import { formatTimeInTz } from '@/lib/operationalWindow'
 
 export interface DeliveredNotice {
   orderId: string
@@ -114,7 +115,7 @@ export const ControlTowerHeroBanner: React.FC<ControlTowerHeroBannerProps> = ({
 
           <div className="flex items-center text-xs text-slate-600 bg-white border border-slate-200 px-3 py-2 rounded-xl shadow-xs">
             <Clock className="w-3.5 h-3.5 mr-1.5 text-slate-400" />
-            <span>10s • {lastUpdated.toLocaleTimeString('pt-BR')}</span>
+            <span>10s • {formatTimeInTz(lastUpdated, true)}</span>
           </div>
 
           <Button

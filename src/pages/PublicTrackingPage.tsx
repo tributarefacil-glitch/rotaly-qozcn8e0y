@@ -451,11 +451,16 @@ export default function PublicTrackingPage() {
 
     if (order.status === 'delivered') {
       const deliveredTime = order.actual_arrival
-        ? new Date(order.actual_arrival).toLocaleTimeString([], {
+        ? new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo',
             hour: '2-digit',
             minute: '2-digit',
-          })
-        : new Date(order.updated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }).format(new Date(order.actual_arrival))
+        : new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo',
+            hour: '2-digit',
+            minute: '2-digit',
+          }).format(new Date(order.updated))
       return {
         type: 'delivered' as const,
         chipLabel: 'Entregue',
@@ -501,7 +506,11 @@ export default function PublicTrackingPage() {
     // Em trânsito normal dentro do prazo
     if (order.status === 'in_transit') {
       const timeStr = estimatedArrivalDate
-        ? estimatedArrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        ? new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo',
+            hour: '2-digit',
+            minute: '2-digit',
+          }).format(estimatedArrivalDate)
         : null
 
       const title = timeStr
@@ -803,10 +812,11 @@ export default function PublicTrackingPage() {
                       <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
                         <span className="text-slate-500 font-medium">Previsão estimada</span>
                         <span className="font-bold text-[#0052CC]">
-                          {estimatedArrivalDate.toLocaleTimeString([], {
+                          {new Intl.DateTimeFormat('pt-BR', {
+                            timeZone: 'America/Sao_Paulo',
                             hour: '2-digit',
                             minute: '2-digit',
-                          })}
+                          }).format(estimatedArrivalDate)}
                           {realEtaMinutes !== null && ` (~${realEtaMinutes} min)`}
                         </span>
                       </div>

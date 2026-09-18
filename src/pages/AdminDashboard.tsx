@@ -3495,7 +3495,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                           Sincronização
                         </span>
                         <p className="text-[11px] text-slate-300">
-                          Última carga: {new Date().toLocaleTimeString('pt-BR')}
+                          Última carga:{' '}
+                          {new Intl.DateTimeFormat('pt-BR', {
+                            timeZone: 'America/Sao_Paulo',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          }).format(new Date())}
                         </p>
                       </div>
                       <Button

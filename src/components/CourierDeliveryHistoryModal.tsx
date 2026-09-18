@@ -1199,7 +1199,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                                 : '🛑 Parada Não Prevista'}
                             </span>
                             <span className="text-slate-500 font-mono text-[10px]">
-                              {new Date(ev.created).toLocaleTimeString('pt-BR')}
+                              {new Intl.DateTimeFormat('pt-BR', {
+                                timeZone: 'America/Sao_Paulo',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                              }).format(new Date(ev.created))}
                             </span>
                           </div>
                           {ev.notes && (

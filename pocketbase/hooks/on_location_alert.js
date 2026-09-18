@@ -5,6 +5,8 @@ onRecordAfterCreateSuccess((e) => {
   const DEVIATION_THRESHOLD_METERS = 600
   const UNEXPECTED_STOP_THRESHOLD_METERS = 600
   const MIN_STOP_DURATION_SECONDS = 180 // 3 minutos mínimos para caracterizar parada não programada
+  const MAX_GPS_SIGNAL_AGE_MS = 3 * 60 * 1000 // Sinais com mais de 3 minutos são defasados e não geram novos alarmes
+  const CONSECUTIVE_DEVIATION_POINTS_REQUIRED = 2 // Debounce: exigir ao menos 2 pontos consecutivos fora da rota (>600m)
 
   const loc = e.record
   const courierId = loc.getString('user_id')
@@ -227,13 +229,14 @@ onRecordAfterCreateSuccess((e) => {
 
   // 1. CHECAGEM E DEDUPLICAÇÃO DE PARADAS FORA DA ROTA (A & C)
   // Regra:
+  // - Avaliar apenas sinais GPS recentes
   // - Velocidade <= 2 km/h
   // - Desvio real da rota planejada (pontos de parada/corredor) > 600m
   // - Tolerância espacial de ~50 m para agrupar leituras paradas consecutivas num ÚNICO episódio
   // - Só registrar/manter se stop_duration_seconds >= 180s (3 minutos)
   const isFarFromRoute = minDistanceToRouteCorridor > UNEXPECTED_STOP_THRESHOLD_METERS
 
-  if (speedKmh <= 2 && isFarFromRoute) {
+  if (speedKmh <= 2 && isFarFromRoute && isGpsSignalFresh) {
     // Buscar se já existe um episódio de parada recente (criado ou atualizado nas últimas 2 horas)
     // na mesma posição geográfica (tolerância <= 50m) para este courier
     let existingStopEvents = []
@@ -361,73 +364,114 @@ onRecordAfterCreateSuccess((e) => {
   }
 
   // 2. CHECAGEM DE DESVIO DE ROTA EM DESLOCAMENTO (> 600 metros fora do corredor da rota)
-  if (speedKmh > 10 && prevLat && prevLng) {
+  // Requisitos:
+  // (a) Avaliar apenas sinais GPS recentes (descartar sinais com mais de 3 minutos)
+  // (b) Exigir N (2) pontos consecutivos fora da rota antes de disparar alarme (debounce)
+  // (c) Limiar intocável de 600 metros mantido rigorosamente
+  const nowMs = Date.now()
+  const isGpsSignalFresh = nowMs - currentLocTime <= MAX_GPS_SIGNAL_AGE_MS
+
+  if (speedKmh > 10 && prevLat && prevLng && isGpsSignalFresh) {
     if (minDistanceToRouteCorridor >= DEVIATION_THRESHOLD_METERS) {
-      // Cooldown de 5 minutos para alertas de desvio de rota do mesmo entregador
-      let recentDevAlerts = []
-      try {
-        const fiveMinAgo = new Date(currentLocTime - 5 * 60 * 1000).toISOString()
-        recentDevAlerts = $app.findRecordsByFilter(
-          'off_route_events',
-          `courier_id = '${courierId}' && event_type = 'route_deviation' && created >= '${fiveMinAgo}'`,
-          '-created',
-          1,
-          0,
-        )
-      } catch (_) {}
-
-      if (recentDevAlerts.length === 0) {
-        try {
-          const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
-          const ev = new Record(offRouteCol)
-          ev.set('courier_id', courierId)
-          ev.set('order_id', anchorOrder.id)
-          ev.set('event_type', 'route_deviation')
-          ev.set('distance_deviation_meters', Math.round(minDistanceToRouteCorridor))
-          ev.set('stop_duration_seconds', 0)
-          ev.set('lat', lat)
-          ev.set('lng', lng)
-          ev.set(
-            'notes',
-            `Desvio de rota superior a 600m detectado (+${Math.round(minDistanceToRouteCorridor)}m fora do corredor viário). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+      // Debounce: verificar se o ponto anterior também estava a >= 600m da rota
+      let prevIsDeviated = false
+      if (prevLocations.length > 0) {
+        let prevMinDist = Infinity
+        for (let w = 0; w < routeWaypoints.length; w++) {
+          const dW = calcHaversineMeters(
+            prevLat,
+            prevLng,
+            routeWaypoints[w].lat,
+            routeWaypoints[w].lng,
           )
-          $app.save(ev)
-        } catch (errDev) {
-          console.log('Error saving deviation event:', errDev)
+          if (dW < prevMinDist) prevMinDist = dW
         }
+        if (routeWaypoints.length >= 2) {
+          for (let w = 0; w < routeWaypoints.length - 1; w++) {
+            const sDist = calcPointToSegmentMeters(
+              prevLat,
+              prevLng,
+              routeWaypoints[w].lat,
+              routeWaypoints[w].lng,
+              routeWaypoints[w + 1].lat,
+              routeWaypoints[w + 1].lng,
+            )
+            if (sDist < prevMinDist) prevMinDist = sDist
+          }
+        }
+        if (prevMinDist >= DEVIATION_THRESHOLD_METERS) {
+          prevIsDeviated = true
+        }
+      }
 
-        // Notificação entregador
+      // Disparar apenas se houver pontos consecutivos fora da rota
+      if (prevIsDeviated) {
+        // Cooldown de 5 minutos para alertas de desvio de rota do mesmo entregador
+        let recentDevAlerts = []
         try {
-          const notifCol = $app.findCollectionByNameOrId('notifications')
-          const notif = new Record(notifCol)
-          notif.set('user_id', courierId)
-          notif.set('order_id', anchorOrder.id)
-          notif.set('type', 'off_route')
-          notif.set('title', '🚨 Alerta de Desvio de Rota (>600m)')
-          notif.set(
-            'message',
-            `Você está fora do traçado previsto do pedido ${trackingCode} (+${Math.round(minDistanceToRouteCorridor)}m). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+          const fiveMinAgo = new Date(currentLocTime - 5 * 60 * 1000).toISOString()
+          recentDevAlerts = $app.findRecordsByFilter(
+            'off_route_events',
+            `courier_id = '${courierId}' && event_type = 'route_deviation' && created >= '${fiveMinAgo}'`,
+            '-created',
+            1,
+            0,
           )
-          notif.set('is_read', false)
-          $app.save(notif)
         } catch (_) {}
 
-        // Notificação vendedor
-        if (sellerId) {
+        if (recentDevAlerts.length === 0) {
+          try {
+            const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
+            const ev = new Record(offRouteCol)
+            ev.set('courier_id', courierId)
+            ev.set('order_id', anchorOrder.id)
+            ev.set('event_type', 'route_deviation')
+            ev.set('distance_deviation_meters', Math.round(minDistanceToRouteCorridor))
+            ev.set('stop_duration_seconds', 0)
+            ev.set('lat', lat)
+            ev.set('lng', lng)
+            ev.set(
+              'notes',
+              `Desvio de rota superior a 600m detectado (+${Math.round(minDistanceToRouteCorridor)}m fora do corredor viário após pontos consecutivos). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+            )
+            $app.save(ev)
+          } catch (errDev) {
+            console.log('Error saving deviation event:', errDev)
+          }
+
+          // Notificação entregador
           try {
             const notifCol = $app.findCollectionByNameOrId('notifications')
             const notif = new Record(notifCol)
-            notif.set('user_id', sellerId)
+            notif.set('user_id', courierId)
             notif.set('order_id', anchorOrder.id)
             notif.set('type', 'off_route')
-            notif.set('title', '🚨 Desvio de Rota do Entregador (>600m)')
+            notif.set('title', '🚨 Alerta de Desvio de Rota (>600m)')
             notif.set(
               'message',
-              `O entregador ${courierName} desviou mais de 600m do trajeto previsto do pedido ${trackingCode}. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+              `Você está fora do traçado previsto do pedido ${trackingCode} (+${Math.round(minDistanceToRouteCorridor)}m). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
             )
             notif.set('is_read', false)
             $app.save(notif)
           } catch (_) {}
+
+          // Notificação vendedor
+          if (sellerId) {
+            try {
+              const notifCol = $app.findCollectionByNameOrId('notifications')
+              const notif = new Record(notifCol)
+              notif.set('user_id', sellerId)
+              notif.set('order_id', anchorOrder.id)
+              notif.set('type', 'off_route')
+              notif.set('title', '🚨 Desvio de Rota do Entregador (>600m)')
+              notif.set(
+                'message',
+                `O entregador ${courierName} desviou mais de 600m do trajeto previsto do pedido ${trackingCode}. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+              )
+              notif.set('is_read', false)
+              $app.save(notif)
+            } catch (_) {}
+          }
         }
       }
     }

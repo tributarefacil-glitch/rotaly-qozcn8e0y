@@ -512,7 +512,11 @@ export const SiteContentManager: React.FC = () => {
                 Última atualização gravada em{' '}
                 <strong className="text-slate-200">
                   {lastSavedAt.toLocaleDateString('pt-BR')} às{' '}
-                  {lastSavedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                  {new Intl.DateTimeFormat('pt-BR', {
+                    timeZone: 'America/Sao_Paulo',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }).format(lastSavedAt)}
                 </strong>
               </>
             ) : (

@@ -177,10 +177,11 @@ export function calculateRouteWorkShift(
   const projectedEndTimestamp = referenceTime + finalRemainingMinutes * 60 * 1000
   const projectedEndDate = new Date(projectedEndTimestamp)
 
-  const projectedEndTimeFormatted = projectedEndDate.toLocaleTimeString('pt-BR', {
+  const projectedEndTimeFormatted = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
     hour: '2-digit',
     minute: '2-digit',
-  })
+  }).format(projectedEndDate)
 
   // 4. Tempo decorrido desde o início da rota
   const elapsedMinutes = Math.max(0, Math.round((referenceTime - routeStartTime) / (60 * 1000)))

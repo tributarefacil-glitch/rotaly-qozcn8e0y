@@ -9,6 +9,7 @@ import {
   getEtaDisplay,
   ActiveRouteCalculatedItem,
 } from './utils'
+import { formatTimeInTz } from '@/lib/operationalWindow'
 import { DeliveredNotice } from './ControlTowerCards'
 
 interface ControlTowerColumnsProps {
@@ -142,7 +143,7 @@ export const ControlTowerColumns: React.FC<ControlTowerColumnsProps> = ({
                             <Clock className="h-3 w-3 text-slate-400" />
                             <span>
                               {order.status === 'delivered' && order.actual_arrival
-                                ? `Entregue às ${new Date(order.actual_arrival).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+                                ? `Entregue às ${formatTimeInTz(order.actual_arrival)}`
                                 : etaTime}
                             </span>
                           </div>

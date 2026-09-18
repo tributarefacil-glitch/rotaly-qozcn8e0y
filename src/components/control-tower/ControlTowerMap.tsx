@@ -3,7 +3,7 @@ import { Activity, RefreshCw, AlertOctagon, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { LiveMap, MapMarkerItem, getVehicleEmoji } from '@/components/LiveMap'
 import { UserRecord, OrderRecord } from '@/types/delivery'
-import { parseSafeTimestamp } from '@/lib/operationalWindow'
+import { parseSafeTimestamp, formatTimeInTz } from '@/lib/operationalWindow'
 import { ActiveRouteCourierData, ActiveRouteCalculatedItem, ControlTowerMetrics } from './utils'
 
 export type MapDisplayMode = 'in_transit' | 'delivered'
@@ -187,12 +187,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                       item.offline_buffered === false
                                     ))
                                 if (isFrozen) {
-                                  const timeStr = lTime
-                                    ? new Date(lTime).toLocaleTimeString('pt-BR', {
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                      })
-                                    : '--:--'
+                                  const timeStr = formatTimeInTz(lTime)
                                   return (
                                     <span className="text-amber-400 font-semibold truncate text-[10px]">
                                       📴 Posição congelada às {timeStr} • Aguardando sinal...
@@ -523,12 +518,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                       item.offline_buffered === false
                                     ))
                                 if (isFrozen) {
-                                  const timeStr = lTime
-                                    ? new Date(lTime).toLocaleTimeString('pt-BR', {
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                      })
-                                    : '--:--'
+                                  const timeStr = formatTimeInTz(lTime)
                                   return (
                                     <span className="text-amber-400 font-semibold truncate text-[10px]">
                                       📴 Posição congelada às {timeStr} • Aguardando sinal...

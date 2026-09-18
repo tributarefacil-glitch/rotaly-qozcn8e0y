@@ -245,10 +245,11 @@ export const Header: React.FC = () => {
                         <div className="flex items-center justify-between">
                           <p className="text-xs font-bold text-[#002855] truncate">{n.title}</p>
                           <span className="text-[10px] text-slate-400">
-                            {new Date(n.created).toLocaleTimeString([], {
+                            {new Intl.DateTimeFormat('pt-BR', {
+                              timeZone: 'America/Sao_Paulo',
                               hour: '2-digit',
                               minute: '2-digit',
-                            })}
+                            }).format(new Date(n.created))}
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-slate-600 leading-relaxed font-sans">

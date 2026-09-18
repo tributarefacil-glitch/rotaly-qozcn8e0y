@@ -20,9 +20,68 @@ export interface OperationalWindow {
  * Converte Date ou timestamp numérico para o formato nativo do PocketBase/SQLite:
  * "YYYY-MM-DD HH:mm:ss.sssZ" (substitui o 'T' da ISO por espaço).
  */
+/**
+ * Converte data/hora para exibição estritamente no fuso horário do Brasil (America/Sao_Paulo, UTC-3).
+ */
+export function formatBrazilTime(
+  dateVal?: string | number | Date | null,
+  options: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' },
+): string {
+  const ts = parseSafeTimestamp(dateVal)
+  if (!ts) return '--:--'
+  try {
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      ...options,
+    }).format(new Date(ts))
+  } catch {
+    return new Date(ts).toLocaleTimeString('pt-BR', options)
+  }
+}
+
 export function formatPbTimestamp(dateOrTs: Date | number): string {
   const d = typeof dateOrTs === 'number' ? new Date(dateOrTs) : dateOrTs
   return d.toISOString().replace('T', ' ')
+}
+
+/**
+ * Utilitário central de formatação de horários e datas com garantia de fuso horário America/Sao_Paulo (UTC-3).
+ * Garante que timestamps UTC gravados no PocketBase sejam sempre exibidos no horário local brasileiro.
+ */
+export const SAO_PAULO_TZ = 'America/Sao_Paulo'
+
+export function formatTimeInTz(
+  dateOrStrOrTs: Date | string | number | null | undefined,
+  includeSeconds = false,
+): string {
+  if (!dateOrStrOrTs) return '--:--'
+  const ts = parseSafeTimestamp(dateOrStrOrTs)
+  if (!ts) return '--:--'
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return '--:--'
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: SAO_PAULO_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(includeSeconds ? { second: '2-digit' } : {}),
+  }).format(d)
+}
+
+export function formatDateInTz(
+  dateOrStrOrTs: Date | string | number | null | undefined,
+  options?: Intl.DateTimeFormatOptions,
+): string {
+  if (!dateOrStrOrTs) return ''
+  const ts = parseSafeTimestamp(dateOrStrOrTs)
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return ''
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: SAO_PAULO_TZ,
+    ...options,
+  }).format(d)
 }
 
 /**
@@ -81,8 +140,17 @@ export function parseSafeTimestamp(dateVal?: string | number | Date | null): num
     if (typeof dateVal === 'string') {
       const trimmed = dateVal.trim()
       if (!trimmed) return 0
-      // Tratar formato padrão PocketBase "YYYY-MM-DD HH:mm:ss.sssZ" ou ISO direto
-      const normalized = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T')
+      // PocketBase armazena datas sempre em UTC (ex: "YYYY-MM-DD HH:mm:ss.sssZ" ou "YYYY-MM-DD HH:mm:ss").
+      // Se a string contiver data e hora sem indicação de fuso (sem 'Z' e sem offset +/-HH:mm),
+      // forçar a terminação com 'Z' para garantir interpretação estrita em UTC, evitando perda de 3h no fuso do Brasil.
+      let normalized = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T')
+      if (
+        /^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(trimmed) &&
+        !trimmed.endsWith('Z') &&
+        !/[+-]\d{2}:?\d{2}$/.test(trimmed)
+      ) {
+        normalized = normalized + 'Z'
+      }
       const t = new Date(normalized).getTime()
       if (!isNaN(t)) return t
       const fallback = new Date(trimmed).getTime()

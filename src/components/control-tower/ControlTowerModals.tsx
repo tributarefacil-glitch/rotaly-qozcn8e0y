@@ -39,6 +39,7 @@ import {
 import { OrderRecord, UserRecord, AppSettingsRecord } from '@/types/delivery'
 import { LatLngPoint, findNearestPointOnRoute } from '@/services/osrmRoutingService'
 import { DEVIATION_THRESHOLD_METERS } from '@/lib/geo'
+import { formatTimeInTz, formatDateInTz } from '@/lib/operationalWindow'
 import { getVehicleEmoji } from '@/components/LiveMap'
 import {
   ActiveRouteCalculatedItem,
@@ -460,12 +461,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                         </span>
                         {drawerReview.created && (
                           <span className="text-[10px] text-slate-400">
-                            {new Date(drawerReview.created).toLocaleDateString('pt-BR', {
-                              day: '2-digit',
-                              month: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                            {`${formatDateInTz(drawerReview.created)} ${formatTimeInTz(drawerReview.created)}`}
                           </span>
                         )}
                       </div>
@@ -976,11 +972,10 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                             <span className="text-[10px] text-slate-400 font-mono shrink-0 ml-2">
                               {o.status === 'delivered'
                                 ? o.actual_arrival
+                                  ? formatTimeInTz(o.actual_arrival)
+                                  : 'Entregue'
                                 : o.estimated_arrival
-                                  ? new Date(o.estimated_arrival).toLocaleTimeString([], {
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                    })
+                                  ? formatTimeInTz(o.estimated_arrival)
                                   : 'Pendente'}
                             </span>
                           </div>

@@ -461,10 +461,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           firstPending.lng,
         )
         const etaMinsNext = Math.max(1, Math.round(distNext / speedMps / 60))
-        etaNextDeliveryTime = new Date(Date.now() + etaMinsNext * 60 * 1000).toLocaleTimeString(
-          'pt-BR',
-          { hour: '2-digit', minute: '2-digit' },
-        )
+        etaNextDeliveryTime = new Intl.DateTimeFormat('pt-BR', {
+          timeZone: 'America/Sao_Paulo',
+          hour: '2-digit',
+          minute: '2-digit',
+        }).format(new Date(Date.now() + etaMinsNext * 60 * 1000))
       }
 
       // Retorno à base
@@ -486,10 +487,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       totalDist += haversineDistanceMeters(cur.lat, cur.lng, returnBasePos.lat, returnBasePos.lng)
       const serviceMins = pendingStops.length * 5
       const etaMinsReturn = Math.max(1, Math.round(totalDist / speedMps / 60) + serviceMins)
-      etaReturnBaseTime = new Date(Date.now() + etaMinsReturn * 60 * 1000).toLocaleTimeString(
-        'pt-BR',
-        { hour: '2-digit', minute: '2-digit' },
-      )
+      etaReturnBaseTime = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(new Date(Date.now() + etaMinsReturn * 60 * 1000))
     }
 
     mapMarkers.push({
@@ -1788,13 +1790,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                     {order.actual_arrival && (
                                       <span className="block text-[10px] text-emerald-400/80 font-mono mt-0.5">
                                         às{' '}
-                                        {new Date(order.actual_arrival).toLocaleTimeString(
-                                          'pt-BR',
-                                          {
-                                            hour: '2-digit',
-                                            minute: '2-digit',
-                                          },
-                                        )}
+                                        {new Intl.DateTimeFormat('pt-BR', {
+                                          timeZone: 'America/Sao_Paulo',
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                        }).format(new Date(order.actual_arrival))}
                                       </span>
                                     )}
                                   </div>
@@ -1802,7 +1802,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                   <Badge
                                     variant="outline"
                                     className="bg-emerald-950/40 text-[#22C55E] border-[#22C55E]/40 text-[10px] font-bold"
-                                    title={`Rota liberada em ${order.route_released_at ? new Date(order.route_released_at).toLocaleTimeString() : 'sim'}`}
+                                    title={`Rota liberada em ${order.route_released_at ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' }).format(new Date(order.route_released_at)) : 'sim'}`}
                                   >
                                     ✓ Rota Liberada
                                   </Badge>
@@ -2466,7 +2466,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                     Sincronização
                   </span>
                   <p className="text-[11px] text-slate-300">
-                    Última carga: {new Date().toLocaleTimeString('pt-BR')}
+                    Última carga:{' '}
+                    {new Intl.DateTimeFormat('pt-BR', {
+                      timeZone: 'America/Sao_Paulo',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    }).format(new Date())}
                   </p>
                 </div>
                 <Button
