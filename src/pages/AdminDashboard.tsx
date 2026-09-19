@@ -57,6 +57,7 @@ import { ReportsSection } from '@/components/ReportsSection'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 import { CreateSellerModal } from '@/components/CreateSellerModal'
 import { EditSellerModal } from '@/components/EditSellerModal'
+import { EditUserModal } from '@/components/EditUserModal'
 import { SiteContentManager } from '@/components/SiteContentManager'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import { CustomerAddressAuditModal } from '@/components/CustomerAddressAuditModal'
@@ -375,6 +376,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [isCreateSellerModalOpen, setIsCreateSellerModalOpen] = useState(false)
   const [isEditSellerModalOpen, setIsEditSellerModalOpen] = useState(false)
   const [selectedSellerForEdit, setSelectedSellerForEdit] = useState<UserRecord | null>(null)
+
+  // Edit User Modal state (Entregadores e Vendedores unificados com troca de senha e login)
+  const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false)
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<UserRecord | null>(null)
 
   // New user modal state
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false)
@@ -3027,6 +3032,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
                                   <td className="py-3 px-3 text-right">
                                     <div className="flex items-center justify-end gap-1.5">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedUserForEdit(c)
+                                          setIsEditUserModalOpen(true)
+                                        }}
+                                        className="h-7 px-2 text-[#0052CC] border-blue-200 dark:border-blue-900 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-[11px] gap-1 font-semibold"
+                                        title="Editar Cadastro, Trocar Senha e E-mail"
+                                      >
+                                        <Edit3 className="h-3 w-3 text-[#0052CC]" />
+                                        Editar
+                                      </Button>
+
                                       {isPending && (
                                         <Button
                                           size="sm"
@@ -3200,8 +3219,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                         variant="outline"
                                         size="sm"
                                         onClick={() => {
-                                          setSelectedSellerForEdit(s)
-                                          setIsEditSellerModalOpen(true)
+                                          setSelectedUserForEdit(s)
+                                          setIsEditUserModalOpen(true)
                                         }}
                                         className="h-7 px-2 text-blue-600 border-blue-200 dark:border-blue-900 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-[11px] gap-1 font-semibold"
                                         title="Editar Dados do Vendedor"
@@ -4120,7 +4139,19 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         onSellerCreated={loadData}
       />
 
-      {/* ================= MODAL: EDITAR VENDEDOR ================= */}
+      {/* ================= MODAL: EDITAR USUÁRIO (ENTREGADOR OU VENDEDOR) ================= */}
+      <EditUserModal
+        user={selectedUserForEdit}
+        open={isEditUserModalOpen}
+        onOpenChange={(open) => {
+          setIsEditUserModalOpen(open)
+          if (!open) setSelectedUserForEdit(null)
+        }}
+        onUserUpdated={loadData}
+        currentAdminId={user?.id}
+      />
+
+      {/* ================= MODAL: EDITAR VENDEDOR (LEGADO) ================= */}
       <EditSellerModal
         seller={selectedSellerForEdit}
         open={isEditSellerModalOpen}
