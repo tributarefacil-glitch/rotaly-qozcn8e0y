@@ -1789,6 +1789,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
           const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
           const seqText = order.sequence ? `[#${order.sequence}] ` : ''
+          const courierId = order.courier_id || courier?.id
+          const courierColor = getCourierRouteColor(courierId)
 
           list.push({
             id: `order-${order.id}`,
@@ -1803,6 +1805,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             total_price: Number(order.total_price || 0),
             estimated_arrival: order.estimated_arrival,
             courier_name: courier?.name,
+            courier_id: courierId,
+            pinColorOverride: courierColor.stroke,
             delivery_sequence: order.sequence,
           })
         }
@@ -2148,9 +2152,22 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       }
     }
 
-    const makeNativeCustomerSvg = (customerName?: string, seq?: number, isTransit = false) => {
+    const makeNativeCustomerSvg = (
+      customerName?: string,
+      seq?: number,
+      isTransit = false,
+      pinColorOverride?: string,
+    ) => {
       // Pin compacto sem texto aberto para evitar sobreposição caótica de etiquetas
-      const generated = makeCustomerSvgIcon(customerName, seq, isTransit, 72, 42, undefined, false)
+      const generated = makeCustomerSvgIcon(
+        customerName,
+        seq,
+        isTransit,
+        72,
+        42,
+        pinColorOverride,
+        false,
+      )
       return {
         url: generated.url,
         scaledSize: new win.google.maps.Size(
@@ -2574,8 +2591,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
             const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
             const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
+            const courierId = order.courier_id || order.expand?.courier_id?.id
+            const courierColor = getCourierRouteColor(courierId)
             const markerTitle = `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`
-            const markerIcon = makeNativeCustomerSvg(cust.name, order.sequence, isTransit)
+            const markerIcon = makeNativeCustomerSvg(
+              cust.name,
+              order.sequence,
+              isTransit,
+              courierColor.stroke,
+            )
 
             let destMarker = customerMarkersMapRef.current.get(order.id)
             if (destMarker) {
@@ -2909,8 +2933,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
 
     // Helpers de SVG para o mini mapa do Drawer (reaproveita os geradores de LiveMap)
-    const makeMiniCourierSvg = (vehicle?: string) => {
-      const generated = makeCourierSvgIcon(vehicle, '#0052CC', 40)
+    const courierDrawerColor = getCourierRouteColor(
+      selectedOrder.courier_id || orderCourierInfo?.courier?.id,
+    )
+
+    const makeMiniCourierSvg = (vehicle?: string, pinColor = courierDrawerColor.stroke) => {
+      const generated = makeCourierSvgIcon(vehicle, pinColor, 40)
       return {
         url: generated.url,
         scaledSize: new win.google.maps.Size(40, 40),
@@ -2918,8 +2946,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       }
     }
 
-    const makeMiniCustomerSvg = (customerName?: string, seq?: number) => {
-      const generated = makeCustomerSvgIcon(customerName, seq, true, 110, 48)
+    const makeMiniCustomerSvg = (
+      customerName?: string,
+      seq?: number,
+      pinColor = courierDrawerColor.stroke,
+    ) => {
+      const generated = makeCustomerSvgIcon(customerName, seq, true, 110, 48, pinColor)
       return {
         url: generated.url,
         scaledSize: new win.google.maps.Size(110, 48),
@@ -2937,12 +2969,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         position: courierPos,
         map: miniMap,
         title: `Entregador: ${courierData.courier.name} (${formatVehicle(courierData.courier.vehicle_type)})`,
-        icon: makeMiniCourierSvg(courierData.courier.vehicle_type),
+        icon: makeMiniCourierSvg(courierData.courier.vehicle_type, courierDrawerColor.stroke),
       })
       drawerMarkersRef.current.push(courierMarker)
     }
 
-    // 3. Cliente destino pin (highlighted com nome visível e número de sequência)
+    // 3. Cliente destino pin (highlighted com nome visível e número de sequência na mesma cor do entregador)
     if (cust?.lat && cust?.lng) {
       const clientPos = { lat: cust.lat, lng: cust.lng }
       bounds.extend(clientPos)
@@ -2952,7 +2984,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         position: clientPos,
         map: miniMap,
         title: `Cliente: ${cust.name}`,
-        icon: makeMiniCustomerSvg(cust.name, selectedOrder.sequence),
+        icon: makeMiniCustomerSvg(cust.name, selectedOrder.sequence, courierDrawerColor.stroke),
       })
       drawerMarkersRef.current.push(clientMarker)
     }
@@ -2963,7 +2995,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       drawerDeviationPolylineRef.current = null
     }
 
-    // Desenhar a rota indicada pelo sistema (LINHA AZUL)
+    // Desenhar a rota indicada pelo sistema na cor fixa do entregador
     // Se temos a geometria de ruas do OSRM, usamos a sequência completa de ruas; caso contrário os pontos chave
     const blueLinePoints =
       streetRoute && streetRoute.coordinates.length >= 2
@@ -2976,7 +3008,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       const polyline = new win.google.maps.Polyline({
         path: blueLinePoints,
         geodesic: true,
-        strokeColor: '#2563EB', // LINHA AZUL INDICADA PELO SISTEMA
+        strokeColor: courierDrawerColor.stroke,
         strokeOpacity: 0.9,
         strokeWeight: 5,
       })

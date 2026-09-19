@@ -69,16 +69,16 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-blue-500 inline-block" />
-            <span className="text-slate-300">Em Rota (no mapa)</span>
+            <span className="flex items-center -space-x-1">
+              <span className="h-2.5 w-2.5 rounded-full bg-blue-500 inline-block ring-1 ring-white/40" />
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 inline-block ring-1 ring-white/40" />
+              <span className="h-2.5 w-2.5 rounded-full bg-orange-500 inline-block ring-1 ring-white/40" />
+            </span>
+            <span className="text-slate-300">Entregador &amp; Destino (mesma cor da rota)</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 inline-block" />
-            <span className="text-slate-300">Disponível (na lista)</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-orange-500 inline-block" />
-            <span className="text-slate-300">Destino de Entrega</span>
+            <span className="text-slate-300">Disponível</span>
           </span>
         </div>
       </div>
@@ -409,10 +409,10 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
 
                     {isLegendExpanded && (
                       <span className="border-l border-slate-700/80 pl-2 text-slate-400 flex items-center gap-1">
-                        <span className="flex h-3 w-3 items-center justify-center rounded-full bg-[#FF6B35] text-[8px] font-bold text-white">
+                        <span className="flex h-3 w-3 items-center justify-center rounded-full bg-emerald-500 text-[8px] font-bold text-white">
                           1
                         </span>
-                        <span>Parada</span>
+                        <span>Destino/Parada (cor do entregador)</span>
                       </span>
                     )}
                   </>

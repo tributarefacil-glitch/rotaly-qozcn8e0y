@@ -41,6 +41,7 @@ import { LatLngPoint, findNearestPointOnRoute } from '@/services/osrmRoutingServ
 import { DEVIATION_THRESHOLD_METERS } from '@/lib/geo'
 import { formatTimeInTz, formatDateInTz } from '@/lib/operationalWindow'
 import { getVehicleEmoji } from '@/components/LiveMap'
+import { getCourierRouteColor } from '@/lib/courierRouteColors'
 import {
   ActiveRouteCalculatedItem,
   ActiveRouteCourierData,
@@ -538,10 +539,13 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                       }`}
                     />
 
-                    {/* Fallback Vetorial Interativo com Ruas Reais OSRM, Linha Azul e Linha Vermelha de Desvio: ativo quando Google não renderizou ou falhou */}
+                    {/* Fallback Vetorial Interativo com Ruas Reais OSRM, Linha da Rota e Linha Vermelha de Desvio: ativo quando Google não renderizou ou falhou */}
                     {(!mapsLoaded || mapsError || drawerMapFailed || !drawerTilesLoaded) &&
                       (() => {
                         const cust = selectedOrder.expand?.customer_id
+                        const drawerCourierId =
+                          selectedOrder.courier_id || orderCourierInfo?.courier?.id
+                        const drawerCourierColor = getCourierRouteColor(drawerCourierId)
                         const baseLat = selectedOrder.start_base_lat
                           ? Number(selectedOrder.start_base_lat)
                           : cust?.lat
@@ -689,34 +693,33 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                                 </filter>
                               </defs>
 
-                              {/* LINHA AZUL: Trajeto Viário Indicado pelo Sistema */}
+                              {/* LINHA DA ROTA: Trajeto Viário Indicado pelo Sistema na cor fixa do entregador */}
                               {blueSvgPath && (
                                 <>
                                   {/* Traçado de fundo largo para contraste de rua */}
                                   <path
                                     d={blueSvgPath}
                                     fill="none"
-                                    stroke="#1E3A8A"
+                                    stroke="#0f172a"
                                     strokeWidth="4"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                     opacity="0.8"
                                   />
-                                  {/* Traçado principal azul brilhante */}
+                                  {/* Traçado principal na cor do entregador */}
                                   <path
                                     d={blueSvgPath}
                                     fill="none"
-                                    stroke="#2563EB"
+                                    stroke={drawerCourierColor.stroke}
                                     strokeWidth="2.5"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
-                                    filter="url(#blue-glow)"
                                   />
-                                  {/* Linha interna guia ciano */}
+                                  {/* Linha interna guia com brilho suave */}
                                   <path
                                     d={blueSvgPath}
                                     fill="none"
-                                    stroke="#60A5FA"
+                                    stroke={drawerCourierColor.inner}
                                     strokeWidth="0.8"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
@@ -822,8 +825,13 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                                     className={`h-7 w-7 rounded-full border-2 text-white flex items-center justify-center text-[13px] shadow-lg ${
                                       isDeviated
                                         ? 'bg-rose-600 border-rose-300 shadow-rose-500/50'
-                                        : 'bg-blue-600 border-blue-300 shadow-blue-500/50'
+                                        : 'border-white/80 shadow-md'
                                     }`}
+                                    style={
+                                      !isDeviated
+                                        ? { backgroundColor: drawerCourierColor.stroke }
+                                        : undefined
+                                    }
                                   >
                                     {getVehicleEmoji(orderCourierInfo.courier?.vehicle_type)}
                                   </div>
@@ -831,7 +839,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                                     className={`mt-0.5 px-1.5 py-0.2 rounded text-[8px] font-bold whitespace-nowrap shadow border ${
                                       isDeviated
                                         ? 'bg-rose-950/95 border-rose-500 text-rose-200'
-                                        : 'bg-blue-950/95 border-blue-500 text-blue-200'
+                                        : 'bg-slate-950/95 border-slate-700 text-slate-100'
                                     }`}
                                   >
                                     {orderCourierInfo.courier?.name
@@ -844,18 +852,31 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                                 </div>
                               )}
 
-                              {/* 3. Cliente Destino 🏁 com Badge de Ordem de entrega e nome completo */}
+                              {/* 3. Cliente Destino 🏁 com Badge de Ordem de entrega e mesma cor do entregador */}
                               <div
                                 style={{ left: `${clientPos.x}%`, top: `${clientPos.y}%` }}
                                 className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-auto"
                               >
                                 {typeof selectedOrder.sequence === 'number' &&
                                   selectedOrder.sequence > 0 && (
-                                    <span className="absolute -top-2 -right-2 z-10 flex h-3.5 min-w-3.5 px-1 items-center justify-center rounded-full bg-white text-[#FF6B35] text-[8px] font-black shadow border border-[#FF6B35]">
+                                    <span
+                                      className="absolute -top-2 -right-2 z-10 flex h-3.5 min-w-3.5 px-1 items-center justify-center rounded-full bg-white text-[8px] font-black shadow"
+                                      style={{
+                                        color: drawerCourierColor.stroke,
+                                        borderColor: drawerCourierColor.stroke,
+                                        borderWidth: '1px',
+                                      }}
+                                    >
                                       {selectedOrder.sequence}
                                     </span>
                                   )}
-                                <div className="h-6 w-6 rounded-full bg-orange-500/25 border-2 border-orange-400 text-orange-300 flex items-center justify-center text-[10px] shadow-lg shadow-orange-500/30">
+                                <div
+                                  className="h-6 w-6 rounded-full border-2 text-white flex items-center justify-center text-[10px] shadow-lg"
+                                  style={{
+                                    backgroundColor: drawerCourierColor.stroke,
+                                    borderColor: '#FFFFFF',
+                                  }}
+                                >
                                   🏁
                                 </div>
                                 <span className="mt-0.5 px-1.5 py-0.2 rounded bg-slate-900/95 border border-[#1E2B58] text-[8px] font-bold text-white whitespace-nowrap shadow max-w-[120px] truncate">
@@ -887,26 +908,25 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                       })()}
                   </div>
 
-                  {/* Legenda explicativa com as linhas AZUL e VERMELHA e símbolos no drawer */}
+                  {/* Legenda explicativa com as linhas da ROTA e DESVIO e símbolos no drawer */}
                   <div className="flex flex-wrap items-center justify-between text-[10px] text-slate-300 pt-2 border-t border-[#1E2B58] gap-2 font-sans">
                     <span className="flex items-center gap-1.5 font-medium">
                       <span className="h-1.5 w-4 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6] inline-block" />
-                      <span className="text-blue-300 font-bold">Linha Azul:</span> Rota Indicada
-                      (Ruas)
+                      <span className="text-blue-300 font-bold">Rota Indicada</span>
                     </span>
                     <span className="flex items-center gap-1.5 font-medium">
                       <span className="h-1.5 w-4 rounded-full bg-rose-500 shadow-[0_0_8px_#ef4444] inline-block" />
-                      <span className="text-rose-400 font-bold">Linha Vermelha:</span> Desvio
+                      <span className="text-rose-400 font-bold">Linha de Desvio</span> (&gt;600m)
                     </span>
                     <span className="flex items-center gap-1 text-slate-300">
                       <span>🛵 🚗 🚛 🚲</span>
-                      <span>Veículo</span>
+                      <span>Entregador</span>
                     </span>
                     <span className="flex items-center gap-1 text-slate-300">
-                      <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FF6B35] text-[8px] font-bold text-white">
+                      <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500 text-[8px] font-bold text-white">
                         1
                       </span>
-                      <span>Ordem &amp; Nome</span>
+                      <span>Cliente (cor do entregador)</span>
                     </span>
                   </div>
                 </div>

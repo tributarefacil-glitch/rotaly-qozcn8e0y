@@ -658,7 +658,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       )
     } else {
       const isTransit = item.type === 'order_transit'
-      const pinColor = item.pinColorOverride || (isTransit ? '#FF6B35' : '#0f172a')
+      // Quando associado a um entregador ou com pinColorOverride definida, usa a cor do entregador;
+      // caso contrário preserva o padrão histórico (#FF6B35 em trânsito sem entregador / #0f172a)
+      const pinColor =
+        item.pinColorOverride ||
+        (item.courier_id
+          ? getCourierRouteColor(item.courier_id).stroke
+          : isTransit
+            ? '#FF6B35'
+            : '#0f172a')
       return makeCustomerSvgIcon(
         item.customer_name,
         item.delivery_sequence,
