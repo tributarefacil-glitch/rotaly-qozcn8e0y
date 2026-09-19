@@ -3387,6 +3387,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         selectedCourier={selectedCourier}
         setSelectedCourier={setSelectedCourier}
         allCourierData={allCourierData}
+        locations={locations}
         appSettings={appSettings}
         fetchData={fetchData}
         onRefresh={onRefresh}

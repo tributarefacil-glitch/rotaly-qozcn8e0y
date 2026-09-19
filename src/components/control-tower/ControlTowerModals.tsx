@@ -36,12 +36,14 @@ import {
   ExternalLink,
   Sparkles,
 } from 'lucide-react'
-import { OrderRecord, UserRecord, AppSettingsRecord } from '@/types/delivery'
+import { OrderRecord, UserRecord, AppSettingsRecord, LocationRecord } from '@/types/delivery'
 import { LatLngPoint, findNearestPointOnRoute } from '@/services/osrmRoutingService'
 import { DEVIATION_THRESHOLD_METERS } from '@/lib/geo'
 import { formatTimeInTz, formatDateInTz } from '@/lib/operationalWindow'
 import { getVehicleEmoji } from '@/components/LiveMap'
 import { getCourierRouteColor } from '@/lib/courierRouteColors'
+import { reverseGeocodeCoordinates } from '@/lib/googleMaps'
+import { diagnoseCourierTelemetry } from '@/lib/courierTelemetryDiagnostics'
 import {
   ActiveRouteCalculatedItem,
   ActiveRouteCourierData,
@@ -87,6 +89,7 @@ interface ControlTowerModalsProps {
   selectedCourier: UserRecord | null
   setSelectedCourier: (courier: UserRecord | null) => void
   allCourierData: ActiveRouteCourierData[]
+  locations?: LocationRecord[]
   appSettings: AppSettingsRecord | null
   fetchData: () => void
   onRefresh?: () => void
@@ -128,12 +131,64 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
   selectedCourier,
   setSelectedCourier,
   allCourierData,
+  locations = [],
   appSettings,
   fetchData,
   onRefresh,
   toast,
   deliveryService,
 }) => {
+  // Estado local para armazenar geocodificação reversa do endereço atual do entregador selecionado
+  const [resolvedCourierAddress, setResolvedCourierAddress] = React.useState<string | null>(null)
+  const [isLoadingCourierAddress, setIsLoadingCourierAddress] = React.useState<boolean>(false)
+
+  // Disparar geocodificação reversa sempre que o entregador selecionado mudar ou sua coordenada atualizar
+  React.useEffect(() => {
+    if (!selectedCourier) {
+      setResolvedCourierAddress(null)
+      setIsLoadingCourierAddress(false)
+      return
+    }
+
+    const courierData = allCourierData.find((c) => c.courier.id === selectedCourier.id)
+    if (
+      !courierData ||
+      !courierData.hasValidCoords ||
+      typeof courierData.lat !== 'number' ||
+      typeof courierData.lng !== 'number'
+    ) {
+      setResolvedCourierAddress(null)
+      setIsLoadingCourierAddress(false)
+      return
+    }
+
+    let isCurrent = true
+    setIsLoadingCourierAddress(true)
+
+    reverseGeocodeCoordinates(courierData.lat, courierData.lng, { toleranceMeters: 50 })
+      .then((res) => {
+        if (!isCurrent) return
+        const formatted = res?.streetAndNumber
+          ? `${res.streetAndNumber}${res.neighborhood ? ` - ${res.neighborhood}` : ''}${res.city ? `, ${res.city}` : ''}`
+          : res?.formattedAddress ||
+            `Lat: ${courierData.lat.toFixed(5)}, Lng: ${courierData.lng.toFixed(5)}`
+        setResolvedCourierAddress(formatted)
+      })
+      .catch(() => {
+        if (!isCurrent) return
+        setResolvedCourierAddress(
+          `Lat: ${courierData.lat.toFixed(5)}, Lng: ${courierData.lng.toFixed(5)}`,
+        )
+      })
+      .finally(() => {
+        if (isCurrent) setIsLoadingCourierAddress(false)
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [selectedCourier?.id, allCourierData])
+
   return (
     <>
       {/* 5. DRAWER / SHEET DE DETALHE EM TEMPO REAL AO CLICAR NO CARD DO CLIENTE */}
@@ -1159,53 +1214,190 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
 
       {/* 6. MODAL DO ENTREGADOR (Ao clicar no entregador na lista lateral ou mapa) */}
       <Dialog open={!!selectedCourier} onOpenChange={(open) => !open && setSelectedCourier(null)}>
-        <DialogContent className="sm:max-w-md bg-[#0A1128] border border-[#1E2B58] text-slate-100">
+        <DialogContent className="sm:max-w-md bg-[#0A1128] border border-[#1E2B58] text-slate-100 max-h-[92vh] overflow-y-auto">
           {selectedCourier &&
             (() => {
               const data = allCourierData.find((c) => c.courier.id === selectedCourier.id)
               const nextCust = data?.nextOrder?.expand?.customer_id
+              const courierColor = getCourierRouteColor(selectedCourier.id)
+
+              // Diagnóstico avançado e honesto da telemetria GPS e tempo parado
+              const diag = diagnoseCourierTelemetry(
+                selectedCourier.id,
+                locations,
+                data?.lat,
+                data?.lng,
+                data?.speed,
+                data?.gps_status,
+                data?.gps_reason,
+                data?.location_timestamp,
+                data?.accuracy,
+                data?.offline_buffered,
+              )
+
+              // Endereço display
+              const addressDisplay = isLoadingCourierAddress
+                ? 'Localizando endereço via GPS...'
+                : resolvedCourierAddress ||
+                  (data?.hasValidCoords
+                    ? `${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}`
+                    : 'Aguardando primeiro sinal GPS')
 
               return (
                 <>
                   <DialogHeader>
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 bg-blue-500/20 border border-blue-500/40 rounded-full text-blue-400">
-                        {renderVehicleIcon(selectedCourier.vehicle_type)}
-                      </div>
-                      <div>
-                        <DialogTitle className="text-lg font-bold text-white font-heading">
-                          {selectedCourier.name || selectedCourier.email}
-                        </DialogTitle>
-                        <DialogDescription className="text-xs text-slate-400">
-                          {formatVehicle(selectedCourier.vehicle_type)} • Placa:{' '}
-                          {selectedCourier.vehicle_plate || 'Não informada'}
-                        </DialogDescription>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div
+                          style={{
+                            backgroundColor: `${courierColor.stroke}20`,
+                            borderColor: `${courierColor.stroke}60`,
+                            color: courierColor.stroke,
+                          }}
+                          className="p-2.5 border rounded-full relative"
+                        >
+                          {renderVehicleIcon(selectedCourier.vehicle_type)}
+                          <span
+                            style={{ backgroundColor: courierColor.stroke }}
+                            className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0A1128]"
+                            title={`Cor da rota: ${courierColor.name}`}
+                          />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <DialogTitle className="text-lg font-bold text-white font-heading">
+                              {selectedCourier.name || selectedCourier.email}
+                            </DialogTitle>
+                            <span
+                              style={{
+                                borderColor: `${courierColor.stroke}50`,
+                                color: courierColor.stroke,
+                              }}
+                              className="px-2 py-0.5 text-[10px] font-bold rounded-full border bg-slate-900/60"
+                            >
+                              Rota {courierColor.name}
+                            </span>
+                          </div>
+                          <DialogDescription className="text-xs text-slate-400 mt-0.5">
+                            {formatVehicle(selectedCourier.vehicle_type)} • Placa:{' '}
+                            {selectedCourier.vehicle_plate || 'Não informada'}
+                            {selectedCourier.vehicle_model
+                              ? ` • ${selectedCourier.vehicle_model}`
+                              : ''}
+                          </DialogDescription>
+                        </div>
                       </div>
                     </div>
                   </DialogHeader>
 
-                  <div className="space-y-4 py-2 text-xs">
-                    <div className="grid grid-cols-2 gap-2 bg-[#070D1E] p-3 rounded-xl border border-[#1E2B58]">
-                      <div>
-                        <span className="text-slate-400 block">Status Atual:</span>
-                        <span className="font-semibold text-white mt-0.5 inline-flex items-center gap-1.5">
-                          <span
-                            className={`h-2.5 w-2.5 rounded-full ${
-                              data?.statusColor === 'green'
-                                ? 'bg-emerald-400'
-                                : data?.statusColor === 'yellow'
-                                  ? 'bg-amber-400'
-                                  : 'bg-rose-500'
-                            }`}
-                          />
-                          {data?.statusLabel}
+                  <div className="space-y-3.5 py-1 text-xs">
+                    {/* CARD 1: DIAGNÓSTICO EM TEMPO REAL (GPS LIGADO/DESLIGADO & TEMPO PARADO / MOVIMENTO) */}
+                    <div className="rounded-xl bg-[#070D1E] p-3.5 border border-[#1E2B58] space-y-3">
+                      <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Compass className="h-3.5 w-3.5 text-[#60A5FA]" />
+                          Situação em Tempo Real
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          Último sinal: {diag.lastSignalFormatted}
                         </span>
                       </div>
-                      <div>
-                        <span className="text-slate-400 block">GPS (Lat / Lng):</span>
-                        <span className="font-mono text-slate-300">
-                          {data?.lat.toFixed(4)}, {data?.lng.toFixed(4)}
-                        </span>
+
+                      {/* BADGES DESTACADOS: ESTADO DO GPS E SITUAÇÃO DE MOVIMENTO */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {/* Estado do GPS */}
+                        <div
+                          className={`p-2.5 rounded-lg border ${diag.gpsBadgeColor.bg} ${diag.gpsBadgeColor.border} flex flex-col justify-between`}
+                        >
+                          <span className="text-[10px] text-slate-400 block uppercase font-bold">
+                            Sinal do GPS
+                          </span>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span
+                              className={`h-2.5 w-2.5 rounded-full shrink-0 ${diag.gpsBadgeColor.dot}`}
+                            />
+                            <span
+                              className={`font-bold text-xs leading-snug ${diag.gpsBadgeColor.text}`}
+                            >
+                              {diag.gpsBadgeLabel}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Movimento vs Parado */}
+                        <div
+                          className={`p-2.5 rounded-lg border flex flex-col justify-between ${
+                            diag.movementBadgeVariant === 'stopped'
+                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                              : diag.movementBadgeVariant === 'moving'
+                                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                                : 'bg-slate-800/40 border-slate-700 text-slate-400'
+                          }`}
+                        >
+                          <span className="text-[10px] text-slate-400 block uppercase font-bold">
+                            Deslocamento
+                          </span>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span
+                              className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                                diag.movementBadgeVariant === 'stopped'
+                                  ? 'bg-amber-400'
+                                  : diag.movementBadgeVariant === 'moving'
+                                    ? 'bg-emerald-400 animate-pulse'
+                                    : 'bg-slate-500'
+                              }`}
+                            />
+                            <span className="font-bold text-xs leading-snug">
+                              {diag.movementBadgeLabel}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Informações adicionais do sinal (Velocidade, Bateria, Acurácia) */}
+                      <div className="grid grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
+                        <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
+                          <span className="text-[9.5px] text-slate-400 block font-sans">
+                            Velocidade
+                          </span>
+                          <span className="font-bold text-white text-xs">{diag.speedKmh} km/h</span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
+                          <span className="text-[9.5px] text-slate-400 block font-sans">
+                            Bateria Celular
+                          </span>
+                          <span className="font-bold text-white text-xs">
+                            {typeof data?.battery_level === 'number' && data.battery_level > 0
+                              ? `🔋 ${Math.round(data.battery_level)}%`
+                              : '🔋 —'}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
+                          <span className="text-[9.5px] text-slate-400 block font-sans">
+                            Precisão GPS
+                          </span>
+                          <span className="font-bold text-white text-xs">
+                            {diag.accuracyMeters ? `±${Math.round(diag.accuracyMeters)}m` : 'Alta'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* LOCALIZAÇÃO ATUAL: ENDEREÇO REVERSO E COORDENADAS */}
+                      <div className="p-2.5 rounded-lg bg-[#0C152F] border border-slate-800 space-y-1">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="font-bold text-[#60A5FA] uppercase tracking-wider flex items-center gap-1 font-sans">
+                            <MapPin className="h-3 w-3 text-[#60A5FA]" />
+                            Endereço da Última Posição Conhecida
+                          </span>
+                          {data?.hasValidCoords && (
+                            <span className="font-mono text-slate-400">
+                              {data.lat.toFixed(4)}, {data.lng.toFixed(4)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-white text-xs leading-relaxed font-sans font-medium break-words">
+                          {addressDisplay}
+                        </p>
                       </div>
                     </div>
 
