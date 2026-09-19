@@ -40,6 +40,7 @@ export interface MapMarkerItem {
   courier_name?: string
   vehicle_type?: string
   delivery_sequence?: number
+  pinColorOverride?: string
   // Campos enriquecidos para exibição em hover / telemetria de entregador
   isDeviated?: boolean
   deviationMeters?: number
@@ -203,6 +204,9 @@ export interface RouteGeometryItem {
   courierPosition?: { lat: number; lng: number }
   isDeviated?: boolean
   isReturnLeg?: boolean
+  strokeColor?: string
+  innerColor?: string
+  courierId?: string
 }
 
 interface LiveMapProps {
@@ -260,6 +264,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         prevTitle?: string
         prevName?: string
         prevDev?: boolean
+        prevPinColor?: string
       }
     >
   >(new Map())
@@ -653,13 +658,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       )
     } else {
       const isTransit = item.type === 'order_transit'
+      const pinColor = item.pinColorOverride || (isTransit ? '#FF6B35' : '#0f172a')
       return makeCustomerSvgIcon(
         item.customer_name,
         item.delivery_sequence,
         isTransit,
         72,
         42,
-        '#0f172a',
+        pinColor,
         false,
       )
     }
@@ -722,12 +728,19 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       activePolylineKeys.add(baseKey)
 
       let existing = googlePolylineMapRef.current.get(baseKey)
+      const routeStroke =
+        r.strokeColor || (r.courierId ? getCourierRouteColor(r.courierId).stroke : '#2563EB')
+      const routeInner =
+        r.innerColor || (r.courierId ? getCourierRouteColor(r.courierId).inner : '#93C5FD')
+
       if (!existing) {
         if (r.isReturnLeg) {
           existing = new google.maps.Polyline({
             path: pathArray,
             geodesic: true,
-            strokeColor: '#60A5FA',
+            strokeColor:
+              r.strokeColor ||
+              (r.courierId ? getCourierRouteColor(r.courierId).returnLeg : '#60A5FA'),
             strokeOpacity: 0,
             strokeWeight: 4,
             icons: [
@@ -742,16 +755,51 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           existing = new google.maps.Polyline({
             path: pathArray,
             geodesic: true,
-            strokeColor: '#2563EB',
-            strokeOpacity: 0.9,
+            strokeColor: routeStroke,
+            strokeOpacity: 0.95,
             strokeWeight: 5,
             map: mapInstanceRef.current,
           })
         }
         googlePolylineMapRef.current.set(baseKey, existing)
       } else {
-        // Apenas atualizar o caminho se já existe (sem recriar)
+        // Apenas atualizar o caminho e cor se já existe (sem recriar)
         existing.setPath(pathArray)
+        try {
+          existing.setOptions({
+            strokeColor: r.isReturnLeg
+              ? r.strokeColor ||
+                (r.courierId ? getCourierRouteColor(r.courierId).returnLeg : '#60A5FA')
+              : routeStroke,
+          })
+        } catch {
+          /* safe ignore */
+        }
+      }
+
+      // Brilho interno para rotas forward (não return leg)
+      if (!r.isReturnLeg) {
+        const innerKey = `${baseKey}-inner`
+        activePolylineKeys.add(innerKey)
+        let existingInner = googlePolylineMapRef.current.get(innerKey)
+        if (!existingInner) {
+          existingInner = new google.maps.Polyline({
+            path: pathArray,
+            geodesic: true,
+            strokeColor: routeInner,
+            strokeOpacity: 0.85,
+            strokeWeight: 2,
+            map: mapInstanceRef.current,
+          })
+          googlePolylineMapRef.current.set(innerKey, existingInner)
+        } else {
+          existingInner.setPath(pathArray)
+          try {
+            existingInner.setOptions({ strokeColor: routeInner })
+          } catch {
+            /* safe ignore */
+          }
+        }
       }
 
       // Linha de desvio (vermelha)
@@ -905,12 +953,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           }
         }
 
-        // Atualizar ícone caso status, desvio, tipo ou sequência tenham mudado
+        // Atualizar ícone caso status, desvio, tipo, sequência ou cor do pin tenham mudado
         if (
           entry.prevType !== item.type ||
           entry.prevDev !== item.isDeviated ||
           entry.prevSeq !== item.delivery_sequence ||
-          entry.prevName !== item.customer_name
+          entry.prevName !== item.customer_name ||
+          entry.prevPinColor !== item.pinColorOverride
         ) {
           marker.setIcon(markerIcon)
         }
@@ -937,6 +986,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         entry.prevTitle = item.title
         entry.prevName = item.customer_name
         entry.prevDev = item.isDeviated
+        entry.prevPinColor = item.pinColorOverride
       } else {
         // Criar NOVO marcador apenas se não existir ainda no mapa
         const marker = new google.maps.Marker({
@@ -1018,6 +1068,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           prevTitle: item.title,
           prevName: item.customer_name,
           prevDev: item.isDeviated,
+          prevPinColor: item.pinColorOverride,
         })
       }
     })
@@ -1176,23 +1227,23 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               return (
                 <React.Fragment key={`route-${i}`}>
                   {r.isReturnLeg ? (
-                    /* LINHA AZUL CLARO TRACEJADA: Volta à Base */
+                    /* LINHA CLARA TRACEJADA: Volta à Base */
                     <path
                       d={pathStr}
                       fill="none"
-                      stroke="#60A5FA"
+                      stroke={r.strokeColor || '#60A5FA'}
                       strokeWidth="2.5"
                       strokeDasharray="4 4"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
                   ) : (
-                    /* LINHA AZUL: Trajeto de ruas indicado pelo sistema */
+                    /* LINHA COLORIDA: Trajeto de ruas indicado pelo sistema */
                     <>
                       <path
                         d={pathStr}
                         fill="none"
-                        stroke="#2563EB"
+                        stroke={r.strokeColor || '#2563EB'}
                         strokeWidth="2.5"
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -1201,7 +1252,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                       <path
                         d={pathStr}
                         fill="none"
-                        stroke="#93C5FD"
+                        stroke={r.innerColor || '#93C5FD'}
                         strokeWidth="0.8"
                         strokeLinecap="round"
                       />
@@ -1282,6 +1333,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                       )}
 
                     <div
+                      style={
+                        m.type !== 'courier' && m.pinColorOverride
+                          ? { backgroundColor: m.pinColorOverride, borderColor: m.pinColorOverride }
+                          : undefined
+                      }
                       className={`flex items-center justify-center p-1.5 rounded-full shadow-brand border-2 transition-all ${
                         m.type === 'courier'
                           ? m.isDeviated
@@ -1289,11 +1345,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                             : m.isUnexpectedStop
                               ? 'bg-[#F59E0B] border-amber-200 text-white ring-2 ring-amber-500/50 text-sm'
                               : 'bg-[#0052CC] border-blue-200 text-white ring-2 ring-[#0052CC]/50 text-sm'
-                          : m.type === 'order_transit'
-                            ? 'bg-[#0f172a] border-slate-700 text-white shadow-md'
-                            : m.type === 'order_delivered'
-                              ? 'bg-[#00AA44] border-emerald-200 text-white'
-                              : 'bg-[#0f172a] border-slate-700 text-white shadow-md'
+                          : m.pinColorOverride
+                            ? 'text-white shadow-md'
+                            : m.type === 'order_transit'
+                              ? 'bg-[#0f172a] border-slate-700 text-white shadow-md'
+                              : m.type === 'order_delivered'
+                                ? 'bg-[#00AA44] border-emerald-200 text-white'
+                                : 'bg-[#0f172a] border-slate-700 text-white shadow-md'
                       }`}
                     >
                       {m.type === 'courier' ? (
@@ -1301,7 +1359,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                           {getVehicleEmoji(m.vehicle_type)}
                         </span>
                       ) : (
-                        <MapPin className="h-4 w-4 fill-white text-[#0f172a]" />
+                        <MapPin className="h-4 w-4 fill-white text-current" />
                       )}
                     </div>
                   </div>

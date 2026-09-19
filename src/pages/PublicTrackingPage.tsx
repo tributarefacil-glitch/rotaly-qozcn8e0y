@@ -21,6 +21,7 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { LiveMap, type MapMarkerItem, type RouteGeometryItem } from '@/components/LiveMap'
+import { getCourierRouteColor } from '@/lib/courierRouteColors'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
 import { fetchStreetRoute, distanceMeters, type LatLngPoint } from '@/services/osrmRoutingService'
@@ -272,6 +273,11 @@ export default function PublicTrackingPage() {
       let totalDistanceMeters = 0
       const routeLineSegments: RouteGeometryItem[] = []
 
+      const activeCourierId = order?.courier_id || courier?.id
+      const isRouteActive = order?.status === 'in_transit' && !!courierLocation?.lat
+      const courierColorTheme =
+        isRouteActive && activeCourierId ? getCourierRouteColor(activeCourierId) : null
+
       for (let i = 0; i < waypoints.length - 1; i++) {
         const fromPoint = waypoints[i]
         const toPoint = waypoints[i + 1]
@@ -287,6 +293,9 @@ export default function PublicTrackingPage() {
             origin: fromPoint,
             destination: toPoint,
             streetCoordinates: leg.coordinates,
+            strokeColor: courierColorTheme?.stroke,
+            innerColor: courierColorTheme?.inner,
+            courierId: activeCourierId,
           })
         } catch (err) {
           // Fallback por distância em linha reta caso serviço viário falhe
@@ -299,6 +308,9 @@ export default function PublicTrackingPage() {
             origin: fromPoint,
             destination: toPoint,
             streetCoordinates: [fromPoint, toPoint],
+            strokeColor: courierColorTheme?.stroke,
+            innerColor: courierColorTheme?.inner,
+            courierId: activeCourierId,
           })
         }
       }
@@ -334,9 +346,14 @@ export default function PublicTrackingPage() {
     publicRouteData,
   ])
 
-  // Map markers: destination (pin preto do cliente) + courier current location
+  // Map markers: destination (pin do cliente na cor do entregador quando ativo) + courier current location
   const mapMarkers: MapMarkerItem[] = useMemo(() => {
     const list: MapMarkerItem[] = []
+
+    const activeCourierId = order?.courier_id || courier?.id
+    const isRouteActive = order?.status === 'in_transit' && !!courierLocation?.lat
+    const courierColorTheme =
+      isRouteActive && activeCourierId ? getCourierRouteColor(activeCourierId) : null
 
     if (customer && customer.lat && customer.lng) {
       list.push({
@@ -353,6 +370,7 @@ export default function PublicTrackingPage() {
           ? estimatedArrivalDate.toISOString()
           : order?.estimated_arrival,
         tracking_code: order?.tracking_code,
+        pinColorOverride: courierColorTheme ? courierColorTheme.stroke : undefined,
       })
     }
 
