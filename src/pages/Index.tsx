@@ -140,7 +140,7 @@ export default function Index() {
   // Handle opening a specific profile card
   const handleSelectProfile = (p: 'admin' | 'seller' | 'courier') => {
     setSelectedProfile(p)
-    setEmail('')
+    setEmail(profileConfig[p].defaultEmail || '')
     setPassword('')
     setLoginError(null)
     setMobileMenuOpen(false)
@@ -199,8 +199,10 @@ export default function Index() {
       redirectByRoleAndStatus(loggedUser.role || selectedProfile || 'seller', loggedUser.status)
     } catch (err: unknown) {
       console.error('Login error:', err)
-      const msg =
-        getErrorMessage(err) || 'E-mail ou senha inválidos. Verifique suas credenciais de acesso.'
+      let msg = getErrorMessage(err)
+      if (!msg || msg.toLowerCase().includes('something went wrong')) {
+        msg = 'E-mail ou senha inválidos. Verifique suas credenciais de acesso.'
+      }
       setLoginError(msg)
       toast.error(msg)
     } finally {
