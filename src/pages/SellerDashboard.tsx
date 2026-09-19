@@ -304,7 +304,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   })
 
   useRealtime<LocationRecord>('locations', (e) => {
-    if (e.action === 'create') {
+    if (e.action === 'create' || e.action === 'update') {
       setLocations((prev) => [e.record, ...prev.filter((l) => l.user_id !== e.record.user_id)])
     }
   })

@@ -8,6 +8,7 @@
 
 import { safeSetMap, safeSetPath } from '@/lib/safeMapOps'
 import { makeCourierSvgIcon, makeCustomerSvgIcon } from '@/components/LiveMap'
+import { getCourierRouteColor } from '@/lib/courierRouteColors'
 
 export interface CourierActiveLines {
   main: any
@@ -106,11 +107,16 @@ export function safelyClearCourierLines(lines?: CourierActiveLines | null): void
 /**
  * Cria polilinha forward principal
  */
-function createMainPolyline(winGoogle: any, map: any, path: Array<{ lat: number; lng: number }>) {
+function createMainPolyline(
+  winGoogle: any,
+  map: any,
+  path: Array<{ lat: number; lng: number }>,
+  strokeColor = '#2563EB',
+) {
   return new winGoogle.maps.Polyline({
     path,
     geodesic: true,
-    strokeColor: '#2563EB',
+    strokeColor,
     strokeOpacity: 0.95,
     strokeWeight: 5,
     map,
@@ -120,11 +126,16 @@ function createMainPolyline(winGoogle: any, map: any, path: Array<{ lat: number;
 /**
  * Cria polilinha forward interna (brilho)
  */
-function createInnerPolyline(winGoogle: any, map: any, path: Array<{ lat: number; lng: number }>) {
+function createInnerPolyline(
+  winGoogle: any,
+  map: any,
+  path: Array<{ lat: number; lng: number }>,
+  innerColor = '#93C5FD',
+) {
   return new winGoogle.maps.Polyline({
     path,
     geodesic: true,
-    strokeColor: '#93C5FD',
+    strokeColor: innerColor,
     strokeOpacity: 0.85,
     strokeWeight: 2,
     map,
@@ -134,11 +145,16 @@ function createInnerPolyline(winGoogle: any, map: any, path: Array<{ lat: number
 /**
  * Cria polilinha tracejada de retorno à base
  */
-function createReturnPolyline(winGoogle: any, map: any, path: Array<{ lat: number; lng: number }>) {
+function createReturnPolyline(
+  winGoogle: any,
+  map: any,
+  path: Array<{ lat: number; lng: number }>,
+  returnLegColor = '#60A5FA',
+) {
   return new winGoogle.maps.Polyline({
     path,
     geodesic: true,
-    strokeColor: '#60A5FA',
+    strokeColor: returnLegColor,
     strokeOpacity: 0,
     strokeWeight: 4,
     icons: [
@@ -207,6 +223,7 @@ export function syncCourierRouteLines({
 }: SyncCourierRouteLinesParams): void {
   if (!winGoogle?.maps || !map) return
 
+  const courierColor = getCourierRouteColor(courierId)
   let lines = linesMap.get(courierId)
 
   if (lines) {
@@ -214,17 +231,27 @@ export function syncCourierRouteLines({
     if (hasForward) {
       // Se lines existia mas main ou inner eram null (ex.: entregador estava apenas retornando à base e ganhou nova entrega)
       if (!lines.main) {
-        lines.main = createMainPolyline(winGoogle, map, rawFPath)
+        lines.main = createMainPolyline(winGoogle, map, rawFPath, courierColor.stroke)
       } else {
         safeSetMap(lines.main, map)
         safeSetPath(lines.main, rawFPath)
+        try {
+          lines.main.setOptions({ strokeColor: courierColor.stroke })
+        } catch {
+          /* safe ignore */
+        }
       }
 
       if (!lines.inner) {
-        lines.inner = createInnerPolyline(winGoogle, map, rawFPath)
+        lines.inner = createInnerPolyline(winGoogle, map, rawFPath, courierColor.inner)
       } else {
         safeSetMap(lines.inner, map)
         safeSetPath(lines.inner, rawFPath)
+        try {
+          lines.inner.setOptions({ strokeColor: courierColor.inner })
+        } catch {
+          /* safe ignore */
+        }
       }
 
       if (bounds) {
@@ -238,10 +265,15 @@ export function syncCourierRouteLines({
     // 2. RETURN LEG
     if (hasReturn) {
       if (!lines.returnLeg) {
-        lines.returnLeg = createReturnPolyline(winGoogle, map, rawRetPath)
+        lines.returnLeg = createReturnPolyline(winGoogle, map, rawRetPath, courierColor.returnLeg)
       } else {
         safeSetMap(lines.returnLeg, map)
         safeSetPath(lines.returnLeg, rawRetPath)
+        try {
+          lines.returnLeg.setOptions({ strokeColor: courierColor.returnLeg })
+        } catch {
+          /* safe ignore */
+        }
       }
       if (bounds) {
         rawRetPath.forEach((p) => bounds.extend(p))
@@ -250,7 +282,7 @@ export function syncCourierRouteLines({
       safeSetMap(lines.returnLeg, null)
     }
 
-    // 3. DEVIATION LINE
+    // 3. DEVIATION LINE — Linha de desvio PERMANECE vermelha #EF4444 (regra blindada >600m)
     if (hasDev) {
       if (!lines.dev) {
         lines.dev = createDevPolyline(winGoogle, map, rawDevPath)
@@ -267,8 +299,8 @@ export function syncCourierRouteLines({
     let innerPolyline: any = null
 
     if (hasForward) {
-      mainPolyline = createMainPolyline(winGoogle, map, rawFPath)
-      innerPolyline = createInnerPolyline(winGoogle, map, rawFPath)
+      mainPolyline = createMainPolyline(winGoogle, map, rawFPath, courierColor.stroke)
+      innerPolyline = createInnerPolyline(winGoogle, map, rawFPath, courierColor.inner)
       if (bounds) {
         rawFPath.forEach((p) => bounds.extend(p))
       }
@@ -276,7 +308,7 @@ export function syncCourierRouteLines({
 
     let returnPolyline: any = null
     if (hasReturn) {
-      returnPolyline = createReturnPolyline(winGoogle, map, rawRetPath)
+      returnPolyline = createReturnPolyline(winGoogle, map, rawRetPath, courierColor.returnLeg)
       if (bounds) {
         rawRetPath.forEach((p) => bounds.extend(p))
       }

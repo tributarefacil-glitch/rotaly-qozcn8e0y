@@ -2,6 +2,7 @@ import React from 'react'
 import { Activity, RefreshCw, AlertOctagon, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { LiveMap, MapMarkerItem, getVehicleEmoji } from '@/components/LiveMap'
+import { getCourierRouteColor } from '@/lib/courierRouteColors'
 import { UserRecord, OrderRecord } from '@/types/delivery'
 import { parseSafeTimestamp, formatTimeInTz } from '@/lib/operationalWindow'
 import { ActiveRouteCourierData, ActiveRouteCalculatedItem, ControlTowerMetrics } from './utils'
@@ -155,6 +156,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                         const shift = rInfo?.shiftMetrics
                         const courierName = item.courier.name || item.courier.email || 'Entregador'
                         const vehicleEmoji = getVehicleEmoji(item.vehicle)
+                        const courierColor = getCourierRouteColor(item.courier.id)
 
                         return (
                           <button
@@ -165,7 +167,12 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                             title="Clique para ver detalhes do entregador"
                           >
                             <div className="flex items-center justify-between gap-1">
-                              <span className="font-bold text-white text-[11px] truncate flex items-center gap-1">
+                              <span className="font-bold text-white text-[11px] truncate flex items-center gap-1.5">
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full shrink-0 ring-1 ring-white/30"
+                                  style={{ backgroundColor: courierColor.stroke }}
+                                  title={`Cor da rota: ${courierColor.name}`}
+                                />
                                 <span>{vehicleEmoji}</span>
                                 <span className="truncate">{courierName}</span>
                               </span>
@@ -366,9 +373,16 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                 ) : (
                   <>
                     <div className="flex items-center gap-2">
-                      <span className="flex items-center gap-1 font-medium text-blue-300">
-                        <span className="h-1.5 w-3 rounded-full bg-blue-600 inline-block" />
-                        Rota
+                      <span className="flex items-center gap-1.5 font-medium text-blue-300">
+                        <span className="flex items-center -space-x-1">
+                          <span className="h-2 w-2 rounded-full bg-[#2563EB] inline-block ring-1 ring-[#0A1128]" />
+                          <span className="h-2 w-2 rounded-full bg-[#EA580C] inline-block ring-1 ring-[#0A1128]" />
+                          <span className="h-2 w-2 rounded-full bg-[#7C3AED] inline-block ring-1 ring-[#0A1128]" />
+                          <span className="h-2 w-2 rounded-full bg-[#059669] inline-block ring-1 ring-[#0A1128]" />
+                        </span>
+                        <span className="text-[9.5px] font-semibold text-slate-200">
+                          Rota — cor por entregador
+                        </span>
                       </span>
                       <span className="flex items-center gap-1 font-medium text-sky-400 border-l border-slate-700/80 pl-2">
                         <span className="h-1.5 w-3 rounded-full bg-[#60A5FA] border border-dashed border-[#2563EB] inline-block" />
@@ -486,6 +500,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                         const shift = rInfo?.shiftMetrics
                         const courierName = item.courier.name || item.courier.email || 'Entregador'
                         const vehicleEmoji = getVehicleEmoji(item.vehicle)
+                        const courierColor = getCourierRouteColor(item.courier.id)
 
                         return (
                           <button
@@ -496,7 +511,12 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                             title="Clique para ver detalhes do entregador"
                           >
                             <div className="flex items-center justify-between gap-1">
-                              <span className="font-bold text-white text-[11px] truncate flex items-center gap-1">
+                              <span className="font-bold text-white text-[11px] truncate flex items-center gap-1.5">
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full shrink-0 ring-1 ring-white/30"
+                                  style={{ backgroundColor: courierColor.stroke }}
+                                  title={`Cor da rota: ${courierColor.name}`}
+                                />
                                 <span>{vehicleEmoji}</span>
                                 <span className="truncate">{courierName}</span>
                               </span>

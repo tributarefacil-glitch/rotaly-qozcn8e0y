@@ -68,6 +68,7 @@ import {
   makeCourierSvgIcon,
   makeCustomerSvgIcon,
 } from '@/components/LiveMap'
+import { getCourierRouteColor } from '@/lib/courierRouteColors'
 import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
 import {
@@ -678,6 +679,50 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             }
             return [newLoc, ...prev]
           })
+          // Atualização imediata do pin no mapa nativo para movimento em tempo real instantâneo
+          if (
+            newLoc.user_id &&
+            typeof newLoc.lat === 'number' &&
+            typeof newLoc.lng === 'number' &&
+            !isNaN(newLoc.lat) &&
+            !isNaN(newLoc.lng)
+          ) {
+            const existingMarker = courierMarkersMapRef.current.get(newLoc.user_id)
+            if (existingMarker) {
+              const prevPos = existingMarker.getPosition()
+              if (prevPos) {
+                const sLat = prevPos.lat()
+                const sLng = prevPos.lng()
+                const dLat = newLoc.lat - sLat
+                const dLng = newLoc.lng - sLng
+                if (Math.abs(dLat) > 0.00001 || Math.abs(dLng) > 0.00001) {
+                  const prevAnim = courierAnimFramesRef.current.get(newLoc.user_id)
+                  if (prevAnim) cancelAnimationFrame(prevAnim)
+                  const startT = performance.now()
+                  const dur = 700
+                  const step = (now: number) => {
+                    const el = now - startT
+                    const prog = Math.min(1, el / dur)
+                    existingMarker.setPosition({
+                      lat: sLat + dLat * prog,
+                      lng: sLng + dLng * prog,
+                    })
+                    if (prog < 1) {
+                      const req = requestAnimationFrame(step)
+                      courierAnimFramesRef.current.set(newLoc.user_id, req)
+                    } else {
+                      existingMarker.setPosition({ lat: newLoc.lat, lng: newLoc.lng })
+                      courierAnimFramesRef.current.delete(newLoc.user_id)
+                    }
+                  }
+                  const req = requestAnimationFrame(step)
+                  courierAnimFramesRef.current.set(newLoc.user_id, req)
+                }
+              } else {
+                existingMarker.setPosition({ lat: newLoc.lat, lng: newLoc.lng })
+              }
+            }
+          }
           setLastUpdated(new Date())
         }
       })
@@ -1621,12 +1666,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
 
     if (activeRouteCouriers.length > 0) {
-      // Debounce de ~800ms no gatilho do efeito para evitar re-cálculos frenéticos em rajada de GPS
+      // Debounce reduzido de ~200ms para resposta ágil sem re-cálculos frenéticos
       debounceTimer = setTimeout(() => {
         if (isCurrent) {
           computeActiveRoutes()
         }
-      }, 800)
+      }, 200)
     } else {
       setActiveRoutesData([])
       notifiedEventsRef.current.clear()
@@ -1888,6 +1933,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             ]
           : []
 
+        const courierColor = getCourierRouteColor(cId)
         let lines = activePolylinesMapRef.current.get(cId)
 
         if (lines) {
@@ -1900,7 +1946,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               lines.main = new win.google.maps.Polyline({
                 path: rawFPath,
                 geodesic: true,
-                strokeColor: '#2563EB',
+                strokeColor: courierColor.stroke,
                 strokeOpacity: 0.95,
                 strokeWeight: 5,
                 map,
@@ -1908,7 +1954,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               lines.inner = new win.google.maps.Polyline({
                 path: rawFPath,
                 geodesic: true,
-                strokeColor: '#93C5FD',
+                strokeColor: courierColor.inner,
                 strokeOpacity: 0.85,
                 strokeWeight: 2,
                 map,
@@ -1916,8 +1962,18 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             } else {
               lines.main?.setMap(map)
               lines.main.setPath(rawFPath)
+              try {
+                lines.main.setOptions({ strokeColor: courierColor.stroke })
+              } catch {
+                /* safe ignore */
+              }
               lines.inner?.setMap(map)
               lines.inner.setPath(rawFPath)
+              try {
+                lines.inner.setOptions({ strokeColor: courierColor.inner })
+              } catch {
+                /* safe ignore */
+              }
             }
             fPoints.forEach((p: any) => bounds.extend(p))
             hasCoords = true
@@ -1931,7 +1987,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               lines.returnLeg = new win.google.maps.Polyline({
                 path: rawRetPath,
                 geodesic: true,
-                strokeColor: '#60A5FA',
+                strokeColor: courierColor.returnLeg,
                 strokeOpacity: 0,
                 strokeWeight: 4,
                 icons: [
@@ -1945,6 +2001,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             } else {
               lines.returnLeg?.setMap(map)
               lines.returnLeg.setPath(rawRetPath)
+              try {
+                lines.returnLeg.setOptions({ strokeColor: courierColor.returnLeg })
+              } catch {
+                /* safe ignore */
+              }
             }
             retPoints.forEach((p: any) => bounds.extend(p))
           } else if (lines.returnLeg) {
@@ -1984,7 +2045,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             mainPolyline = new win.google.maps.Polyline({
               path: rawFPath,
               geodesic: true,
-              strokeColor: '#2563EB',
+              strokeColor: courierColor.stroke,
               strokeOpacity: 0.95,
               strokeWeight: 5,
               map,
@@ -1992,7 +2053,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             innerPolyline = new win.google.maps.Polyline({
               path: rawFPath,
               geodesic: true,
-              strokeColor: '#93C5FD',
+              strokeColor: courierColor.inner,
               strokeOpacity: 0.85,
               strokeWeight: 2,
               map,
@@ -2006,7 +2067,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             returnPolyline = new win.google.maps.Polyline({
               path: rawRetPath,
               geodesic: true,
-              strokeColor: '#60A5FA',
+              strokeColor: courierColor.returnLeg,
               strokeOpacity: 0,
               strokeWeight: 4,
               icons: [
@@ -2220,18 +2281,19 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         bounds.extend(targetPos)
         hasCoords = true
 
+        const courierColor = getCourierRouteColor(item.courier.id)
         const routeInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
         const isDeviated = routeInfo?.isDeviated ?? false
         const isStoppedOut = routeInfo?.isUnexpectedStop ?? false
 
-        // Cor do marcador do entregador: destaque vermelho para desvio, âmbar para parada fora do local
+        // Cor do marcador do entregador: destaque vermelho para desvio, âmbar para parada fora do local, ou cor estável do entregador
         const pinColor = isDeviated
           ? '#EF4444'
           : isStoppedOut
             ? '#F59E0B'
             : item.statusColor === 'red'
               ? '#EF4444'
-              : '#0052CC'
+              : courierColor.stroke
 
         const statusTag = isDeviated
           ? `⚠️ [DESVIO DETECTADO: ${routeInfo?.deviationMeters || 0}m]`
@@ -2261,20 +2323,19 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             const deltaLat = targetPos.lat - startLat
             const deltaLng = targetPos.lng - startLng
 
-            // Se houve mudança de posição significativa (> 0.00001 graus), animar suavemente
+            // Se houve mudança de posição significativa (> 0.00001 graus), animar suave e rápido (~700ms)
             if (Math.abs(deltaLat) > 0.00001 || Math.abs(deltaLng) > 0.00001) {
               const prevAnim = courierAnimFramesRef.current.get(item.courier.id)
               if (prevAnim) cancelAnimationFrame(prevAnim)
 
               const animStartTime = performance.now()
-              const duration = 2500 // 2.5s animação suave
+              const duration = 700 // 700ms para resposta em tempo real
 
               const step = (now: number) => {
                 const elapsed = now - animStartTime
                 const progress = Math.min(1, elapsed / duration)
-                // Curva de interpolação ease-in-out suave
-                const ease =
-                  progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress
+                // Easing linear/leve
+                const ease = progress
 
                 const curLat = startLat + deltaLat * ease
                 const curLng = startLng + deltaLng * ease

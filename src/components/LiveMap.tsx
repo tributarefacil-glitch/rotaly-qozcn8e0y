@@ -21,6 +21,7 @@ import {
 } from '@/lib/googleMaps'
 import { parseSafeTimestamp } from '@/lib/operationalWindow'
 import { safeSetMap } from '@/lib/safeMapOps'
+import { getCourierRouteColor } from '@/lib/courierRouteColors'
 
 export interface MapMarkerItem {
   id: string
@@ -631,7 +632,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
   const getMarkerIcon = (item: MapMarkerItem) => {
     if (item.type === 'courier') {
-      const pinColor = item.isDeviated ? '#EF4444' : item.isUnexpectedStop ? '#F59E0B' : '#0052CC'
+      const courierId = item.courier_id || item.id.replace('courier-', '')
+      const courierColor = getCourierRouteColor(courierId)
+      const defaultPinColor = courierColor.stroke
+      const pinColor = item.isDeviated
+        ? '#EF4444'
+        : item.isUnexpectedStop
+          ? '#F59E0B'
+          : defaultPinColor
       return makeCourierSvgIcon(item.vehicle_type, pinColor)
     } else if (item.type === 'order_delivered') {
       return makeCustomerSvgIcon(
@@ -858,13 +866,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               if (prevAnim) cancelAnimationFrame(prevAnim)
 
               const animStartTime = performance.now()
-              const duration = 2500
+              const duration = 700 // Animação rápida de 700ms para movimento em tempo real
 
               const step = (now: number) => {
                 const elapsed = now - animStartTime
                 const progress = Math.min(1, elapsed / duration)
-                const ease =
-                  progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress
+                // Interpolação suave e ágil
+                const ease = progress
 
                 const curLat = startLat + deltaLat * ease
                 const curLng = startLng + deltaLng * ease
@@ -1236,7 +1244,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                     left: `${clampedX}%`,
                     top: `${clampedY}%`,
                     transitionProperty: 'left, top, transform',
-                    transitionDuration: m.type === 'courier' ? '2500ms' : '300ms',
+                    transitionDuration: m.type === 'courier' ? '700ms' : '300ms',
                     transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
                   }}
                   className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group ${
