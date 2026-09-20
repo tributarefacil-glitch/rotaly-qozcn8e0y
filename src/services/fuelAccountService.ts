@@ -22,7 +22,8 @@ export interface UnifiedCourierFuelAccount {
   balance: number
   advanceCount: number
   deliveriesCount: number
-  calculationSource: 'odometro' | 'gps' | 'viario'
+  advances?: FuelAdvanceRecord[]
+  calculationSource: 'odometro' | 'gps' | 'historico_viario'
   metrics: CourierFuelCalculationResult
 }
 
@@ -241,6 +242,9 @@ export class FuelAccountService {
     const totalSpent = isBicycle ? 0 : metrics.totalSpent
     const balance = metrics.balance
 
+    // Filtra adiantamentos específicos deste entregador
+    const courierAdvances = advances.filter((a) => a && a.courier_id === courier.id)
+
     return {
       courier,
       totalAdvances: metrics.totalAdvances,
@@ -249,6 +253,7 @@ export class FuelAccountService {
       balance,
       advanceCount: metrics.advanceCount,
       deliveriesCount: metrics.deliveriesCount,
+      advances: courierAdvances,
       calculationSource: metrics.calculationSource,
       metrics,
     }

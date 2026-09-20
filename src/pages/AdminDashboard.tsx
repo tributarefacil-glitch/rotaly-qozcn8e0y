@@ -1179,7 +1179,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       return []
     }
     return couriers.map((courier) => {
-      const account = fuelAccountService.calculateAccountForCourier({
+      return fuelAccountService.calculateAccountForCourier({
         courier,
         advances: fuelAdvances,
         orders: activeFuelOrdersPool,
@@ -1188,16 +1188,6 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         offRouteEvents,
         periodFilter: fuelPeriodFilter,
       })
-      return {
-        courier: account.courier,
-        totalAdvances: account.totalAdvances,
-        totalRouteKm: account.totalRouteKm,
-        totalSpent: account.totalSpent,
-        balance: account.balance,
-        advanceCount: account.advanceCount,
-        deliveriesCount: account.deliveriesCount,
-        calculationSource: account.calculationSource,
-      }
     })
   }, [
     isFuelViewActive,

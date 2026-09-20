@@ -24,7 +24,7 @@ import type {
   CourierFuelAccount,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
-import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
+import { fuelAccountService } from '@/services/fuelAccountService'
 import { formatPbTimestamp } from '@/lib/operationalWindow'
 import { CourierFuelSummaryCard } from '@/components/CourierFuelSummaryCard'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
@@ -144,35 +144,36 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   )
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
 
-  // 1. Calcular métricas de cada entregador usando o mesmo motor puro do Admin/App
+  // 1. Calcular métricas de cada entregador usando o MESMO fuelAccountService unificado (/admin e /seller)
   const calculatedAccounts = useMemo(() => {
     return couriers.map((courier) => {
-      const metrics = calculateCourierFuelMetrics({
+      const unifiedAccount = fuelAccountService.calculateAccountForCourier({
         courier,
         advances: fuelAdvances,
         orders: activeFuelOrdersPool,
+        settings,
         locations,
         offRouteEvents,
-        settings,
         periodFilter: fuelPeriodFilter,
       })
 
-      const fuelAccount: CourierFuelAccount =
-        metrics.fuelAccount ||
-        deliveryService.getCourierFuelAccount(
-          courier,
-          fuelAdvances,
-          activeFuelOrdersPool,
-          settings,
-          fuelPeriodFilter,
-          locations,
-          offRouteEvents,
-        )
+      const fuelAccount: CourierFuelAccount = {
+        courier: unifiedAccount.courier,
+        totalAdvances: unifiedAccount.totalAdvances,
+        totalRouteKm: unifiedAccount.totalRouteKm,
+        totalSpent: unifiedAccount.totalSpent,
+        balance: unifiedAccount.balance,
+        advanceCount: unifiedAccount.advanceCount,
+        deliveriesCount: unifiedAccount.deliveriesCount,
+        advances: unifiedAccount.advances,
+        calculationSource: unifiedAccount.calculationSource,
+      }
 
       return {
-        courier,
-        metrics,
+        courier: unifiedAccount.courier,
+        metrics: unifiedAccount.metrics,
         fuelAccount,
+        unifiedAccount,
       }
     })
   }, [
