@@ -18,7 +18,12 @@ export const STORAGE_KEY = 'rotaly_active_empresa_id'
 export interface ResolvedCompany {
   id: string
   name: string
-  source: 'master_selection' | 'master_default' | 'membro_empresa' | 'fallback_matriz'
+  source:
+    | 'master_selection'
+    | 'master_default'
+    | 'membro_empresa'
+    | 'fallback_matriz'
+    | 'single_company_matriz'
   memberId?: string
   role?: string
   plano?: string

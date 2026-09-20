@@ -51,6 +51,104 @@ export const deliveryService = {
     return pb.collection<EmpresaRecord>('empresas').update(id, data)
   },
 
+  /**
+   * Alternar status de ativação da empresa (Bloquear / Desbloquear)
+   * Usa o endpoint dedicado do backend com auditoria, ou fallback para update direto.
+   */
+  async toggleEmpresaAtiva(
+    id: string,
+    ativa?: boolean,
+  ): Promise<{ success: boolean; ativa: boolean; message: string }> {
+    if (id === this.MATRIZ_EMPRESA_ID && ativa === false) {
+      throw new Error('A empresa Matriz Principal não pode ser desativada/bloqueada.')
+    }
+
+    try {
+      const res = await pb.send<{ success: boolean; ativa: boolean; message: string }>(
+        `/backend/v1/companies/${id}/toggle-status`,
+        {
+          method: 'POST',
+          body: typeof ativa === 'boolean' ? { ativa } : {},
+        },
+      )
+      return res
+    } catch {
+      // Fallback direto via SDK
+      let targetStatus = ativa
+      if (typeof targetStatus !== 'boolean') {
+        const current = await this.getEmpresaById(id)
+        targetStatus = !(current.ativa ?? true)
+      }
+      const updated = await this.updateEmpresa(id, { ativa: targetStatus })
+      return {
+        success: true,
+        ativa: updated.ativa ?? targetStatus,
+        message: targetStatus
+          ? 'Empresa desbloqueada com sucesso.'
+          : 'Empresa bloqueada com sucesso.',
+      }
+    }
+  },
+
+  /**
+   * Exclusão segura de empresa (apenas papel Master).
+   * Desvincula membros, protege a Matriz e valida histórico de pedidos.
+   */
+  async deleteEmpresaSafe(
+    id: string,
+    options?: { forceDeleteOrders?: boolean },
+  ): Promise<{
+    success: boolean
+    message: string
+    removedMembersCount?: number
+    updatedCustomersCount?: number
+  }> {
+    if (id === this.MATRIZ_EMPRESA_ID) {
+      throw new Error('A empresa Matriz Principal não pode ser excluída.')
+    }
+
+    try {
+      const res = await pb.send<{
+        success: boolean
+        message: string
+        removedMembersCount?: number
+        updatedCustomersCount?: number
+      }>(`/backend/v1/companies/${id}/delete-safe`, {
+        method: 'POST',
+        body: {
+          force_delete_orders: options?.forceDeleteOrders ?? false,
+        },
+      })
+      return res
+    } catch (err: any) {
+      // Se a rota backend retornar mensagem de erro específica, propaga
+      if (err?.data?.message) {
+        throw new Error(err.data.message)
+      }
+      // Se falhar o endpoint, tentar exclusão direta via SDK (protegida pela deleteRule)
+      // Primeiro desvincula membros da empresa
+      try {
+        const membros = await pb.collection<MembroRecord>('membros').getFullList({
+          filter: `empresa_id = '${id}'`,
+          requestKey: null,
+        })
+        for (const m of membros) {
+          await pb
+            .collection('membros')
+            .delete(m.id)
+            .catch(() => null)
+        }
+        await pb.collection('empresas').delete(id)
+        return {
+          success: true,
+          message: 'Empresa e vínculos excluídos com sucesso.',
+        }
+      } catch (sdkErr: any) {
+        throw new Error(sdkErr?.message || err?.message || 'Falha ao excluir a empresa.')
+      }
+    }
+  },
+
   async getMembros(filter = '', sort = '-created', expand = 'empresa_id,user_id') {
     return pb.collection<MembroRecord>('membros').getFullList({
       filter,
@@ -916,7 +1014,7 @@ export const deliveryService = {
               ...u,
               vehicle_type: u.vehicle_type || 'moto',
               status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
-            }
+            } as UserRecord
           })
           .filter((u): u is UserRecord => Boolean(u))
       }

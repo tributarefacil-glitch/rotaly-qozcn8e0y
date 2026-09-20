@@ -15,14 +15,21 @@ import {
   UserPlus,
   Trash2,
   ArrowRight,
-  Sparkles,
   Zap,
   Edit2,
   Lock,
-  Layers,
-  Bike,
-  Package,
+  Unlock,
+  MoreVertical,
+  AlertTriangle,
 } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { useAuth } from '@/contexts/AuthContext'
@@ -171,6 +178,15 @@ export const CompaniesPage: React.FC = () => {
     max_orders_month: 2000,
     ativa: true,
   })
+
+  // Modal de Bloqueio / Desbloqueio de Empresa
+  const [toggleStatusTarget, setToggleStatusTarget] = useState<EmpresaRecord | null>(null)
+  const [isTogglingStatus, setIsTogglingStatus] = useState(false)
+
+  // Modal de Exclusão de Empresa (com confirmação explícita)
+  const [deleteTarget, setDeleteTarget] = useState<EmpresaRecord | null>(null)
+  const [deleteConfirmationText, setDeleteConfirmationText] = useState('')
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Modal de Membros de uma Empresa
   const [selectedEmpresaForMembers, setSelectedEmpresaForMembers] = useState<EmpresaRecord | null>(
@@ -465,6 +481,79 @@ export const CompaniesPage: React.FC = () => {
     }
   }
 
+  // Ação de Bloqueio / Desbloqueio
+  const handleConfirmToggleStatus = async () => {
+    if (!toggleStatusTarget) return
+    if (
+      toggleStatusTarget.id === deliveryService.MATRIZ_EMPRESA_ID &&
+      toggleStatusTarget.ativa !== false
+    ) {
+      toast.error('A Matriz Principal não pode ser bloqueada.')
+      setToggleStatusTarget(null)
+      return
+    }
+
+    setIsTogglingStatus(true)
+    const isCurrentlyActive = toggleStatusTarget.ativa !== false
+    const willBeActive = !isCurrentlyActive
+    const companyDisplayName =
+      toggleStatusTarget.nome_fantasia || toggleStatusTarget.nome_razao_social
+
+    try {
+      const result = await deliveryService.toggleEmpresaAtiva(toggleStatusTarget.id, willBeActive)
+      if (willBeActive) {
+        toast.success(`A empresa "${companyDisplayName}" foi desbloqueada com sucesso!`)
+      } else {
+        toast.warning(
+          `A empresa "${companyDisplayName}" foi bloqueada. Membros e entregadores tiveram o acesso suspenso.`,
+        )
+      }
+      setToggleStatusTarget(null)
+      await loadData()
+      await refreshCompanyData()
+    } catch (err: any) {
+      console.error('Erro ao alternar status da empresa:', err)
+      toast.error(err?.message || 'Falha ao alterar status da empresa.')
+    } finally {
+      setIsTogglingStatus(false)
+    }
+  }
+
+  // Ação de Exclusão de Empresa com confirmação rigorosa
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    if (deleteTarget.id === deliveryService.MATRIZ_EMPRESA_ID) {
+      toast.error('A Matriz Principal não pode ser excluída do sistema.')
+      setDeleteTarget(null)
+      return
+    }
+
+    const companyExpectedName = (
+      deleteTarget.nome_fantasia ||
+      deleteTarget.nome_razao_social ||
+      ''
+    ).trim()
+    if (deleteConfirmationText.trim().toLowerCase() !== companyExpectedName.toLowerCase()) {
+      toast.error(`Para confirmar, digite exatamente o nome "${companyExpectedName}".`)
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      const result = await deliveryService.deleteEmpresaSafe(deleteTarget.id)
+      toast.success(result.message || `Empresa "${companyExpectedName}" excluída com sucesso!`)
+      setDeleteTarget(null)
+      setDeleteConfirmationText('')
+      await loadData()
+      await refreshCompanyData()
+    } catch (err: any) {
+      console.error('Erro ao excluir empresa:', err)
+      toast.error(err?.message || 'Falha ao excluir a empresa.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   const filteredEmpresas = empresas.filter((emp) => {
     const q = searchTerm.toLowerCase()
     return (
@@ -658,11 +747,25 @@ export const CompaniesPage: React.FC = () => {
                           </div>
 
                           <div className="flex flex-col items-end gap-1">
-                            {isSelected && (
-                              <Badge className="bg-[#00A3FF] text-white text-[10px] font-bold">
-                                Ativa
-                              </Badge>
-                            )}
+                            <div className="flex items-center gap-1.5">
+                              {emp.ativa !== false ? (
+                                <Badge className="bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-bold gap-1 shadow-xs">
+                                  <CheckCircle2 className="h-3 w-3" /> Ativa
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-rose-500 hover:bg-rose-600 text-white text-[10px] font-bold gap-1 shadow-xs">
+                                  <Lock className="h-3 w-3" /> Bloqueada
+                                </Badge>
+                              )}
+                              {isSelected && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[9px] font-bold border-[#00A3FF] text-[#00A3FF] bg-blue-50/60 uppercase"
+                                >
+                                  Em Uso
+                                </Badge>
+                              )}
+                            </div>
                             <Badge
                               variant="outline"
                               className="text-[10px] capitalize border-blue-200 bg-blue-50/50 text-[#002855]"
@@ -746,6 +849,63 @@ export const CompaniesPage: React.FC = () => {
                           >
                             <Edit2 className="h-3.5 w-3.5" />
                           </Button>
+                        )}
+
+                        {/* Menu de Ações Administrativas Master: Bloquear/Desbloquear e Excluir */}
+                        {isMaster && !isMatriz && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-xs text-slate-500 hover:text-[#002855] hover:bg-slate-200 h-8 w-8 p-0"
+                                title="Mais ações da empresa"
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="end"
+                              className="w-48 bg-white border-slate-200"
+                            >
+                              <DropdownMenuLabel className="text-[10px] uppercase font-bold text-slate-400">
+                                Ações Master
+                              </DropdownMenuLabel>
+                              <DropdownMenuItem
+                                onClick={() => setToggleStatusTarget(emp)}
+                                className={`text-xs gap-2 cursor-pointer font-medium ${
+                                  emp.ativa !== false
+                                    ? 'text-amber-600 focus:text-amber-700 focus:bg-amber-50'
+                                    : 'text-emerald-600 focus:text-emerald-700 focus:bg-emerald-50'
+                                }`}
+                              >
+                                {emp.ativa !== false ? (
+                                  <>
+                                    <Lock className="h-3.5 w-3.5" />
+                                    <span>Bloquear Empresa</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Unlock className="h-3.5 w-3.5" />
+                                    <span>Desbloquear Empresa</span>
+                                  </>
+                                )}
+                              </DropdownMenuItem>
+
+                              <DropdownMenuSeparator />
+
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setDeleteTarget(emp)
+                                  setDeleteConfirmationText('')
+                                }}
+                                className="text-xs gap-2 cursor-pointer font-medium text-rose-600 focus:text-rose-700 focus:bg-rose-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                <span>Excluir Empresa...</span>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         )}
                       </div>
 
@@ -1455,6 +1615,211 @@ export const CompaniesPage: React.FC = () => {
               className="border-slate-200 bg-slate-100 hover:bg-slate-200 text-[#002855] text-xs font-semibold"
             >
               Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Confirmação: Bloquear / Desbloquear Empresa */}
+      <Dialog
+        open={!!toggleStatusTarget}
+        onOpenChange={(open) => !open && setToggleStatusTarget(null)}
+      >
+        <DialogContent className="max-w-md bg-white border-slate-200 text-[#002855] p-6 shadow-xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-1">
+              <div
+                className={`h-10 w-10 rounded-xl flex items-center justify-center ${
+                  toggleStatusTarget?.ativa !== false
+                    ? 'bg-amber-100 text-amber-600'
+                    : 'bg-emerald-100 text-emerald-600'
+                }`}
+              >
+                {toggleStatusTarget?.ativa !== false ? (
+                  <Lock className="h-5 w-5" />
+                ) : (
+                  <Unlock className="h-5 w-5" />
+                )}
+              </div>
+              <div>
+                <DialogTitle className="font-heading text-lg font-bold text-[#002855]">
+                  {toggleStatusTarget?.ativa !== false
+                    ? 'Bloquear Empresa?'
+                    : 'Desbloquear Empresa?'}
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500">
+                  {toggleStatusTarget?.nome_fantasia || toggleStatusTarget?.nome_razao_social}
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="py-3 text-xs text-slate-600 space-y-2.5">
+            {toggleStatusTarget?.ativa !== false ? (
+              <>
+                <p className="font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <strong>Atenção:</strong> Esta ação bloqueia imediatamente o acesso da loja ao
+                  sistema. Todos os membros, vendedores e entregadores associados ficarão impedidos
+                  de entrar e criar pedidos.
+                </p>
+                <p className="text-slate-500">
+                  Os dados e o histórico de pedidos permanecem seguros e você poderá desbloquear
+                  esta empresa a qualquer momento.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                  <strong>Reativação:</strong> Ao desbloquear a empresa, os membros e
+                  administradores voltam a ter permissão para acessar o painel, despachar rotas e
+                  criar novos pedidos normalmente.
+                </p>
+                <p className="text-slate-500">
+                  Deseja realmente reativar o acesso de{' '}
+                  <strong>
+                    {toggleStatusTarget?.nome_fantasia || toggleStatusTarget?.nome_razao_social}
+                  </strong>
+                  ?
+                </p>
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="pt-3 border-t border-slate-200 flex sm:justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isTogglingStatus}
+              onClick={() => setToggleStatusTarget(null)}
+              className="text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={isTogglingStatus}
+              onClick={handleConfirmToggleStatus}
+              className={`text-xs font-bold text-white ${
+                toggleStatusTarget?.ativa !== false
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
+            >
+              {isTogglingStatus ? (
+                'Processando...'
+              ) : toggleStatusTarget?.ativa !== false ? (
+                <>
+                  <Lock className="h-3.5 w-3.5 mr-1.5" />
+                  Confirmar Bloqueio
+                </>
+              ) : (
+                <>
+                  <Unlock className="h-3.5 w-3.5 mr-1.5" />
+                  Confirmar Desbloqueio
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Exclusão de Empresa (com confirmação explícita por digitação do nome) */}
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+            setDeleteConfirmationText('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-md bg-white border-slate-200 text-[#002855] p-6 shadow-xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="h-10 w-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="font-heading text-lg font-bold text-rose-700">
+                  Excluir Empresa Definitivamente
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500">
+                  Ação crítica e irreversível para o inquilino SaaS.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="py-2 space-y-3 text-xs text-slate-600">
+            <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-rose-900 space-y-1.5">
+              <p className="font-bold flex items-center gap-1.5">
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                Você está prestes a excluir a empresa:
+              </p>
+              <p className="font-semibold text-rose-950 text-sm">
+                "{deleteTarget?.nome_fantasia || deleteTarget?.nome_razao_social}"
+              </p>
+              <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-rose-800">
+                <li>Os vínculos de membros e colaboradores desta empresa serão removidos.</li>
+                <li>Os endereços base desta loja serão desvinculados.</li>
+                <li>
+                  Caso deseje apenas suspender o acesso temporariamente sem perder históricos,
+                  recomendamos a opção <strong>Bloquear Empresa</strong>.
+                </li>
+              </ul>
+            </div>
+
+            <div className="space-y-1.5 pt-1">
+              <Label className="text-xs font-semibold text-slate-700">
+                Digite exatamente{' '}
+                <strong className="text-rose-700 select-all font-mono">
+                  {deleteTarget?.nome_fantasia || deleteTarget?.nome_razao_social}
+                </strong>{' '}
+                para confirmar:
+              </Label>
+              <Input
+                placeholder="Nome da empresa"
+                value={deleteConfirmationText}
+                onChange={(e) => setDeleteConfirmationText(e.target.value)}
+                className="h-9 border-slate-300 text-xs font-medium focus:border-rose-500"
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="pt-3 border-t border-slate-200 flex sm:justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isDeleting}
+              onClick={() => {
+                setDeleteTarget(null)
+                setDeleteConfirmationText('')
+              }}
+              className="text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                isDeleting ||
+                deleteConfirmationText.trim().toLowerCase() !==
+                  (deleteTarget?.nome_fantasia || deleteTarget?.nome_razao_social || '')
+                    .trim()
+                    .toLowerCase()
+              }
+              onClick={handleConfirmDelete}
+              className="text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 gap-1.5"
+            >
+              {isDeleting ? (
+                'Excluindo...'
+              ) : (
+                <>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Excluir Empresa
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

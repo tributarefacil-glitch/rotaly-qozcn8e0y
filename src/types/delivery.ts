@@ -42,7 +42,7 @@ export interface EmpresaRecord extends RecordModel {
   max_orders_month?: number
 }
 
-export type MembroPapel = 'admin' | 'vendedor' | 'entregador' | 'gestor'
+export type MembroPapel = 'admin' | 'vendedor' | 'entregador' | 'gestor' | 'courier' | 'seller'
 
 export interface MembroRecord extends RecordModel {
   empresa_id: string
