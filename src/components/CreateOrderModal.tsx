@@ -62,6 +62,7 @@ import {
   fallbackGeocodeAddress,
   fallbackReverseGeocode,
   normalizeBrazilianUF,
+  geocodeAddressWithValidation,
 } from '@/lib/googleMaps'
 import { BaseAddressAutocomplete, BaseAddressResult } from '@/components/BaseAddressAutocomplete'
 import { CustomerSearchCombobox } from '@/components/CustomerSearchCombobox'
@@ -193,6 +194,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markerInstanceRef = useRef<any>(null)
   const isReverseGeocodingRef = useRef<boolean>(false)
+
+  // Refs de controle de geocodificação direta e anti-loop
+  const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastGeocodedAddressRef = useRef<string>('')
+  const isProgrammaticUpdateRef = useRef<boolean>(false)
 
   // Helper to check window.google safely
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -413,6 +419,19 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       try {
         const geoRes = await reverseGeocodeCoordinates(lat, lng)
         if (geoRes) {
+          // Prevenção anti-loop: marcar atualização programática antes de aplicar
+          const newFullAddress = [
+            geoRes.streetAndNumber || geoRes.street || '',
+            geoRes.neighborhood || '',
+            geoRes.city ? (geoRes.state ? `${geoRes.city} - ${geoRes.state}` : geoRes.city) : '',
+            geoRes.postalCode ? `CEP: ${geoRes.postalCode}` : '',
+          ]
+            .filter(Boolean)
+            .join(', ')
+
+          isProgrammaticUpdateRef.current = true
+          lastGeocodedAddressRef.current = newFullAddress
+
           applyAddressData(geoRes)
         }
       } catch (err) {
@@ -752,6 +771,91 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
     if (postalCode.trim()) parts.push(`CEP: ${postalCode.trim()}`)
     return parts.join(', ')
+  }
+
+  // Geocodificação direta debounced ao digitar o endereço nos campos estruturados
+  const triggerAddressGeocoding = useCallback(
+    async (overrideValues?: {
+      streetAndNumber?: string
+      neighborhood?: string
+      city?: string
+      ufState?: string
+      postalCode?: string
+    }) => {
+      // Se a atualização foi disparada programaticamente (ex: reverseGeocode pelo arraste do pino), consome a flag e ignora
+      if (isProgrammaticUpdateRef.current) {
+        isProgrammaticUpdateRef.current = false
+        return
+      }
+
+      const currentStreet = overrideValues?.streetAndNumber ?? streetAndNumber
+      const currentNeighborhood = overrideValues?.neighborhood ?? neighborhood
+      const currentCity = overrideValues?.city ?? city
+      const currentUf = overrideValues?.ufState ?? ufState
+      const currentCep = overrideValues?.postalCode ?? postalCode
+
+      const addressParts: string[] = []
+      if (currentStreet.trim()) addressParts.push(currentStreet.trim())
+      if (currentNeighborhood.trim()) addressParts.push(currentNeighborhood.trim())
+      if (currentCity.trim()) {
+        addressParts.push(currentUf ? `${currentCity.trim()} - ${currentUf}` : currentCity.trim())
+      }
+      if (currentCep.trim()) addressParts.push(`CEP: ${currentCep.trim()}`)
+
+      const fullAddress = addressParts.join(', ')
+
+      // Ignora se endereço for muito curto (< 8 caracteres) ou idêntico ao último geocodificado
+      if (
+        !fullAddress ||
+        fullAddress.length < 8 ||
+        fullAddress === lastGeocodedAddressRef.current
+      ) {
+        return
+      }
+
+      try {
+        const expected = {
+          city: currentCity.trim(),
+          postalCode: currentCep.trim(),
+          street: currentStreet.trim(),
+          neighborhood: currentNeighborhood.trim(),
+        }
+
+        const geo = await geocodeAddressWithValidation(fullAddress, expected)
+
+        if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+          // Ignora se for o ponto genérico de fallback (-22.906847, -43.172896)
+          const isFallback =
+            Math.abs(geo.lat - -22.906847) < 0.0001 && Math.abs(geo.lng - -43.172896) < 0.0001
+
+          if (!isFallback) {
+            lastGeocodedAddressRef.current = fullAddress
+            // shouldReverseGeocode = false para não sobrescrever o texto digitado
+            updateMapPosition(geo.lat, geo.lng, 16, false)
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao geocodificar endereço digitado:', err)
+      }
+    },
+    [city, neighborhood, postalCode, streetAndNumber, ufState, updateMapPosition],
+  )
+
+  // Handler unificado para alterações nos inputs de endereço com debounce de 800ms
+  const handleAddressFieldChange = (
+    setter: (val: string) => void,
+    fieldKey: 'streetAndNumber' | 'neighborhood' | 'city' | 'ufState' | 'postalCode',
+    value: string,
+  ) => {
+    setter(value)
+
+    if (addressDebounceRef.current) {
+      clearTimeout(addressDebounceRef.current)
+    }
+
+    addressDebounceRef.current = setTimeout(() => {
+      triggerAddressGeocoding({ [fieldKey]: value })
+    }, 800)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1306,7 +1410,14 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     <Input
                       placeholder="Ex: Rua Manuel Vieira, 196"
                       value={streetAndNumber}
-                      onChange={(e) => setStreetAndNumber(e.target.value)}
+                      onChange={(e) =>
+                        handleAddressFieldChange(
+                          setStreetAndNumber,
+                          'streetAndNumber',
+                          e.target.value,
+                        )
+                      }
+                      onBlur={() => triggerAddressGeocoding()}
                       className="mt-1 bg-white dark:bg-slate-800 text-xs"
                       required
                     />
@@ -1333,7 +1444,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     <Input
                       placeholder="Ex: Pinheiros"
                       value={neighborhood}
-                      onChange={(e) => setNeighborhood(e.target.value)}
+                      onChange={(e) =>
+                        handleAddressFieldChange(setNeighborhood, 'neighborhood', e.target.value)
+                      }
                       className="mt-1 bg-white dark:bg-slate-800 text-xs"
                     />
                   </div>
@@ -1346,7 +1459,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     <Input
                       placeholder="Ex: Rio de Janeiro"
                       value={city}
-                      onChange={(e) => setCity(e.target.value)}
+                      onChange={(e) => handleAddressFieldChange(setCity, 'city', e.target.value)}
                       className="mt-1 bg-white dark:bg-slate-800 text-xs"
                     />
                   </div>
@@ -1356,7 +1469,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
                       UF (Estado)
                     </Label>
-                    <Select value={ufState} onValueChange={setUfState}>
+                    <Select
+                      value={ufState}
+                      onValueChange={(val) => handleAddressFieldChange(setUfState, 'ufState', val)}
+                    >
                       <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs h-9">
                         <SelectValue placeholder="UF" />
                       </SelectTrigger>

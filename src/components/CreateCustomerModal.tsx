@@ -101,6 +101,8 @@ export function CreateCustomerModal({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const phoneDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastGeocodedAddressRef = useRef<string>('')
+  const isProgrammaticUpdateRef = useRef<boolean>(false)
 
   // Referências para o mini-mapa com pino interativo e arrastável
   const miniMapContainerRef = useRef<HTMLDivElement | null>(null)
@@ -354,6 +356,8 @@ export function CreateCustomerModal({
           if (!evt?.latLng) return
           const newLat = typeof evt.latLng.lat === 'function' ? evt.latLng.lat() : evt.latLng.lat
           const newLng = typeof evt.latLng.lng === 'function' ? evt.latLng.lng() : evt.latLng.lng
+          // Anti-loop: marca atualização programática antes de atualizar coordenadas pelo arraste
+          isProgrammaticUpdateRef.current = true
           setLat(newLat)
           setLng(newLng)
           setIsPinManuallyAdjusted(true)
@@ -415,8 +419,17 @@ export function CreateCustomerModal({
   // Executa geocodificação sob demanda ou debounced dos campos estruturados de endereço
   const handleGeocodeFields = useCallback(
     async (manualTrigger = false) => {
+      if (isProgrammaticUpdateRef.current) {
+        isProgrammaticUpdateRef.current = false
+        return
+      }
+
       const full = getFullFormattedAddress() || streetAndNumber.trim()
       if (!full || full.length < 5) return
+
+      if (!manualTrigger && full === lastGeocodedAddressRef.current) {
+        return
+      }
 
       // Se estamos em modo edição e o endereço não foi alterado em relação ao original salvo
       // e já temos coordenadas válidas salvas, blindar para não regerar sem necessidade
@@ -469,6 +482,7 @@ export function CreateCustomerModal({
               )
             }
           } else {
+            lastGeocodedAddressRef.current = full
             setLat(geo.lat)
             setLng(geo.lng)
             setIsPinManuallyAdjusted(false)
@@ -542,9 +556,20 @@ export function CreateCustomerModal({
   // Dispara geocodificação sob demanda no blur dos campos de endereço (rua, número, cidade)
   const handleAddressFieldsBlur = () => {
     if (addressDebounceRef.current) clearTimeout(addressDebounceRef.current)
+    handleGeocodeFields(false)
+  }
+
+  // Handler unificado para alterações com debounce de 800ms
+  const handleAddressFieldChange = (setter: (val: string) => void, value: string) => {
+    setter(value)
+
+    if (addressDebounceRef.current) {
+      clearTimeout(addressDebounceRef.current)
+    }
+
     addressDebounceRef.current = setTimeout(() => {
       handleGeocodeFields(false)
-    }, 600)
+    }, 800)
   }
 
   // Verifica se o endereço textual foi modificado em relação ao salvo no cliente
@@ -671,12 +696,29 @@ export function CreateCustomerModal({
       try {
         const geoRes = await reverseGeocodeCoordinates(parsedLat, parsedLng)
         if (geoRes) {
-          if (geoRes.streetAndNumber) {
-            setStreetAndNumber(geoRes.streetAndNumber)
-          } else if (geoRes.street) {
-            setStreetAndNumber(geoRes.number ? `${geoRes.street}, ${geoRes.number}` : geoRes.street)
-          } else if (geoRes.formattedAddress) {
-            setStreetAndNumber(geoRes.formattedAddress.split(',')[0] || geoRes.formattedAddress)
+          const streetVal =
+            geoRes.streetAndNumber ||
+            (geoRes.street
+              ? geoRes.number
+                ? `${geoRes.street}, ${geoRes.number}`
+                : geoRes.street
+              : '') ||
+            (geoRes.formattedAddress ? geoRes.formattedAddress.split(',')[0] : '')
+
+          const newFullAddress = [
+            streetVal,
+            geoRes.neighborhood || '',
+            geoRes.city ? (geoRes.state ? `${geoRes.city} - ${geoRes.state}` : geoRes.city) : '',
+            geoRes.postalCode ? `CEP: ${geoRes.postalCode}` : '',
+          ]
+            .filter(Boolean)
+            .join(', ')
+
+          isProgrammaticUpdateRef.current = true
+          lastGeocodedAddressRef.current = newFullAddress
+
+          if (streetVal) {
+            setStreetAndNumber(streetVal)
           }
 
           if (geoRes.neighborhood) {
@@ -1188,7 +1230,7 @@ export function CreateCustomerModal({
               <Input
                 placeholder="Ex: Av. Paulista, 1000"
                 value={streetAndNumber}
-                onChange={(e) => setStreetAndNumber(e.target.value)}
+                onChange={(e) => handleAddressFieldChange(setStreetAndNumber, e.target.value)}
                 onBlur={handleAddressFieldsBlur}
                 className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                 required
@@ -1210,7 +1252,7 @@ export function CreateCustomerModal({
               <Input
                 placeholder="Ex: Bela Vista"
                 value={neighborhood}
-                onChange={(e) => setNeighborhood(e.target.value)}
+                onChange={(e) => handleAddressFieldChange(setNeighborhood, e.target.value)}
                 onBlur={handleAddressFieldsBlur}
                 className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
               />
@@ -1221,7 +1263,7 @@ export function CreateCustomerModal({
               <Input
                 placeholder="Ex: Rio de Janeiro"
                 value={city}
-                onChange={(e) => setCity(e.target.value)}
+                onChange={(e) => handleAddressFieldChange(setCity, e.target.value)}
                 onBlur={handleAddressFieldsBlur}
                 className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
               />
