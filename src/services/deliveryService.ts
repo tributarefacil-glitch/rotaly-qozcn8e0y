@@ -183,7 +183,7 @@ export const deliveryService = {
       const stored = localStorage.getItem('rotaly_active_empresa_id')
       if (stored) return stored
     }
-    return this.MATRIZ_EMPRESA_ID
+    return ''
   },
 
   setActiveCompanyId(empresaId: string): void {

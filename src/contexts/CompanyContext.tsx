@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import pb from '@/lib/pocketbase/client'
 import type { EmpresaRecord, MembroRecord } from '@/types/delivery'
 import { useAuth } from './AuthContext'
-import { getMyCompany, clearCompanyCache, MATRIZ_EMPRESA_ID } from '@/lib/companyResolver'
+import { getMyCompany, clearCompanyCache, resolveMatrizCompany } from '@/lib/companyResolver'
 
 interface CompanyContextType {
   currentCompany: EmpresaRecord | null
@@ -61,26 +61,28 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           requestKey: null,
         })
       } catch {
-        resolvedCompany = loadedCompanies.find((c) => c.id === resolved.id) || {
-          id: MATRIZ_EMPRESA_ID,
-          nome_razao_social: 'Rotaly Logística Matriz',
-          nome_fantasia: 'Rotaly Operações',
-          cnpj: '34.567.890/0001-22',
-          telefone: '(21) 96428-2954',
-          email: 'tributarefacil@gmail.com',
-          cep: '25020-210',
-          logradouro: 'Rua Manuel Vieira',
-          numero: '196',
-          bairro: 'Centro',
-          cidade: 'Duque de Caxias',
-          estado: 'RJ',
-          ativa: true,
-          plano: 'enterprise',
-          created: '',
-          updated: '',
-          collectionId: 'empresas',
-          collectionName: 'empresas',
-        }
+        const matriz = await resolveMatrizCompany()
+        resolvedCompany = loadedCompanies.find((c) => c.id === resolved.id) ||
+          matriz || {
+            id: resolved.id || '',
+            nome_razao_social: resolved.name || 'Rotaly Logística Matriz',
+            nome_fantasia: resolved.name || 'Rotaly Operações',
+            cnpj: '34.567.890/0001-22',
+            telefone: '(21) 96428-2954',
+            email: 'tributarefacil@gmail.com',
+            cep: '25020-210',
+            logradouro: 'Rua Manuel Vieira',
+            numero: '196',
+            bairro: 'Centro',
+            cidade: 'Duque de Caxias',
+            uf: 'RJ',
+            ativa: true,
+            plano: 'enterprise',
+            created: '',
+            updated: '',
+            collectionId: 'empresas',
+            collectionName: 'empresas',
+          }
       }
 
       // Carregar vínculo de membro
