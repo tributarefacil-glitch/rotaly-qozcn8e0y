@@ -999,14 +999,22 @@ export const deliveryService = {
         sort: '-created',
         requestKey: null,
       })
-      return list.map((u) => ({
-        ...u,
-        vehicle_type: u.vehicle_type || 'moto',
-        status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
-      }))
+      const couriersMap = new Map<string, UserRecord>()
+      for (const u of list) {
+        if (u && u.id && !couriersMap.has(u.id)) {
+          couriersMap.set(u.id, {
+            ...u,
+            vehicle_type: u.vehicle_type || 'moto',
+            status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+          })
+        }
+      }
+      return Array.from(couriersMap.values())
     }
 
-    // Filtrar entregadores membros da empresa ativa
+    // Filtrar entregadores membros da empresa ativa com deduplicação defensiva por user_id
+    const couriersMap = new Map<string, UserRecord>()
+
     try {
       const members = await pb.collection<MembroRecord>('membros').getFullList({
         filter: `empresa_id = '${targetCompanyId}' && ativo = true && (papel = 'courier' || papel = 'entregador')`,
@@ -1015,24 +1023,28 @@ export const deliveryService = {
         requestKey: null,
       })
 
-      if (members.length > 0) {
-        return members
-          .map((m) => {
-            const u = m.expand?.user_id as UserRecord | undefined
-            if (!u) return null
-            return {
+      for (const m of members) {
+        const u = m.expand?.user_id as UserRecord | undefined
+        // Ignora vínculos órfãos ou registros inválidos e deduplica por ID de usuário
+        if (u && u.id && (u.role === 'courier' || !u.role)) {
+          if (!couriersMap.has(u.id)) {
+            couriersMap.set(u.id, {
               ...u,
               vehicle_type: u.vehicle_type || 'moto',
               status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
-            } as UserRecord
-          })
-          .filter((u): u is UserRecord => Boolean(u))
+            } as UserRecord)
+          }
+        }
+      }
+
+      if (couriersMap.size > 0) {
+        return Array.from(couriersMap.values())
       }
     } catch (e) {
       console.warn('Erro ao filtrar couriers por membros:', e)
     }
 
-    // Fallback: se for a Matriz, lista couriers da base
+    // Fallback: se for a Matriz e não encontrou membros, lista couriers da base
     const isMatriz = await this.isMatrizCompany(targetCompanyId)
     if (isMatriz) {
       const list = await pb.collection<UserRecord>('users').getFullList({
@@ -1040,11 +1052,16 @@ export const deliveryService = {
         sort: '-created',
         requestKey: null,
       })
-      return list.map((u) => ({
-        ...u,
-        vehicle_type: u.vehicle_type || 'moto',
-        status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
-      }))
+      for (const u of list) {
+        if (u && u.id && !couriersMap.has(u.id)) {
+          couriersMap.set(u.id, {
+            ...u,
+            vehicle_type: u.vehicle_type || 'moto',
+            status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+          })
+        }
+      }
+      return Array.from(couriersMap.values())
     }
 
     return []
@@ -1057,14 +1074,22 @@ export const deliveryService = {
     const isMatriz = await this.isMatrizCompany(targetCompanyId)
 
     if (isMaster && empresaId === 'ALL') {
-      return pb.collection<UserRecord>('users').getFullList({
+      const allSellers = await pb.collection<UserRecord>('users').getFullList({
         filter: "role = 'seller'",
         sort: '-created',
         requestKey: null,
       })
+      const map = new Map<string, UserRecord>()
+      for (const u of allSellers) {
+        if (u && u.id && !map.has(u.id)) {
+          map.set(u.id, u)
+        }
+      }
+      return Array.from(map.values())
     }
 
     // 1. Resolução via coleção 'membros' (papel 'seller' ou 'vendedor' e ativo = true)
+    // Tolerante a vínculos órfãos e deduplicado por user_id
     const sellersMap = new Map<string, UserRecord>()
 
     try {
@@ -1077,12 +1102,20 @@ export const deliveryService = {
 
       for (const m of members) {
         const u = m.expand?.user_id as UserRecord | undefined
-        if (u && u.id && u.role === 'seller') {
-          sellersMap.set(u.id, u)
+        // Filtra defensivamente órfãos e valida papel do usuário
+        if (u && u.id && (u.role === 'seller' || !u.role)) {
+          if (!sellersMap.has(u.id)) {
+            sellersMap.set(u.id, u)
+          }
         }
       }
     } catch (e) {
       console.warn('Erro ao filtrar sellers por membros:', e)
+    }
+
+    // Se já obteve vendedores a partir da tabela de membros, retorna
+    if (sellersMap.size > 0) {
+      return Array.from(sellersMap.values())
     }
 
     // 2. Consulta complementar e tolerância retroativa diretamente em 'users' (role = 'seller')
@@ -1104,7 +1137,6 @@ export const deliveryService = {
 
       for (const u of usersList) {
         if (u && u.id && !sellersMap.has(u.id)) {
-          // Se for empresa específica (não matriz), garantir que não puxa vendedores de outras empresas
           sellersMap.set(u.id, u)
         }
       }
@@ -1139,11 +1171,20 @@ export const deliveryService = {
     const targetCompanyId = empresaId || this.getActiveCompanyId()
 
     if (isMaster && empresaId === 'ALL') {
-      return pb.collection<UserRecord>('users').getFullList({
+      const list = await pb.collection<UserRecord>('users').getFullList({
         sort: '-created',
         requestKey: null,
       })
+      const map = new Map<string, UserRecord>()
+      for (const u of list) {
+        if (u && u.id && !map.has(u.id)) {
+          map.set(u.id, u)
+        }
+      }
+      return Array.from(map.values())
     }
+
+    const usersMap = new Map<string, UserRecord>()
 
     try {
       const members = await pb.collection<MembroRecord>('membros').getFullList({
@@ -1153,10 +1194,15 @@ export const deliveryService = {
         requestKey: null,
       })
 
-      if (members.length > 0) {
-        return members
-          .map((m) => m.expand?.user_id as UserRecord | undefined)
-          .filter((u): u is UserRecord => Boolean(u))
+      for (const m of members) {
+        const u = m.expand?.user_id as UserRecord | undefined
+        if (u && u.id && !usersMap.has(u.id)) {
+          usersMap.set(u.id, u)
+        }
+      }
+
+      if (usersMap.size > 0) {
+        return Array.from(usersMap.values())
       }
     } catch (e) {
       console.warn('Erro ao filtrar users por membros:', e)
@@ -1164,10 +1210,16 @@ export const deliveryService = {
 
     const isMatriz = await this.isMatrizCompany(targetCompanyId)
     if (isMatriz) {
-      return pb.collection<UserRecord>('users').getFullList({
+      const list = await pb.collection<UserRecord>('users').getFullList({
         sort: '-created',
         requestKey: null,
       })
+      for (const u of list) {
+        if (u && u.id && !usersMap.has(u.id)) {
+          usersMap.set(u.id, u)
+        }
+      }
+      return Array.from(usersMap.values())
     }
 
     return []

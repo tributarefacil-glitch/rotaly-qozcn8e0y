@@ -948,14 +948,35 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     }
   }
 
+  // Deduplicação defensiva das listas de couriers e sellers por ID de usuário
+  const deduplicatedCouriers = useMemo(() => {
+    const map = new Map<string, UserRecord>()
+    for (const c of couriers) {
+      if (c && c.id && !map.has(c.id)) {
+        map.set(c.id, c)
+      }
+    }
+    return Array.from(map.values())
+  }, [couriers])
+
+  const deduplicatedSellers = useMemo(() => {
+    const map = new Map<string, UserRecord>()
+    for (const s of sellers) {
+      if (s && s.id && !map.has(s.id)) {
+        map.set(s.id, s)
+      }
+    }
+    return Array.from(map.values())
+  }, [sellers])
+
   // Filtered lists baseadas nos estados alimentados pela coleção membros
-  const pendingCouriers = couriers.filter((c) => c.status === 'pending')
-  const activeCouriers = couriers.filter(
+  const pendingCouriers = deduplicatedCouriers.filter((c) => c.status === 'pending')
+  const activeCouriers = deduplicatedCouriers.filter(
     (c) => c.status === 'active' || c.status === 'idle' || c.status === 'busy',
   )
-  const inactiveCouriers = couriers.filter((c) => c.status === 'inactive')
+  const inactiveCouriers = deduplicatedCouriers.filter((c) => c.status === 'inactive')
 
-  const filteredCouriers = couriers.filter((c) => {
+  const filteredCouriers = deduplicatedCouriers.filter((c) => {
     const matchesSearch =
       c.name?.toLowerCase().includes(searchCouriers.toLowerCase()) ||
       c.email?.toLowerCase().includes(searchCouriers.toLowerCase()) ||
@@ -972,7 +993,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     return true
   })
 
-  const filteredSellers = sellers.filter((s) => {
+  const filteredSellers = deduplicatedSellers.filter((s) => {
     return (
       s.name?.toLowerCase().includes(searchSellers.toLowerCase()) ||
       s.email?.toLowerCase().includes(searchSellers.toLowerCase()) ||
@@ -1380,7 +1401,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   className="text-xs font-semibold text-slate-700 data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg relative"
                 >
                   <Truck className="h-3.5 w-3.5 mr-1.5 text-[#00A3FF]" />
-                  Entregadores ({couriers.length})
+                  Entregadores ({deduplicatedCouriers.length})
                   {pendingCouriers.length > 0 && (
                     <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-[#00A3FF] text-white text-[10px] font-bold">
                       {pendingCouriers.length}
@@ -1392,7 +1413,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   className="text-xs font-semibold text-slate-700 data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg"
                 >
                   <Users className="h-3.5 w-3.5 mr-1.5 text-[#00A3FF]" />
-                  Vendedores ({sellers.length})
+                  Vendedores ({deduplicatedSellers.length})
                 </TabsTrigger>
                 <TabsTrigger
                   value="customers"
@@ -1679,7 +1700,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">Todos os Entregadores</SelectItem>
-                            {couriers.map((c) => (
+                            {deduplicatedCouriers.map((c) => (
                               <SelectItem key={c.id} value={c.id}>
                                 🛵 {c.name}
                               </SelectItem>
@@ -2906,7 +2927,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                           {filteredCouriers.length === 0 ? (
                             <tr>
                               <td colSpan={6} className="py-8 text-center text-slate-500">
-                                {couriers.length === 0
+                                {deduplicatedCouriers.length === 0
                                   ? 'Nenhum entregador vinculado na tabela de membros desta empresa.'
                                   : 'Nenhum entregador encontrado com os filtros selecionados.'}
                               </td>
@@ -3165,7 +3186,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                           {filteredSellers.length === 0 ? (
                             <tr>
                               <td colSpan={5} className="py-8 text-center text-slate-500">
-                                {sellers.length === 0
+                                {deduplicatedSellers.length === 0
                                   ? 'Nenhum vendedor vinculado na tabela de membros desta empresa.'
                                   : 'Nenhum vendedor encontrado.'}
                               </td>
