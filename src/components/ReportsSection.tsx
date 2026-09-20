@@ -68,6 +68,7 @@ interface ReportsSectionProps {
   orders: OrderRecord[]
   couriers: UserRecord[]
   sellers?: UserRecord[]
+  customers?: CustomerRecord[]
   settings?: AppSettingsRecord | null
   offRouteEvents?: OffRouteEventRecord[]
   locations?: LocationRecord[]
@@ -77,6 +78,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   orders,
   couriers,
   sellers: propSellers,
+  customers: propCustomers,
   settings,
   offRouteEvents = [],
   locations = [],
