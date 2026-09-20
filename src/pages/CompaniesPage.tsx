@@ -21,6 +21,8 @@ import {
   Unlock,
   MoreVertical,
   AlertTriangle,
+  Loader2,
+  Sparkles,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -58,6 +60,7 @@ import {
 } from '@/components/ui/select'
 import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
+import { lookupCnpj } from '@/services/cnpjService'
 
 // Validação de CNPJ
 export function validateCNPJ(cnpjRaw: string): boolean {
@@ -140,6 +143,11 @@ export const CompaniesPage: React.FC = () => {
   // Modal de Criação de Empresa
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isLookingUpCnpj, setIsLookingUpCnpj] = useState(false)
+  const [cnpjFeedback, setCnpjFeedback] = useState<{
+    message: string
+    type: 'success' | 'info' | 'error'
+  } | null>(null)
   const [cnpjError, setCnpjError] = useState<string | null>(null)
 
   // Formulário de Nova Empresa + Admin da Empresa
@@ -227,9 +235,86 @@ export const CompaniesPage: React.FC = () => {
     loadData()
   }, [])
 
+  // Consulta automática na API de CNPJ (BrasilAPI com fallback para ReceitaWS)
+  useEffect(() => {
+    const rawCnpj = formData.cnpj.replace(/\D/g, '')
+    if (rawCnpj.length !== 14 || !validateCNPJ(rawCnpj)) {
+      setIsLookingUpCnpj(false)
+      return
+    }
+
+    const abortController = new AbortController()
+
+    const timer = setTimeout(async () => {
+      setIsLookingUpCnpj(true)
+      setCnpjFeedback(null)
+
+      try {
+        const result = await lookupCnpj(rawCnpj, {
+          signal: abortController.signal,
+          timeoutMs: 7000,
+        })
+
+        if (!result) {
+          setCnpjFeedback({
+            message:
+              'CNPJ válido, mas dados não encontrados na Receita/BrasilAPI. Preencha manualmente.',
+            type: 'info',
+          })
+          return
+        }
+
+        // Preencher preservando dados já digitados pelo usuário
+        setFormData((prev) => {
+          // Só atualiza se o CNPJ digitado ainda for o mesmo da consulta
+          if (prev.cnpj.replace(/\D/g, '') !== rawCnpj) return prev
+
+          return {
+            ...prev,
+            nome_razao_social: prev.nome_razao_social.trim() || result.nome_razao_social,
+            nome_fantasia:
+              prev.nome_fantasia.trim() || result.nome_fantasia || result.nome_razao_social,
+            telefone: prev.telefone.trim() || result.telefone,
+            email: prev.email.trim() || result.email,
+            cep: prev.cep.trim() || result.cep,
+            logradouro: prev.logradouro.trim() || result.logradouro,
+            numero: prev.numero.trim() || result.numero,
+            complemento: prev.complemento.trim() || result.complemento,
+            bairro: prev.bairro.trim() || result.bairro,
+            cidade: prev.cidade.trim() || result.cidade,
+            uf: prev.uf.trim() && prev.uf !== 'RJ' ? prev.uf : result.uf || prev.uf,
+          }
+        })
+
+        const razaoDisplay = result.nome_fantasia || result.nome_razao_social || 'Empresa'
+        setCnpjFeedback({
+          message: `Dados carregados automaticamente (${razaoDisplay}).`,
+          type: 'success',
+        })
+        toast.success(`Dados da empresa "${razaoDisplay}" preenchidos via CNPJ!`)
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          console.warn('Erro ao consultar CNPJ:', err)
+          setCnpjFeedback({
+            message: 'Consulta pública indisponível no momento. Preencha os campos normalmente.',
+            type: 'info',
+          })
+        }
+      } finally {
+        setIsLookingUpCnpj(false)
+      }
+    }, 400) // Debounce de 400ms
+
+    return () => {
+      clearTimeout(timer)
+      abortController.abort()
+    }
+  }, [formData.cnpj])
+
   const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const formatted = formatCNPJ(e.target.value)
     setFormData((prev) => ({ ...prev, cnpj: formatted }))
+    setCnpjFeedback(null)
 
     const raw = formatted.replace(/\D/g, '')
     if (raw.length === 14) {
@@ -354,6 +439,8 @@ export const CompaniesPage: React.FC = () => {
 
       toast.success('Nova empresa parceira cadastrada com sucesso!')
       setIsCreateOpen(false)
+      setCnpjFeedback(null)
+      setCnpjError(null)
       setFormData({
         nome_razao_social: '',
         nome_fantasia: '',
@@ -981,19 +1068,57 @@ export const CompaniesPage: React.FC = () => {
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-slate-700">CNPJ (com validação)</Label>
-                <Input
-                  placeholder="00.000.000/0000-00"
-                  value={formData.cnpj}
-                  onChange={handleCnpjChange}
-                  maxLength={18}
-                  className={`h-9 border-slate-200 text-xs font-mono ${
-                    cnpjError ? 'border-rose-500' : ''
-                  }`}
-                />
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-slate-700">
+                    CNPJ (autocompletar)
+                  </Label>
+                  {isLookingUpCnpj && (
+                    <span className="text-[10px] text-[#00A3FF] font-medium flex items-center gap-1 animate-pulse">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Consultando CNPJ...
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <Input
+                    placeholder="00.000.000/0000-00"
+                    value={formData.cnpj}
+                    onChange={handleCnpjChange}
+                    maxLength={18}
+                    className={`h-9 border-slate-200 text-xs font-mono pr-8 ${
+                      cnpjError ? 'border-rose-500' : ''
+                    }`}
+                  />
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                    {isLookingUpCnpj ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-[#00A3FF]" />
+                    ) : formData.cnpj.replace(/\D/g, '').length === 14 && !cnpjError ? (
+                      <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
+                    ) : null}
+                  </div>
+                </div>
+
                 {cnpjError && (
                   <p className="text-[11px] text-rose-500 flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" /> {cnpjError}
+                  </p>
+                )}
+
+                {cnpjFeedback && !cnpjError && (
+                  <p
+                    className={`text-[11px] flex items-center gap-1 ${
+                      cnpjFeedback.type === 'success'
+                        ? 'text-emerald-600'
+                        : cnpjFeedback.type === 'info'
+                          ? 'text-slate-500'
+                          : 'text-rose-500'
+                    }`}
+                  >
+                    {cnpjFeedback.type === 'success' ? (
+                      <CheckCircle2 className="h-3 w-3" />
+                    ) : (
+                      <AlertCircle className="h-3 w-3" />
+                    )}
+                    {cnpjFeedback.message}
                   </p>
                 )}
               </div>
@@ -1209,6 +1334,31 @@ export const CompaniesPage: React.FC = () => {
                     maxLength={2}
                     onChange={(e) =>
                       setFormData((prev) => ({ ...prev, uf: e.target.value.toUpperCase() }))
+                    }
+                    className="h-9 border-slate-200 text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">CEP</Label>
+                  <Input
+                    placeholder="00000-000"
+                    value={formData.cep}
+                    maxLength={9}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, cep: formatCEP(e.target.value) }))
+                    }
+                    className="h-9 border-slate-200 text-xs font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs font-semibold text-slate-700">Complemento</Label>
+                  <Input
+                    placeholder="Sala, Galpão, Bloco..."
+                    value={formData.complemento}
+                    onChange={(e) =>
+                      setFormData((prev) => ({ ...prev, complemento: e.target.value }))
                     }
                     className="h-9 border-slate-200 text-xs"
                   />
