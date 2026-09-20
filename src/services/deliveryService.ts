@@ -2577,10 +2577,21 @@ export const deliveryService = {
   // Fuel Advances & Current Account
   async getFuelAdvances(filter = '', sort = '-date,-created', expand = 'courier_id,created_by') {
     let finalFilter = filter
-    if (!filter.includes('empresa_id')) {
-      const companyClause = this.getCompanyFilterClause('empresa_id')
-      if (companyClause) {
-        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
+
+    // A coleção fuel_advances não possui empresa_id diretamente.
+    // O isolamento multiempresa é feito via entregadores da empresa ativa:
+    // courier_id IN (ids dos couriers da empresa ativa).
+    if (!filter.includes('courier_id')) {
+      try {
+        const couriers = await this.getCouriers()
+        if (couriers.length > 0) {
+          const courierFilterClause = couriers.map((c) => `courier_id = '${c.id}'`).join(' || ')
+          finalFilter = filter
+            ? `(${filter}) && (${courierFilterClause})`
+            : `(${courierFilterClause})`
+        }
+      } catch (err) {
+        console.warn('Erro ao obter entregadores para isolamento de fuel_advances:', err)
       }
     }
 

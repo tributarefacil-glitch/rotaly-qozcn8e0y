@@ -345,7 +345,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     new Map(),
   )
   const [selectedCourierForFuelFilter, setSelectedCourierForFuelFilter] = useState<string>('all')
-  const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week'>('month')
+  const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week'>('all')
   const [isNewFuelAdvanceModalOpen, setIsNewFuelAdvanceModalOpen] = useState(false)
   const [advanceCourierId, setAdvanceCourierId] = useState('')
   const [advanceAmount, setAdvanceAmount] = useState('')
