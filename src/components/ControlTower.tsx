@@ -101,6 +101,7 @@ import {
   getOperationalWindow,
   isNeutralizedSystemError,
   isTodayOrder,
+  isOrderIssueToday,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
 import { isOrderInActiveRoute } from '@/lib/activeRouteHelper'
@@ -980,15 +981,21 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }, [orders, operationalWindow])
 
   // Helpers to categorize orders into kanban columns
-  const getOrderKanbanCategory = (order: OrderRecord): KanbanColumnKey => {
-    if (
+  // A coluna "Exceções & Problemas" mostra EXCLUSIVAMENTE ocorrências do dia atual no fuso de Brasília
+  const getOrderKanbanCategory = (order: OrderRecord): KanbanColumnKey | null => {
+    const isIssue =
       order.status === 'address_error' ||
       order.status === 'client_absent' ||
       order.status === 'cancelled' ||
       order.completion_reason === 'address_error' ||
       order.completion_reason === 'client_absent' ||
       (order.notes && order.notes.toLowerCase().includes('problema'))
-    ) {
+
+    if (isIssue) {
+      // Pedidos com problema de dias passados NÃO entram na coluna de Exceções & Problemas da Torre
+      if (!isOrderIssueToday(order, operationalWindow)) {
+        return null
+      }
       return 'issues'
     }
 
@@ -1093,10 +1100,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       )
       const problemOrders = courierLocalOrders.filter(
         (o) =>
-          o.status === 'address_error' ||
-          o.status === 'client_absent' ||
-          o.completion_reason === 'address_error' ||
-          o.completion_reason === 'client_absent',
+          (o.status === 'address_error' ||
+            o.status === 'client_absent' ||
+            o.completion_reason === 'address_error' ||
+            o.completion_reason === 'client_absent') &&
+          isOrderIssueToday(o, operationalWindow),
       )
       const finishedOrders = courierLocalOrders.filter((o) => o.status === 'delivered')
 
@@ -1858,6 +1866,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const filteredOrders = useMemo(() => {
     return todayOrders.filter((order) => {
       const cat = getOrderKanbanCategory(order)
+      // Se cat for null (ex: pedido cancelado de dia anterior que escapou), descartar do Kanban
+      if (!cat) return false
+
       const matchesStatus =
         statusFilter === 'all'
           ? true
@@ -1879,7 +1890,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
       return matchesStatus && matchesCourier && matchesSearch
     })
-  }, [todayOrders, statusFilter, courierFilter, searchQuery])
+  }, [todayOrders, statusFilter, courierFilter, searchQuery, operationalWindow])
 
   // Group filtered orders by Kanban column
   const kanbanColumnsData = useMemo(() => {
@@ -1892,7 +1903,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     filteredOrders.forEach((o) => {
       const cat = getOrderKanbanCategory(o)
-      grouped[cat].push(o)
+      if (cat) {
+        grouped[cat].push(o)
+      }
     })
 
     // Sort: sequence ascending, or created desc
@@ -1904,7 +1917,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     })
 
     return grouped
-  }, [filteredOrders])
+  }, [filteredOrders, operationalWindow])
 
   // Interactive Main Google Map
   useEffect(() => {

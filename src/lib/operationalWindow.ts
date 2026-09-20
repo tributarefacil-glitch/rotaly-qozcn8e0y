@@ -184,9 +184,20 @@ export function isTodayOrder(
   order: OrderRecord,
   windowRange: { start: number; end: number } = getOperationalWindow(),
 ): boolean {
+  // Pedidos cancelados ou com problema NÃO devem ser considerados "ativos em rota" mesmo se route_started === true
+  // pois quando foram cancelados ou tiveram ocorrência a rota daquela entrega não está mais em andamento.
+  const isTerminatedOrIssue =
+    order.status === 'cancelled' ||
+    order.status === 'address_error' ||
+    order.status === 'client_absent' ||
+    order.completion_reason === 'address_error' ||
+    order.completion_reason === 'client_absent'
+
   // Pedidos em trânsito com rota iniciada e não finalizada pertencem à jornada ativa
   const isActiveInRoute =
-    (order.route_started === true || order.status === 'in_transit') && order.route_finished !== true
+    !isTerminatedOrIssue &&
+    (order.route_started === true || order.status === 'in_transit') &&
+    order.route_finished !== true
 
   if (isActiveInRoute) return true
 
@@ -203,6 +214,37 @@ export function isTodayOrder(
   ]
 
   return stamps.some((s) => isTimestampInOperationalWindow(s, windowRange))
+}
+
+/**
+ * Avalia se uma exceção/problema (cancelamento, cliente ausente, erro de endereço)
+ * ocorreu dentro da janela operacional do dia atual (05:00 - 23:59 no fuso de Brasília).
+ * Critério temporal: prioriza a data em que o problema de fato ocorreu (actual_arrival, updated, route_finished_at ou created).
+ */
+export function isOrderIssueToday(
+  order: OrderRecord,
+  windowRange: { start: number; end: number } = getOperationalWindow(),
+): boolean {
+  if (!order) return false
+
+  // Se o pedido foi neutralizado como erro técnico de sistema, não é exceção operacional
+  if (isNeutralizedSystemError(order)) return false
+
+  // Timestamps relevantes de quando a exceção / cancelamento ocorreu
+  // Para pedidos cancelados pelo vendedor/operador ou entregador, a data da ocorrência é
+  // registrada em actual_arrival, updated, route_finished_at ou created.
+  const issueStamps = [order.actual_arrival, order.updated, order.route_finished_at, order.created]
+
+  // Verifica se o carimbo mais recente da ocorrência ocorreu dentro da janela do dia corrente
+  // Pega o maior timestamp válido dentre os campos preenchidos do pedido
+  const issueTs = issueStamps
+    .map((s) => parseSafeTimestamp(s))
+    .filter((ts) => ts > 0)
+    .sort((a, b) => b - a)[0]
+
+  if (!issueTs) return false
+
+  return issueTs >= windowRange.start && issueTs <= windowRange.end
 }
 
 /**

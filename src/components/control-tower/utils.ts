@@ -4,7 +4,7 @@ import { OrderRecord, UserRecord, LocationRecord, AppSettingsRecord } from '@/ty
 import { getVehicleLabel } from '@/components/LiveMap'
 import { LatLngPoint } from '@/services/osrmRoutingService'
 import { RouteWorkShiftMetrics } from '@/lib/routeWorkShift'
-import { formatTimeInTz } from '@/lib/operationalWindow'
+import { formatTimeInTz, isOrderIssueToday, type OperationalWindow } from '@/lib/operationalWindow'
 
 export interface ControlTowerProps {
   orders?: OrderRecord[]
@@ -158,15 +158,23 @@ export function renderVehicleIcon(type?: string): React.ReactNode {
   return React.createElement('span', { className: 'text-sm select-none leading-none' }, '🛵')
 }
 
-export function getOrderKanbanCategory(order: OrderRecord): KanbanColumnKey {
-  if (
+export function getOrderKanbanCategory(
+  order: OrderRecord,
+  opWindow?: OperationalWindow,
+): KanbanColumnKey | null {
+  const isIssue =
     order.status === 'address_error' ||
     order.status === 'client_absent' ||
     order.status === 'cancelled' ||
     order.completion_reason === 'address_error' ||
     order.completion_reason === 'client_absent' ||
     (order.notes && order.notes.toLowerCase().includes('problema'))
-  ) {
+
+  if (isIssue) {
+    // Se a janela operacional foi passada, validar estritamente se o problema é do dia atual
+    if (opWindow && !isOrderIssueToday(order, opWindow)) {
+      return null
+    }
     return 'issues'
   }
 
