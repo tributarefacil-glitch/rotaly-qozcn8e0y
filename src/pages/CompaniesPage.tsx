@@ -23,6 +23,9 @@ import {
   AlertTriangle,
   Loader2,
   Sparkles,
+  UserCheck,
+  KeyRound,
+  ShieldAlert,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -58,6 +61,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
 import { lookupCnpj } from '@/services/cnpjService'
@@ -176,17 +180,66 @@ export const CompaniesPage: React.FC = () => {
     admin_phone: '',
   })
 
-  // Modal de Edição de Empresa / Limites
+  // Modal de Edição de Empresa / Limites / Dados Cadastrais / Membros
   const [editingEmpresa, setEditingEmpresa] = useState<EmpresaRecord | null>(null)
+  const [editActiveTab, setEditActiveTab] = useState<'dados' | 'membros'>('dados')
   const [editFormData, setEditFormData] = useState({
     nome_razao_social: '',
     nome_fantasia: '',
+    cnpj: '',
+    logradouro: '',
+    numero: '',
+    complemento: '',
+    bairro: '',
+    cidade: '',
+    uf: 'RJ',
+    cep: '',
+    telefone: '',
+    email: '',
     plano: 'profissional' as PlanoEmpresa,
     max_users: 15,
     max_couriers: 10,
     max_orders_month: 2000,
     ativa: true,
   })
+  const [editCnpjError, setEditCnpjError] = useState<string | null>(null)
+
+  // Gestão de Membros dentro do Modal de Edição
+  const [isEditAddMemberOpen, setIsEditAddMemberOpen] = useState(false)
+  const [memberAddMode, setMemberAddMode] = useState<'create' | 'link'>('create')
+  const [selectedExistingUserId, setSelectedExistingUserId] = useState<string>('')
+  const [existingUserRole, setExistingUserRole] = useState<'admin' | 'seller' | 'courier'>('seller')
+  const [editNewMemberForm, setEditNewMemberForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    phone: '',
+    role: 'seller' as 'admin' | 'seller' | 'courier',
+    vehicle_type: 'moto',
+    vehicle_plate: '',
+  })
+  const [isAddingMemberInEdit, setIsAddingMemberInEdit] = useState(false)
+
+  // Edição de Membro individual (sub-modal ou formulário de edição)
+  const [editingMember, setEditingMember] = useState<{
+    membroId: string
+    userId: string
+    name: string
+    email: string
+    phone: string
+    role: 'admin' | 'seller' | 'courier'
+    vehicle_type?: string
+    vehicle_plate?: string
+  } | null>(null)
+  const [isSavingMemberEdit, setIsSavingMemberEdit] = useState(false)
+
+  // Confirmação de exclusão de vínculo de membro
+  const [memberToDelete, setMemberToDelete] = useState<{
+    membroId: string
+    userName: string
+    userRole: string
+  } | null>(null)
+  const [isDeletingMemberLink, setIsDeletingMemberLink] = useState(false)
 
   // Modal de Bloqueio / Desbloqueio de Empresa
   const [toggleStatusTarget, setToggleStatusTarget] = useState<EmpresaRecord | null>(null)
@@ -479,9 +532,25 @@ export const CompaniesPage: React.FC = () => {
 
   const handleOpenEdit = (emp: EmpresaRecord) => {
     setEditingEmpresa(emp)
+    setEditActiveTab('dados')
+    setIsEditAddMemberOpen(false)
+    setEditingMember(null)
+    setMemberToDelete(null)
+    setEditCnpjError(null)
+
     setEditFormData({
       nome_razao_social: emp.nome_razao_social || '',
       nome_fantasia: emp.nome_fantasia || '',
+      cnpj: emp.cnpj || '',
+      logradouro: emp.logradouro || '',
+      numero: emp.numero || '',
+      complemento: emp.complemento || '',
+      bairro: emp.bairro || '',
+      cidade: emp.cidade || '',
+      uf: emp.uf || 'RJ',
+      cep: emp.cep || '',
+      telefone: emp.telefone || '',
+      email: emp.email || '',
       plano: (emp.plano as PlanoEmpresa) || 'profissional',
       max_users: emp.max_users || 15,
       max_couriers: emp.max_couriers || 10,
@@ -490,20 +559,89 @@ export const CompaniesPage: React.FC = () => {
     })
   }
 
+  const handleEditCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatCNPJ(e.target.value)
+    setEditFormData((prev) => ({ ...prev, cnpj: formatted }))
+
+    const raw = formatted.replace(/\D/g, '')
+    if (raw.length === 14) {
+      if (!validateCNPJ(raw)) {
+        setEditCnpjError('CNPJ inválido (dígitos verificadores incorretos).')
+      } else {
+        setEditCnpjError(null)
+      }
+    } else if (raw.length > 0) {
+      setEditCnpjError('O CNPJ deve ter 14 dígitos.')
+    } else {
+      setEditCnpjError(null)
+    }
+  }
+
   const handleSaveEdit = async () => {
     if (!editingEmpresa) return
+
+    if (!editFormData.nome_razao_social.trim()) {
+      toast.error('A Razão Social é obrigatória.')
+      return
+    }
+
+    const isMatriz = Boolean(matrizId && editingEmpresa.id === matrizId)
+
+    const cleanCnpj = editFormData.cnpj.replace(/\D/g, '')
+    if (cleanCnpj) {
+      if (!validateCNPJ(cleanCnpj)) {
+        toast.error('CNPJ informado é inválido.')
+        return
+      }
+
+      // Validar duplicidade de CNPJ com outras empresas
+      const exists = empresas.some(
+        (emp) => emp.id !== editingEmpresa.id && (emp.cnpj || '').replace(/\D/g, '') === cleanCnpj,
+      )
+      if (exists) {
+        toast.error('Já existe outra empresa cadastrada com este CNPJ.')
+        return
+      }
+    }
+
     setIsSubmitting(true)
     try {
-      await pb.collection<EmpresaRecord>('empresas').update(editingEmpresa.id, {
-        nome_razao_social: editFormData.nome_razao_social,
-        nome_fantasia: editFormData.nome_fantasia,
-        plano: editFormData.plano,
-        max_users: Number(editFormData.max_users),
-        max_couriers: Number(editFormData.max_couriers),
-        max_orders_month: Number(editFormData.max_orders_month),
-        ativa: editFormData.ativa,
-      })
-      toast.success('Empresa e limites atualizados!')
+      const enderecoCompleto = [
+        editFormData.logradouro,
+        editFormData.numero ? `nº ${editFormData.numero}` : '',
+        editFormData.complemento,
+        editFormData.bairro,
+        editFormData.cidade,
+        editFormData.uf,
+        editFormData.cep ? `CEP: ${editFormData.cep}` : '',
+      ]
+        .filter(Boolean)
+        .join(', ')
+
+      const updatePayload: Partial<EmpresaRecord> = {
+        nome_razao_social: editFormData.nome_razao_social.trim(),
+        nome_fantasia: editFormData.nome_fantasia.trim() || editFormData.nome_razao_social.trim(),
+        // Se for a Matriz, preserva o CNPJ original para segurança
+        cnpj: isMatriz ? editingEmpresa.cnpj : editFormData.cnpj,
+        logradouro: editFormData.logradouro,
+        numero: editFormData.numero,
+        complemento: editFormData.complemento,
+        bairro: editFormData.bairro,
+        cidade: editFormData.cidade,
+        uf: editFormData.uf,
+        cep: editFormData.cep,
+        endereco_completo: enderecoCompleto,
+        telefone: editFormData.telefone,
+        email: editFormData.email,
+        plano: isMatriz ? 'enterprise' : editFormData.plano,
+        max_users: isMatriz ? 9999 : Number(editFormData.max_users),
+        max_couriers: isMatriz ? 9999 : Number(editFormData.max_couriers),
+        max_orders_month: isMatriz ? 999999 : Number(editFormData.max_orders_month),
+        ativa: isMatriz ? true : editFormData.ativa,
+      }
+
+      await pb.collection<EmpresaRecord>('empresas').update(editingEmpresa.id, updatePayload)
+      toast.success('Dados cadastrais e limites da empresa atualizados!')
       setEditingEmpresa(null)
       await loadData()
       await refreshCompanyData()
@@ -511,6 +649,218 @@ export const CompaniesPage: React.FC = () => {
       toast.error(err?.message || 'Erro ao atualizar dados da empresa.')
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  // --- GESTÃO DE MEMBROS DENTRO DO MODAL DE EDIÇÃO ---
+
+  // Adicionar membro na empresa em edição (novo usuário ou vincular existente)
+  const handleAddMemberInEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingEmpresa) return
+
+    const isMatriz = Boolean(matrizId && editingEmpresa.id === matrizId)
+    if (isMatriz) {
+      toast.error(
+        'A gestão de membros da Matriz é protegida e não pode ser modificada por este modal.',
+      )
+      return
+    }
+
+    setIsAddingMemberInEdit(true)
+    try {
+      if (memberAddMode === 'create') {
+        if (!editNewMemberForm.email || !editNewMemberForm.password) {
+          toast.error('E-mail e senha são obrigatórios.')
+          setIsAddingMemberInEdit(false)
+          return
+        }
+
+        // Validar limites da empresa antes de criar
+        const isCourier = editNewMemberForm.role === 'courier'
+        const limitCheck = await deliveryService.checkUserLimit(editingEmpresa.id, isCourier)
+        if (!limitCheck.allowed) {
+          toast.error(limitCheck.message || 'Limite de usuários do plano atingido.')
+          setIsAddingMemberInEdit(false)
+          return
+        }
+
+        // Criar usuário novo via deliveryService.createUser (já cria membro vinculado)
+        const createdUser = await deliveryService.createUser(
+          {
+            name: editNewMemberForm.name,
+            email: editNewMemberForm.email.trim().toLowerCase(),
+            password: editNewMemberForm.password,
+            passwordConfirm: editNewMemberForm.password,
+            role: editNewMemberForm.role,
+            phone: editNewMemberForm.phone,
+            status: 'active',
+            vehicle_type: editNewMemberForm.vehicle_type,
+            vehicle_plate: editNewMemberForm.vehicle_plate,
+            verified: true,
+          },
+          editingEmpresa.id,
+        )
+
+        toast.success(
+          `Membro ${createdUser.name || createdUser.email} criado e vinculado com sucesso!`,
+        )
+      } else {
+        // Modo 'link': vincular usuário existente
+        if (!selectedExistingUserId) {
+          toast.error('Selecione um usuário existente para vincular.')
+          setIsAddingMemberInEdit(false)
+          return
+        }
+
+        // Checar se já é membro ativo desta empresa
+        const alreadyLinked = membros.some(
+          (m) => m.empresa_id === editingEmpresa.id && m.user_id === selectedExistingUserId,
+        )
+        if (alreadyLinked) {
+          toast.error('Este usuário já é membro desta empresa.')
+          setIsAddingMemberInEdit(false)
+          return
+        }
+
+        // Validar limites da empresa
+        const isCourier = existingUserRole === 'courier'
+        const limitCheck = await deliveryService.checkUserLimit(editingEmpresa.id, isCourier)
+        if (!limitCheck.allowed) {
+          toast.error(limitCheck.message || 'Limite de usuários do plano atingido.')
+          setIsAddingMemberInEdit(false)
+          return
+        }
+
+        // Criar registro na coleção membros
+        await pb.collection<MembroRecord>('membros').create({
+          empresa_id: editingEmpresa.id,
+          user_id: selectedExistingUserId,
+          papel: existingUserRole,
+          ativo: true,
+        })
+
+        // Sincronizar users.role caso o usuário ainda não tenha papel ou coincida
+        try {
+          const usr = allUsers.find((u) => u.id === selectedExistingUserId)
+          if (usr && usr.role !== 'master' && usr.role !== existingUserRole) {
+            await pb.collection('users').update(selectedExistingUserId, {
+              role: existingUserRole,
+            })
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+
+        toast.success('Usuário vinculado a esta empresa com sucesso!')
+      }
+
+      // Limpar formulário de adição
+      setIsEditAddMemberOpen(false)
+      setEditNewMemberForm({
+        name: '',
+        email: '',
+        password: '',
+        phone: '',
+        role: 'seller',
+        vehicle_type: 'moto',
+        vehicle_plate: '',
+      })
+      setSelectedExistingUserId('')
+      await loadData()
+    } catch (err: any) {
+      console.error('Erro ao adicionar membro na empresa:', err)
+      toast.error(err?.message || 'Falha ao adicionar membro.')
+    } finally {
+      setIsAddingMemberInEdit(false)
+    }
+  }
+
+  // Abrir modal de edição de dados/papel do membro
+  const handleOpenEditMember = (m: MembroRecord) => {
+    const usr = allUsers.find((u) => u.id === m.user_id)
+    const papel = (m.papel || usr?.role || 'seller') as 'admin' | 'seller' | 'courier'
+
+    setEditingMember({
+      membroId: m.id,
+      userId: m.user_id,
+      name: usr?.name || '',
+      email: usr?.email || '',
+      phone: usr?.phone || '',
+      role: papel === 'admin' || papel === 'courier' ? papel : 'seller',
+      vehicle_type: usr?.vehicle_type || 'moto',
+      vehicle_plate: usr?.vehicle_plate || '',
+    })
+  }
+
+  // Salvar alterações de papel e dados cadastrais do membro
+  const handleSaveMemberEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingMember || !editingEmpresa) return
+
+    const isMatriz = Boolean(matrizId && editingEmpresa.id === matrizId)
+    if (isMatriz) {
+      toast.error('Membros da Matriz não podem ser editados por este modal.')
+      return
+    }
+
+    setIsSavingMemberEdit(true)
+    try {
+      // 1. Atualizar vínculo na tabela `membros` (papel)
+      await pb.collection<MembroRecord>('membros').update(editingMember.membroId, {
+        papel: editingMember.role,
+        ativo: true,
+      })
+
+      // 2. Atualizar dados do usuário em `users` (nome, telefone, role e veículo se courier)
+      const userPayload: Record<string, any> = {
+        name: editingMember.name.trim(),
+        phone: editingMember.phone.trim(),
+        role: editingMember.role,
+      }
+      if (editingMember.role === 'courier') {
+        userPayload.vehicle_type = editingMember.vehicle_type || 'moto'
+        userPayload.vehicle_plate = (editingMember.vehicle_plate || '').toUpperCase().trim()
+      }
+
+      await pb.collection('users').update(editingMember.userId, userPayload)
+
+      toast.success('Dados e papel do membro atualizados com sucesso!')
+      setEditingMember(null)
+      await loadData()
+    } catch (err: any) {
+      console.error('Erro ao salvar membro:', err)
+      toast.error(err?.message || 'Falha ao atualizar dados do membro.')
+    } finally {
+      setIsSavingMemberEdit(false)
+    }
+  }
+
+  // Confirmar exclusão do vínculo (membro) com a empresa
+  const handleConfirmDeleteMemberLink = async () => {
+    if (!memberToDelete || !editingEmpresa) return
+
+    const isMatriz = Boolean(matrizId && editingEmpresa.id === matrizId)
+    if (isMatriz) {
+      toast.error('Vínculos de membros da Matriz não podem ser removidos.')
+      setMemberToDelete(null)
+      return
+    }
+
+    setIsDeletingMemberLink(true)
+    try {
+      // Exclui EXCLUSIVAMENTE o vínculo (registro na coleção `membros`), NUNCA o registro de `users`
+      await deliveryService.deleteMembro(memberToDelete.membroId)
+      toast.success(
+        `Vínculo de "${memberToDelete.userName}" com esta empresa foi removido com sucesso. O histórico de entregas e pedidos do usuário foi preservado.`,
+      )
+      setMemberToDelete(null)
+      await loadData()
+    } catch (err: any) {
+      console.error('Erro ao excluir vínculo de membro:', err)
+      toast.error(err?.message || 'Falha ao desvincular membro da empresa.')
+    } finally {
+      setIsDeletingMemberLink(false)
     }
   }
 
@@ -1389,127 +1739,1048 @@ export const CompaniesPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Editar Empresa / Plano / Limites */}
-      <Dialog open={!!editingEmpresa} onOpenChange={(open) => !open && setEditingEmpresa(null)}>
+      {/* Modal: Editar Empresa, Dados Cadastrais, Limites & Membros (Gestão Completa) */}
+      <Dialog
+        open={!!editingEmpresa}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingEmpresa(null)
+            setIsEditAddMemberOpen(false)
+            setEditingMember(null)
+            setMemberToDelete(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl bg-white border-slate-200 text-[#002855] p-6 max-h-[92vh] overflow-y-auto shadow-2xl">
+          {(() => {
+            const isEditingMatriz = Boolean(matrizId && editingEmpresa?.id === matrizId)
+            const currentEditingMembers = editingEmpresa
+              ? membros.filter((m) => m.empresa_id === editingEmpresa.id)
+              : []
+            const unlinkedUsers = allUsers.filter(
+              (u) => u.role !== 'master' && !currentEditingMembers.some((m) => m.user_id === u.id),
+            )
+
+            return (
+              <>
+                <DialogHeader className="pb-3 border-b border-slate-100">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#002855]">
+                        <Building2 className="h-5 w-5 text-[#00A3FF]" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <DialogTitle className="font-heading text-lg font-bold text-[#002855]">
+                            {editingEmpresa?.nome_fantasia ||
+                              editingEmpresa?.nome_razao_social ||
+                              'Gestão da Empresa'}
+                          </DialogTitle>
+                          {isEditingMatriz && (
+                            <Badge className="bg-[#002855] text-white text-[9px] px-2 py-0.5">
+                              Matriz Principal
+                            </Badge>
+                          )}
+                        </div>
+                        <DialogDescription className="text-xs text-slate-500 mt-0.5">
+                          Gestão unificada: dados cadastrais completos, limites operacionais e
+                          membros vinculados.
+                        </DialogDescription>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className="text-[11px] font-bold border-blue-200 bg-blue-50 text-[#002855] capitalize"
+                      >
+                        Plano: {editFormData.plano}
+                      </Badge>
+                      {editFormData.ativa ? (
+                        <Badge className="bg-emerald-500 text-white text-[10px] font-bold gap-1">
+                          <CheckCircle2 className="h-3 w-3" /> Ativa
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-rose-500 text-white text-[10px] font-bold gap-1">
+                          <Lock className="h-3 w-3" /> Bloqueada
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Aviso de Proteção da Matriz */}
+                  {isEditingMatriz && (
+                    <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2.5 text-xs text-amber-900">
+                      <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="block font-semibold">
+                          Proteção de Integridade da Matriz Ativa:
+                        </strong>
+                        <span>
+                          O CNPJ, os limites enterprise ilimitados e a gestão de membros da Matriz
+                          Principal são estritamente protegidos e não podem ser alterados ou
+                          removidos por este formulário.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </DialogHeader>
+
+                {/* Abas Internas: Dados Cadastrais / Membros */}
+                <Tabs
+                  value={editActiveTab}
+                  onValueChange={(val: any) => setEditActiveTab(val)}
+                  className="w-full pt-3"
+                >
+                  <TabsList className="grid w-full grid-cols-2 bg-slate-100 p-1 rounded-xl h-10">
+                    <TabsTrigger
+                      value="dados"
+                      className="text-xs font-bold data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg flex items-center gap-2"
+                    >
+                      <Building className="h-3.5 w-3.5" />
+                      Dados Cadastrais &amp; Limites
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="membros"
+                      className="text-xs font-bold data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg flex items-center gap-2"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      Membros da Loja ({currentEditingMembers.length})
+                    </TabsTrigger>
+                  </TabsList>
+
+                  {/* ABA 1: DADOS CADASTRAIS COMPLETOS & LIMITES */}
+                  <TabsContent value="dados" className="space-y-4 pt-3 focus-visible:outline-none">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label className="text-xs font-semibold text-slate-700">
+                          Razão Social *
+                        </Label>
+                        <Input
+                          required
+                          placeholder="Ex: Drogaria Santa Fé Ltda"
+                          value={editFormData.nome_razao_social}
+                          onChange={(e) =>
+                            setEditFormData((p) => ({ ...p, nome_razao_social: e.target.value }))
+                          }
+                          className="h-9 border-slate-200 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-slate-700">
+                          Nome Fantasia
+                        </Label>
+                        <Input
+                          placeholder="Ex: Farmácia Santa Fé"
+                          value={editFormData.nome_fantasia}
+                          onChange={(e) =>
+                            setEditFormData((p) => ({ ...p, nome_fantasia: e.target.value }))
+                          }
+                          className="h-9 border-slate-200 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-slate-700">
+                          CNPJ {isEditingMatriz && '(Protegido na Matriz)'}
+                        </Label>
+                        <Input
+                          disabled={isEditingMatriz}
+                          placeholder="00.000.000/0000-00"
+                          value={editFormData.cnpj}
+                          onChange={handleEditCnpjChange}
+                          maxLength={18}
+                          className={`h-9 border-slate-200 text-xs font-mono ${
+                            isEditingMatriz ? 'bg-slate-100 cursor-not-allowed opacity-80' : ''
+                          } ${editCnpjError ? 'border-rose-500' : ''}`}
+                        />
+                        {editCnpjError && !isEditingMatriz && (
+                          <p className="text-[11px] text-rose-500 flex items-center gap-1">
+                            <AlertCircle className="h-3 w-3" /> {editCnpjError}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-slate-700">
+                          Telefone / WhatsApp
+                        </Label>
+                        <Input
+                          placeholder="(21) 90000-0000"
+                          value={editFormData.telefone}
+                          onChange={(e) =>
+                            setEditFormData((p) => ({
+                              ...p,
+                              telefone: formatPhone(e.target.value),
+                            }))
+                          }
+                          maxLength={15}
+                          className="h-9 border-slate-200 text-xs"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-slate-700">
+                          E-mail Comercial
+                        </Label>
+                        <Input
+                          type="email"
+                          placeholder="contato@empresa.com.br"
+                          value={editFormData.email}
+                          onChange={(e) =>
+                            setEditFormData((p) => ({ ...p, email: e.target.value }))
+                          }
+                          className="h-9 border-slate-200 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* ENDEREÇO COMPLETO */}
+                    <div className="border-t border-slate-200 pt-3">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2.5 flex items-center gap-1.5">
+                        <MapPin className="h-3.5 w-3.5 text-[#00A3FF]" /> Endereço Base /
+                        Operacional
+                      </span>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="space-y-1.5 sm:col-span-2">
+                          <Label className="text-xs font-semibold text-slate-700">
+                            Logradouro (Rua / Av)
+                          </Label>
+                          <Input
+                            placeholder="Rua das Lojas"
+                            value={editFormData.logradouro}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, logradouro: e.target.value }))
+                            }
+                            className="h-9 border-slate-200 text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-700">Número</Label>
+                          <Input
+                            placeholder="100"
+                            value={editFormData.numero}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, numero: e.target.value }))
+                            }
+                            className="h-9 border-slate-200 text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-700">Bairro</Label>
+                          <Input
+                            placeholder="Centro"
+                            value={editFormData.bairro}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, bairro: e.target.value }))
+                            }
+                            className="h-9 border-slate-200 text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-700">Cidade</Label>
+                          <Input
+                            placeholder="Rio de Janeiro"
+                            value={editFormData.cidade}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, cidade: e.target.value }))
+                            }
+                            className="h-9 border-slate-200 text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-700">UF</Label>
+                          <Input
+                            placeholder="RJ"
+                            value={editFormData.uf}
+                            maxLength={2}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, uf: e.target.value.toUpperCase() }))
+                            }
+                            className="h-9 border-slate-200 text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-700">CEP</Label>
+                          <Input
+                            placeholder="00000-000"
+                            value={editFormData.cep}
+                            maxLength={9}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, cep: formatCEP(e.target.value) }))
+                            }
+                            className="h-9 border-slate-200 text-xs font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5 sm:col-span-2">
+                          <Label className="text-xs font-semibold text-slate-700">
+                            Complemento
+                          </Label>
+                          <Input
+                            placeholder="Sala, Galpão, Bloco..."
+                            value={editFormData.complemento}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, complemento: e.target.value }))
+                            }
+                            className="h-9 border-slate-200 text-xs"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* PLANO E LIMITES */}
+                    <div className="border-t border-slate-200 pt-3">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#002855] flex items-center gap-1.5 mb-2.5">
+                        <Zap className="h-3.5 w-3.5 text-amber-500" /> Plano Comercial &amp; Limites
+                        Operacionais
+                      </span>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-700">Plano</Label>
+                          <Select
+                            disabled={isEditingMatriz}
+                            value={editFormData.plano}
+                            onValueChange={(val: PlanoEmpresa) => {
+                              const def = PLANO_DEFAULTS[val]
+                              setEditFormData((p) => ({
+                                ...p,
+                                plano: val,
+                                max_users: def.max_users,
+                                max_couriers: def.max_couriers,
+                                max_orders_month: def.max_orders_month,
+                              }))
+                            }}
+                          >
+                            <SelectTrigger
+                              className={`h-9 border-slate-200 text-xs ${
+                                isEditingMatriz ? 'bg-slate-100 cursor-not-allowed opacity-80' : ''
+                              }`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="basico">Básico (Até 5 usuários)</SelectItem>
+                              <SelectItem value="profissional">
+                                Profissional (Até 15 usuários)
+                              </SelectItem>
+                              <SelectItem value="enterprise">Enterprise (Ilimitado)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-700">
+                            Máx. Usuários
+                          </Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            disabled={isEditingMatriz}
+                            value={editFormData.max_users}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, max_users: Number(e.target.value) }))
+                            }
+                            className={`h-9 border-slate-200 text-xs ${
+                              isEditingMatriz ? 'bg-slate-100 cursor-not-allowed opacity-80' : ''
+                            }`}
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-slate-700">
+                            Máx. Entregadores
+                          </Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            disabled={isEditingMatriz}
+                            value={editFormData.max_couriers}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({
+                                ...p,
+                                max_couriers: Number(e.target.value),
+                              }))
+                            }
+                            className={`h-9 border-slate-200 text-xs ${
+                              isEditingMatriz ? 'bg-slate-100 cursor-not-allowed opacity-80' : ''
+                            }`}
+                          />
+                        </div>
+
+                        <div className="space-y-1.5 sm:col-span-3">
+                          <Label className="text-xs font-semibold text-slate-700">
+                            Máx. Pedidos / Mês
+                          </Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            disabled={isEditingMatriz}
+                            value={editFormData.max_orders_month}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({
+                                ...p,
+                                max_orders_month: Number(e.target.value),
+                              }))
+                            }
+                            className={`h-9 border-slate-200 text-xs ${
+                              isEditingMatriz ? 'bg-slate-100 cursor-not-allowed opacity-80' : ''
+                            }`}
+                          />
+                        </div>
+                      </div>
+
+                      {!isEditingMatriz && (
+                        <div className="flex items-center gap-2 pt-3">
+                          <input
+                            type="checkbox"
+                            id="edit-empresa-ativa"
+                            checked={editFormData.ativa}
+                            onChange={(e) =>
+                              setEditFormData((p) => ({ ...p, ativa: e.target.checked }))
+                            }
+                            className="h-4 w-4 rounded border-slate-300 text-[#00A3FF]"
+                          />
+                          <Label
+                            htmlFor="edit-empresa-ativa"
+                            className="text-xs font-semibold text-slate-700 cursor-pointer"
+                          >
+                            Empresa Ativa (permite login e operação comercial de membros e
+                            entregadores)
+                          </Label>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-200 flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setEditingEmpresa(null)}
+                        className="border-slate-200 text-slate-600 text-xs"
+                      >
+                        Cancelar
+                      </Button>
+                      <Button
+                        onClick={handleSaveEdit}
+                        disabled={isSubmitting || !!editCnpjError}
+                        className="bg-[#002855] hover:bg-[#001D3D] text-white text-xs font-bold"
+                      >
+                        {isSubmitting ? 'Salvando...' : 'Salvar Dados Cadastrais'}
+                      </Button>
+                    </div>
+                  </TabsContent>
+
+                  {/* ABA 2: GESTÃO COMPLETA DE MEMBROS */}
+                  <TabsContent
+                    value="membros"
+                    className="space-y-4 pt-3 focus-visible:outline-none"
+                  >
+                    {/* Header da aba membros com botão de adicionar */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                      <div>
+                        <span className="text-xs font-bold text-[#002855] block">
+                          Membros Ativos ({currentEditingMembers.length} /{' '}
+                          {editingEmpresa?.max_users || 9999} no plano)
+                        </span>
+                        <p className="text-[11px] text-slate-500">
+                          {isEditingMatriz
+                            ? 'A Matriz gerencia usuários do núcleo do sistema de forma protegida.'
+                            : 'Adicione, edite dados e papéis ou desvincule membros sem apagar o histórico.'}
+                        </p>
+                      </div>
+
+                      {!isEditingMatriz && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setIsEditAddMemberOpen(!isEditAddMemberOpen)
+                            setEditingMember(null)
+                          }}
+                          className="bg-[#00A3FF] hover:bg-[#008CE0] text-white text-xs font-bold gap-1.5 h-8 shrink-0"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          {isEditAddMemberOpen ? 'Ver Lista' : 'Adicionar Membro'}
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Formulário de Adição de Membro (Criar Novo OU Vincular Existente) */}
+                    {isEditAddMemberOpen && !isEditingMatriz && (
+                      <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 space-y-3.5">
+                        <div className="flex items-center justify-between border-b border-blue-200 pb-2">
+                          <span className="text-xs font-bold text-[#002855] flex items-center gap-1.5">
+                            <UserPlus className="h-4 w-4 text-[#00A3FF]" />
+                            {memberAddMode === 'create'
+                              ? 'Cadastrar Novo Usuário e Vincular'
+                              : 'Vincular Usuário Existente'}
+                          </span>
+
+                          <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-blue-200">
+                            <button
+                              type="button"
+                              onClick={() => setMemberAddMode('create')}
+                              className={`text-[10px] font-bold px-2.5 py-1 rounded-md transition-all ${
+                                memberAddMode === 'create'
+                                  ? 'bg-[#002855] text-white shadow-xs'
+                                  : 'text-slate-600 hover:text-[#002855]'
+                              }`}
+                            >
+                              Criar Novo
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setMemberAddMode('link')}
+                              className={`text-[10px] font-bold px-2.5 py-1 rounded-md transition-all ${
+                                memberAddMode === 'link'
+                                  ? 'bg-[#002855] text-white shadow-xs'
+                                  : 'text-slate-600 hover:text-[#002855]'
+                              }`}
+                            >
+                              Vincular Existente
+                            </button>
+                          </div>
+                        </div>
+
+                        {memberAddMode === 'create' ? (
+                          <form onSubmit={handleAddMemberInEdit} className="space-y-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  Nome Completo *
+                                </Label>
+                                <Input
+                                  required
+                                  placeholder="Ex: Carlos Silva"
+                                  value={editNewMemberForm.name}
+                                  onChange={(e) =>
+                                    setEditNewMemberForm((p) => ({ ...p, name: e.target.value }))
+                                  }
+                                  className="h-8 border-slate-200 text-xs bg-white"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  Papel / Função *
+                                </Label>
+                                <Select
+                                  value={editNewMemberForm.role}
+                                  onValueChange={(val: any) =>
+                                    setEditNewMemberForm((p) => ({ ...p, role: val }))
+                                  }
+                                >
+                                  <SelectTrigger className="h-8 border-slate-200 text-xs bg-white">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="seller">Vendedor</SelectItem>
+                                    <SelectItem value="courier">Entregador</SelectItem>
+                                    <SelectItem value="admin">Administrador da Loja</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  E-mail de Login *
+                                </Label>
+                                <Input
+                                  type="email"
+                                  required
+                                  placeholder="carlos@loja.com"
+                                  value={editNewMemberForm.email}
+                                  onChange={(e) =>
+                                    setEditNewMemberForm((p) => ({ ...p, email: e.target.value }))
+                                  }
+                                  className="h-8 border-slate-200 text-xs bg-white"
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  Senha (mín. 8 caracteres) *
+                                </Label>
+                                <Input
+                                  type="password"
+                                  required
+                                  placeholder="••••••••"
+                                  value={editNewMemberForm.password}
+                                  onChange={(e) =>
+                                    setEditNewMemberForm((p) => ({
+                                      ...p,
+                                      password: e.target.value,
+                                    }))
+                                  }
+                                  className="h-8 border-slate-200 text-xs bg-white"
+                                />
+                              </div>
+
+                              <div className="space-y-1 sm:col-span-2">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  WhatsApp / Telefone
+                                </Label>
+                                <Input
+                                  placeholder="(21) 98888-8888"
+                                  value={editNewMemberForm.phone}
+                                  onChange={(e) =>
+                                    setEditNewMemberForm((p) => ({
+                                      ...p,
+                                      phone: formatPhone(e.target.value),
+                                    }))
+                                  }
+                                  className="h-8 border-slate-200 text-xs bg-white"
+                                />
+                              </div>
+
+                              {editNewMemberForm.role === 'courier' && (
+                                <>
+                                  <div className="space-y-1">
+                                    <Label className="text-xs font-semibold text-slate-700">
+                                      Tipo de Veículo
+                                    </Label>
+                                    <Select
+                                      value={editNewMemberForm.vehicle_type}
+                                      onValueChange={(val) =>
+                                        setEditNewMemberForm((p) => ({ ...p, vehicle_type: val }))
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8 border-slate-200 text-xs bg-white">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="moto">Moto</SelectItem>
+                                        <SelectItem value="carro">Carro</SelectItem>
+                                        <SelectItem value="bicicleta">Bicicleta</SelectItem>
+                                        <SelectItem value="van">Van</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <Label className="text-xs font-semibold text-slate-700">
+                                      Placa do Veículo
+                                    </Label>
+                                    <Input
+                                      placeholder="ABC1D23"
+                                      value={editNewMemberForm.vehicle_plate}
+                                      onChange={(e) =>
+                                        setEditNewMemberForm((p) => ({
+                                          ...p,
+                                          vehicle_plate: e.target.value.toUpperCase(),
+                                        }))
+                                      }
+                                      className="h-8 border-slate-200 text-xs bg-white font-mono"
+                                    />
+                                  </div>
+                                </>
+                              )}
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2 border-t border-blue-200">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() => setIsEditAddMemberOpen(false)}
+                                className="h-8 text-xs text-slate-600"
+                              >
+                                Cancelar
+                              </Button>
+                              <Button
+                                type="submit"
+                                disabled={isAddingMemberInEdit}
+                                className="h-8 text-xs bg-[#002855] hover:bg-[#001D3D] text-white font-bold"
+                              >
+                                {isAddingMemberInEdit
+                                  ? 'Criando...'
+                                  : 'Cadastrar e Vincular Membro'}
+                              </Button>
+                            </div>
+                          </form>
+                        ) : (
+                          <form onSubmit={handleAddMemberInEdit} className="space-y-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1 sm:col-span-2">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  Selecione o Usuário Cadastrado *
+                                </Label>
+                                <Select
+                                  value={selectedExistingUserId}
+                                  onValueChange={(val) => setSelectedExistingUserId(val)}
+                                >
+                                  <SelectTrigger className="h-9 border-slate-200 text-xs bg-white">
+                                    <SelectValue placeholder="Selecione um usuário existente..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {unlinkedUsers.map((u) => (
+                                      <SelectItem key={u.id} value={u.id}>
+                                        {u.name || 'Sem Nome'} — {u.email} ({u.role || 'sem cargo'})
+                                      </SelectItem>
+                                    ))}
+                                    {unlinkedUsers.length === 0 && (
+                                      <div className="p-2 text-center text-xs text-slate-400">
+                                        Nenhum usuário livre encontrado.
+                                      </div>
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="space-y-1 sm:col-span-2">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  Papel nesta Empresa *
+                                </Label>
+                                <Select
+                                  value={existingUserRole}
+                                  onValueChange={(val: any) => setExistingUserRole(val)}
+                                >
+                                  <SelectTrigger className="h-8 border-slate-200 text-xs bg-white">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="seller">Vendedor</SelectItem>
+                                    <SelectItem value="courier">Entregador</SelectItem>
+                                    <SelectItem value="admin">Administrador da Loja</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2 border-t border-blue-200">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() => setIsEditAddMemberOpen(false)}
+                                className="h-8 text-xs text-slate-600"
+                              >
+                                Cancelar
+                              </Button>
+                              <Button
+                                type="submit"
+                                disabled={isAddingMemberInEdit || !selectedExistingUserId}
+                                className="h-8 text-xs bg-[#002855] hover:bg-[#001D3D] text-white font-bold"
+                              >
+                                {isAddingMemberInEdit ? 'Vinculando...' : 'Vincular à Empresa'}
+                              </Button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Formulário de Edição do Membro Selecionado */}
+                    {editingMember && !isEditingMatriz && (
+                      <form
+                        onSubmit={handleSaveMemberEdit}
+                        className="rounded-xl border border-amber-300 bg-amber-50/50 p-4 space-y-3"
+                      >
+                        <div className="flex items-center justify-between border-b border-amber-200 pb-2">
+                          <span className="text-xs font-bold text-[#002855] flex items-center gap-1.5">
+                            <Edit2 className="h-3.5 w-3.5 text-amber-600" />
+                            Editar Membro:{' '}
+                            <strong>{editingMember.name || editingMember.email}</strong>
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditingMember(null)}
+                            className="h-7 text-xs text-slate-500 hover:text-slate-800"
+                          >
+                            Fechar Edição
+                          </Button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700">Nome</Label>
+                            <Input
+                              required
+                              value={editingMember.name}
+                              onChange={(e) =>
+                                setEditingMember((p) => (p ? { ...p, name: e.target.value } : null))
+                              }
+                              className="h-8 border-slate-200 text-xs bg-white"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700">
+                              Papel / Função *
+                            </Label>
+                            <Select
+                              value={editingMember.role}
+                              onValueChange={(val: any) =>
+                                setEditingMember((p) => (p ? { ...p, role: val } : null))
+                              }
+                            >
+                              <SelectTrigger className="h-8 border-slate-200 text-xs bg-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="seller">Vendedor</SelectItem>
+                                <SelectItem value="courier">Entregador</SelectItem>
+                                <SelectItem value="admin">Administrador da Loja</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700">
+                              WhatsApp / Telefone
+                            </Label>
+                            <Input
+                              value={editingMember.phone}
+                              onChange={(e) =>
+                                setEditingMember((p) =>
+                                  p ? { ...p, phone: formatPhone(e.target.value) } : null,
+                                )
+                              }
+                              className="h-8 border-slate-200 text-xs bg-white"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-xs font-semibold text-slate-700">
+                              E-mail (Login)
+                            </Label>
+                            <Input
+                              disabled
+                              value={editingMember.email}
+                              className="h-8 border-slate-200 text-xs bg-slate-100 cursor-not-allowed text-slate-500"
+                            />
+                          </div>
+
+                          {editingMember.role === 'courier' && (
+                            <>
+                              <div className="space-y-1">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  Tipo de Veículo
+                                </Label>
+                                <Select
+                                  value={editingMember.vehicle_type || 'moto'}
+                                  onValueChange={(val) =>
+                                    setEditingMember((p) =>
+                                      p ? { ...p, vehicle_type: val } : null,
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger className="h-8 border-slate-200 text-xs bg-white">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="moto">Moto</SelectItem>
+                                    <SelectItem value="carro">Carro</SelectItem>
+                                    <SelectItem value="bicicleta">Bicicleta</SelectItem>
+                                    <SelectItem value="van">Van</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label className="text-xs font-semibold text-slate-700">
+                                  Placa
+                                </Label>
+                                <Input
+                                  placeholder="ABC1D23"
+                                  value={editingMember.vehicle_plate || ''}
+                                  onChange={(e) =>
+                                    setEditingMember((p) =>
+                                      p
+                                        ? { ...p, vehicle_plate: e.target.value.toUpperCase() }
+                                        : null,
+                                    )
+                                  }
+                                  className="h-8 border-slate-200 text-xs bg-white font-mono"
+                                />
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2 border-t border-amber-200">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => setEditingMember(null)}
+                            className="h-8 text-xs text-slate-600"
+                          >
+                            Cancelar
+                          </Button>
+                          <Button
+                            type="submit"
+                            disabled={isSavingMemberEdit}
+                            className="h-8 text-xs bg-[#002855] hover:bg-[#001D3D] text-white font-bold"
+                          >
+                            {isSavingMemberEdit ? 'Salvando...' : 'Salvar Dados do Membro'}
+                          </Button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Lista de Membros da Empresa */}
+                    <div className="space-y-2">
+                      <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl bg-white overflow-hidden max-h-72 overflow-y-auto">
+                        {currentEditingMembers.map((m) => {
+                          const usr = allUsers.find((u) => u.id === m.user_id)
+                          const roleLabel = m.papel || usr?.role || 'membro'
+
+                          return (
+                            <div
+                              key={m.id}
+                              className="p-3.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-50/70 transition-colors"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="h-8 w-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-[#002855] font-bold text-xs uppercase">
+                                  {usr?.name ? usr.name.slice(0, 2) : 'US'}
+                                </div>
+                                <div>
+                                  <p className="font-bold text-[#002855] flex items-center gap-2">
+                                    <span>{usr?.name || 'Usuário Rotaly'}</span>
+                                    {usr?.role === 'master' && (
+                                      <Badge className="bg-amber-500 text-white text-[9px] px-1 py-0 h-4">
+                                        Master
+                                      </Badge>
+                                    )}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500">{usr?.email}</p>
+                                  <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                                    {usr?.phone && <span>{usr.phone}</span>}
+                                    {usr?.vehicle_type && (
+                                      <span>
+                                        • Veículo: {usr.vehicle_type}{' '}
+                                        {usr?.vehicle_plate ? `(${usr.vehicle_plate})` : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] border-slate-200 text-slate-700 capitalize bg-slate-50 font-medium"
+                                >
+                                  {roleLabel}
+                                </Badge>
+
+                                {!isEditingMatriz && isMaster && (
+                                  <>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={() => {
+                                        setIsEditAddMemberOpen(false)
+                                        handleOpenEditMember(m)
+                                      }}
+                                      className="h-7 w-7 text-slate-500 hover:text-[#002855] hover:bg-slate-200 rounded-lg"
+                                      title="Editar papel e dados do membro"
+                                    >
+                                      <Edit2 className="h-3.5 w-3.5" />
+                                    </Button>
+
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={() =>
+                                        setMemberToDelete({
+                                          membroId: m.id,
+                                          userName: usr?.name || usr?.email || 'Membro',
+                                          userRole: roleLabel,
+                                        })
+                                      }
+                                      className="h-7 w-7 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg"
+                                      title="Excluir vínculo do membro com esta empresa"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+
+                        {currentEditingMembers.length === 0 && (
+                          <div className="p-8 text-center text-xs text-slate-400">
+                            Nenhum membro vinculado a esta empresa ainda. Clique em "Adicionar
+                            Membro" acima para cadastrar.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-200 flex justify-end">
+                      <Button
+                        type="button"
+                        onClick={() => setEditingEmpresa(null)}
+                        className="border-slate-200 bg-slate-100 hover:bg-slate-200 text-[#002855] text-xs font-semibold"
+                      >
+                        Fechar
+                      </Button>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmação de Exclusão de Vínculo de Membro */}
+      <Dialog open={!!memberToDelete} onOpenChange={(open) => !open && setMemberToDelete(null)}>
         <DialogContent className="max-w-md bg-white border-slate-200 text-[#002855] p-6 shadow-xl">
           <DialogHeader>
-            <DialogTitle className="font-heading text-lg font-bold text-[#002855]">
-              Editar Empresa &amp; Limites do Plano
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500">
-              Atualize o plano e os tetos operacionais desta empresa parceira.
-            </DialogDescription>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="h-10 w-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="font-heading text-lg font-bold text-rose-700">
+                  Desvincular Membro da Loja?
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500">
+                  {memberToDelete?.userName} ({memberToDelete?.userRole})
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
 
-          <div className="space-y-4 pt-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">Nome Fantasia</Label>
-              <Input
-                value={editFormData.nome_fantasia}
-                onChange={(e) => setEditFormData((p) => ({ ...p, nome_fantasia: e.target.value }))}
-                className="h-9 border-slate-200 text-xs"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">Plano</Label>
-              <Select
-                value={editFormData.plano}
-                onValueChange={(val: PlanoEmpresa) => {
-                  const def = PLANO_DEFAULTS[val]
-                  setEditFormData((p) => ({
-                    ...p,
-                    plano: val,
-                    max_users: def.max_users,
-                    max_couriers: def.max_couriers,
-                    max_orders_month: def.max_orders_month,
-                  }))
-                }}
-              >
-                <SelectTrigger className="h-9 border-slate-200 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="basico">Básico</SelectItem>
-                  <SelectItem value="profissional">Profissional</SelectItem>
-                  <SelectItem value="enterprise">Enterprise</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-slate-700">Máx. Usuários</Label>
-                <Input
-                  type="number"
-                  min="1"
-                  value={editFormData.max_users}
-                  onChange={(e) =>
-                    setEditFormData((p) => ({ ...p, max_users: Number(e.target.value) }))
-                  }
-                  className="h-9 border-slate-200 text-xs"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-slate-700">Máx. Entregadores</Label>
-                <Input
-                  type="number"
-                  min="1"
-                  value={editFormData.max_couriers}
-                  onChange={(e) =>
-                    setEditFormData((p) => ({ ...p, max_couriers: Number(e.target.value) }))
-                  }
-                  className="h-9 border-slate-200 text-xs"
-                />
-              </div>
-
-              <div className="space-y-1.5 col-span-2">
-                <Label className="text-xs font-semibold text-slate-700">Máx. Pedidos / Mês</Label>
-                <Input
-                  type="number"
-                  min="1"
-                  value={editFormData.max_orders_month}
-                  onChange={(e) =>
-                    setEditFormData((p) => ({ ...p, max_orders_month: Number(e.target.value) }))
-                  }
-                  className="h-9 border-slate-200 text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 pt-2">
-              <input
-                type="checkbox"
-                id="empresa-ativa"
-                checked={editFormData.ativa}
-                onChange={(e) => setEditFormData((p) => ({ ...p, ativa: e.target.checked }))}
-                className="h-4 w-4 rounded border-slate-300 text-[#00A3FF]"
-              />
-              <Label
-                htmlFor="empresa-ativa"
-                className="text-xs font-semibold text-slate-700 cursor-pointer"
-              >
-                Empresa Ativa (permite login e operação dos membros)
-              </Label>
-            </div>
+          <div className="py-2 text-xs text-slate-600 space-y-2">
+            <p className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-slate-700">
+              Esta ação removerá o <strong>vínculo deste usuário com a empresa atual</strong>.
+            </p>
+            <p className="text-slate-500 text-[11px]">
+              O cadastro do usuário em si e seu histórico de rotas, entregas e pedidos são{' '}
+              <strong>preservados intactos</strong> no banco de dados.
+            </p>
           </div>
 
-          <DialogFooter className="pt-4 border-t border-slate-200">
+          <DialogFooter className="pt-3 border-t border-slate-200 flex sm:justify-end gap-2">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setEditingEmpresa(null)}
-              className="border-slate-200 text-slate-600 text-xs"
+              disabled={isDeletingMemberLink}
+              onClick={() => setMemberToDelete(null)}
+              className="text-xs"
             >
               Cancelar
             </Button>
             <Button
-              onClick={handleSaveEdit}
-              disabled={isSubmitting}
-              className="bg-[#002855] hover:bg-[#001D3D] text-white text-xs font-bold"
+              type="button"
+              disabled={isDeletingMemberLink}
+              onClick={handleConfirmDeleteMemberLink}
+              className="text-xs font-bold text-white bg-rose-600 hover:bg-rose-700"
             >
-              {isSubmitting ? 'Salvando...' : 'Salvar Alterações'}
+              {isDeletingMemberLink ? 'Desvinculando...' : 'Confirmar Desvinculação'}
             </Button>
           </DialogFooter>
         </DialogContent>
