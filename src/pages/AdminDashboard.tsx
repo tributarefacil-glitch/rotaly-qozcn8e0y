@@ -1957,6 +1957,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                   orders={orders}
                   couriers={couriers}
                   sellers={sellers}
+                  customers={customers}
                   settings={settings}
                   offRouteEvents={offRouteEvents}
                   locations={locations}

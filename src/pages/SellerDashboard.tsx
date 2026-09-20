@@ -1243,6 +1243,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             <ReportsSection
               orders={orders}
               couriers={couriers}
+              customers={customers}
               settings={settings}
               offRouteEvents={offRouteEvents}
               locations={locations}

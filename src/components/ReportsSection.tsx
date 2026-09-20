@@ -42,10 +42,15 @@ import {
   Loader2,
   Receipt,
   UserCheck,
+  Trophy,
+  Award,
+  Crown,
+  Medal,
 } from 'lucide-react'
 import {
   OrderRecord,
   UserRecord,
+  CustomerRecord,
   AppSettingsRecord,
   OffRouteEventRecord,
   LocationRecord,
@@ -90,6 +95,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   const [isLoadingPeriodOrders, setIsLoadingPeriodOrders] = useState<boolean>(false)
   const [loadedPeriod, setLoadedPeriod] = useState<string | null>(null)
   const [sellersList, setSellersList] = useState<UserRecord[]>(propSellers || [])
+  const [customersList, setCustomersList] = useState<CustomerRecord[]>(propCustomers || [])
 
   const [copiedLink, setCopiedLink] = useState(false)
   const [selectedCourierForModal, setSelectedCourierForModal] = useState<UserRecord | null>(null)
@@ -115,6 +121,24 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       isMounted = false
     }
   }, [propSellers])
+
+  // Se customers não foi passado via props, carregar do deliveryService
+  React.useEffect(() => {
+    if (propCustomers && propCustomers.length > 0) {
+      setCustomersList(propCustomers)
+      return
+    }
+    let isMounted = true
+    deliveryService
+      .getCustomers()
+      .then((c) => {
+        if (isMounted) setCustomersList(c)
+      })
+      .catch((err) => console.warn('Erro ao carregar clientes para relatórios:', err))
+    return () => {
+      isMounted = false
+    }
+  }, [propCustomers])
 
   // Carregar os pedidos do período diretamente do banco via paginação de ~200
   React.useEffect(() => {
@@ -388,6 +412,111 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       totalOrders: deliveredOrdersCount,
     }
   }, [filteredOrders, sellersList])
+
+  // BREAKDOWN NOVO: RANKING DE VENDAS POR CLIENTE
+  // REGRAS:
+  // - Apenas vendas entregues com sucesso e não neutralizadas (status === 'delivered' && !isNeutralizedSystemError(order))
+  // - Agrupamento por customer_id; se não houver cliente ou id não mapeado, rotular como 'Cliente Avulso'
+  // - Nome, documento (CPF/CNPJ), telefone, cidade/bairro, pedidos entregues, faturamento total, ticket médio e % de participação
+  // - Pódio Top 3 (Ouro 🥇, Prata 🥈, Bronze 🥉) + Tabela Top 10 com paginação/listagem limpa
+  const salesByCustomer = useMemo(() => {
+    const customerMap = new Map<
+      string,
+      {
+        customerId: string
+        customerName: string
+        customerDoc: string
+        customerPhone: string
+        customerCity: string
+        ordersCount: number
+        totalRevenue: number
+      }
+    >()
+
+    let periodTotalRevenue = 0
+    let deliveredOrdersCount = 0
+
+    filteredOrders.forEach((order) => {
+      // Regra blindada: apenas pedidos entregues e não neutralizados entram no ranking de faturamento
+      const isDeliveredSale = order.status === 'delivered' && !isNeutralizedSystemError(order)
+      if (!isDeliveredSale) return
+
+      const rawPrice =
+        typeof order.total_price === 'number' && order.total_price > 0 ? order.total_price : 0
+
+      periodTotalRevenue += rawPrice
+      deliveredOrdersCount += 1
+
+      const customerId = order.customer_id || 'cliente_avulso'
+      let customerName = 'Cliente Avulso'
+      let customerDoc = ''
+      let customerPhone = ''
+      let customerCity = ''
+
+      if (order.expand?.customer_id) {
+        const exp = order.expand.customer_id
+        customerName = exp.name || 'Cliente Avulso'
+        customerDoc = exp.document || ''
+        customerPhone = exp.phone || exp.phone2 || ''
+        customerCity = [exp.neighborhood, exp.city].filter(Boolean).join(' - ') || exp.city || ''
+      } else if (order.customer_id) {
+        const found = customersList.find((c) => c.id === order.customer_id)
+        if (found) {
+          customerName = found.name || 'Cliente Avulso'
+          customerDoc = found.document || ''
+          customerPhone = found.phone || found.phone2 || ''
+          customerCity =
+            [found.neighborhood, found.city].filter(Boolean).join(' - ') || found.city || ''
+        } else {
+          customerName = 'Cliente Avulso'
+        }
+      }
+
+      const entry = customerMap.get(customerId) || {
+        customerId,
+        customerName,
+        customerDoc,
+        customerPhone,
+        customerCity,
+        ordersCount: 0,
+        totalRevenue: 0,
+      }
+
+      // Se já tinha nome genérico e encontramos dados melhores, atualizamos
+      if (entry.customerName === 'Cliente Avulso' && customerName !== 'Cliente Avulso') {
+        entry.customerName = customerName
+        entry.customerDoc = customerDoc
+        entry.customerPhone = customerPhone
+        entry.customerCity = customerCity
+      }
+
+      entry.ordersCount += 1
+      entry.totalRevenue += rawPrice
+      customerMap.set(customerId, entry)
+    })
+
+    const list = Array.from(customerMap.values()).map((item) => {
+      const avgTicket = item.ordersCount > 0 ? item.totalRevenue / item.ordersCount : 0
+      const sharePercentage =
+        periodTotalRevenue > 0 ? (item.totalRevenue / periodTotalRevenue) * 100 : 0
+
+      return {
+        ...item,
+        avgTicket: Number(avgTicket.toFixed(2)),
+        sharePercentage: Number(sharePercentage.toFixed(1)),
+      }
+    })
+
+    // Ordenar por faturamento desc (ou volume de pedidos desc)
+    list.sort((a, b) => b.totalRevenue - a.totalRevenue || b.ordersCount - a.ordersCount)
+
+    return {
+      items: list,
+      totalRevenue: periodTotalRevenue,
+      totalOrders: deliveredOrdersCount,
+      uniqueCustomersCount: list.length,
+    }
+  }, [filteredOrders, customersList])
 
   // BREAKDOWN 2: ENTREGAS POR ENTREGADOR
   // Agrupar por courier_id (expand users), nome, atribuídas, concluídas (delivered), com problema, canceladas e taxa de sucesso.
@@ -1057,6 +1186,334 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
           </CardContent>
         </Card>
       </div>
+
+      {/* SEÇÃO NOVA: RANKING DE VENDAS POR CLIENTE */}
+      <Card className="shadow-sm border-slate-200 overflow-hidden">
+        <CardHeader className="pb-3 border-b bg-gradient-to-r from-amber-50/70 via-slate-50/60 to-white">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-bold flex items-center gap-2 text-slate-900">
+                <Trophy className="h-5 w-5 text-amber-500" />
+                Ranking de Vendas por Cliente
+              </CardTitle>
+              <CardDescription className="text-xs text-slate-500">
+                Pódio dos principais compradores e top 10 clientes por faturamento em vendas
+                entregues no período
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 bg-white px-2.5 py-1 rounded-md border shadow-sm">
+                Faturamento Entregue:{' '}
+                <strong className="text-emerald-700 font-mono">
+                  R${' '}
+                  {salesByCustomer.totalRevenue.toLocaleString('pt-BR', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </strong>
+              </span>
+              <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
+                {salesByCustomer.uniqueCustomersCount} cliente
+                {salesByCustomer.uniqueCustomersCount === 1 ? '' : 's'} atendido
+                {salesByCustomer.uniqueCustomersCount === 1 ? '' : 's'}
+              </span>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-4 sm:p-6 space-y-6">
+          {salesByCustomer.items.length === 0 ? (
+            <div className="py-10 text-center">
+              <Users className="h-10 w-10 mx-auto text-slate-300 mb-2" />
+              <p className="text-sm font-semibold text-slate-600">
+                Nenhuma venda registrada ainda no período selecionado.
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                Apenas vendas entregues com sucesso e não neutralizadas entram no ranking.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* PÓDIO TOP 3 */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                {/* 1º LUGAR (OURO) */}
+                {salesByCustomer.items[0] && (
+                  <div className="order-1 md:order-2 relative rounded-2xl border-2 border-amber-300 bg-gradient-to-b from-amber-50/90 to-white p-4 shadow-sm flex flex-col justify-between">
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-amber-500 text-white text-[11px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                      <Crown className="h-3.5 w-3.5" />
+                      1º Lugar • Ouro
+                    </div>
+                    <div className="pt-2 text-center space-y-1">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700 border-2 border-amber-300 font-black text-lg shadow-inner">
+                        🥇
+                      </div>
+                      <h4
+                        className="font-bold text-sm text-slate-900 truncate px-2"
+                        title={salesByCustomer.items[0].customerName}
+                      >
+                        {salesByCustomer.items[0].customerName}
+                      </h4>
+                      {salesByCustomer.items[0].customerDoc && (
+                        <p className="text-[11px] font-mono text-slate-500">
+                          {salesByCustomer.items[0].customerDoc}
+                        </p>
+                      )}
+                      {salesByCustomer.items[0].customerCity && (
+                        <p className="text-[10px] text-slate-400 truncate">
+                          {salesByCustomer.items[0].customerCity}
+                        </p>
+                      )}
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-amber-200/70 grid grid-cols-2 gap-2 text-center bg-white/70 rounded-xl p-2">
+                      <div>
+                        <span className="block text-[10px] uppercase font-semibold text-slate-400">
+                          Faturamento
+                        </span>
+                        <strong className="text-xs sm:text-sm font-mono font-bold text-emerald-700">
+                          R${' '}
+                          {salesByCustomer.items[0].totalRevenue.toLocaleString('pt-BR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] uppercase font-semibold text-slate-400">
+                          Pedidos
+                        </span>
+                        <strong className="text-xs sm:text-sm font-bold text-slate-800">
+                          {salesByCustomer.items[0].ordersCount} (
+                          {salesByCustomer.items[0].sharePercentage}%)
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2º LUGAR (PRATA) */}
+                {salesByCustomer.items[1] && (
+                  <div className="order-2 md:order-1 relative rounded-2xl border border-slate-300 bg-gradient-to-b from-slate-100/80 to-white p-4 shadow-sm flex flex-col justify-between">
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-slate-500 text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                      <Medal className="h-3 w-3" />
+                      2º Lugar • Prata
+                    </div>
+                    <div className="pt-2 text-center space-y-1">
+                      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-slate-700 border border-slate-300 font-bold text-base">
+                        🥈
+                      </div>
+                      <h4
+                        className="font-bold text-sm text-slate-900 truncate px-2"
+                        title={salesByCustomer.items[1].customerName}
+                      >
+                        {salesByCustomer.items[1].customerName}
+                      </h4>
+                      {salesByCustomer.items[1].customerDoc && (
+                        <p className="text-[11px] font-mono text-slate-500">
+                          {salesByCustomer.items[1].customerDoc}
+                        </p>
+                      )}
+                      {salesByCustomer.items[1].customerCity && (
+                        <p className="text-[10px] text-slate-400 truncate">
+                          {salesByCustomer.items[1].customerCity}
+                        </p>
+                      )}
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-200 grid grid-cols-2 gap-2 text-center bg-white/70 rounded-xl p-2">
+                      <div>
+                        <span className="block text-[10px] uppercase font-semibold text-slate-400">
+                          Faturamento
+                        </span>
+                        <strong className="text-xs font-mono font-bold text-emerald-700">
+                          R${' '}
+                          {salesByCustomer.items[1].totalRevenue.toLocaleString('pt-BR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] uppercase font-semibold text-slate-400">
+                          Pedidos
+                        </span>
+                        <strong className="text-xs font-bold text-slate-800">
+                          {salesByCustomer.items[1].ordersCount} (
+                          {salesByCustomer.items[1].sharePercentage}%)
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3º LUGAR (BRONZE) */}
+                {salesByCustomer.items[2] && (
+                  <div className="order-3 md:order-3 relative rounded-2xl border border-amber-700/30 bg-gradient-to-b from-amber-100/40 to-white p-4 shadow-sm flex flex-col justify-between">
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-amber-800/80 text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 shadow-sm">
+                      <Award className="h-3 w-3" />
+                      3º Lugar • Bronze
+                    </div>
+                    <div className="pt-2 text-center space-y-1">
+                      <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-100/70 text-amber-800 border border-amber-300/70 font-bold text-base">
+                        🥉
+                      </div>
+                      <h4
+                        className="font-bold text-sm text-slate-900 truncate px-2"
+                        title={salesByCustomer.items[2].customerName}
+                      >
+                        {salesByCustomer.items[2].customerName}
+                      </h4>
+                      {salesByCustomer.items[2].customerDoc && (
+                        <p className="text-[11px] font-mono text-slate-500">
+                          {salesByCustomer.items[2].customerDoc}
+                        </p>
+                      )}
+                      {salesByCustomer.items[2].customerCity && (
+                        <p className="text-[10px] text-slate-400 truncate">
+                          {salesByCustomer.items[2].customerCity}
+                        </p>
+                      )}
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-amber-200/50 grid grid-cols-2 gap-2 text-center bg-white/70 rounded-xl p-2">
+                      <div>
+                        <span className="block text-[10px] uppercase font-semibold text-slate-400">
+                          Faturamento
+                        </span>
+                        <strong className="text-xs font-mono font-bold text-emerald-700">
+                          R${' '}
+                          {salesByCustomer.items[2].totalRevenue.toLocaleString('pt-BR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="block text-[10px] uppercase font-semibold text-slate-400">
+                          Pedidos
+                        </span>
+                        <strong className="text-xs font-bold text-slate-800">
+                          {salesByCustomer.items[2].ordersCount} (
+                          {salesByCustomer.items[2].sharePercentage}%)
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* TABELA TOP 10 CLIENTES */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <UserCheck className="h-3.5 w-3.5 text-[#0052CC]" />
+                    Top 10 Maiores Clientes em Vendas
+                  </h4>
+                  <span className="text-[11px] text-slate-400">
+                    Mostrando até 10 de {salesByCustomer.items.length} clientes
+                  </span>
+                </div>
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-600 uppercase border-b">
+                      <tr>
+                        <th className="py-2.5 px-3 w-14 text-center">Posição</th>
+                        <th className="py-2.5 px-3">Cliente</th>
+                        <th className="py-2.5 px-3 text-center">Nº Pedidos</th>
+                        <th className="py-2.5 px-3">Faturamento (R$)</th>
+                        <th className="py-2.5 px-3">Ticket Médio</th>
+                        <th className="py-2.5 px-3">Participação (%)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {salesByCustomer.items.slice(0, 10).map((customer, index) => {
+                        const rank = index + 1
+                        const isPodium = rank <= 3
+                        return (
+                          <tr key={customer.customerId} className="hover:bg-slate-50 transition">
+                            <td className="py-2.5 px-3 text-center">
+                              <span
+                                className={`inline-flex items-center justify-center h-6 w-6 rounded-full font-bold text-xs ${
+                                  rank === 1
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                    : rank === 2
+                                      ? 'bg-slate-200 text-slate-700 border border-slate-300'
+                                      : rank === 3
+                                        ? 'bg-amber-700/20 text-amber-900 border border-amber-700/30'
+                                        : 'bg-slate-50 text-slate-500'
+                                }`}
+                              >
+                                {isPodium
+                                  ? rank === 1
+                                    ? '🥇'
+                                    : rank === 2
+                                      ? '🥈'
+                                      : '🥉'
+                                  : `#${rank}`}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-900">
+                              <div className="flex items-center gap-2">
+                                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-[#0052CC] font-bold text-xs uppercase shrink-0">
+                                  {customer.customerName.slice(0, 2)}
+                                </div>
+                                <div>
+                                  <span className="block font-medium text-slate-900">
+                                    {customer.customerName}
+                                  </span>
+                                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 font-normal">
+                                    {customer.customerDoc && (
+                                      <span className="font-mono">{customer.customerDoc}</span>
+                                    )}
+                                    {customer.customerPhone && (
+                                      <span>• {customer.customerPhone}</span>
+                                    )}
+                                    {customer.customerCity && (
+                                      <span>• {customer.customerCity}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-slate-800 text-center">
+                              {customer.ordersCount}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-bold text-emerald-700">
+                              R${' '}
+                              {customer.totalRevenue.toLocaleString('pt-BR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-slate-700">
+                              R${' '}
+                              {customer.avgTicket.toLocaleString('pt-BR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-amber-500 rounded-full"
+                                    style={{
+                                      width: `${Math.min(100, Math.max(0, customer.sharePercentage))}%`,
+                                    }}
+                                  />
+                                </div>
+                                <span className="font-semibold text-slate-700">
+                                  {customer.sharePercentage}%
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* 2. VENDAS POR VENDEDOR */}
       <Card className="shadow-sm border-slate-200">
