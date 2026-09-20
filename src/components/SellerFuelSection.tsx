@@ -1,7 +1,6 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import {
   Wallet,
-  PlusCircle,
   CreditCard,
   Receipt,
   Search,
@@ -26,6 +25,7 @@ import type {
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
+import { formatPbTimestamp } from '@/lib/operationalWindow'
 import { CourierFuelSummaryCard } from '@/components/CourierFuelSummaryCard'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
@@ -68,6 +68,76 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
     'all' | 'moto' | 'carro' | 'caminhao' | 'bicicleta'
   >('all')
 
+  // Pedidos históricos de combustível com cache e paginação em lote (idêntico ao AdminDashboard)
+  const [fuelHistoryOrders, setFuelHistoryOrders] = useState<OrderRecord[]>([])
+  const [isLoadingFuelOrders, setIsLoadingFuelOrders] = useState(false)
+  const [loadedFuelPeriod, setLoadedFuelPeriod] = useState<string>('')
+  const fuelOrdersCacheRef = useRef<Map<string, { data: OrderRecord[]; timestamp: number }>>(
+    new Map(),
+  )
+
+  const fetchFuelHistoryOrders = useCallback(
+    async (forceRefresh = false) => {
+      const cacheKey = fuelPeriodFilter
+      const now = Date.now()
+      const cached = fuelOrdersCacheRef.current.get(cacheKey)
+
+      if (!forceRefresh && cached && now - cached.timestamp < 5 * 60 * 1000) {
+        setFuelHistoryOrders(cached.data)
+        setLoadedFuelPeriod(fuelPeriodFilter)
+        return
+      }
+
+      let filter = ''
+      const currentDate = new Date()
+
+      if (fuelPeriodFilter === 'month') {
+        const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
+        const startStr = formatPbTimestamp(firstDayOfMonth)
+        filter = `created >= '${startStr}'`
+      } else if (fuelPeriodFilter === 'week') {
+        const sevenDaysAgo = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000)
+        const startStr = formatPbTimestamp(sevenDaysAgo)
+        filter = `created >= '${startStr}'`
+      } else {
+        filter = ''
+      }
+
+      setIsLoadingFuelOrders(true)
+      try {
+        const targetCompanyId =
+          deliveryService.getActiveCompanyId() || (await deliveryService.getMatrizCompanyId())
+        const fetched = await deliveryService.getOrdersInBatches(
+          filter,
+          '-created',
+          'customer_id,courier_id,seller_id',
+          200,
+          targetCompanyId,
+        )
+        fuelOrdersCacheRef.current.set(cacheKey, { data: fetched, timestamp: Date.now() })
+        setFuelHistoryOrders(fetched)
+        setLoadedFuelPeriod(fuelPeriodFilter)
+      } catch (err) {
+        console.error('Erro ao carregar pedidos de combustível do período no seller:', err)
+        setFuelHistoryOrders((prev) => (prev.length > 0 ? prev : orders))
+        setLoadedFuelPeriod(fuelPeriodFilter)
+      } finally {
+        setIsLoadingFuelOrders(false)
+      }
+    },
+    [fuelPeriodFilter, orders],
+  )
+
+  useEffect(() => {
+    fetchFuelHistoryOrders()
+  }, [fuelPeriodFilter, fetchFuelHistoryOrders])
+
+  // Pool de pedidos ativo para combustível: histórico se carregado, senão orders do dia
+  const activeFuelOrdersPool =
+    fuelHistoryOrders.length > 0 || loadedFuelPeriod === fuelPeriodFilter
+      ? fuelHistoryOrders
+      : orders
+
   // Modal de Histórico Detalhado
   const [selectedCourierForHistory, setSelectedCourierForHistory] = useState<UserRecord | null>(
     null,
@@ -80,7 +150,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
       const metrics = calculateCourierFuelMetrics({
         courier,
         advances: fuelAdvances,
-        orders,
+        orders: activeFuelOrdersPool,
         locations,
         offRouteEvents,
         settings,
@@ -92,7 +162,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         deliveryService.getCourierFuelAccount(
           courier,
           fuelAdvances,
-          orders,
+          activeFuelOrdersPool,
           settings,
           fuelPeriodFilter,
           locations,
@@ -105,7 +175,15 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         fuelAccount,
       }
     })
-  }, [couriers, fuelAdvances, orders, locations, offRouteEvents, settings, fuelPeriodFilter])
+  }, [
+    couriers,
+    fuelAdvances,
+    activeFuelOrdersPool,
+    locations,
+    offRouteEvents,
+    settings,
+    fuelPeriodFilter,
+  ])
 
   // 2. Filtrar os cards dos entregadores por busca e categoria
   const filteredAccounts = useMemo(() => {
@@ -276,10 +354,16 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
           <Button
             variant="outline"
             size="sm"
-            onClick={onRefresh}
+            onClick={() => {
+              fetchFuelHistoryOrders(true)
+              onRefresh()
+            }}
+            disabled={isLoadingFuelOrders}
             className="h-9 gap-1.5 border-[#1E2B58] bg-[#0E1738] hover:bg-[#121E46] text-slate-200 text-xs rounded-lg"
           >
-            <RefreshCw className="h-3.5 w-3.5 text-[#60A5FA]" />
+            <RefreshCw
+              className={`h-3.5 w-3.5 text-[#60A5FA] ${isLoadingFuelOrders ? 'animate-spin' : ''}`}
+            />
             <span>Atualizar</span>
           </Button>
           <Button
@@ -621,7 +705,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         }}
         courier={selectedCourierForHistory}
         fuelAccount={selectedCourierAccount}
-        orders={orders}
+        orders={activeFuelOrdersPool}
         offRouteEvents={offRouteEvents}
         locations={locations}
         settings={settings}

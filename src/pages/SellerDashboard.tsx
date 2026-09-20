@@ -216,11 +216,22 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         ordersFilter = `seller_id = '${user.id}' && (${ordersFilter})`
       }
 
+      // Resolução segura da empresa alvo: currentCompany -> localStorage -> Matriz
+      const targetCompanyId =
+        currentCompany?.id ||
+        deliveryService.getActiveCompanyId() ||
+        (await deliveryService.getMatrizCompanyId())
+
       // ETAPA 1 (prioritária, imediata): getOrders + getCouriers + getLatestLocations
       // Popula os estados críticos e libera imediatamente a renderização dos cards do Kanban, entregadores e mapa
       const [ordersData, couriersData, locsData] = await Promise.all([
-        deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
-        deliveryService.getCouriers(),
+        deliveryService.getOrders(
+          ordersFilter,
+          '-created',
+          'customer_id,courier_id,seller_id',
+          targetCompanyId,
+        ),
+        deliveryService.getCouriers(targetCompanyId),
         deliveryService.getLatestLocations(),
       ])
       setOrders(ordersData)
@@ -230,11 +241,16 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
       // ETAPA 2 (em segundo plano, sem bloquear UI): getCustomers, getBaseAddresses, getSettings, getOffRouteEvents, getFuelAdvances
       Promise.all([
-        deliveryService.getCustomers(),
+        deliveryService.getCustomers('', targetCompanyId),
         deliveryService.getBaseAddresses(),
         deliveryService.getSettings(),
         deliveryService.getOffRouteEvents(),
-        deliveryService.getFuelAdvances(),
+        deliveryService.getFuelAdvances(
+          '',
+          '-date,-created',
+          'courier_id,created_by',
+          targetCompanyId,
+        ),
       ])
         .then(([custData, basesData, settingsData, eventsData, fuelData]) => {
           setCustomers(custData)

@@ -1013,7 +1013,8 @@ export const deliveryService = {
       return Array.from(couriersMap.values())
     }
 
-    // Filtrar entregadores membros da empresa ativa com deduplicação defensiva por user_id
+    // Filtrar entregadores membros da empresa ativa e UNIR com a lista de users com role='courier'
+    // Garantindo deduplicação por id e nunca descartando entregadores cadastrados em users
     const couriersMap = new Map<string, UserRecord>()
 
     try {
@@ -1037,24 +1038,40 @@ export const deliveryService = {
           }
         }
       }
-
-      if (couriersMap.size > 0) {
-        return Array.from(couriersMap.values())
-      }
     } catch (e) {
       console.warn('Erro ao filtrar couriers por membros:', e)
     }
 
-    // Fallback: se for a Matriz e não encontrou membros, lista couriers da base
-    const isMatriz = await this.isMatrizCompany(targetCompanyId)
-    if (isMatriz) {
-      const list = await pb.collection<UserRecord>('users').getFullList({
+    // Sempre buscar couriers da coleção users e UNIR (dedup por id)
+    // Se for Matriz ou filial principal, une todos os usuários com role='courier' (excluindo apenas quem for membro exclusivo de outra empresa ativa)
+    try {
+      const isMatriz = await this.isMatrizCompany(targetCompanyId)
+      const usersList = await pb.collection<UserRecord>('users').getFullList({
         filter: "role = 'courier'",
         sort: '-created',
         requestKey: null,
       })
-      for (const u of list) {
+
+      let otherCompanyMemberUserIds = new Set<string>()
+      if (!isMatriz) {
+        try {
+          const otherMembers = await pb.collection<MembroRecord>('membros').getFullList({
+            filter: `empresa_id != '${targetCompanyId}' && ativo = true && (papel = 'courier' || papel = 'entregador')`,
+            fields: 'user_id',
+            requestKey: null,
+          })
+          otherCompanyMemberUserIds = new Set(otherMembers.map((m) => m.user_id))
+        } catch (mErr) {
+          console.warn('Aviso ao consultar membros de outras empresas:', mErr)
+        }
+      }
+
+      for (const u of usersList) {
         if (u && u.id && !couriersMap.has(u.id)) {
+          // Se não for matriz e o courier estiver vinculado exclusivamente a outra empresa, pula
+          if (!isMatriz && otherCompanyMemberUserIds.has(u.id)) {
+            continue
+          }
           couriersMap.set(u.id, {
             ...u,
             vehicle_type: u.vehicle_type || 'moto',
@@ -1062,6 +1079,11 @@ export const deliveryService = {
           })
         }
       }
+    } catch (usersErr) {
+      console.warn('Erro ao unir couriers de users:', usersErr)
+    }
+
+    if (couriersMap.size > 0) {
       return Array.from(couriersMap.values())
     }
 
@@ -2685,17 +2707,21 @@ export const deliveryService = {
 
     // A coleção fuel_advances não possui empresa_id diretamente.
     // O isolamento multiempresa é feito via entregadores da empresa ativa:
-    // courier_id IN (ids dos couriers da empresa ativa).
+    // courier_id IN (ids dos couriers da empresa ativa / união).
+    let targetCompanyId = empresaId || this.getActiveCompanyId()
+    if (!targetCompanyId) {
+      try {
+        targetCompanyId = await this.getMatrizCompanyId()
+      } catch {
+        targetCompanyId = ''
+      }
+    }
+
     if (!filter.includes('courier_id')) {
       try {
-        // Resolver empresa ativa ou matriz sem filtrar por string vazia
-        const targetCompanyId =
-          empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
-
         let couriers = await this.getCouriers(targetCompanyId)
 
-        // Se mesmo assim os entregadores vierem vazios da coleção 'membros',
-        // buscar direto em users com role='courier' como fonte de verdade (mesma cascata usada em getSellers)
+        // Fallback defensivo: garantir que se couriers for vazio, busca todos os users com role='courier'
         if (!couriers || couriers.length === 0) {
           try {
             const allCouriers = await pb.collection<UserRecord>('users').getFullList({
@@ -2737,14 +2763,12 @@ export const deliveryService = {
         queryErr,
       )
       try {
-        // Fallback defensivo: listar adiantamentos e cruzar em memória pelos courier_id
+        // Fallback defensivo: listar adiantamentos e cruzar em memória pelos courier_id permitidos
         const allAdvances = await pb.collection<FuelAdvanceRecord>('fuel_advances').getFullList({
           sort,
           expand,
           requestKey: null,
         })
-        const targetCompanyId =
-          empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
         let couriers = await this.getCouriers(targetCompanyId)
         if (!couriers || couriers.length === 0) {
           const allCouriers = await pb.collection<UserRecord>('users').getFullList({
@@ -2755,6 +2779,16 @@ export const deliveryService = {
           couriers = allCouriers
         }
         const allowedCourierIds = new Set(couriers.map((c) => c.id))
+        // Adiciona defensivamente qualquer user com role courier à lista permitida
+        try {
+          const allUserCouriers = await pb.collection<UserRecord>('users').getFullList({
+            filter: "role = 'courier'",
+            requestKey: null,
+          })
+          allUserCouriers.forEach((u) => allowedCourierIds.add(u.id))
+        } catch {
+          /* ignore */
+        }
         return allAdvances.filter((adv) => adv.courier_id && allowedCourierIds.has(adv.courier_id))
       } catch (fallbackErr) {
         console.error('Falha crítica no fallback de fuel_advances:', fallbackErr)
@@ -2824,11 +2858,20 @@ export const deliveryService = {
 
   // Compute Real-time Courier Current Account
   // Consome o motor único oficial para todos os entregadores
-  async getCourierFuelAccounts(): Promise<CourierFuelAccount[]> {
+  async getCourierFuelAccounts(empresaId?: string): Promise<CourierFuelAccount[]> {
+    let resolvedCompanyId = empresaId || this.getActiveCompanyId()
+    if (!resolvedCompanyId) {
+      try {
+        resolvedCompanyId = await this.getMatrizCompanyId()
+      } catch {
+        resolvedCompanyId = ''
+      }
+    }
+
     const [couriers, advances, orders, settings, locations, offRouteEvents] = await Promise.all([
-      this.getCouriers(),
-      this.getFuelAdvances(),
-      this.getOrders(),
+      this.getCouriers(resolvedCompanyId),
+      this.getFuelAdvances('', '-date,-created', 'courier_id,created_by', resolvedCompanyId),
+      this.getOrders('', '-created', 'customer_id,courier_id,seller_id', resolvedCompanyId),
       this.getSettings(),
       this.getLatestLocations(),
       this.getOffRouteEvents(),
