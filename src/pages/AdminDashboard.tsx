@@ -67,6 +67,7 @@ import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
+import { fuelAccountService } from '@/services/fuelAccountService'
 import { getMyCompany, type ResolvedCompany } from '@/lib/companyResolver'
 import { getOperationalWindow, formatPbTimestamp } from '@/lib/operationalWindow'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
@@ -431,12 +432,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         currentOpWindow.endPbString || new Date(currentOpWindow.end).toISOString().replace('T', ' ')
       const ordersFilter = `(created >= '${windowStart}' && created <= '${windowEnd}') || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
 
-      // ETAPA 1 (imediata): pedidos + entregadores + telemetria de locais
+      // ETAPA 1 (imediata): pedidos + entregadores + telemetria de locais com fallback seguro
       // Libera imediatamente a renderização dos cards do Kanban, mapa e entregadores
       const [ordersData, couriersData, locationsData] = await Promise.all([
-        deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
-        deliveryService.getCouriers(companyId),
-        deliveryService.getLatestLocations(),
+        deliveryService
+          .getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id')
+          .catch((err) => {
+            console.warn('[AdminDashboard] Falha ao carregar pedidos:', err)
+            return [] as OrderRecord[]
+          }),
+        deliveryService.getCouriers(companyId).catch((err) => {
+          console.warn('[AdminDashboard] Falha ao carregar entregadores:', err)
+          return [] as UserRecord[]
+        }),
+        deliveryService.getLatestLocations().catch(() => [] as LocationRecord[]),
       ])
       setOrders(ordersData)
       setCouriers(couriersData)
@@ -444,8 +453,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setIsLoading(false)
 
       // ETAPA 2: usuários, vendedores, notificações, configurações, adiantamentos, eventos e avaliações
-      // CORREÇÃO (A): aguardar com await para eliminar race condition em que loadData() concorrente
-      // resolvia fora de ordem e repopulava inputs com snapshots defasados
+      // Cada query possui tratamento resiliente individual com fallback defensivo para nunca zerar listas
       const [
         usersData,
         sellersData,
@@ -456,14 +464,25 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         reviewsData,
         customersData,
       ] = await Promise.all([
-        deliveryService.getAllUsers(companyId),
-        deliveryService.getSellers(companyId),
-        deliveryService.getNotifications(),
-        deliveryService.getSettings(),
-        deliveryService.getFuelAdvances('', '-date,-created', 'courier_id,created_by', companyId),
-        deliveryService.getOffRouteEvents(),
-        deliveryService.getReviews(),
-        deliveryService.getCustomers(),
+        deliveryService.getAllUsers(companyId).catch((err) => {
+          console.warn('[AdminDashboard] Falha ao carregar usuários:', err)
+          return [] as UserRecord[]
+        }),
+        deliveryService.getSellers(companyId).catch((err) => {
+          console.warn('[AdminDashboard] Falha ao carregar vendedores:', err)
+          return [] as UserRecord[]
+        }),
+        deliveryService.getNotifications().catch(() => []),
+        deliveryService.getSettings().catch(() => null),
+        deliveryService
+          .getFuelAdvances('', '-date,-created', 'courier_id,created_by', companyId)
+          .catch((err) => {
+            console.warn('[AdminDashboard] Falha ao carregar adiantamentos de combustível:', err)
+            return [] as FuelAdvanceRecord[]
+          }),
+        deliveryService.getOffRouteEvents().catch(() => [] as OffRouteEventRecord[]),
+        deliveryService.getReviews().catch(() => []),
+        deliveryService.getCustomers().catch(() => []),
       ])
 
       setUsers(usersData)
@@ -1153,22 +1172,32 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       : orders
 
   // Recalcular fuelAccounts de forma LAZY — somente quando a aba de combustível ou o modal de histórico estiverem ativos
-  // Consome EXCLUSIVAMENTE o motor único calculateCourierFuelMetrics via deliveryService
+  // Consome EXCLUSIVAMENTE o motor único calculateCourierFuelMetrics via fuelAccountService / deliveryService
   // e é alimentado por fuelHistoryOrders (dataset histórico completo sob demanda)
   const currentFuelAccounts = useMemo(() => {
     if (!isFuelViewActive) {
       return []
     }
     return couriers.map((courier) => {
-      return deliveryService.getCourierFuelAccount(
+      const account = fuelAccountService.calculateAccountForCourier({
         courier,
-        fuelAdvances,
-        activeFuelOrdersPool,
+        advances: fuelAdvances,
+        orders: activeFuelOrdersPool,
         settings,
-        fuelPeriodFilter,
         locations,
         offRouteEvents,
-      )
+        periodFilter: fuelPeriodFilter,
+      })
+      return {
+        courier: account.courier,
+        totalAdvances: account.totalAdvances,
+        totalRouteKm: account.totalRouteKm,
+        totalSpent: account.totalSpent,
+        balance: account.balance,
+        advanceCount: account.advanceCount,
+        deliveriesCount: account.deliveriesCount,
+        calculationSource: account.calculationSource,
+      }
     })
   }, [
     isFuelViewActive,

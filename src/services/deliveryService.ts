@@ -1144,18 +1144,18 @@ export const deliveryService = {
 
     // 2. Consulta complementar e tolerância retroativa:
     // Atenção: a coleção 'users' NÃO possui coluna 'empresa_id' (o vínculo vive exclusivamente em 'membros').
-    // Para a Matriz, busca usuários com role = 'seller' e cruza com membros ativos para evitar vazamento entre empresas.
+    // Busca usuários com role = 'seller' e cruza com membros ativos para evitar vazamento entre empresas.
     try {
-      if (isMatriz) {
-        const usersList = await pb.collection<UserRecord>('users').getFullList({
-          filter: "role = 'seller'",
-          sort: '-created',
-          requestKey: null,
-        })
+      const usersList = await pb.collection<UserRecord>('users').getFullList({
+        filter: "role = 'seller'",
+        sort: '-created',
+        requestKey: null,
+      })
 
-        // Buscar membros ativos de outras empresas para garantir que vendedores vinculados
-        // exclusivamente a outras filiais (ex: Pimenta Verde) não vazem para a Matriz no fallback
-        let otherCompanyMemberUserIds = new Set<string>()
+      // Buscar membros ativos de outras empresas para garantir que vendedores vinculados
+      // exclusivamente a outras filiais não vazem
+      let otherCompanyMemberUserIds = new Set<string>()
+      if (!isMatriz) {
         try {
           const otherMembers = await pb.collection<MembroRecord>('membros').getFullList({
             filter: `empresa_id != '${targetCompanyId}' && ativo = true`,
@@ -1166,11 +1166,16 @@ export const deliveryService = {
         } catch (mErr) {
           console.warn('Aviso ao consultar membros de outras empresas:', mErr)
         }
+      }
 
-        for (const u of usersList) {
-          if (u && u.id && !sellersMap.has(u.id) && !otherCompanyMemberUserIds.has(u.id)) {
-            sellersMap.set(u.id, u)
-          }
+      for (const u of usersList) {
+        if (
+          u &&
+          u.id &&
+          !sellersMap.has(u.id) &&
+          (!otherCompanyMemberUserIds.has(u.id) || isMatriz)
+        ) {
+          sellersMap.set(u.id, u)
         }
       }
     } catch (usersErr) {
@@ -2798,12 +2803,10 @@ export const deliveryService = {
   },
 
   async createFuelAdvance(data: Partial<FuelAdvanceRecord>) {
-    const activeCompanyId = this.getActiveCompanyId()
-    const payload = {
-      ...data,
-      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
-    }
-    return pb.collection<FuelAdvanceRecord>('fuel_advances').create(payload)
+    // fuel_advances NÃO possui campo empresa_id no schema do PocketBase.
+    // Remove qualquer menção a empresa_id para não causar HTTP 400.
+    const { empresa_id: _empresaId, ...payloadWithoutEmpresaId } = (data as any) || {}
+    return pb.collection<FuelAdvanceRecord>('fuel_advances').create(payloadWithoutEmpresaId)
   },
 
   async deleteFuelAdvance(id: string) {
@@ -2868,26 +2871,21 @@ export const deliveryService = {
       }
     }
 
-    const [couriers, advances, orders, settings, locations, offRouteEvents] = await Promise.all([
-      this.getCouriers(resolvedCompanyId),
-      this.getFuelAdvances('', '-date,-created', 'courier_id,created_by', resolvedCompanyId),
-      this.getOrders('', '-created', 'customer_id,courier_id,seller_id', resolvedCompanyId),
-      this.getSettings(),
-      this.getLatestLocations(),
-      this.getOffRouteEvents(),
-    ])
-
-    return couriers.map((courier) =>
-      this.getCourierFuelAccount(
-        courier,
-        advances,
-        orders,
-        settings,
-        'all',
-        locations,
-        offRouteEvents,
-      ),
-    )
+    const { fuelAccountService } = await import('@/services/fuelAccountService')
+    const accounts = await fuelAccountService.getAllCourierFuelAccounts({
+      companyId: resolvedCompanyId,
+      periodFilter: 'all',
+    })
+    return accounts.map((a) => ({
+      courier: a.courier,
+      totalAdvances: a.totalAdvances,
+      totalRouteKm: a.totalRouteKm,
+      totalSpent: a.totalSpent,
+      balance: a.balance,
+      advanceCount: a.advanceCount,
+      deliveriesCount: a.deliveriesCount,
+      calculationSource: a.calculationSource,
+    }))
   },
 
   // Reviews (Avaliação de Entregador e Vendedor no Rastreio Público)

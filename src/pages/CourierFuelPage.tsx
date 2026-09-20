@@ -25,6 +25,7 @@ import { CourierBottomNav } from '@/components/CourierBottomNav'
 import { CourierFuelSummaryCard } from '@/components/CourierFuelSummaryCard'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 import { deliveryService } from '@/services/deliveryService'
+import { fuelAccountService } from '@/services/fuelAccountService'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import { useCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
@@ -56,13 +57,25 @@ export default function CourierFuelPage() {
     if (!user?.id) return
 
     try {
-      // STRICT FILTER: Courier can ONLY access their OWN records
+      // Usa o serviço unificado de combustível e queries resilientes com fallback individual
       const [userAdvances, userOrders, appSettings, userLocations, userEvents] = await Promise.all([
-        deliveryService.getFuelAdvances(`courier_id = '${user.id}'`, '-date,-created'),
-        deliveryService.getOrders(`courier_id = '${user.id}'`, '-created'),
-        deliveryService.getSettings(),
-        deliveryService.getLatestLocations(`user_id = '${user.id}'`),
-        deliveryService.getOffRouteEvents(`courier_id = '${user.id}'`),
+        fuelAccountService.getFuelAdvances(user.id).catch((err) => {
+          console.warn('[CourierFuelPage] Falha ao carregar adiantamentos:', err)
+          return [] as FuelAdvanceRecord[]
+        }),
+        deliveryService
+          .getOrders(`courier_id = '${user.id}'`, '-created', 'customer_id,courier_id,seller_id')
+          .catch((err) => {
+            console.warn('[CourierFuelPage] Falha ao carregar pedidos:', err)
+            return [] as OrderRecord[]
+          }),
+        deliveryService.getSettings().catch(() => null),
+        deliveryService
+          .getLatestLocations(`user_id = '${user.id}'`)
+          .catch(() => [] as LocationRecord[]),
+        deliveryService
+          .getOffRouteEvents(`courier_id = '${user.id}'`)
+          .catch(() => [] as OffRouteEventRecord[]),
       ])
 
       setAdvances(userAdvances)
@@ -71,8 +84,8 @@ export default function CourierFuelPage() {
       setLocations(userLocations)
       setOffRouteEvents(userEvents)
     } catch (err) {
-      console.error('Error loading courier fuel data:', err)
-      toast.error('Erro ao carregar dados financeiros de combustível.')
+      console.warn('Erro ao processar dados de combustível:', err)
+      // Não exibe toast de erro bloqueante; opera normalmente com fallback
     } finally {
       setIsLoading(false)
     }
