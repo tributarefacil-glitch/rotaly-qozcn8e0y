@@ -990,7 +990,8 @@ export const deliveryService = {
   async getCouriers(empresaId?: string) {
     const authUser = pb.authStore.record as any
     const isMaster = authUser?.role === 'master'
-    const targetCompanyId = empresaId || this.getActiveCompanyId()
+    const targetCompanyId =
+      empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
 
     // Se for Master e não especificou empresa (ou empresa é ALL), pode ver todos
     if (isMaster && empresaId === 'ALL') {
@@ -1070,7 +1071,8 @@ export const deliveryService = {
   async getSellers(empresaId?: string) {
     const authUser = pb.authStore.record as any
     const isMaster = authUser?.role === 'master'
-    const targetCompanyId = empresaId || this.getActiveCompanyId()
+    const targetCompanyId =
+      empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
     const isMatriz = await this.isMatrizCompany(targetCompanyId)
 
     if (isMaster && empresaId === 'ALL') {
@@ -1118,48 +1120,39 @@ export const deliveryService = {
       return Array.from(sellersMap.values())
     }
 
-    // 2. Consulta complementar e tolerância retroativa diretamente em 'users' (role = 'seller')
+    // 2. Consulta complementar e tolerância retroativa:
+    // Atenção: a coleção 'users' NÃO possui coluna 'empresa_id' (o vínculo vive exclusivamente em 'membros').
+    // Para a Matriz, busca usuários com role = 'seller' e cruza com membros ativos para evitar vazamento entre empresas.
     try {
-      let usersFilter: string
       if (isMatriz) {
-        // Matriz: vendedores explicitamente da matriz mais registros legados sem vínculo (empresa_id = '' ou null)
-        usersFilter = `role = 'seller' && (empresa_id = '${targetCompanyId}' || empresa_id = '' || empresa_id = null)`
-      } else {
-        // Outra empresa: isolamento estrito pelo ID da empresa
-        usersFilter = `role = 'seller' && empresa_id = '${targetCompanyId}'`
-      }
+        const usersList = await pb.collection<UserRecord>('users').getFullList({
+          filter: "role = 'seller'",
+          sort: '-created',
+          requestKey: null,
+        })
 
-      const usersList = await pb.collection<UserRecord>('users').getFullList({
-        filter: usersFilter,
-        sort: '-created',
-        requestKey: null,
-      })
+        // Buscar membros ativos de outras empresas para garantir que vendedores vinculados
+        // exclusivamente a outras filiais (ex: Pimenta Verde) não vazem para a Matriz no fallback
+        let otherCompanyMemberUserIds = new Set<string>()
+        try {
+          const otherMembers = await pb.collection<MembroRecord>('membros').getFullList({
+            filter: `empresa_id != '${targetCompanyId}' && ativo = true`,
+            fields: 'user_id',
+            requestKey: null,
+          })
+          otherCompanyMemberUserIds = new Set(otherMembers.map((m) => m.user_id))
+        } catch (mErr) {
+          console.warn('Aviso ao consultar membros de outras empresas:', mErr)
+        }
 
-      for (const u of usersList) {
-        if (u && u.id && !sellersMap.has(u.id)) {
-          sellersMap.set(u.id, u)
+        for (const u of usersList) {
+          if (u && u.id && !sellersMap.has(u.id) && !otherCompanyMemberUserIds.has(u.id)) {
+            sellersMap.set(u.id, u)
+          }
         }
       }
     } catch (usersErr) {
-      console.warn('Erro na consulta em camadas de sellers em users:', usersErr)
-      // Se a consulta com empresa_id falhar (ex: coluna empresa_id inexistente em users),
-      // buscar por role = 'seller' pura apenas se for a Matriz
-      if (isMatriz) {
-        try {
-          const fallbackUsers = await pb.collection<UserRecord>('users').getFullList({
-            filter: "role = 'seller'",
-            sort: '-created',
-            requestKey: null,
-          })
-          for (const u of fallbackUsers) {
-            if (u && u.id && !sellersMap.has(u.id)) {
-              sellersMap.set(u.id, u)
-            }
-          }
-        } catch (fbErr) {
-          console.warn('Erro no fallback de sellers em users:', fbErr)
-        }
-      }
+      console.warn('Erro no fallback de sellers em users:', usersErr)
     }
 
     return Array.from(sellersMap.values())
@@ -1168,7 +1161,8 @@ export const deliveryService = {
   async getAllUsers(empresaId?: string) {
     const authUser = pb.authStore.record as any
     const isMaster = authUser?.role === 'master'
-    const targetCompanyId = empresaId || this.getActiveCompanyId()
+    const targetCompanyId =
+      empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
 
     if (isMaster && empresaId === 'ALL') {
       const list = await pb.collection<UserRecord>('users').getFullList({

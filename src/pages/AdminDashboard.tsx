@@ -435,7 +435,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       // Libera imediatamente a renderização dos cards do Kanban, mapa e entregadores
       const [ordersData, couriersData, locationsData] = await Promise.all([
         deliveryService.getOrders(ordersFilter, '-created', 'customer_id,courier_id,seller_id'),
-        deliveryService.getCouriers(),
+        deliveryService.getCouriers(companyId),
         deliveryService.getLatestLocations(),
       ])
       setOrders(ordersData)
@@ -456,8 +456,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         reviewsData,
         customersData,
       ] = await Promise.all([
-        deliveryService.getAllUsers(),
-        deliveryService.getSellers(),
+        deliveryService.getAllUsers(companyId),
+        deliveryService.getSellers(companyId),
         deliveryService.getNotifications(),
         deliveryService.getSettings(),
         deliveryService.getFuelAdvances(),
