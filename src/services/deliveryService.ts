@@ -1201,12 +1201,16 @@ export const deliveryService = {
 
     let createdRecord: UserRecord
     if (data instanceof FormData) {
+      if (!data.has('verified')) {
+        data.append('verified', 'true')
+      }
       createdRecord = await pb.collection<UserRecord>('users').create(data)
     } else {
-      const { verified: _omittedVerified, empresa_id: _emp, ...rest } = data
+      const { empresa_id: _emp, ...rest } = data
       const payload: Record<string, unknown> = {
         ...rest,
         email: data.email.trim().toLowerCase(),
+        verified: data.verified ?? true,
       }
 
       // Auto-generate username from email if not provided
