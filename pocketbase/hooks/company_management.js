@@ -1,6 +1,6 @@
 // Hook para Gestão Master de Empresas SaaS:
 // 1. Exclusão de Empresa com integridade referencial e auditoria (somente papel 'master'):
-//    - Protege permanentemente a Matriz Rotaly ('7wo05iyvfcfh01h') contra exclusão acidental.
+//    - Protege permanentemente a Matriz Rotaly contra exclusão acidental (resolvida dinamicamente).
 //    - Verifica histórico de pedidos: se houver pedidos ativos/entregues, alerta ou requer exclusão controlada.
 //    - Desvincula membros e limpa vínculos de clientes e endereços base.
 // 2. Bloqueio / Desbloqueio seguro de Empresa (somente papel 'master').
@@ -28,8 +28,22 @@ routerAdd(
         return e.json(400, { message: 'ID de empresa não fornecido.' })
       }
 
-      // Proteger a Matriz Rotaly de ser bloqueada
-      if (companyId === '7wo05iyvfcfh01h') {
+      // Proteger a Matriz Rotaly de ser bloqueada (resolução dinâmica inline no callback)
+      let matrizId = ''
+      try {
+        const oldest = $app.findRecordsByFilter('empresas', '', '+created', 1, 0)
+        if (oldest && oldest.length > 0) {
+          matrizId = oldest[0].id
+        }
+      } catch (_) {}
+      if (!matrizId) {
+        try {
+          const byCnpj = $app.findFirstRecordByData('empresas', 'cnpj', '34.567.890/0001-22')
+          if (byCnpj) matrizId = byCnpj.id
+        } catch (_) {}
+      }
+
+      if (matrizId && companyId === matrizId) {
         return e.json(400, {
           message: 'A empresa Matriz Principal (Rotaly Operações) não pode ser desativada.',
         })
@@ -98,8 +112,22 @@ routerAdd(
         return e.json(400, { message: 'ID da empresa não informado.' })
       }
 
-      // Proteção inviolável da Matriz Rotaly (Empresa 1)
-      if (companyId === '7wo05iyvfcfh01h') {
+      // Proteção inviolável da Matriz Rotaly (resolução dinâmica inline no callback)
+      let matrizId = ''
+      try {
+        const oldest = $app.findRecordsByFilter('empresas', '', '+created', 1, 0)
+        if (oldest && oldest.length > 0) {
+          matrizId = oldest[0].id
+        }
+      } catch (_) {}
+      if (!matrizId) {
+        try {
+          const byCnpj = $app.findFirstRecordByData('empresas', 'cnpj', '34.567.890/0001-22')
+          if (byCnpj) matrizId = byCnpj.id
+        } catch (_) {}
+      }
+
+      if (matrizId && companyId === matrizId) {
         return e.json(400, {
           message: 'A empresa Matriz Principal do Rotaly não pode ser excluída do sistema.',
         })

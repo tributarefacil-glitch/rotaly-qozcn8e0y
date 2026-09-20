@@ -40,14 +40,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           pb.authStore.clear()
           setUser(null)
           setToken(null)
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('rotaly_active_empresa_id')
+            localStorage.removeItem('rotaly_active_company')
+            localStorage.removeItem('rotaly_empresa_id')
+          }
         })
         .finally(() => {
           setIsLoading(false)
         })
     } else {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('rotaly_active_empresa_id')
+        localStorage.removeItem('rotaly_active_company')
+        localStorage.removeItem('rotaly_empresa_id')
+      }
       setIsLoading(false)
     }
-
     return () => {
       unsubscribe()
     }
@@ -55,6 +64,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, pass: string) => {
     const cleanEmail = email.trim().toLowerCase()
+    // Limpar contexto residual anterior antes de inicializar a sessão do novo usuário
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('rotaly_active_empresa_id')
+      localStorage.removeItem('rotaly_active_company')
+      localStorage.removeItem('rotaly_empresa_id')
+    }
     const authData = await pb.collection('users').authWithPassword(cleanEmail, pass)
     const authUser = authData.record as unknown as UserRecord
     setUser(authUser)
@@ -66,6 +81,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pb.authStore.clear()
     setUser(null)
     setToken(null)
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('rotaly_active_empresa_id')
+      localStorage.removeItem('rotaly_active_company')
+      localStorage.removeItem('rotaly_empresa_id')
+    }
   }
 
   const refreshUser = async () => {

@@ -1,4 +1,5 @@
 import pb from '@/lib/pocketbase/client'
+import { getMatrizCompanyId, resolveMatrizCompany } from '@/lib/companyResolver'
 import { haversineDistanceMeters } from '@/lib/geo'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
@@ -55,11 +56,18 @@ export const deliveryService = {
    * Alternar status de ativação da empresa (Bloquear / Desbloquear)
    * Usa o endpoint dedicado do backend com auditoria, ou fallback para update direto.
    */
+  async isMatrizCompany(id?: string): Promise<boolean> {
+    if (!id) return false
+    const matrizId = await getMatrizCompanyId()
+    return Boolean(matrizId && id === matrizId)
+  },
+
   async toggleEmpresaAtiva(
     id: string,
     ativa?: boolean,
   ): Promise<{ success: boolean; ativa: boolean; message: string }> {
-    if (id === this.MATRIZ_EMPRESA_ID && ativa === false) {
+    const isMatriz = await this.isMatrizCompany(id)
+    if (isMatriz && ativa === false) {
       throw new Error('A empresa Matriz Principal não pode ser desativada/bloqueada.')
     }
 
@@ -103,7 +111,8 @@ export const deliveryService = {
     removedMembersCount?: number
     updatedCustomersCount?: number
   }> {
-    if (id === this.MATRIZ_EMPRESA_ID) {
+    const isMatriz = await this.isMatrizCompany(id)
+    if (isMatriz) {
       throw new Error('A empresa Matriz Principal não pode ser excluída.')
     }
 
@@ -170,9 +179,6 @@ export const deliveryService = {
     return pb.collection<MembroRecord>('membros').delete(id)
   },
 
-  // ID da Empresa Matriz Rotaly (Empresa 1)
-  MATRIZ_EMPRESA_ID: '7wo05iyvfcfh01h',
-
   /**
    * Helper para obter o ID da empresa ativa.
    * - Para master: lê do localStorage ou cai na Matriz.
@@ -184,6 +190,10 @@ export const deliveryService = {
       if (stored) return stored
     }
     return ''
+  },
+
+  async getMatrizCompanyId(): Promise<string> {
+    return getMatrizCompanyId()
   },
 
   setActiveCompanyId(empresaId: string): void {
@@ -224,12 +234,12 @@ export const deliveryService = {
     ativa: boolean
   }> {
     const targetId = empresaId || this.getActiveCompanyId()
+    const isMatriz = await this.isMatrizCompany(targetId)
     try {
       const comp = await pb.collection<EmpresaRecord>('empresas').getOne(targetId, {
         requestKey: null,
       })
-      const plano =
-        (comp.plano as any) || (targetId === this.MATRIZ_EMPRESA_ID ? 'enterprise' : 'profissional')
+      const plano = (comp.plano as any) || (isMatriz ? 'enterprise' : 'profissional')
       return {
         plano,
         max_users:
@@ -261,7 +271,7 @@ export const deliveryService = {
   ): Promise<{ allowed: boolean; message?: string }> {
     const targetId = empresaId || this.getActiveCompanyId()
     // Matriz nunca é bloqueada
-    if (targetId === this.MATRIZ_EMPRESA_ID) return { allowed: true }
+    if (await this.isMatrizCompany(targetId)) return { allowed: true }
 
     const limits = await this.getCompanyPlanAndLimits(targetId)
     if (!limits.ativa) {
@@ -302,7 +312,7 @@ export const deliveryService = {
    */
   async checkOrderLimit(empresaId?: string): Promise<{ allowed: boolean; message?: string }> {
     const targetId = empresaId || this.getActiveCompanyId()
-    if (targetId === this.MATRIZ_EMPRESA_ID) return { allowed: true }
+    if (await this.isMatrizCompany(targetId)) return { allowed: true }
 
     const limits = await this.getCompanyPlanAndLimits(targetId)
     if (!limits.ativa) {
@@ -1022,8 +1032,9 @@ export const deliveryService = {
       console.warn('Erro ao filtrar couriers por membros:', e)
     }
 
-    // Fallback: se for a Matriz (Empresa 1 ou bkef63kajsmin6c), lista couriers da base
-    if (targetCompanyId === this.MATRIZ_EMPRESA_ID || targetCompanyId === 'bkef63kajsmin6c') {
+    // Fallback: se for a Matriz, lista couriers da base
+    const isMatriz = await this.isMatrizCompany(targetCompanyId)
+    if (isMatriz) {
       const list = await pb.collection<UserRecord>('users').getFullList({
         filter: "role = 'courier'",
         sort: '-created',
@@ -1043,8 +1054,7 @@ export const deliveryService = {
     const authUser = pb.authStore.record as any
     const isMaster = authUser?.role === 'master'
     const targetCompanyId = empresaId || this.getActiveCompanyId()
-    const isMatriz =
-      targetCompanyId === this.MATRIZ_EMPRESA_ID || targetCompanyId === 'bkef63kajsmin6c'
+    const isMatriz = await this.isMatrizCompany(targetCompanyId)
 
     if (isMaster && empresaId === 'ALL') {
       return pb.collection<UserRecord>('users').getFullList({
@@ -1079,10 +1089,8 @@ export const deliveryService = {
     try {
       let usersFilter: string
       if (isMatriz) {
-        // Matriz: vendedores explicitamente da matriz ('bkef63kajsmin6c' ou '7wo05iyvfcfh01h')
-        // mais registros legados sem vínculo (empresa_id = '' ou null)
-        usersFilter =
-          "role = 'seller' && (empresa_id = 'bkef63kajsmin6c' || empresa_id = '7wo05iyvfcfh01h' || empresa_id = '' || empresa_id = null)"
+        // Matriz: vendedores explicitamente da matriz mais registros legados sem vínculo (empresa_id = '' ou null)
+        usersFilter = `role = 'seller' && (empresa_id = '${targetCompanyId}' || empresa_id = '' || empresa_id = null)`
       } else {
         // Outra empresa: isolamento estrito pelo ID da empresa
         usersFilter = `role = 'seller' && empresa_id = '${targetCompanyId}'`
@@ -1154,7 +1162,8 @@ export const deliveryService = {
       console.warn('Erro ao filtrar users por membros:', e)
     }
 
-    if (targetCompanyId === this.MATRIZ_EMPRESA_ID || targetCompanyId === 'bkef63kajsmin6c') {
+    const isMatriz = await this.isMatrizCompany(targetCompanyId)
+    if (isMatriz) {
       return pb.collection<UserRecord>('users').getFullList({
         sort: '-created',
         requestKey: null,
@@ -1739,7 +1748,7 @@ export const deliveryService = {
         lng: -43.296723,
         is_default: true,
         is_end_default: true,
-        empresa_id: this.MATRIZ_EMPRESA_ID,
+        empresa_id: (await getMatrizCompanyId()) || '',
         collectionId: 'base_addresses',
         collectionName: 'base_addresses',
         created: new Date().toISOString(),

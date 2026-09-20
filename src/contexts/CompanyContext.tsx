@@ -27,10 +27,16 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const loadCompanyContext = useCallback(async () => {
     if (!isAuthenticated || !user) {
+      clearCompanyCache()
       setCurrentCompanyState(null)
       setCurrentMember(null)
       setAllCompanies([])
       setIsLoadingCompany(false)
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(STORAGE_KEY)
+        localStorage.removeItem('rotaly_active_company')
+        localStorage.removeItem('rotaly_empresa_id')
+      }
       return
     }
 
@@ -56,33 +62,24 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const resolved = await getMyCompany()
 
       let resolvedCompany: EmpresaRecord | null = null
-      try {
-        resolvedCompany = await pb.collection<EmpresaRecord>('empresas').getOne(resolved.id, {
-          requestKey: null,
-        })
-      } catch {
+      if (resolved.id) {
+        try {
+          resolvedCompany = await pb.collection<EmpresaRecord>('empresas').getOne(resolved.id, {
+            requestKey: null,
+          })
+        } catch {
+          resolvedCompany = null
+        }
+      }
+
+      // Se a empresa selecionada não pôde ser recuperada ou está inativa, recai na matriz dinamicamente
+      if (!resolvedCompany || resolvedCompany.ativa === false) {
         const matriz = await resolveMatrizCompany()
-        resolvedCompany = loadedCompanies.find((c) => c.id === resolved.id) ||
-          matriz || {
-            id: resolved.id || '',
-            nome_razao_social: resolved.name || 'Rotaly Logística Matriz',
-            nome_fantasia: resolved.name || 'Rotaly Operações',
-            cnpj: '34.567.890/0001-22',
-            telefone: '(21) 96428-2954',
-            email: 'tributarefacil@gmail.com',
-            cep: '25020-210',
-            logradouro: 'Rua Manuel Vieira',
-            numero: '196',
-            bairro: 'Centro',
-            cidade: 'Duque de Caxias',
-            uf: 'RJ',
-            ativa: true,
-            plano: 'enterprise',
-            created: '',
-            updated: '',
-            collectionId: 'empresas',
-            collectionName: 'empresas',
-          }
+        if (matriz) {
+          resolvedCompany = matriz
+        } else if (loadedCompanies.length > 0) {
+          resolvedCompany = loadedCompanies[0]
+        }
       }
 
       // Carregar vínculo de membro

@@ -410,13 +410,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         fetchFuelHistoryOrders(true)
       }
 
-      // A) Modo Empresa Única: Rotaly Operações (Matriz)
+      // A) Obter empresa do contexto ativo ou resolver dinamicamente
+      const companyId = currentCompany?.id || (await deliveryService.getMatrizCompanyId()) || ''
+      const companyName =
+        currentCompany?.nome_fantasia || currentCompany?.nome_razao_social || 'Rotaly Operações'
       const resolvedInfo: ResolvedCompany = {
-        id: deliveryService.MATRIZ_EMPRESA_ID,
-        name: 'Rotaly Operações',
+        id: companyId,
+        name: companyName,
         source: 'single_company_matriz',
       }
-      setResolvedCompanySource('Rotaly Operações (Matriz)')
+      setResolvedCompanySource(companyName)
       setResolvedCompany(resolvedInfo)
       setIsLoadingCompanyGate(false)
 
@@ -3479,7 +3482,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                           'Rotaly Operações'}
                       </p>
                       <p className="font-mono text-[10px] text-slate-400 truncate">
-                        ID: {currentCompany?.id || deliveryService.MATRIZ_EMPRESA_ID}
+                        ID: {currentCompany?.id || '—'}
                       </p>
                       <p className="text-[10px] text-indigo-300 truncate font-mono">
                         Fonte: {resolvedCompanySource || 'Empresa Única (Matriz)'}

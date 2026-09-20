@@ -6,8 +6,7 @@
  *   selecionando qualquer empresa no painel ou localStorage.
  * - Usuário de empresa ('admin', 'seller', 'courier'): Totalmente amarrado à empresa
  *   onde está cadastrado na coleção 'membros'. NUNCA acessa dados de outra empresa.
- * - Fallback / Operação Matriz: Se for Empresa 1 ('7wo05iyvfcfh01h'), continua funcionando
- *   de forma transparente.
+ * - Fallback / Operação Matriz: resolvida dinamicamente no banco (primeira empresa / CNPJ da matriz).
  */
 import pb from '@/lib/pocketbase/client'
 import type { EmpresaRecord, MembroRecord, UserRecord } from '@/types/delivery'
@@ -105,23 +104,23 @@ export async function getMyCompany(): Promise<ResolvedCompany> {
     matrizRecord?.nome_fantasia || matrizRecord?.nome_razao_social || 'Rotaly Operações'
 
   // 1. Caso Master: Ao logar como master, deve iniciar SEMPRE na matriz real.
-  // Pode alternar o contexto de empresa se selecionou explicitamente uma empresa válida no painel.
+  // Pode alternar o contexto de empresa durante a sessão se selecionou explicitamente uma empresa válida no painel.
   if (isMaster) {
-    let savedId = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null
+    const savedId = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null
 
-    // Se o savedId for inválido ou não existir, inicia sempre na Matriz real
-    if (savedId) {
+    // Se houver uma empresa selecionada no painel, validar se ela existe e está ativa
+    if (savedId && savedId !== matrizId) {
       try {
         const comp = await pb
           .collection<EmpresaRecord>('empresas')
           .getOne(savedId, { requestKey: null })
           .catch(() => null)
 
-        if (comp) {
+        if (comp && comp.ativa !== false) {
           const resolved: ResolvedCompany = {
             id: comp.id,
             name: comp.nome_fantasia || comp.nome_razao_social,
-            source: comp.id === matrizId ? 'master_default' : 'master_selection',
+            source: 'master_selection',
             plano: comp.plano,
           }
           cachedCompany = resolved

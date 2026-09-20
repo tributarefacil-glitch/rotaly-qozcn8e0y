@@ -2434,7 +2434,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                     'Rotaly Operações'}
                 </p>
                 <p className="font-mono text-[10px] text-slate-400 truncate">
-                  ID: {currentCompany?.id || deliveryService.MATRIZ_EMPRESA_ID}
+                  ID: {currentCompany?.id || '—'}
                 </p>
                 <p className="text-[10px] text-indigo-300 truncate font-mono">
                   Fonte: {resolvedCompanySource || 'Empresa Única (Matriz)'}
