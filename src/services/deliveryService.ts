@@ -1204,12 +1204,20 @@ export const deliveryService = {
       if (!data.has('verified')) {
         data.append('verified', 'true')
       }
+      // Garantir integridade de password e passwordConfirm
+      const rawPassword = data.get('password')
+      if (rawPassword && !data.has('passwordConfirm')) {
+        data.append('passwordConfirm', rawPassword)
+      }
       createdRecord = await pb.collection<UserRecord>('users').create(data)
     } else {
       const { empresa_id: _emp, ...rest } = data
+      const rawPassword = String(data.password || '')
       const payload: Record<string, unknown> = {
         ...rest,
         email: data.email.trim().toLowerCase(),
+        password: rawPassword,
+        passwordConfirm: data.passwordConfirm || rawPassword,
         verified: data.verified ?? true,
       }
 
