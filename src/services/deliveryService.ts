@@ -999,7 +999,7 @@ export const deliveryService = {
     // Filtrar entregadores membros da empresa ativa
     try {
       const members = await pb.collection<MembroRecord>('membros').getFullList({
-        filter: `empresa_id = '${targetCompanyId}' && ativo = true && papel = 'courier'`,
+        filter: `empresa_id = '${targetCompanyId}' && ativo = true && (papel = 'courier' || papel = 'entregador')`,
         expand: 'user_id',
         sort: '-created',
         requestKey: null,
@@ -1022,8 +1022,8 @@ export const deliveryService = {
       console.warn('Erro ao filtrar couriers por membros:', e)
     }
 
-    // Fallback: se for a Matriz Empresa 1, lista couriers da base
-    if (targetCompanyId === this.MATRIZ_EMPRESA_ID) {
+    // Fallback: se for a Matriz (Empresa 1 ou bkef63kajsmin6c), lista couriers da base
+    if (targetCompanyId === this.MATRIZ_EMPRESA_ID || targetCompanyId === 'bkef63kajsmin6c') {
       const list = await pb.collection<UserRecord>('users').getFullList({
         filter: "role = 'courier'",
         sort: '-created',
@@ -1043,6 +1043,8 @@ export const deliveryService = {
     const authUser = pb.authStore.record as any
     const isMaster = authUser?.role === 'master'
     const targetCompanyId = empresaId || this.getActiveCompanyId()
+    const isMatriz =
+      targetCompanyId === this.MATRIZ_EMPRESA_ID || targetCompanyId === 'bkef63kajsmin6c'
 
     if (isMaster && empresaId === 'ALL') {
       return pb.collection<UserRecord>('users').getFullList({
@@ -1052,32 +1054,75 @@ export const deliveryService = {
       })
     }
 
+    // 1. Resolução via coleção 'membros' (papel 'seller' ou 'vendedor' e ativo = true)
+    const sellersMap = new Map<string, UserRecord>()
+
     try {
       const members = await pb.collection<MembroRecord>('membros').getFullList({
-        filter: `empresa_id = '${targetCompanyId}' && ativo = true && papel = 'seller'`,
+        filter: `empresa_id = '${targetCompanyId}' && ativo = true && (papel = 'seller' || papel = 'vendedor')`,
         expand: 'user_id',
         sort: '-created',
         requestKey: null,
       })
 
-      if (members.length > 0) {
-        return members
-          .map((m) => m.expand?.user_id as UserRecord | undefined)
-          .filter((u): u is UserRecord => Boolean(u))
+      for (const m of members) {
+        const u = m.expand?.user_id as UserRecord | undefined
+        if (u && u.id && u.role === 'seller') {
+          sellersMap.set(u.id, u)
+        }
       }
     } catch (e) {
       console.warn('Erro ao filtrar sellers por membros:', e)
     }
 
-    if (targetCompanyId === this.MATRIZ_EMPRESA_ID) {
-      return pb.collection<UserRecord>('users').getFullList({
-        filter: "role = 'seller'",
+    // 2. Consulta complementar e tolerância retroativa diretamente em 'users' (role = 'seller')
+    try {
+      let usersFilter: string
+      if (isMatriz) {
+        // Matriz: vendedores explicitamente da matriz ('bkef63kajsmin6c' ou '7wo05iyvfcfh01h')
+        // mais registros legados sem vínculo (empresa_id = '' ou null)
+        usersFilter =
+          "role = 'seller' && (empresa_id = 'bkef63kajsmin6c' || empresa_id = '7wo05iyvfcfh01h' || empresa_id = '' || empresa_id = null)"
+      } else {
+        // Outra empresa: isolamento estrito pelo ID da empresa
+        usersFilter = `role = 'seller' && empresa_id = '${targetCompanyId}'`
+      }
+
+      const usersList = await pb.collection<UserRecord>('users').getFullList({
+        filter: usersFilter,
         sort: '-created',
         requestKey: null,
       })
+
+      for (const u of usersList) {
+        if (u && u.id && !sellersMap.has(u.id)) {
+          // Se for empresa específica (não matriz), garantir que não puxa vendedores de outras empresas
+          sellersMap.set(u.id, u)
+        }
+      }
+    } catch (usersErr) {
+      console.warn('Erro na consulta em camadas de sellers em users:', usersErr)
+      // Se a consulta com empresa_id falhar (ex: coluna empresa_id inexistente em users),
+      // buscar por role = 'seller' pura apenas se for a Matriz
+      if (isMatriz) {
+        try {
+          const fallbackUsers = await pb.collection<UserRecord>('users').getFullList({
+            filter: "role = 'seller'",
+            sort: '-created',
+            requestKey: null,
+          })
+          for (const u of fallbackUsers) {
+            if (u && u.id && !sellersMap.has(u.id)) {
+              sellersMap.set(u.id, u)
+            }
+          }
+        } catch (fbErr) {
+          console.warn('Erro no fallback de sellers em users:', fbErr)
+        }
+      }
     }
 
-    return []
+    return Array.from(sellersMap.values())
   },
 
   async getAllUsers(empresaId?: string) {
@@ -1109,7 +1154,7 @@ export const deliveryService = {
       console.warn('Erro ao filtrar users por membros:', e)
     }
 
-    if (targetCompanyId === this.MATRIZ_EMPRESA_ID) {
+    if (targetCompanyId === this.MATRIZ_EMPRESA_ID || targetCompanyId === 'bkef63kajsmin6c') {
       return pb.collection<UserRecord>('users').getFullList({
         sort: '-created',
         requestKey: null,
