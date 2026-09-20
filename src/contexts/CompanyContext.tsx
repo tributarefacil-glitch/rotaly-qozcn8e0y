@@ -36,7 +36,23 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     setIsLoadingCompany(true)
     try {
-      // 1. Fonte única de verdade: Matriz Rotaly Operações
+      const isMaster = user.role === 'master'
+
+      // Se for master, carregar todas as empresas cadastradas no sistema
+      let loadedCompanies: EmpresaRecord[] = []
+      if (isMaster) {
+        try {
+          loadedCompanies = await pb.collection<EmpresaRecord>('empresas').getFullList({
+            sort: 'nome_razao_social',
+            requestKey: null,
+          })
+          setAllCompanies(loadedCompanies)
+        } catch (err) {
+          console.warn('Erro ao carregar lista de empresas para Master:', err)
+        }
+      }
+
+      // Resolver empresa ativa
       const resolved = await getMyCompany()
 
       let resolvedCompany: EmpresaRecord | null = null
@@ -45,7 +61,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           requestKey: null,
         })
       } catch {
-        resolvedCompany = {
+        resolvedCompany = loadedCompanies.find((c) => c.id === resolved.id) || {
           id: MATRIZ_EMPRESA_ID,
           nome_razao_social: 'Rotaly Logística Matriz',
           nome_fantasia: 'Rotaly Operações',
@@ -59,6 +75,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           cidade: 'Duque de Caxias',
           estado: 'RJ',
           ativa: true,
+          plano: 'enterprise',
           created: '',
           updated: '',
           collectionId: 'empresas',
@@ -66,7 +83,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
 
-      // 2. Carregar vínculo de membro
+      // Carregar vínculo de membro
       const memberRecords = await pb
         .collection<MembroRecord>('membros')
         .getFullList({
@@ -76,19 +93,24 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         })
         .catch(() => [] as MembroRecord[])
 
-      const resolvedMember = memberRecords[0] || null
+      const resolvedMember =
+        memberRecords.find((m) => m.empresa_id === resolved.id) || memberRecords[0] || null
 
-      setAllCompanies(resolvedCompany ? [resolvedCompany] : [])
+      if (!isMaster) {
+        setAllCompanies(resolvedCompany ? [resolvedCompany] : [])
+      }
       setCurrentCompanyState(resolvedCompany)
       setCurrentMember(resolvedMember)
 
-      localStorage.setItem(STORAGE_KEY, MATRIZ_EMPRESA_ID)
-      if (typeof window !== 'undefined' && resolvedCompany) {
-        window.dispatchEvent(
-          new CustomEvent('rotaly_company_changed', {
-            detail: { companyId: MATRIZ_EMPRESA_ID, company: resolvedCompany },
-          }),
-        )
+      if (resolvedCompany) {
+        localStorage.setItem(STORAGE_KEY, resolvedCompany.id)
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('rotaly_company_changed', {
+              detail: { companyId: resolvedCompany.id, company: resolvedCompany },
+            }),
+          )
+        }
       }
     } catch (err) {
       console.error('Falha ao resolver contexto de empresa:', err)
@@ -116,8 +138,8 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }
 
-  // No modo empresa única, desativamos o multiCompanyAccess para impedir trocas
-  const hasMultiCompanyAccess = false
+  // Apenas o Administrador Master tem acesso para alternar entre empresas
+  const hasMultiCompanyAccess = user?.role === 'master'
 
   return (
     <CompanyContext.Provider

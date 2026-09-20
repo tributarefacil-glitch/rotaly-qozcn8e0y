@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-20T13:09:18.746Z",
+  "generatedAt": "2026-09-20T19:11:02.665Z",
   "collections": [
     {
       "name": "users",
@@ -7,9 +7,9 @@
       "apiRules": {
         "list": "@request.auth.id != ''",
         "view": "",
-        "create": "@request.auth.role = 'admin' || (@request.auth.role = 'seller' && role = 'courier')",
+        "create": "@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'seller' && role = 'courier')",
         "update": "@request.auth.id = id || @request.auth.role = 'admin'",
-        "delete": "@request.auth.role = 'admin'"
+        "delete": "@request.auth.role = 'master' || @request.auth.role = 'admin'"
       },
       "fields": [
         {
@@ -43,7 +43,7 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": ["admin", "seller", "courier"]
+          "selectValues": ["master", "admin", "seller", "courier"]
         },
         {
           "name": "status",
@@ -1191,9 +1191,9 @@
       "apiRules": {
         "list": "@request.auth.id != ''",
         "view": "@request.auth.id != ''",
-        "create": "@request.auth.id != ''",
-        "update": "@request.auth.id != ''",
-        "delete": "@request.auth.role = 'admin'"
+        "create": "@request.auth.role = 'master' || @request.auth.role = 'admin'",
+        "update": "@request.auth.role = 'master' || @request.auth.role = 'admin'",
+        "delete": "@request.auth.role = 'master'"
       },
       "fields": [
         {
@@ -1293,6 +1293,31 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "plano",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["basico", "profissional", "enterprise"]
+        },
+        {
+          "name": "max_users",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "max_couriers",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "max_orders_month",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

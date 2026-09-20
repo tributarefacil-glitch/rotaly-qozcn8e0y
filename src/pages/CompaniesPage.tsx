@@ -16,13 +16,19 @@ import {
   Trash2,
   ArrowRight,
   Sparkles,
+  Zap,
+  Edit2,
+  Lock,
+  Layers,
+  Bike,
+  Package,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
-import type { EmpresaRecord, MembroRecord, UserRecord } from '@/types/delivery'
+import type { EmpresaRecord, MembroRecord, UserRecord, PlanoEmpresa } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -44,8 +50,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { toast } from 'sonner'
+import pb from '@/lib/pocketbase/client'
 
-// Validação oficial de CNPJ brasileiro com dígitos verificadores
+// Validação de CNPJ
 export function validateCNPJ(cnpjRaw: string): boolean {
   const cnpj = cnpjRaw.replace(/\D/g, '')
   if (cnpj.length !== 14) return false
@@ -79,7 +86,6 @@ export function validateCNPJ(cnpjRaw: string): boolean {
   return resultado === parseInt(digitos.charAt(1), 10)
 }
 
-// Máscara de CNPJ
 export function formatCNPJ(value: string): string {
   const digits = value.replace(/\D/g, '').slice(0, 14)
   return digits
@@ -89,7 +95,6 @@ export function formatCNPJ(value: string): string {
     .replace(/(\d{4})(\d)/, '$1-$2')
 }
 
-// Máscara de Telefone
 export function formatPhone(value: string): string {
   const digits = value.replace(/\D/g, '').slice(0, 11)
   if (digits.length <= 10) {
@@ -98,15 +103,26 @@ export function formatPhone(value: string): string {
   return digits.replace(/^(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3')
 }
 
-// Máscara de CEP
 export function formatCEP(value: string): string {
   const digits = value.replace(/\D/g, '').slice(0, 8)
   return digits.replace(/^(\d{5})(\d{0,3})/, '$1-$2')
 }
 
+// Limites padrão por plano
+const PLANO_DEFAULTS: Record<
+  PlanoEmpresa,
+  { max_users: number; max_couriers: number; max_orders_month: number }
+> = {
+  basico: { max_users: 5, max_couriers: 3, max_orders_month: 300 },
+  profissional: { max_users: 15, max_couriers: 10, max_orders_month: 2000 },
+  enterprise: { max_users: 9999, max_couriers: 9999, max_orders_month: 999999 },
+}
+
 export const CompaniesPage: React.FC = () => {
   const { user } = useAuth()
   const { currentCompany, setCurrentCompany, refreshCompanyData } = useCompany()
+
+  const isMaster = user?.role === 'master'
 
   const [empresas, setEmpresas] = useState<EmpresaRecord[]>([])
   const [membros, setMembros] = useState<MembroRecord[]>([])
@@ -114,12 +130,12 @@ export const CompaniesPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [isLoading, setIsLoading] = useState(true)
 
-  // Modal de Nova Empresa
+  // Modal de Criação de Empresa
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [cnpjError, setCnpjError] = useState<string | null>(null)
 
-  // Formulário de Empresa
+  // Formulário de Nova Empresa + Admin da Empresa
   const [formData, setFormData] = useState({
     nome_razao_social: '',
     nome_fantasia: '',
@@ -133,17 +149,44 @@ export const CompaniesPage: React.FC = () => {
     cep: '',
     telefone: '',
     email: '',
+    plano: 'profissional' as PlanoEmpresa,
+    max_users: 15,
+    max_couriers: 10,
+    max_orders_month: 2000,
+    // Dados do Primeiro Administrador da Loja
+    admin_name: '',
+    admin_email: '',
+    admin_password: '',
+    admin_phone: '',
+  })
+
+  // Modal de Edição de Empresa / Limites
+  const [editingEmpresa, setEditingEmpresa] = useState<EmpresaRecord | null>(null)
+  const [editFormData, setEditFormData] = useState({
+    nome_razao_social: '',
+    nome_fantasia: '',
+    plano: 'profissional' as PlanoEmpresa,
+    max_users: 15,
+    max_couriers: 10,
+    max_orders_month: 2000,
+    ativa: true,
   })
 
   // Modal de Membros de uma Empresa
   const [selectedEmpresaForMembers, setSelectedEmpresaForMembers] = useState<EmpresaRecord | null>(
     null,
   )
-  const [newMemberUserId, setNewMemberUserId] = useState('')
-  const [newMemberPapel, setNewMemberPapel] = useState<
-    'admin' | 'vendedor' | 'entregador' | 'gestor'
-  >('vendedor')
-  const [isAddingMember, setIsAddingMember] = useState(false)
+  const [isCreateMemberOpen, setIsCreateMemberOpen] = useState(false)
+  const [newMemberForm, setNewMemberForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    phone: '',
+    role: 'seller' as 'admin' | 'seller' | 'courier',
+    vehicle_type: 'moto',
+    vehicle_plate: '',
+  })
+  const [isSavingMember, setIsSavingMember] = useState(false)
 
   const loadData = async () => {
     setIsLoading(true)
@@ -151,7 +194,7 @@ export const CompaniesPage: React.FC = () => {
       const [empList, membList, usrList] = await Promise.all([
         deliveryService.getEmpresas('', 'nome_razao_social'),
         deliveryService.getMembros('', '-created', 'empresa_id,user_id'),
-        deliveryService.getAllUsers(),
+        deliveryService.getAllUsers('ALL'),
       ])
       setEmpresas(empList)
       setMembros(membList)
@@ -186,6 +229,17 @@ export const CompaniesPage: React.FC = () => {
     }
   }
 
+  const handlePlanChange = (plano: PlanoEmpresa) => {
+    const def = PLANO_DEFAULTS[plano]
+    setFormData((prev) => ({
+      ...prev,
+      plano,
+      max_users: def.max_users,
+      max_couriers: def.max_couriers,
+      max_orders_month: def.max_orders_month,
+    }))
+  }
+
   const handleCreateEmpresa = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -201,12 +255,16 @@ export const CompaniesPage: React.FC = () => {
         return
       }
 
-      // Validar duplicidade de CNPJ
       const exists = empresas.some((emp) => (emp.cnpj || '').replace(/\D/g, '') === cleanCnpj)
       if (exists) {
         toast.error('Já existe uma empresa cadastrada com este CNPJ.')
         return
       }
+    }
+
+    if (formData.admin_email && (!formData.admin_password || formData.admin_password.length < 8)) {
+      toast.error('A senha do administrador da nova empresa deve ter no mínimo 8 caracteres.')
+      return
     }
 
     setIsSubmitting(true)
@@ -223,6 +281,7 @@ export const CompaniesPage: React.FC = () => {
         .filter(Boolean)
         .join(', ')
 
+      // 1. Criar a Empresa
       const created = await deliveryService.createEmpresa({
         nome_razao_social: formData.nome_razao_social.trim(),
         nome_fantasia: formData.nome_fantasia.trim() || formData.nome_razao_social.trim(),
@@ -237,20 +296,47 @@ export const CompaniesPage: React.FC = () => {
         endereco_completo: enderecoCompleto,
         telefone: formData.telefone,
         email: formData.email,
+        plano: formData.plano,
+        max_users: Number(formData.max_users) || 10,
+        max_couriers: Number(formData.max_couriers) || 5,
+        max_orders_month: Number(formData.max_orders_month) || 1000,
         ativa: true,
       })
 
-      // Vincular automaticamente o usuário criador como membro Admin da nova empresa
-      if (user) {
-        await deliveryService.createMembro({
-          empresa_id: created.id,
-          user_id: user.id,
-          papel: 'admin',
-          ativo: true,
-        })
+      // 2. Se fornecido administrador da loja, criar a conta e vinculá-lo como admin
+      if (formData.admin_email && formData.admin_password) {
+        try {
+          const createdUser = await deliveryService.createUser(
+            {
+              email: formData.admin_email.trim().toLowerCase(),
+              password: formData.admin_password,
+              passwordConfirm: formData.admin_password,
+              name:
+                formData.admin_name ||
+                `Admin ${formData.nome_fantasia || formData.nome_razao_social}`,
+              role: 'admin',
+              status: 'active',
+              phone: formData.admin_phone,
+            },
+            created.id,
+          )
+
+          // Garantir vínculo do admin
+          await pb.collection('membros').create({
+            user_id: createdUser.id,
+            empresa_id: created.id,
+            papel: 'admin',
+            ativo: true,
+          })
+        } catch (admErr: any) {
+          console.warn('Aviso na criação do admin da empresa:', admErr)
+          toast.warning(
+            `Empresa criada, mas verifique o admin: ${admErr?.message || 'Erro no usuário'}`,
+          )
+        }
       }
 
-      toast.success('Empresa cadastrada com sucesso!')
+      toast.success('Nova empresa parceira cadastrada com sucesso!')
       setIsCreateOpen(false)
       setFormData({
         nome_razao_social: '',
@@ -265,69 +351,105 @@ export const CompaniesPage: React.FC = () => {
         cep: '',
         telefone: '',
         email: '',
+        plano: 'profissional',
+        max_users: 15,
+        max_couriers: 10,
+        max_orders_month: 2000,
+        admin_name: '',
+        admin_email: '',
+        admin_password: '',
+        admin_phone: '',
       })
       await loadData()
       await refreshCompanyData()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro ao cadastrar empresa:', err)
-      toast.error('Não foi possível cadastrar a empresa.')
+      toast.error(err?.message || 'Não foi possível cadastrar a empresa.')
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  const handleAddMember = async () => {
-    if (!selectedEmpresaForMembers || !newMemberUserId) return
-    setIsAddingMember(true)
+  const handleOpenEdit = (emp: EmpresaRecord) => {
+    setEditingEmpresa(emp)
+    setEditFormData({
+      nome_razao_social: emp.nome_razao_social || '',
+      nome_fantasia: emp.nome_fantasia || '',
+      plano: (emp.plano as PlanoEmpresa) || 'profissional',
+      max_users: emp.max_users || 15,
+      max_couriers: emp.max_couriers || 10,
+      max_orders_month: emp.max_orders_month || 2000,
+      ativa: emp.ativa ?? true,
+    })
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editingEmpresa) return
+    setIsSubmitting(true)
     try {
-      // Verificar se já é membro
-      const already = membros.some(
-        (m) => m.empresa_id === selectedEmpresaForMembers.id && m.user_id === newMemberUserId,
-      )
-      if (already) {
-        toast.error('Este usuário já é membro desta empresa.')
-        return
-      }
-
-      await deliveryService.createMembro({
-        empresa_id: selectedEmpresaForMembers.id,
-        user_id: newMemberUserId,
-        papel: newMemberPapel,
-        ativo: true,
+      await pb.collection<EmpresaRecord>('empresas').update(editingEmpresa.id, {
+        nome_razao_social: editFormData.nome_razao_social,
+        nome_fantasia: editFormData.nome_fantasia,
+        plano: editFormData.plano,
+        max_users: Number(editFormData.max_users),
+        max_couriers: Number(editFormData.max_couriers),
+        max_orders_month: Number(editFormData.max_orders_month),
+        ativa: editFormData.ativa,
       })
-
-      // Criar também registro espelho em colaboradores para facilidade de gestão
-      const targetUser = allUsers.find((u) => u.id === newMemberUserId)
-      if (targetUser) {
-        await deliveryService
-          .createColaborador({
-            empresa_id: selectedEmpresaForMembers.id,
-            user_id: targetUser.id,
-            nome: targetUser.name || 'Colaborador',
-            email: targetUser.email || '',
-            telefone: targetUser.phone || '',
-            cpf: targetUser.document || '',
-            cargo:
-              newMemberPapel === 'entregador'
-                ? 'entregador'
-                : newMemberPapel === 'vendedor'
-                  ? 'vendedor'
-                  : 'administrativo',
-            tipo_veiculo: targetUser.vehicle_type || '',
-            placa_veiculo: targetUser.vehicle_plate || '',
-            ativo: true,
-          })
-          .catch(() => {})
-      }
-
-      toast.success('Membro vinculado à empresa!')
-      setNewMemberUserId('')
+      toast.success('Empresa e limites atualizados!')
+      setEditingEmpresa(null)
       await loadData()
-    } catch (err) {
-      console.error('Erro ao adicionar membro:', err)
-      toast.error('Falha ao vincular membro.')
+      await refreshCompanyData()
+    } catch (err: any) {
+      toast.error(err?.message || 'Erro ao atualizar dados da empresa.')
     } finally {
-      setIsAddingMember(false)
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleCreateNewMember = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedEmpresaForMembers) return
+
+    if (!newMemberForm.email || !newMemberForm.password) {
+      toast.error('E-mail e senha são obrigatórios.')
+      return
+    }
+
+    setIsSavingMember(true)
+    try {
+      const createdUser = await deliveryService.createUser(
+        {
+          name: newMemberForm.name,
+          email: newMemberForm.email.trim().toLowerCase(),
+          password: newMemberForm.password,
+          passwordConfirm: newMemberForm.password,
+          role: newMemberForm.role,
+          phone: newMemberForm.phone,
+          status: 'active',
+          vehicle_type: newMemberForm.vehicle_type,
+          vehicle_plate: newMemberForm.vehicle_plate,
+        },
+        selectedEmpresaForMembers.id,
+      )
+
+      toast.success(`Usuário ${createdUser.name || createdUser.email} criado e amarrado à empresa!`)
+      setIsCreateMemberOpen(false)
+      setNewMemberForm({
+        name: '',
+        email: '',
+        password: '',
+        phone: '',
+        role: 'seller',
+        vehicle_type: 'moto',
+        vehicle_plate: '',
+      })
+      await loadData()
+    } catch (err: any) {
+      console.error('Erro ao criar membro:', err)
+      toast.error(err?.message || 'Falha ao criar usuário na empresa.')
+    } finally {
+      setIsSavingMember(false)
     }
   }
 
@@ -349,12 +471,13 @@ export const CompaniesPage: React.FC = () => {
       emp.nome_razao_social.toLowerCase().includes(q) ||
       (emp.nome_fantasia && emp.nome_fantasia.toLowerCase().includes(q)) ||
       (emp.cnpj && emp.cnpj.includes(q)) ||
-      (emp.cidade && emp.cidade.toLowerCase().includes(q))
+      (emp.cidade && emp.cidade.toLowerCase().includes(q)) ||
+      (emp.plano && emp.plano.toLowerCase().includes(q))
     )
   })
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-white text-[#002855] font-sans">
+    <div className="flex h-screen w-full overflow-hidden bg-slate-50 text-[#002855] font-sans">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-y-auto">
         <Header />
@@ -368,29 +491,36 @@ export const CompaniesPage: React.FC = () => {
                   <Building2 className="h-5 w-5 text-[#00A3FF]" />
                 </div>
                 <div>
-                  <h1 className="font-heading text-xl sm:text-2xl font-black tracking-tight text-[#002855]">
-                    Gestão Multi-Tenant &amp; Empresas
-                  </h1>
+                  <div className="flex items-center gap-2">
+                    <h1 className="font-heading text-xl sm:text-2xl font-black tracking-tight text-[#002855]">
+                      Gestão Master Multi-Tenant
+                    </h1>
+                    <Badge className="bg-amber-500 text-white text-[10px] uppercase font-bold tracking-wider">
+                      SaaS Multilojas
+                    </Badge>
+                  </div>
                   <p className="text-xs sm:text-sm text-slate-500">
-                    Isole e gerencie múltiplas operações com total conformidade e Row Level Security
-                    no Rotaly.
+                    Cadastre novas empresas, gerencie planos, limites operacionais e membros com
+                    isolamento total de dados.
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <Button
-                onClick={() => setIsCreateOpen(true)}
-                className="h-10 px-4 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs rounded-xl shadow-sm gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Cadastrar Nova Empresa
-              </Button>
-            </div>
+            {isMaster && (
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={() => setIsCreateOpen(true)}
+                  className="h-10 px-4 bg-[#00A3FF] hover:bg-[#008CE0] text-white font-bold text-xs rounded-xl shadow-sm gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Nova Empresa Parceira
+                </Button>
+              </div>
+            )}
           </div>
 
-          {/* Active Company Highlight Card */}
+          {/* Active Company Banner */}
           {currentCompany && (
             <Card className="border border-slate-200 bg-white shadow-sm rounded-2xl overflow-hidden">
               <div className="h-1.5 w-full bg-gradient-to-r from-[#002855] via-[#00A3FF] to-[#002855]" />
@@ -402,11 +532,21 @@ export const CompaniesPage: React.FC = () => {
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-[#002855] bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
-                        Empresa Ativa na Sessão
+                        Contexto Atual Selecionado
                       </span>
-                      {currentCompany.ativa && (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] font-bold border-blue-300 text-blue-700 uppercase"
+                      >
+                        Plano: {currentCompany.plano || 'enterprise'}
+                      </Badge>
+                      {currentCompany.ativa !== false ? (
                         <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
                           <CheckCircle2 className="h-3 w-3" /> Ativa
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200 flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3" /> Desativada
                         </span>
                       )}
                     </div>
@@ -421,13 +561,13 @@ export const CompaniesPage: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Badge
-                    variant="outline"
-                    className="border-slate-200 text-slate-700 text-xs py-1 px-3"
-                  >
-                    {membros.filter((m) => m.empresa_id === currentCompany.id).length} membros
-                    vinculados
-                  </Badge>
+                  <div className="text-right mr-3 hidden sm:block">
+                    <p className="text-[11px] font-medium text-slate-500">Limites do Plano</p>
+                    <p className="text-xs font-bold text-[#002855]">
+                      {currentCompany.max_users || 9999} usuários •{' '}
+                      {currentCompany.max_couriers || 9999} entregadores
+                    </p>
+                  </div>
                   <Button
                     size="sm"
                     variant="outline"
@@ -443,32 +583,38 @@ export const CompaniesPage: React.FC = () => {
           )}
 
           {/* Search bar */}
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input
-              type="text"
-              placeholder="Buscar por razão social, nome fantasia, CNPJ ou cidade..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="h-10 pl-9 border-slate-200 bg-slate-50 text-xs text-[#002855] placeholder:text-slate-400 rounded-xl focus:bg-white focus:border-[#00A3FF]"
-            />
+          <div className="flex items-center justify-between gap-4">
+            <div className="relative max-w-md w-full">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                type="text"
+                placeholder="Buscar por razão social, nome, CNPJ, plano ou cidade..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-10 pl-9 border-slate-200 bg-white text-xs text-[#002855] placeholder:text-slate-400 rounded-xl focus:border-[#00A3FF]"
+              />
+            </div>
+            <div className="text-xs text-slate-500 font-medium">
+              Total: <strong className="text-[#002855]">{filteredEmpresas.length}</strong>{' '}
+              empresa(s)
+            </div>
           </div>
 
           {/* Companies Grid */}
           {isLoading ? (
             <div className="py-20 text-center space-y-3">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent mx-auto" />
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#00A3FF] border-t-transparent mx-auto" />
               <p className="text-xs text-slate-400">Carregando empresas cadastradas...</p>
             </div>
           ) : filteredEmpresas.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-[#1E2B58] bg-[#0E1738]/50 p-12 text-center space-y-3">
-              <Building2 className="h-10 w-10 text-slate-500 mx-auto" />
-              <h3 className="font-heading text-sm font-bold text-white">
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center space-y-3">
+              <Building2 className="h-10 w-10 text-slate-400 mx-auto" />
+              <h3 className="font-heading text-sm font-bold text-[#002855]">
                 Nenhuma empresa encontrada
               </h3>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                Não localizamos nenhuma empresa com os critérios informados. Clique em "Cadastrar
-                Nova Empresa" para criar.
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                Não localizamos nenhuma empresa com os critérios informados. Clique em "Nova Empresa
+                Parceira" para cadastrar.
               </p>
             </div>
           ) : (
@@ -476,6 +622,7 @@ export const CompaniesPage: React.FC = () => {
               {filteredEmpresas.map((emp) => {
                 const isSelected = currentCompany?.id === emp.id
                 const companyMembers = membros.filter((m) => m.empresa_id === emp.id)
+                const isMatriz = emp.id === deliveryService.MATRIZ_EMPRESA_ID
 
                 return (
                   <Card
@@ -494,51 +641,79 @@ export const CompaniesPage: React.FC = () => {
                               <Building2 className="h-4 w-4 text-[#00A3FF]" />
                             </div>
                             <div>
-                              <h3 className="font-heading text-sm font-bold text-[#002855] line-clamp-1">
-                                {emp.nome_fantasia || emp.nome_razao_social}
-                              </h3>
+                              <div className="flex items-center gap-1.5">
+                                <h3 className="font-heading text-sm font-bold text-[#002855] line-clamp-1">
+                                  {emp.nome_fantasia || emp.nome_razao_social}
+                                </h3>
+                                {isMatriz && (
+                                  <Badge className="bg-[#002855] text-white text-[9px] px-1.5 py-0 h-4">
+                                    Matriz
+                                  </Badge>
+                                )}
+                              </div>
                               <p className="text-[11px] text-slate-500 line-clamp-1">
                                 {emp.nome_razao_social}
                               </p>
                             </div>
                           </div>
 
-                          {isSelected ? (
-                            <Badge className="bg-blue-600 text-white text-[10px] font-bold">
-                              Ativa
-                            </Badge>
-                          ) : (
+                          <div className="flex flex-col items-end gap-1">
+                            {isSelected && (
+                              <Badge className="bg-[#00A3FF] text-white text-[10px] font-bold">
+                                Ativa
+                              </Badge>
+                            )}
                             <Badge
                               variant="outline"
-                              className="border-[#1E2B58] text-slate-400 text-[10px]"
+                              className="text-[10px] capitalize border-blue-200 bg-blue-50/50 text-[#002855]"
                             >
-                              {companyMembers.length} membros
+                              {emp.plano || 'profissional'}
                             </Badge>
-                          )}
+                          </div>
                         </div>
 
-                        <div className="space-y-1.5 mt-4 text-xs text-slate-300">
+                        {/* Limites do Plano */}
+                        <div className="mt-3 p-2.5 rounded-xl bg-slate-50 border border-slate-100 grid grid-cols-3 gap-2 text-center text-xs">
+                          <div>
+                            <span className="text-[10px] text-slate-400 block">Usuários</span>
+                            <span className="font-bold text-[#002855]">{emp.max_users || 10}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block">Entregadores</span>
+                            <span className="font-bold text-[#002855]">
+                              {emp.max_couriers || 5}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-400 block">Ped./Mês</span>
+                            <span className="font-bold text-[#002855]">
+                              {emp.max_orders_month || 1000}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5 mt-3 text-xs text-slate-600">
                           {emp.cnpj && (
                             <div className="flex items-center gap-2">
-                              <FileText className="h-3.5 w-3.5 text-slate-500" />
+                              <FileText className="h-3.5 w-3.5 text-slate-400" />
                               <span className="text-[11px] font-mono">{emp.cnpj}</span>
                             </div>
                           )}
                           {emp.telefone && (
                             <div className="flex items-center gap-2">
-                              <Phone className="h-3.5 w-3.5 text-slate-500" />
+                              <Phone className="h-3.5 w-3.5 text-slate-400" />
                               <span className="text-[11px]">{emp.telefone}</span>
                             </div>
                           )}
                           {emp.email && (
                             <div className="flex items-center gap-2">
-                              <Mail className="h-3.5 w-3.5 text-slate-500" />
+                              <Mail className="h-3.5 w-3.5 text-slate-400" />
                               <span className="text-[11px] truncate">{emp.email}</span>
                             </div>
                           )}
                           {emp.cidade && (
                             <div className="flex items-center gap-2">
-                              <MapPin className="h-3.5 w-3.5 text-slate-500" />
+                              <MapPin className="h-3.5 w-3.5 text-slate-400" />
                               <span className="text-[11px]">
                                 {emp.cidade}
                                 {emp.uf ? ` - ${emp.uf}` : ''}
@@ -549,18 +724,32 @@ export const CompaniesPage: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="p-4 pt-3 border-t border-[#1E2B58] bg-[#070D1E]/60 flex items-center justify-between gap-2">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setSelectedEmpresaForMembers(emp)}
-                        className="text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 gap-1.5 h-8 px-2.5"
-                      >
-                        <Users className="h-3.5 w-3.5" />
-                        Membros ({companyMembers.length})
-                      </Button>
+                    <div className="p-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setSelectedEmpresaForMembers(emp)}
+                          className="text-xs text-[#002855] hover:bg-slate-200 gap-1.5 h-8 px-2.5"
+                        >
+                          <Users className="h-3.5 w-3.5 text-[#00A3FF]" />
+                          Membros ({companyMembers.length})
+                        </Button>
 
-                      {!isSelected && (
+                        {isMaster && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleOpenEdit(emp)}
+                            className="text-xs text-slate-500 hover:text-[#002855] hover:bg-slate-200 h-8 px-2"
+                            title="Editar limites e plano"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+
+                      {isMaster && !isSelected && (
                         <Button
                           size="sm"
                           onClick={() => {
@@ -569,9 +758,9 @@ export const CompaniesPage: React.FC = () => {
                               `Contexto alterado para ${emp.nome_fantasia || emp.nome_razao_social}`,
                             )
                           }}
-                          className="h-8 text-xs bg-[#0052CC] hover:bg-[#003E99] text-white gap-1 rounded-lg"
+                          className="h-8 text-xs bg-[#002855] hover:bg-[#001D3D] text-white gap-1 rounded-lg"
                         >
-                          <span>Selecionar</span>
+                          <span>Alternar Contexto</span>
                           <ArrowRight className="h-3 w-3" />
                         </Button>
                       )}
@@ -584,70 +773,73 @@ export const CompaniesPage: React.FC = () => {
         </main>
       </div>
 
-      {/* Modal: Cadastro de Empresa */}
+      {/* Modal: Cadastro de Empresa + Limites + Admin Inicial */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="max-w-2xl bg-[#0E1738] border-[#1E2B58] text-white p-6 max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl bg-white border-slate-200 text-[#002855] p-6 max-h-[90vh] overflow-y-auto shadow-xl">
           <DialogHeader>
             <div className="flex items-center gap-2.5 mb-1">
-              <div className="h-8 w-8 rounded-lg bg-[#FF6B35]/20 border border-[#FF6B35]/30 flex items-center justify-center text-[#FF6B35]">
-                <Building2 className="h-4 w-4" />
+              <div className="h-9 w-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#00A3FF]">
+                <Building2 className="h-5 w-5" />
               </div>
-              <DialogTitle className="font-heading text-lg font-bold text-white">
-                Cadastrar Nova Empresa
-              </DialogTitle>
+              <div>
+                <DialogTitle className="font-heading text-lg font-bold text-[#002855]">
+                  Cadastrar Nova Empresa Parceira (SaaS)
+                </DialogTitle>
+                <DialogDescription className="text-xs text-slate-500">
+                  Cadastre uma loja cliente, defina o plano comercial e crie o usuário administrador
+                  da empresa.
+                </DialogDescription>
+              </div>
             </div>
-            <DialogDescription className="text-xs text-slate-400">
-              Preencha os dados cadastrais da empresa para habilitar a estrutura multi-tenant.
-            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleCreateEmpresa} className="space-y-4 pt-2">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5 sm:col-span-2">
-                <Label className="text-xs text-slate-300">Razão Social *</Label>
+                <Label className="text-xs font-semibold text-slate-700">Razão Social *</Label>
                 <Input
                   required
-                  placeholder="Ex: Pimenta Verde Cosméticos Eireli"
+                  placeholder="Ex: Drogaria Santa Fé Ltda"
                   value={formData.nome_razao_social}
                   onChange={(e) =>
                     setFormData((prev) => ({ ...prev, nome_razao_social: e.target.value }))
                   }
-                  className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                  className="h-9 border-slate-200 text-xs"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs text-slate-300">Nome Fantasia</Label>
+                <Label className="text-xs font-semibold text-slate-700">Nome Fantasia</Label>
                 <Input
-                  placeholder="Ex: Pimenta Verde Centro"
+                  placeholder="Ex: Farmácia Santa Fé"
                   value={formData.nome_fantasia}
                   onChange={(e) =>
                     setFormData((prev) => ({ ...prev, nome_fantasia: e.target.value }))
                   }
-                  className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                  className="h-9 border-slate-200 text-xs"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs text-slate-300">CNPJ (com máscara e validação)</Label>
+                <Label className="text-xs font-semibold text-slate-700">CNPJ (com validação)</Label>
                 <Input
                   placeholder="00.000.000/0000-00"
                   value={formData.cnpj}
                   onChange={handleCnpjChange}
                   maxLength={18}
-                  className={`h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white font-mono ${
+                  className={`h-9 border-slate-200 text-xs font-mono ${
                     cnpjError ? 'border-rose-500' : ''
                   }`}
                 />
                 {cnpjError && (
-                  <p className="text-[11px] text-rose-400 flex items-center gap-1">
+                  <p className="text-[11px] text-rose-500 flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" /> {cnpjError}
                   </p>
                 )}
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs text-slate-300">Telefone / WhatsApp</Label>
+                <Label className="text-xs font-semibold text-slate-700">Telefone / WhatsApp</Label>
                 <Input
                   placeholder="(21) 90000-0000"
                   value={formData.telefone}
@@ -655,97 +847,202 @@ export const CompaniesPage: React.FC = () => {
                     setFormData((prev) => ({ ...prev, telefone: formatPhone(e.target.value) }))
                   }
                   maxLength={15}
-                  className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                  className="h-9 border-slate-200 text-xs"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs text-slate-300">E-mail de Contato</Label>
+                <Label className="text-xs font-semibold text-slate-700">E-mail Comercial</Label>
                 <Input
                   type="email"
                   placeholder="contato@empresa.com.br"
                   value={formData.email}
                   onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-                  className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                  className="h-9 border-slate-200 text-xs"
                 />
               </div>
             </div>
 
-            <div className="border-t border-[#1E2B58] pt-3">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 block">
-                Endereço Operacional
+            {/* SELEÇÃO DO PLANO E LIMITES */}
+            <div className="border-t border-slate-200 pt-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#002855] flex items-center gap-1.5 mb-2">
+                <Zap className="h-4 w-4 text-amber-500" /> Plano Comercial e Limites Operacionais
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">Plano</Label>
+                  <Select
+                    value={formData.plano}
+                    onValueChange={(val: PlanoEmpresa) => handlePlanChange(val)}
+                  >
+                    <SelectTrigger className="h-9 border-slate-200 text-xs">
+                      <SelectValue placeholder="Selecione o plano" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="basico">Básico (Até 5 usuários)</SelectItem>
+                      <SelectItem value="profissional">Profissional (Até 15 usuários)</SelectItem>
+                      <SelectItem value="enterprise">Enterprise (Ilimitado)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">Máx. Usuários</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={formData.max_users}
+                    onChange={(e) =>
+                      setFormData((p) => ({ ...p, max_users: Number(e.target.value) }))
+                    }
+                    className="h-9 border-slate-200 text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">Máx. Entregadores</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={formData.max_couriers}
+                    onChange={(e) =>
+                      setFormData((p) => ({ ...p, max_couriers: Number(e.target.value) }))
+                    }
+                    className="h-9 border-slate-200 text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1.5 sm:col-span-3">
+                  <Label className="text-xs font-semibold text-slate-700">
+                    Máx. Pedidos por Mês
+                  </Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={formData.max_orders_month}
+                    onChange={(e) =>
+                      setFormData((p) => ({ ...p, max_orders_month: Number(e.target.value) }))
+                    }
+                    className="h-9 border-slate-200 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* CRIAR PRIMEIRO ADMINISTRADOR DA LOJA */}
+            <div className="border-t border-slate-200 pt-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-[#002855] flex items-center gap-1.5 mb-2">
+                <Shield className="h-4 w-4 text-[#00A3FF]" /> Usuário Administrador da Loja
+              </span>
+              <p className="text-[11px] text-slate-500 mb-3">
+                Será criado com perfil Admin amarrado exclusivamente a esta nova empresa.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">Nome do Admin</Label>
+                  <Input
+                    placeholder="Ex: Carlos Oliveira"
+                    value={formData.admin_name}
+                    onChange={(e) => setFormData((p) => ({ ...p, admin_name: e.target.value }))}
+                    className="h-9 border-slate-200 text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">WhatsApp do Admin</Label>
+                  <Input
+                    placeholder="(21) 98888-7777"
+                    value={formData.admin_phone}
+                    onChange={(e) =>
+                      setFormData((p) => ({ ...p, admin_phone: formatPhone(e.target.value) }))
+                    }
+                    className="h-9 border-slate-200 text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">
+                    E-mail de Login do Admin *
+                  </Label>
+                  <Input
+                    type="email"
+                    placeholder="admin@loja.com"
+                    value={formData.admin_email}
+                    onChange={(e) => setFormData((p) => ({ ...p, admin_email: e.target.value }))}
+                    className="h-9 border-slate-200 text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">
+                    Senha Provisória (mín. 8 dígitos) *
+                  </Label>
+                  <Input
+                    type="password"
+                    placeholder="••••••••"
+                    value={formData.admin_password}
+                    onChange={(e) => setFormData((p) => ({ ...p, admin_password: e.target.value }))}
+                    className="h-9 border-slate-200 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* ENDEREÇO */}
+            <div className="border-t border-slate-200 pt-3">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 block">
+                Endereço Base / Operacional
               </span>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1.5 sm:col-span-2">
-                  <Label className="text-xs text-slate-300">Logradouro (Rua / Av)</Label>
+                  <Label className="text-xs font-semibold text-slate-700">
+                    Logradouro (Rua / Av)
+                  </Label>
                   <Input
-                    placeholder="Rua Manuel Vieira"
+                    placeholder="Rua das Lojas"
                     value={formData.logradouro}
                     onChange={(e) =>
                       setFormData((prev) => ({ ...prev, logradouro: e.target.value }))
                     }
-                    className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                    className="h-9 border-slate-200 text-xs"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-300">Número</Label>
+                  <Label className="text-xs font-semibold text-slate-700">Número</Label>
                   <Input
-                    placeholder="196"
+                    placeholder="100"
                     value={formData.numero}
                     onChange={(e) => setFormData((prev) => ({ ...prev, numero: e.target.value }))}
-                    className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                    className="h-9 border-slate-200 text-xs"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-300">Complemento</Label>
-                  <Input
-                    placeholder="Galpão Cinza"
-                    value={formData.complemento}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, complemento: e.target.value }))
-                    }
-                    className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-300">Bairro</Label>
+                  <Label className="text-xs font-semibold text-slate-700">Bairro</Label>
                   <Input
                     placeholder="Centro"
                     value={formData.bairro}
                     onChange={(e) => setFormData((prev) => ({ ...prev, bairro: e.target.value }))}
-                    className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                    className="h-9 border-slate-200 text-xs"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-300">CEP</Label>
+                  <Label className="text-xs font-semibold text-slate-700">Cidade</Label>
                   <Input
-                    placeholder="25020-210"
-                    value={formData.cep}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, cep: formatCEP(e.target.value) }))
-                    }
-                    maxLength={9}
-                    className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white font-mono"
-                  />
-                </div>
-
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label className="text-xs text-slate-300">Cidade</Label>
-                  <Input
-                    placeholder="Duque de Caxias"
+                    placeholder="Rio de Janeiro"
                     value={formData.cidade}
                     onChange={(e) => setFormData((prev) => ({ ...prev, cidade: e.target.value }))}
-                    className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                    className="h-9 border-slate-200 text-xs"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-300">UF (Estado)</Label>
+                  <Label className="text-xs font-semibold text-slate-700">UF</Label>
                   <Input
                     placeholder="RJ"
                     value={formData.uf}
@@ -753,120 +1050,354 @@ export const CompaniesPage: React.FC = () => {
                     onChange={(e) =>
                       setFormData((prev) => ({ ...prev, uf: e.target.value.toUpperCase() }))
                     }
-                    className="h-9 border-[#1E2B58] bg-[#0A1128] text-xs text-white"
+                    className="h-9 border-slate-200 text-xs"
                   />
                 </div>
               </div>
             </div>
 
-            <DialogFooter className="pt-4 border-t border-[#1E2B58]">
+            <DialogFooter className="pt-4 border-t border-slate-200">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => setIsCreateOpen(false)}
-                className="border-[#1E2B58] bg-[#0A1128] hover:bg-[#121E46] text-slate-300 text-xs"
+                className="border-slate-200 text-slate-600 text-xs"
               >
                 Cancelar
               </Button>
               <Button
                 type="submit"
                 disabled={isSubmitting || !!cnpjError}
-                className="bg-[#0052CC] hover:bg-[#003E99] text-white text-xs font-bold"
+                className="bg-[#002855] hover:bg-[#001D3D] text-white text-xs font-bold"
               >
-                {isSubmitting ? 'Cadastrando...' : 'Salvar Empresa'}
+                {isSubmitting ? 'Salvando...' : 'Criar Empresa e Habilitar Acesso'}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Gestão de Membros da Empresa */}
-      <Dialog
-        open={!!selectedEmpresaForMembers}
-        onOpenChange={(open) => !open && setSelectedEmpresaForMembers(null)}
-      >
-        <DialogContent className="max-w-xl bg-[#0E1738] border-[#1E2B58] text-white p-6 max-h-[90vh] overflow-y-auto">
+      {/* Modal: Editar Empresa / Plano / Limites */}
+      <Dialog open={!!editingEmpresa} onOpenChange={(open) => !open && setEditingEmpresa(null)}>
+        <DialogContent className="max-w-md bg-white border-slate-200 text-[#002855] p-6 shadow-xl">
           <DialogHeader>
-            <div className="flex items-center gap-2.5 mb-1">
-              <div className="h-8 w-8 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                <Users className="h-4 w-4" />
-              </div>
-              <DialogTitle className="font-heading text-lg font-bold text-white">
-                Membros da Empresa
-              </DialogTitle>
-            </div>
-            <DialogDescription className="text-xs text-slate-400">
-              {selectedEmpresaForMembers?.nome_fantasia ||
-                selectedEmpresaForMembers?.nome_razao_social}
+            <DialogTitle className="font-heading text-lg font-bold text-[#002855]">
+              Editar Empresa &amp; Limites do Plano
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Atualize o plano e os tetos operacionais desta empresa parceira.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-5 pt-2">
-            {/* Vincular novo membro */}
-            <div className="rounded-xl border border-[#1E2B58] bg-[#0A1128] p-3.5 space-y-3">
-              <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                <UserPlus className="h-4 w-4 text-blue-400" /> Vincular Usuário Existente
-              </span>
+          <div className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Nome Fantasia</Label>
+              <Input
+                value={editFormData.nome_fantasia}
+                onChange={(e) => setEditFormData((p) => ({ ...p, nome_fantasia: e.target.value }))}
+                className="h-9 border-slate-200 text-xs"
+              />
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <div className="sm:col-span-2">
-                  <Select value={newMemberUserId} onValueChange={setNewMemberUserId}>
-                    <SelectTrigger className="h-9 border-[#1E2B58] bg-[#0E1738] text-xs text-white">
-                      <SelectValue placeholder="Selecione um usuário..." />
-                    </SelectTrigger>
-                    <SelectContent className="bg-[#0E1738] border-[#1E2B58] text-white">
-                      {allUsers.map((u) => (
-                        <SelectItem key={u.id} value={u.id} className="text-xs">
-                          {u.name || u.email} ({u.role || 'user'})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Plano</Label>
+              <Select
+                value={editFormData.plano}
+                onValueChange={(val: PlanoEmpresa) => {
+                  const def = PLANO_DEFAULTS[val]
+                  setEditFormData((p) => ({
+                    ...p,
+                    plano: val,
+                    max_users: def.max_users,
+                    max_couriers: def.max_couriers,
+                    max_orders_month: def.max_orders_month,
+                  }))
+                }}
+              >
+                <SelectTrigger className="h-9 border-slate-200 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="basico">Básico</SelectItem>
+                  <SelectItem value="profissional">Profissional</SelectItem>
+                  <SelectItem value="enterprise">Enterprise</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-slate-700">Máx. Usuários</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={editFormData.max_users}
+                  onChange={(e) =>
+                    setEditFormData((p) => ({ ...p, max_users: Number(e.target.value) }))
+                  }
+                  className="h-9 border-slate-200 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-slate-700">Máx. Entregadores</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={editFormData.max_couriers}
+                  onChange={(e) =>
+                    setEditFormData((p) => ({ ...p, max_couriers: Number(e.target.value) }))
+                  }
+                  className="h-9 border-slate-200 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1.5 col-span-2">
+                <Label className="text-xs font-semibold text-slate-700">Máx. Pedidos / Mês</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={editFormData.max_orders_month}
+                  onChange={(e) =>
+                    setEditFormData((p) => ({ ...p, max_orders_month: Number(e.target.value) }))
+                  }
+                  className="h-9 border-slate-200 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <input
+                type="checkbox"
+                id="empresa-ativa"
+                checked={editFormData.ativa}
+                onChange={(e) => setEditFormData((p) => ({ ...p, ativa: e.target.checked }))}
+                className="h-4 w-4 rounded border-slate-300 text-[#00A3FF]"
+              />
+              <Label
+                htmlFor="empresa-ativa"
+                className="text-xs font-semibold text-slate-700 cursor-pointer"
+              >
+                Empresa Ativa (permite login e operação dos membros)
+              </Label>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-4 border-t border-slate-200">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEditingEmpresa(null)}
+              className="border-slate-200 text-slate-600 text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSaveEdit}
+              disabled={isSubmitting}
+              className="bg-[#002855] hover:bg-[#001D3D] text-white text-xs font-bold"
+            >
+              {isSubmitting ? 'Salvando...' : 'Salvar Alterações'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Gestão de Membros da Empresa + Cadastro de Novo Membro Direto */}
+      <Dialog
+        open={!!selectedEmpresaForMembers}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedEmpresaForMembers(null)
+            setIsCreateMemberOpen(false)
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl bg-white border-slate-200 text-[#002855] p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#00A3FF]">
+                  <Users className="h-5 w-5" />
                 </div>
-
                 <div>
-                  <Select
-                    value={newMemberPapel}
-                    onValueChange={(val: any) => setNewMemberPapel(val)}
-                  >
-                    <SelectTrigger className="h-9 border-[#1E2B58] bg-[#0E1738] text-xs text-white">
-                      <SelectValue placeholder="Papel" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-[#0E1738] border-[#1E2B58] text-white">
-                      <SelectItem value="vendedor" className="text-xs">
-                        Vendedor
-                      </SelectItem>
-                      <SelectItem value="entregador" className="text-xs">
-                        Entregador
-                      </SelectItem>
-                      <SelectItem value="admin" className="text-xs">
-                        Admin
-                      </SelectItem>
-                      <SelectItem value="gestor" className="text-xs">
-                        Gestor
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <DialogTitle className="font-heading text-lg font-bold text-[#002855]">
+                    Membros da Empresa
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-slate-500">
+                    {selectedEmpresaForMembers?.nome_fantasia ||
+                      selectedEmpresaForMembers?.nome_razao_social}
+                  </DialogDescription>
                 </div>
               </div>
 
               <Button
-                onClick={handleAddMember}
-                disabled={!newMemberUserId || isAddingMember}
-                className="w-full h-8 text-xs bg-[#0052CC] hover:bg-[#003E99] text-white font-semibold"
+                size="sm"
+                onClick={() => setIsCreateMemberOpen(!isCreateMemberOpen)}
+                className="bg-[#00A3FF] hover:bg-[#008CE0] text-white text-xs font-bold gap-1.5 h-8"
               >
-                {isAddingMember ? 'Vinculando...' : 'Adicionar Membro à Empresa'}
+                <Plus className="h-3.5 w-3.5" />
+                {isCreateMemberOpen ? 'Ver Lista' : 'Novo Usuário na Loja'}
               </Button>
             </div>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            {/* Formulário para criar novo usuário nesta empresa */}
+            {isCreateMemberOpen ? (
+              <form
+                onSubmit={handleCreateNewMember}
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3"
+              >
+                <span className="text-xs font-bold text-[#002855] flex items-center gap-1.5">
+                  <UserPlus className="h-4 w-4 text-[#00A3FF]" /> Cadastrar Usuário para esta Loja
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-slate-700">Nome Completo *</Label>
+                    <Input
+                      required
+                      placeholder="Ex: João Silva"
+                      value={newMemberForm.name}
+                      onChange={(e) => setNewMemberForm((p) => ({ ...p, name: e.target.value }))}
+                      className="h-8 border-slate-200 text-xs bg-white"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-slate-700">Papel / Função *</Label>
+                    <Select
+                      value={newMemberForm.role}
+                      onValueChange={(val: any) => setNewMemberForm((p) => ({ ...p, role: val }))}
+                    >
+                      <SelectTrigger className="h-8 border-slate-200 text-xs bg-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="seller">Vendedor</SelectItem>
+                        <SelectItem value="courier">Entregador</SelectItem>
+                        <SelectItem value="admin">Administrador da Loja</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-slate-700">
+                      E-mail de Login *
+                    </Label>
+                    <Input
+                      type="email"
+                      required
+                      placeholder="joao@loja.com"
+                      value={newMemberForm.email}
+                      onChange={(e) => setNewMemberForm((p) => ({ ...p, email: e.target.value }))}
+                      className="h-8 border-slate-200 text-xs bg-white"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-slate-700">
+                      Senha (mín. 8 caracteres) *
+                    </Label>
+                    <Input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={newMemberForm.password}
+                      onChange={(e) =>
+                        setNewMemberForm((p) => ({ ...p, password: e.target.value }))
+                      }
+                      className="h-8 border-slate-200 text-xs bg-white"
+                    />
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2">
+                    <Label className="text-xs font-semibold text-slate-700">
+                      WhatsApp / Telefone
+                    </Label>
+                    <Input
+                      placeholder="(21) 98888-8888"
+                      value={newMemberForm.phone}
+                      onChange={(e) =>
+                        setNewMemberForm((p) => ({ ...p, phone: formatPhone(e.target.value) }))
+                      }
+                      className="h-8 border-slate-200 text-xs bg-white"
+                    />
+                  </div>
+
+                  {newMemberForm.role === 'courier' && (
+                    <>
+                      <div className="space-y-1">
+                        <Label className="text-xs font-semibold text-slate-700">
+                          Tipo de Veículo
+                        </Label>
+                        <Select
+                          value={newMemberForm.vehicle_type}
+                          onValueChange={(val) =>
+                            setNewMemberForm((p) => ({ ...p, vehicle_type: val }))
+                          }
+                        >
+                          <SelectTrigger className="h-8 border-slate-200 text-xs bg-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="moto">Moto</SelectItem>
+                            <SelectItem value="carro">Carro</SelectItem>
+                            <SelectItem value="bicicleta">Bicicleta</SelectItem>
+                            <SelectItem value="van">Van</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-xs font-semibold text-slate-700">
+                          Placa do Veículo
+                        </Label>
+                        <Input
+                          placeholder="ABC1D23"
+                          value={newMemberForm.vehicle_plate}
+                          onChange={(e) =>
+                            setNewMemberForm((p) => ({
+                              ...p,
+                              vehicle_plate: e.target.value.toUpperCase(),
+                            }))
+                          }
+                          className="h-8 border-slate-200 text-xs bg-white"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setIsCreateMemberOpen(false)}
+                    className="h-8 text-xs text-slate-500"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={isSavingMember}
+                    className="h-8 text-xs bg-[#002855] hover:bg-[#001D3D] text-white font-bold"
+                  >
+                    {isSavingMember ? 'Salvando...' : 'Cadastrar e Amarrar à Empresa'}
+                  </Button>
+                </div>
+              </form>
+            ) : null}
 
             {/* Lista de membros */}
             <div className="space-y-2">
-              <span className="text-xs font-bold text-slate-300">
-                Membros Atuais (
+              <span className="text-xs font-bold text-slate-700">
+                Membros Vinculados (
                 {membros.filter((m) => m.empresa_id === selectedEmpresaForMembers?.id).length})
               </span>
 
-              <div className="divide-y divide-[#1E2B58] border border-[#1E2B58] rounded-xl bg-[#0A1128] overflow-hidden max-h-64 overflow-y-auto">
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl bg-white overflow-hidden max-h-80 overflow-y-auto">
                 {membros
                   .filter((m) => m.empresa_id === selectedEmpresaForMembers?.id)
                   .map((m) => {
@@ -877,37 +1408,51 @@ export const CompaniesPage: React.FC = () => {
                         className="p-3 flex items-center justify-between gap-3 text-xs"
                       >
                         <div>
-                          <p className="font-bold text-white">{usr?.name || 'Usuário Rotaly'}</p>
-                          <p className="text-[11px] text-slate-400">{usr?.email}</p>
+                          <p className="font-bold text-[#002855]">
+                            {usr?.name || 'Usuário Rotaly'}
+                          </p>
+                          <p className="text-[11px] text-slate-500">{usr?.email}</p>
+                          {usr?.phone && <p className="text-[10px] text-slate-400">{usr.phone}</p>}
                         </div>
 
                         <div className="flex items-center gap-2">
                           <Badge
                             variant="outline"
-                            className="text-[10px] border-[#1E2B58] text-slate-300 capitalize"
+                            className="text-[10px] border-slate-200 text-slate-700 capitalize bg-slate-50"
                           >
                             {m.papel || usr?.role || 'membro'}
                           </Badge>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => handleRemoveMember(m.id)}
-                            className="h-7 w-7 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
+                          {isMaster && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => handleRemoveMember(m.id)}
+                              className="h-7 w-7 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg"
+                              title="Desvincular membro"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     )
                   })}
+
+                {membros.filter((m) => m.empresa_id === selectedEmpresaForMembers?.id).length ===
+                  0 && (
+                  <div className="p-6 text-center text-xs text-slate-400">
+                    Nenhum membro cadastrado nesta empresa ainda. Clique em "Novo Usuário na Loja"
+                    para adicionar.
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
-          <DialogFooter className="pt-4 border-t border-[#1E2B58]">
+          <DialogFooter className="pt-4 border-t border-slate-200">
             <Button
               onClick={() => setSelectedEmpresaForMembers(null)}
-              className="border-[#1E2B58] bg-[#0A1128] hover:bg-[#121E46] text-white text-xs"
+              className="border-slate-200 bg-slate-100 hover:bg-slate-200 text-[#002855] text-xs font-semibold"
             >
               Fechar
             </Button>

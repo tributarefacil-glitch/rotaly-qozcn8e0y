@@ -72,30 +72,170 @@ export const deliveryService = {
     return pb.collection<MembroRecord>('membros').delete(id)
   },
 
-  // ID da Empresa Matriz Rotaly (Empresa Única do Sistema)
+  // ID da Empresa Matriz Rotaly (Empresa 1)
   MATRIZ_EMPRESA_ID: '7wo05iyvfcfh01h',
 
   /**
-   * Helper para obter o ID da empresa ativa de forma fail-safe.
-   * Retorna SEMPRE a Matriz '7wo05iyvfcfh01h' ("Rotaly Operações").
+   * Helper para obter o ID da empresa ativa.
+   * - Para master: lê do localStorage ou cai na Matriz.
+   * - Para demais usuários: obtém da empresa vinculada à sua sessão/membro.
    */
   getActiveCompanyId(): string {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('rotaly_active_empresa_id')
+      if (stored) return stored
+    }
     return this.MATRIZ_EMPRESA_ID
   },
 
   setActiveCompanyId(empresaId: string): void {
     if (typeof window !== 'undefined' && empresaId) {
-      localStorage.setItem('rotaly_active_empresa_id', this.MATRIZ_EMPRESA_ID)
+      localStorage.setItem('rotaly_active_empresa_id', empresaId)
     }
   },
 
   /**
-   * Helper de cláusula de empresa:
-   * No modo empresa única, não restringe ou aceita tudo para garantir 100% de visibilidade.
+   * Helper de cláusula de empresa para isolamento multi-tenant:
+   * Retorna `empresa_id = '...'` garantindo que registros de outras lojas nunca se misturem.
+   * Caso o usuário logado seja Master e queira ver tudo (sem filtro de empresa), pode ser nulo.
+   * Por padrão em operações de loja, isola rigorosamente pelo ID da empresa ativa.
    */
-  getCompanyFilterClause(_field = 'empresa_id', _overrideCompanyId?: string): string | null {
-    // Retorna null para nunca restringir queries e garantir que TODOS os registros apareçam unificados
-    return null
+  getCompanyFilterClause(_field = 'empresa_id', overrideCompanyId?: string): string | null {
+    const authUser = pb.authStore.record as any
+    const isMaster = authUser?.role === 'master'
+
+    // Se for master e passou explicitamente override como 'ALL', não filtra
+    if (isMaster && overrideCompanyId === 'ALL') {
+      return null
+    }
+
+    const companyId = overrideCompanyId || this.getActiveCompanyId()
+    if (!companyId) return null
+
+    return `${_field} = '${companyId}'`
+  },
+
+  /**
+   * Obter plano e limites de uma empresa ativa
+   */
+  async getCompanyPlanAndLimits(empresaId?: string): Promise<{
+    plano: 'basico' | 'profissional' | 'enterprise'
+    max_users: number
+    max_couriers: number
+    max_orders_month: number
+    ativa: boolean
+  }> {
+    const targetId = empresaId || this.getActiveCompanyId()
+    try {
+      const comp = await pb.collection<EmpresaRecord>('empresas').getOne(targetId, {
+        requestKey: null,
+      })
+      const plano =
+        (comp.plano as any) || (targetId === this.MATRIZ_EMPRESA_ID ? 'enterprise' : 'profissional')
+      return {
+        plano,
+        max_users:
+          comp.max_users || (plano === 'enterprise' ? 9999 : plano === 'profissional' ? 15 : 5),
+        max_couriers:
+          comp.max_couriers || (plano === 'enterprise' ? 9999 : plano === 'profissional' ? 10 : 3),
+        max_orders_month:
+          comp.max_orders_month ||
+          (plano === 'enterprise' ? 999999 : plano === 'profissional' ? 2000 : 300),
+        ativa: comp.ativa ?? true,
+      }
+    } catch {
+      return {
+        plano: 'enterprise',
+        max_users: 9999,
+        max_couriers: 9999,
+        max_orders_month: 999999,
+        ativa: true,
+      }
+    }
+  },
+
+  /**
+   * Validar se a empresa atingiu o limite de usuários/membros
+   */
+  async checkUserLimit(
+    empresaId?: string,
+    isCourier = false,
+  ): Promise<{ allowed: boolean; message?: string }> {
+    const targetId = empresaId || this.getActiveCompanyId()
+    // Matriz nunca é bloqueada
+    if (targetId === this.MATRIZ_EMPRESA_ID) return { allowed: true }
+
+    const limits = await this.getCompanyPlanAndLimits(targetId)
+    if (!limits.ativa) {
+      return {
+        allowed: false,
+        message: 'Esta empresa está desativada no sistema. Contate o suporte.',
+      }
+    }
+
+    // Contar membros atuais da empresa
+    const currentMembers = await pb.collection<MembroRecord>('membros').getFullList({
+      filter: `empresa_id = '${targetId}' && ativo = true`,
+      requestKey: null,
+    })
+
+    if (currentMembers.length >= limits.max_users) {
+      return {
+        allowed: false,
+        message: `Limite de usuários do plano (${limits.max_users} membros) atingido para esta empresa. Faça upgrade do plano para adicionar mais usuários.`,
+      }
+    }
+
+    if (isCourier) {
+      const courierMembers = currentMembers.filter((m) => m.papel === 'courier')
+      if (courierMembers.length >= limits.max_couriers) {
+        return {
+          allowed: false,
+          message: `Limite de entregadores do plano (${limits.max_couriers} entregadores) atingido para esta empresa. Faça upgrade do plano para cadastrar mais entregadores.`,
+        }
+      }
+    }
+
+    return { allowed: true }
+  },
+
+  /**
+   * Validar se a empresa atingiu o limite de pedidos no mês corrente
+   */
+  async checkOrderLimit(empresaId?: string): Promise<{ allowed: boolean; message?: string }> {
+    const targetId = empresaId || this.getActiveCompanyId()
+    if (targetId === this.MATRIZ_EMPRESA_ID) return { allowed: true }
+
+    const limits = await this.getCompanyPlanAndLimits(targetId)
+    if (!limits.ativa) {
+      return {
+        allowed: false,
+        message: 'Esta empresa está desativada no sistema. Contate o suporte.',
+      }
+    }
+
+    // Contar pedidos criados no mês atual
+    const now = new Date()
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+      .toISOString()
+      .replace('T', ' ')
+
+    try {
+      const res = await pb.collection<OrderRecord>('orders').getList(1, 1, {
+        filter: `empresa_id = '${targetId}' && created >= '${firstDayOfMonth}'`,
+        requestKey: null,
+      })
+      if (res.totalItems >= limits.max_orders_month) {
+        return {
+          allowed: false,
+          message: `Limite mensal de pedidos (${limits.max_orders_month} pedidos/mês) atingido para esta empresa. Faça upgrade do plano para continuar gerando entregas.`,
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao verificar limite de pedidos:', err)
+    }
+
+    return { allowed: true }
   },
 
   // Colaboradores, Rotas, Entregas, Relatórios (Unificados)
@@ -168,11 +308,9 @@ export const deliveryService = {
     filter = '',
     sort = '-created',
     expand = 'customer_id,courier_id,seller_id',
-    _empresaId?: string,
+    empresaId?: string,
   ) {
     // Saneamento global e preventivo de filtros PocketBase:
-    // 1. Substitui qualquer padrão inválido de bool `(route_finished = false || route_finished = null)` por `route_finished != true`
-    // 2. Corrige data ISO com "T" em `created >= 'YYYY-MM-DDTHH:mm:ss'` substituindo 'T' por espaço para compatibilidade léxica SQLite
     let sanitizedFilter = filter
     if (sanitizedFilter) {
       sanitizedFilter = sanitizedFilter
@@ -183,6 +321,16 @@ export const deliveryService = {
         .replace(/route_finished\s*=\s*false/g, 'route_finished != true')
         .replace(/route_finished\s*=\s*null/g, 'route_finished != true')
         .replace(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/g, '$1 $2')
+    }
+
+    // Isolamento multi-tenant por empresa (se não contiver empresa_id no filtro e não for busca de tracking público)
+    if (!sanitizedFilter.includes('empresa_id') && !sanitizedFilter.includes('tracking_code')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id', empresaId)
+      if (companyClause) {
+        sanitizedFilter = sanitizedFilter
+          ? `(${sanitizedFilter}) && ${companyClause}`
+          : companyClause
+      }
     }
 
     return pb.collection<OrderRecord>('orders').getFullList({
@@ -202,6 +350,7 @@ export const deliveryService = {
     sort = '-created',
     expand = 'customer_id,courier_id,seller_id',
     batchSize = 200,
+    empresaId?: string,
   ): Promise<OrderRecord[]> {
     let sanitizedFilter = filter
     if (sanitizedFilter) {
@@ -213,6 +362,15 @@ export const deliveryService = {
         .replace(/route_finished\s*=\s*false/g, 'route_finished != true')
         .replace(/route_finished\s*=\s*null/g, 'route_finished != true')
         .replace(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/g, '$1 $2')
+    }
+
+    if (!sanitizedFilter.includes('empresa_id') && !sanitizedFilter.includes('tracking_code')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id', empresaId)
+      if (companyClause) {
+        sanitizedFilter = sanitizedFilter
+          ? `(${sanitizedFilter}) && ${companyClause}`
+          : companyClause
+      }
     }
 
     const allOrders: OrderRecord[] = []
@@ -422,10 +580,19 @@ export const deliveryService = {
   },
 
   async createOrder(data: Partial<OrderRecord>) {
-    const activeCompanyId = this.getActiveCompanyId()
+    const activeCompanyId = data.empresa_id || this.getActiveCompanyId()
+
+    // Validar limites de plano da empresa
+    const limitCheck = await this.checkOrderLimit(activeCompanyId)
+    if (!limitCheck.allowed) {
+      throw new Error(
+        limitCheck.message || 'Limite mensal de pedidos excedido para o plano desta empresa.',
+      )
+    }
+
     const payload = {
       ...data,
-      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+      empresa_id: activeCompanyId,
     }
     return pb.collection<OrderRecord>('orders').create(payload)
   },
@@ -439,9 +606,17 @@ export const deliveryService = {
   },
 
   // Customers
-  async getCustomers(customFilter = '') {
+  async getCustomers(customFilter = '', empresaId?: string) {
+    let finalFilter = customFilter
+    if (!finalFilter.includes('empresa_id')) {
+      const companyClause = this.getCompanyFilterClause('empresa_id', empresaId)
+      if (companyClause) {
+        finalFilter = finalFilter ? `(${finalFilter}) && ${companyClause}` : companyClause
+      }
+    }
+
     return pb.collection<CustomerRecord>('customers').getFullList({
-      filter: customFilter,
+      filter: finalFilter,
       sort: 'name',
       requestKey: null,
     })
@@ -594,10 +769,10 @@ export const deliveryService = {
   },
 
   async createCustomer(data: Partial<CustomerRecord>) {
-    const activeCompanyId = this.getActiveCompanyId()
+    const activeCompanyId = data.empresa_id || this.getActiveCompanyId()
     const payload = {
       ...data,
-      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
+      empresa_id: activeCompanyId,
     }
     return pb.collection<CustomerRecord>('customers').create(payload)
   },
@@ -704,35 +879,146 @@ export const deliveryService = {
 
   // Users / Couriers / Sellers
   // Filtrados pela empresa ativa através dos vínculos da coleção membros (ativo = true)
-  async getCouriers(_empresaId?: string) {
-    // Modo Empresa Única: listar todos os entregadores do sistema cadastrados (sem isolamento)
-    const list = await pb.collection<UserRecord>('users').getFullList({
-      filter: "role = 'courier'",
-      sort: '-created',
-      requestKey: null,
-    })
-    return list.map((u) => ({
-      ...u,
-      vehicle_type: u.vehicle_type || 'moto',
-      status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
-    }))
+  async getCouriers(empresaId?: string) {
+    const authUser = pb.authStore.record as any
+    const isMaster = authUser?.role === 'master'
+    const targetCompanyId = empresaId || this.getActiveCompanyId()
+
+    // Se for Master e não especificou empresa (ou empresa é ALL), pode ver todos
+    if (isMaster && empresaId === 'ALL') {
+      const list = await pb.collection<UserRecord>('users').getFullList({
+        filter: "role = 'courier'",
+        sort: '-created',
+        requestKey: null,
+      })
+      return list.map((u) => ({
+        ...u,
+        vehicle_type: u.vehicle_type || 'moto',
+        status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+      }))
+    }
+
+    // Filtrar entregadores membros da empresa ativa
+    try {
+      const members = await pb.collection<MembroRecord>('membros').getFullList({
+        filter: `empresa_id = '${targetCompanyId}' && ativo = true && papel = 'courier'`,
+        expand: 'user_id',
+        sort: '-created',
+        requestKey: null,
+      })
+
+      if (members.length > 0) {
+        return members
+          .map((m) => {
+            const u = m.expand?.user_id as UserRecord | undefined
+            if (!u) return null
+            return {
+              ...u,
+              vehicle_type: u.vehicle_type || 'moto',
+              status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+            }
+          })
+          .filter((u): u is UserRecord => Boolean(u))
+      }
+    } catch (e) {
+      console.warn('Erro ao filtrar couriers por membros:', e)
+    }
+
+    // Fallback: se for a Matriz Empresa 1, lista couriers da base
+    if (targetCompanyId === this.MATRIZ_EMPRESA_ID) {
+      const list = await pb.collection<UserRecord>('users').getFullList({
+        filter: "role = 'courier'",
+        sort: '-created',
+        requestKey: null,
+      })
+      return list.map((u) => ({
+        ...u,
+        vehicle_type: u.vehicle_type || 'moto',
+        status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+      }))
+    }
+
+    return []
   },
 
-  async getSellers(_empresaId?: string) {
-    // Modo Empresa Única: listar todos os vendedores do sistema cadastrados (sem isolamento)
-    return pb.collection<UserRecord>('users').getFullList({
-      filter: "role = 'seller'",
-      sort: '-created',
-      requestKey: null,
-    })
+  async getSellers(empresaId?: string) {
+    const authUser = pb.authStore.record as any
+    const isMaster = authUser?.role === 'master'
+    const targetCompanyId = empresaId || this.getActiveCompanyId()
+
+    if (isMaster && empresaId === 'ALL') {
+      return pb.collection<UserRecord>('users').getFullList({
+        filter: "role = 'seller'",
+        sort: '-created',
+        requestKey: null,
+      })
+    }
+
+    try {
+      const members = await pb.collection<MembroRecord>('membros').getFullList({
+        filter: `empresa_id = '${targetCompanyId}' && ativo = true && papel = 'seller'`,
+        expand: 'user_id',
+        sort: '-created',
+        requestKey: null,
+      })
+
+      if (members.length > 0) {
+        return members
+          .map((m) => m.expand?.user_id as UserRecord | undefined)
+          .filter((u): u is UserRecord => Boolean(u))
+      }
+    } catch (e) {
+      console.warn('Erro ao filtrar sellers por membros:', e)
+    }
+
+    if (targetCompanyId === this.MATRIZ_EMPRESA_ID) {
+      return pb.collection<UserRecord>('users').getFullList({
+        filter: "role = 'seller'",
+        sort: '-created',
+        requestKey: null,
+      })
+    }
+
+    return []
   },
 
-  async getAllUsers(_empresaId?: string) {
-    // Modo Empresa Única: listar todos os usuários unificados
-    return pb.collection<UserRecord>('users').getFullList({
-      sort: '-created',
-      requestKey: null,
-    })
+  async getAllUsers(empresaId?: string) {
+    const authUser = pb.authStore.record as any
+    const isMaster = authUser?.role === 'master'
+    const targetCompanyId = empresaId || this.getActiveCompanyId()
+
+    if (isMaster && empresaId === 'ALL') {
+      return pb.collection<UserRecord>('users').getFullList({
+        sort: '-created',
+        requestKey: null,
+      })
+    }
+
+    try {
+      const members = await pb.collection<MembroRecord>('membros').getFullList({
+        filter: `empresa_id = '${targetCompanyId}' && ativo = true`,
+        expand: 'user_id',
+        sort: '-created',
+        requestKey: null,
+      })
+
+      if (members.length > 0) {
+        return members
+          .map((m) => m.expand?.user_id as UserRecord | undefined)
+          .filter((u): u is UserRecord => Boolean(u))
+      }
+    } catch (e) {
+      console.warn('Erro ao filtrar users por membros:', e)
+    }
+
+    if (targetCompanyId === this.MATRIZ_EMPRESA_ID) {
+      return pb.collection<UserRecord>('users').getFullList({
+        sort: '-created',
+        requestKey: null,
+      })
+    }
+
+    return []
   },
 
   async updateUser(id: string, data: Partial<UserRecord> | FormData) {
@@ -788,7 +1074,7 @@ export const deliveryService = {
           password: string
           passwordConfirm: string
           name?: string
-          role?: 'admin' | 'seller' | 'courier'
+          role?: 'master' | 'admin' | 'seller' | 'courier'
           status?: 'active' | 'inactive' | 'pending' | 'idle' | 'busy'
           phone?: string
           document?: string
@@ -796,28 +1082,67 @@ export const deliveryService = {
           vehicle_model?: string
           vehicle_year?: number
           vehicle_plate?: string
+          empresa_id?: string
           [key: string]: unknown
         }
       | FormData,
+    targetEmpresaId?: string,
   ) {
+    const activeCompanyId =
+      targetEmpresaId ||
+      (!(data instanceof FormData) ? (data.empresa_id as string | undefined) : undefined) ||
+      this.getActiveCompanyId()
+
+    // Se o usuário criado for courier ou usuário de empresa, validar limites de plano
+    const requestedRole = !(data instanceof FormData) ? data.role : undefined
+    const isCourier = requestedRole === 'courier'
+    const limitCheck = await this.checkUserLimit(activeCompanyId, isCourier)
+    if (!limitCheck.allowed) {
+      throw new Error(limitCheck.message || 'Limite de usuários do plano atingido.')
+    }
+
+    let createdRecord: UserRecord
     if (data instanceof FormData) {
-      return pb.collection<UserRecord>('users').create(data)
+      createdRecord = await pb.collection<UserRecord>('users').create(data)
+    } else {
+      const { verified: _omittedVerified, empresa_id: _emp, ...rest } = data
+      const payload: Record<string, unknown> = {
+        ...rest,
+        email: data.email.trim().toLowerCase(),
+      }
+
+      // Auto-generate username from email if not provided
+      if (!payload.username) {
+        const emailPrefix = data.email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '')
+        const randomSuffix = Math.floor(1000 + Math.random() * 9000)
+        payload.username = `${emailPrefix || 'user'}_${randomSuffix}`
+      }
+
+      createdRecord = await pb.collection<UserRecord>('users').create(payload)
     }
 
-    const { verified: _omittedVerified, ...rest } = data
-    const payload: Record<string, unknown> = {
-      ...rest,
-      email: data.email.trim().toLowerCase(),
+    // Vincular imediatamente o usuário na coleção membros da empresa ativa
+    if (createdRecord?.id && activeCompanyId) {
+      try {
+        const papelMembro =
+          createdRecord.role === 'courier'
+            ? 'courier'
+            : createdRecord.role === 'seller'
+              ? 'seller'
+              : 'admin'
+
+        await pb.collection<MembroRecord>('membros').create({
+          user_id: createdRecord.id,
+          empresa_id: activeCompanyId,
+          papel: papelMembro,
+          ativo: true,
+        })
+      } catch (membroErr) {
+        console.warn('Aviso: vínculo automático de membro falhou:', membroErr)
+      }
     }
 
-    // Auto-generate username from email if not provided
-    if (!payload.username) {
-      const emailPrefix = data.email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '')
-      const randomSuffix = Math.floor(1000 + Math.random() * 9000)
-      payload.username = `${emailPrefix || 'user'}_${randomSuffix}`
-    }
-
-    return pb.collection<UserRecord>('users').create(payload)
+    return createdRecord
   },
 
   // Password Reset Native PocketBase
@@ -1230,9 +1555,12 @@ export const deliveryService = {
   },
 
   // Base Addresses Management (Cadastro de Base da Empresa / Loja e Endereço Final)
-  async getBaseAddresses(_empresaId?: string): Promise<BaseAddressRecord[]> {
+  async getBaseAddresses(empresaId?: string): Promise<BaseAddressRecord[]> {
+    const targetCompanyId = empresaId || this.getActiveCompanyId()
     try {
+      const filterClause = this.getCompanyFilterClause('empresa_id', targetCompanyId)
       const records = await pb.collection<BaseAddressRecord>('base_addresses').getFullList({
+        filter: filterClause || undefined,
         sort: '-is_default,name',
         requestKey: null,
       })

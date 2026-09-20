@@ -211,7 +211,9 @@ export default function Index() {
   }
 
   const redirectByRoleAndStatus = (userRole: string, status?: string) => {
-    if (userRole === 'courier') {
+    if (userRole === 'master') {
+      navigate('/master', { replace: true })
+    } else if (userRole === 'courier') {
       if (status === 'pending' || status === 'inactive') {
         navigate('/pending-approval', { replace: true })
       } else {

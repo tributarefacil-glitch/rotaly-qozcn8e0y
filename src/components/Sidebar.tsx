@@ -23,19 +23,25 @@ interface NavItem {
   title: string
   href: string
   icon: React.ElementType
-  roles: ('admin' | 'seller' | 'courier')[]
+  roles: ('master' | 'admin' | 'seller' | 'courier')[]
   badge?: string
   adminOnly?: boolean
 }
 
 const navItems: NavItem[] = [
   {
-    title: 'Painel Master Admin',
+    title: 'Gestão de Empresas (SaaS)',
+    href: '/master',
+    icon: Building2,
+    roles: ['master'],
+    badge: 'Master',
+  },
+  {
+    title: 'Painel Executivo',
     href: '/admin',
     icon: LayoutDashboard,
-    roles: ['admin'],
+    roles: ['master', 'admin'],
   },
-
   {
     title: 'Painel do Lojista',
     href: '/seller',
@@ -105,10 +111,16 @@ export const Sidebar: React.FC = () => {
   const { user } = useAuth()
   const role = user?.role || 'seller'
 
+  const isMaster = role === 'master'
+
   const filteredItems = navItems
     .filter((item) => {
-      if (role === 'admin') return true
-      return item.roles.includes(role)
+      if (isMaster) return true // Master vê todos os menus
+      if (role === 'admin') {
+        // Admin comum de empresa não vê o menu exclusivo do Master
+        return item.roles.includes('admin')
+      }
+      return item.roles.includes(role as any)
     })
     .map((item) => {
       // Ajustar destino conforme a role do usuário
@@ -119,7 +131,6 @@ export const Sidebar: React.FC = () => {
         if (role === 'seller') {
           return { ...item, href: '/fuel' }
         }
-        // Para admin, pode direcionar para a aba de combustível no painel admin ou /fuel
         return { ...item, href: '/admin?tab=fuel' }
       }
       return item

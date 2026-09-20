@@ -305,13 +305,13 @@ function ProtectedRoute({
   routeName,
 }: {
   children: React.ReactNode
-  allowedRoles?: ('admin' | 'seller' | 'courier')[]
+  allowedRoles?: ('master' | 'admin' | 'seller' | 'courier')[]
   routeName?: string
 }) {
   const { user, role, isLoading, isAuthenticated } = useAuth()
   const location = useLocation()
 
-  // Se ainda estiver carregando a sessão/perfil, exibe tela de loading elegante no tema Dark Navy
+  // Se ainda estiver carregando a sessão/perfil, exibe tela de loading elegante
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-white text-[#002855]">
@@ -339,6 +339,11 @@ function ProtectedRoute({
       return <Navigate to="/pending-approval" replace />
     }
     return <>{children}</>
+  }
+
+  // Papel Master tem passe livre completo em rotas admin e de empresas
+  if (role === 'master') {
+    return <RouteErrorBoundary routeName={routeName}>{children}</RouteErrorBoundary>
   }
 
   // BLINDAGEM ESTRITA: perfis não-admin (seller ou courier) NUNCA podem renderizar em /admin ou qualquer sub-rota admin
@@ -542,11 +547,19 @@ const App = () => (
                 }
               />
 
-              {/* Multi-tenant Companies Management */}
+              {/* Multi-tenant Companies Management (Master & Admin) */}
+              <Route
+                path="/master"
+                element={
+                  <ProtectedRoute allowedRoles={['master', 'admin']}>
+                    <CompaniesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="/empresas"
                 element={
-                  <ProtectedRoute allowedRoles={['admin']}>
+                  <ProtectedRoute allowedRoles={['master', 'admin']}>
                     <CompaniesPage />
                   </ProtectedRoute>
                 }
@@ -554,7 +567,7 @@ const App = () => (
               <Route
                 path="/admin/empresas"
                 element={
-                  <ProtectedRoute allowedRoles={['admin']}>
+                  <ProtectedRoute allowedRoles={['master', 'admin']}>
                     <CompaniesPage />
                   </ProtectedRoute>
                 }

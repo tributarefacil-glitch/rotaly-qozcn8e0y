@@ -12,9 +12,9 @@ routerAdd(
         return e.json(401, { message: 'Autenticação necessária.' })
       }
 
-      // Ensure caller is an admin
+      // Ensure caller is master or admin
       const callerRole = authUser.getString('role')
-      if (callerRole !== 'admin') {
+      if (callerRole !== 'master' && callerRole !== 'admin') {
         return e.json(403, { message: 'Apenas administradores podem executar esta ação.' })
       }
 
@@ -103,9 +103,15 @@ routerAdd(
 
       // Update role if provided (admin, seller, courier)
       if (body.role !== undefined && body.role !== null) {
-        const validRoles = ['admin', 'seller', 'courier']
+        const validRoles = ['master', 'admin', 'seller', 'courier']
         const newRole = String(body.role).trim()
         if (validRoles.indexOf(newRole) !== -1) {
+          // Apenas master pode conceder papel master
+          if (newRole === 'master' && callerRole !== 'master') {
+            return e.json(403, {
+              message: 'Apenas o Administrador Master pode atribuir o perfil Master.',
+            })
+          }
           targetRecord.set('role', newRole)
         }
       }

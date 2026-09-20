@@ -1,6 +1,6 @@
 import type { RecordModel } from 'pocketbase'
 
-export type UserRole = 'admin' | 'seller' | 'courier'
+export type UserRole = 'master' | 'admin' | 'seller' | 'courier'
 export type UserStatus = 'active' | 'inactive' | 'pending' | 'idle' | 'busy'
 export type VehicleType =
   | 'moto'
@@ -12,6 +12,14 @@ export type VehicleType =
   | 'truck'
   | 'bicycle'
   | 'bicicleta'
+
+export type PlanoEmpresa = 'basico' | 'profissional' | 'enterprise'
+
+export interface EmpresaLimites {
+  max_users: number
+  max_couriers: number
+  max_orders_month: number
+}
 
 export interface EmpresaRecord extends RecordModel {
   nome_razao_social: string
@@ -28,6 +36,10 @@ export interface EmpresaRecord extends RecordModel {
   telefone?: string
   email?: string
   ativa?: boolean
+  plano?: PlanoEmpresa
+  max_users?: number
+  max_couriers?: number
+  max_orders_month?: number
 }
 
 export type MembroPapel = 'admin' | 'vendedor' | 'entregador' | 'gestor'
