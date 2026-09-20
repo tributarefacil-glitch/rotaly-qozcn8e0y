@@ -460,7 +460,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         deliveryService.getSellers(companyId),
         deliveryService.getNotifications(),
         deliveryService.getSettings(),
-        deliveryService.getFuelAdvances(),
+        deliveryService.getFuelAdvances('', '-date,-created', 'courier_id,created_by', companyId),
         deliveryService.getOffRouteEvents(),
         deliveryService.getReviews(),
         deliveryService.getCustomers(),

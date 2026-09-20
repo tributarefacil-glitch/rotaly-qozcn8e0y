@@ -2675,7 +2675,12 @@ export const deliveryService = {
   },
 
   // Fuel Advances & Current Account
-  async getFuelAdvances(filter = '', sort = '-date,-created', expand = 'courier_id,created_by') {
+  async getFuelAdvances(
+    filter = '',
+    sort = '-date,-created',
+    expand = 'courier_id,created_by',
+    empresaId?: string,
+  ) {
     let finalFilter = filter
 
     // A coleção fuel_advances não possui empresa_id diretamente.
@@ -2683,8 +2688,32 @@ export const deliveryService = {
     // courier_id IN (ids dos couriers da empresa ativa).
     if (!filter.includes('courier_id')) {
       try {
-        const couriers = await this.getCouriers()
-        if (couriers.length > 0) {
+        // Resolver empresa ativa ou matriz sem filtrar por string vazia
+        const targetCompanyId =
+          empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+
+        let couriers = await this.getCouriers(targetCompanyId)
+
+        // Se mesmo assim os entregadores vierem vazios da coleção 'membros',
+        // buscar direto em users com role='courier' como fonte de verdade (mesma cascata usada em getSellers)
+        if (!couriers || couriers.length === 0) {
+          try {
+            const allCouriers = await pb.collection<UserRecord>('users').getFullList({
+              filter: "role = 'courier'",
+              sort: '-created',
+              requestKey: null,
+            })
+            couriers = allCouriers.map((u) => ({
+              ...u,
+              vehicle_type: u.vehicle_type || 'moto',
+              status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+            }))
+          } catch (usersErr) {
+            console.warn('Erro no fallback de couriers para fuel_advances:', usersErr)
+          }
+        }
+
+        if (couriers && couriers.length > 0) {
           const courierFilterClause = couriers.map((c) => `courier_id = '${c.id}'`).join(' || ')
           finalFilter = filter
             ? `(${filter}) && (${courierFilterClause})`
@@ -2695,12 +2724,43 @@ export const deliveryService = {
       }
     }
 
-    return pb.collection<FuelAdvanceRecord>('fuel_advances').getFullList({
-      filter: finalFilter,
-      sort,
-      expand,
-      requestKey: null,
-    })
+    try {
+      return await pb.collection<FuelAdvanceRecord>('fuel_advances').getFullList({
+        filter: finalFilter,
+        sort,
+        expand,
+        requestKey: null,
+      })
+    } catch (queryErr) {
+      console.warn(
+        'Erro na consulta filtrada de fuel_advances; executando fallback defensivo:',
+        queryErr,
+      )
+      try {
+        // Fallback defensivo: listar adiantamentos e cruzar em memória pelos courier_id
+        const allAdvances = await pb.collection<FuelAdvanceRecord>('fuel_advances').getFullList({
+          sort,
+          expand,
+          requestKey: null,
+        })
+        const targetCompanyId =
+          empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+        let couriers = await this.getCouriers(targetCompanyId)
+        if (!couriers || couriers.length === 0) {
+          const allCouriers = await pb.collection<UserRecord>('users').getFullList({
+            filter: "role = 'courier'",
+            sort: '-created',
+            requestKey: null,
+          })
+          couriers = allCouriers
+        }
+        const allowedCourierIds = new Set(couriers.map((c) => c.id))
+        return allAdvances.filter((adv) => adv.courier_id && allowedCourierIds.has(adv.courier_id))
+      } catch (fallbackErr) {
+        console.error('Falha crítica no fallback de fuel_advances:', fallbackErr)
+        return []
+      }
+    }
   },
 
   async createFuelAdvance(data: Partial<FuelAdvanceRecord>) {
