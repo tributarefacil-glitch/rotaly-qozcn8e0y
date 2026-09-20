@@ -198,9 +198,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     setLocalCustomers(initialCustomers)
   }, [initialCustomers])
 
-  // Estados para Edição e Exclusão de Clientes na Etapa 2
+  // Estados para Edição e Cancelamento de Venda / Exclusão de Clientes na Etapa 2
   const [customerToEdit, setCustomerToEdit] = useState<CustomerRecord | null>(null)
   const [isEditCustomerModalOpen, setIsEditCustomerModalOpen] = useState(false)
+  const [orderToCancelSale, setOrderToCancelSale] = useState<OrderRecord | null>(null)
+  const [isCancellingSale, setIsCancellingSale] = useState(false)
   const [customerToDelete, setCustomerToDelete] = useState<CustomerRecord | null>(null)
   const [isDeletingCustomer, setIsDeletingCustomer] = useState(false)
 
@@ -2779,6 +2781,84 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     onRoutesApplied()
   }
 
+  // Ação de Cancelamento da Venda Pendente na Etapa 2 (Cliente permanece ativo com histórico)
+  const handleOpenCancelSaleConfirm = (order: OrderRecord, e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setOrderToCancelSale(order)
+  }
+
+  const handleConfirmCancelSale = async () => {
+    if (!orderToCancelSale) return
+    const targetOrder = orderToCancelSale
+    const cust =
+      localCustomers.find((c) => c.id === targetOrder.customer_id) ||
+      targetOrder.expand?.customer_id
+    const customerName = cust?.name || 'Cliente'
+
+    setIsCancellingSale(true)
+    try {
+      const auditNote =
+        '[Audit: venda cancelada pelo operador na montagem de rota — cliente permanece ativo]'
+      const existingNotes = targetOrder.notes ? `${targetOrder.notes} | ` : ''
+      const updatedNotes = `${existingNotes}${auditNote}`
+      const now = new Date().toISOString()
+
+      // Atualiza pedido para status 'cancelled' com completion_reason 'cancelado_vendedor'
+      await deliveryService.updateOrder(targetOrder.id, {
+        status: 'cancelled',
+        completion_reason: 'cancelado_vendedor',
+        actual_arrival: now,
+        notes: updatedNotes,
+      })
+
+      // 1. Desmarcar da seleção de rotas caso estivesse marcado
+      setSelectedOrderIds((prev) => prev.filter((id) => id !== targetOrder.id))
+
+      // 2. Atualizar pedido no estado local (com status cancelled para sair imediatamente de pendingOrders)
+      setLocalOrders((prev) =>
+        prev.map((o) =>
+          o.id === targetOrder.id
+            ? {
+                ...o,
+                status: 'cancelled',
+                completion_reason: 'cancelado_vendedor',
+                actual_arrival: now,
+                notes: updatedNotes,
+              }
+            : o,
+        ),
+      )
+
+      // 3. Notificação interna opcional
+      try {
+        await deliveryService.createNotification({
+          title: `Venda Cancelada na Rota: ${targetOrder.tracking_code || targetOrder.id.slice(0, 8)}`,
+          message: `Venda para ${customerName} cancelada na montagem de rota. O cliente permanece ativo no cadastro com histórico preservado.`,
+          type: 'warning',
+          read: false,
+          order_id: targetOrder.id,
+        })
+      } catch {
+        /* silent catch */
+      }
+
+      toast.success(
+        `Venda ${targetOrder.tracking_code || ''} cancelada com sucesso! Cliente "${customerName}" permanece ativo.`,
+      )
+
+      // 4. Notificar painel pai para recarregar dados
+      onRoutesApplied()
+      setOrderToCancelSale(null)
+    } catch (err: unknown) {
+      console.error('Erro ao cancelar venda do cliente:', err)
+      const message = err instanceof Error ? err.message : 'Falha ao cancelar a venda do cliente.'
+      toast.error(message)
+    } finally {
+      setIsCancellingSale(false)
+    }
+  }
+
   const handleOpenDeleteConfirm = (cust: CustomerRecord, e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
@@ -2817,9 +2897,17 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       setCustomerToDelete(null)
     } catch (err: unknown) {
       console.error('Erro ao excluir cliente:', err)
-      const message =
+      const rawMessage =
         err instanceof Error ? err.message : 'Falha ao excluir cliente e entregas vinculadas.'
-      toast.error(message)
+      // Se houver entregas já entregues/histórico preservado, orienta o cancelamento da venda em vez do erro seco
+      if (rawMessage.includes('comprovante preservado') || rawMessage.includes('já entregue')) {
+        toast.error(
+          'Este cliente possui entregas concluídas com comprovante preservado e não pode ser excluído do cadastro. Para removê-lo da rota, use o cancelamento de venda (o cliente permanece ativo no sistema com todo o histórico).',
+          { duration: 8000 },
+        )
+      } else {
+        toast.error(rawMessage)
+      }
     } finally {
       setIsDeletingCustomer(false)
     }
@@ -4135,36 +4223,36 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                               {ord.tracking_code || ord.id.slice(0, 8)}
                             </Badge>
 
-                            {/* Botões de Ação Rápida: Editar e Excluir Cliente */}
-                            {cust && (
-                              <div
-                                className="flex items-center gap-0.5 ml-1"
-                                onClick={(e) => e.stopPropagation()}
-                              >
+                            {/* Botões de Ação Rápida: Editar cadastro do cliente e Cancelar Venda da Rota */}
+                            <div
+                              className="flex items-center gap-0.5 ml-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {cust && (
                                 <Button
                                   type="button"
                                   size="icon"
                                   variant="ghost"
-                                  title="Editar cadastro do cliente"
+                                  title="Editar dados cadastrais do cliente"
                                   aria-label="Editar cliente"
                                   onClick={(e) => handleOpenEditCustomer(cust, e)}
                                   className="h-6 w-6 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100/60 dark:hover:bg-indigo-950/50 rounded-md transition"
                                 >
                                   <Pencil className="h-3 w-3" />
                                 </Button>
-                                <Button
-                                  type="button"
-                                  size="icon"
-                                  variant="ghost"
-                                  title="Excluir cliente e entregas vinculadas"
-                                  aria-label="Excluir cliente"
-                                  onClick={(e) => handleOpenDeleteConfirm(cust, e)}
-                                  className="h-6 w-6 text-slate-400 hover:text-red-600 hover:bg-red-100/60 dark:hover:bg-red-950/50 rounded-md transition"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            )}
+                              )}
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                title="Cancelar venda pendente (cliente permanece ativo com histórico)"
+                                aria-label="Cancelar venda pendente"
+                                onClick={(e) => handleOpenCancelSaleConfirm(ord, e)}
+                                className="h-6 w-6 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 dark:hover:bg-rose-950/50 rounded-md transition"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
                           </div>
                         </div>
                         {(cust?.document || cust?.phone) && (
@@ -5119,6 +5207,71 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         />
       )}
 
+      {/* Confirmação de Cancelamento da Venda Pendente (Cliente permanece ativo e preservado) */}
+      <AlertDialog
+        open={Boolean(orderToCancelSale)}
+        onOpenChange={(isOpen) => {
+          if (!isOpen && !isCancellingSale) {
+            setOrderToCancelSale(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+              <Trash2 className="h-5 w-5 text-rose-600 shrink-0" />
+              Cancelar Venda Pendente?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2.5 pt-2 text-slate-700 dark:text-slate-300">
+              {(() => {
+                const targetCust = orderToCancelSale
+                  ? localCustomers.find((c) => c.id === orderToCancelSale.customer_id) ||
+                    orderToCancelSale.expand?.customer_id
+                  : null
+                return (
+                  <>
+                    <p>
+                      Deseja cancelar a venda pendente{' '}
+                      <strong className="text-slate-900 dark:text-white font-mono">
+                        {orderToCancelSale?.tracking_code || orderToCancelSale?.id.slice(0, 8)}
+                      </strong>{' '}
+                      do cliente{' '}
+                      <strong className="text-slate-900 dark:text-white">
+                        &ldquo;{targetCust?.name || 'Cliente'}&rdquo;
+                      </strong>
+                      ?
+                    </p>
+                    <div className="text-xs bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/50 p-2.5 rounded-lg text-emerald-900 dark:text-emerald-200 space-y-1">
+                      <p className="font-semibold flex items-center gap-1">
+                        ✓ O cliente continua ativo no sistema
+                      </p>
+                      <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                        O cadastro do cliente, histórico de entregas concluídas e comprovantes
+                        permanecem 100% intactos. Apenas este pedido pendente será cancelado e não
+                        entrará na rota.
+                      </p>
+                    </div>
+                  </>
+                )
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel disabled={isCancellingSale} className="w-full sm:w-auto">
+              Voltar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmCancelSale}
+              disabled={isCancellingSale}
+              className="w-full sm:w-auto bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center gap-1.5 font-semibold"
+            >
+              <Trash2 className="h-4 w-4" />
+              {isCancellingSale ? 'Cancelando venda...' : 'Sim, Cancelar Venda'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Confirmação de Exclusão de Cliente e Entregas em Cascata */}
       <AlertDialog
         open={Boolean(customerToDelete)}
@@ -5144,8 +5297,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               </p>
               <div className="text-xs bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 p-2.5 rounded-lg text-rose-800 dark:text-rose-300">
                 ⚠️ <strong>Atenção:</strong> Esta ação apagará permanentemente o cadastro do cliente
-                e <strong>todas as entregas pendentes vinculadas a ele</strong>. Pedidos já em
-                trânsito ou em rota iniciada bloquearão a exclusão por segurança.
+                e <strong>todas as entregas pendentes vinculadas a ele</strong>. Clientes com
+                entregas já concluídas ou comprovantes preservados não podem ser excluídos — nesse
+                caso, cancele apenas a venda pendente.
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
