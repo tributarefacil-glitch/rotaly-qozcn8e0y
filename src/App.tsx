@@ -13,15 +13,29 @@ import Index from './pages/Index'
 import RegisterPage from './pages/RegisterPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import PendingApprovalPage from './pages/PendingApprovalPage'
-import SellerDashboard from './pages/SellerDashboard'
-import CourierApp from './pages/CourierApp'
-import AdminDashboard from './pages/AdminDashboard'
+import { Suspense, lazy } from 'react'
 import CourierFuelPage from './pages/CourierFuelPage'
 import CourierHistoryPage from './pages/CourierHistoryPage'
 import CourierProfilePage from './pages/CourierProfilePage'
 import PublicTrackingPage from './pages/PublicTrackingPage'
 import CompaniesPage from './pages/CompaniesPage'
 import NotFound from './pages/NotFound'
+
+// Code-split heavy dashboard pages to optimize initial bundle
+const SellerDashboard = lazy(() => import('./pages/SellerDashboard'))
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
+const CourierApp = lazy(() => import('./pages/CourierApp'))
+
+const PageSuspenseFallback = () => (
+  <div className="flex min-h-[60vh] w-full items-center justify-center bg-transparent">
+    <div className="flex flex-col items-center gap-3">
+      <div className="h-8 w-8 animate-spin rounded-full border-3 border-[#00A3FF] border-t-transparent" />
+      <span className="font-heading text-xs font-semibold text-slate-500 tracking-wider uppercase">
+        Carregando painel...
+      </span>
+    </div>
+  </div>
+)
 
 interface GlobalErrorBoundaryProps {
   children: ReactNode
@@ -431,7 +445,9 @@ const App = () => (
                 path="/seller"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SellerDashboard defaultTab="overview" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SellerDashboard defaultTab="overview" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -439,7 +455,9 @@ const App = () => (
                 path="/control-tower"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SellerDashboard defaultTab="control-tower" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SellerDashboard defaultTab="control-tower" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -447,7 +465,9 @@ const App = () => (
                 path="/reports"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SellerDashboard defaultTab="reports" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SellerDashboard defaultTab="reports" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -455,7 +475,9 @@ const App = () => (
                 path="/fuel"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SellerDashboard defaultTab="fuel" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SellerDashboard defaultTab="fuel" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -463,7 +485,9 @@ const App = () => (
                 path="/orders"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SellerDashboard defaultTab="overview" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SellerDashboard defaultTab="overview" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -471,7 +495,9 @@ const App = () => (
                 path="/routes"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SellerDashboard defaultTab="control-tower" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SellerDashboard defaultTab="control-tower" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -479,7 +505,9 @@ const App = () => (
                 path="/customers"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SellerDashboard defaultTab="customers" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SellerDashboard defaultTab="customers" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -487,7 +515,9 @@ const App = () => (
                 path="/couriers"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <CouriersRoute />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <CouriersRoute />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -495,7 +525,9 @@ const App = () => (
                 path="/settings"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SettingsRoute />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SettingsRoute />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -503,7 +535,9 @@ const App = () => (
                 path="/invoices"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'seller']}>
-                    <SellerDashboard defaultTab="reports" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <SellerDashboard defaultTab="reports" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -531,7 +565,9 @@ const App = () => (
                 path="/admin"
                 element={
                   <ProtectedRoute allowedRoles={['admin']} routeName="Painel do Administrador">
-                    <AdminDashboard defaultTab="overview" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <AdminDashboard defaultTab="overview" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -539,7 +575,9 @@ const App = () => (
                 path="/admin/users"
                 element={
                   <ProtectedRoute allowedRoles={['admin']} routeName="Gestão de Usuários (Admin)">
-                    <AdminDashboard defaultTab="couriers" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <AdminDashboard defaultTab="couriers" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -547,7 +585,9 @@ const App = () => (
                 path="/users"
                 element={
                   <ProtectedRoute allowedRoles={['admin']} routeName="Gestão de Usuários">
-                    <AdminDashboard defaultTab="couriers" />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <AdminDashboard defaultTab="couriers" />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -557,7 +597,9 @@ const App = () => (
                 path="/courier"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                    <CourierApp />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <CourierApp />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />
@@ -573,7 +615,9 @@ const App = () => (
                 path="/courier/tasks"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'courier']}>
-                    <CourierApp />
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <CourierApp />
+                    </Suspense>
                   </ProtectedRoute>
                 }
               />

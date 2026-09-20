@@ -896,9 +896,16 @@ export const deliveryService = {
   },
 
   // Locations
-  async getLatestLocations(filter = '', sort = '-created') {
+  async getLatestLocations(filter = '', sort = '-created', minutesWindow = 60) {
+    let finalFilter = filter
+    if (minutesWindow && minutesWindow > 0) {
+      const windowStartIso = new Date(Date.now() - minutesWindow * 60 * 1000).toISOString()
+      const timeFilter = `created >= '${windowStartIso}'`
+      finalFilter = filter ? `(${filter}) && (${timeFilter})` : timeFilter
+    }
+
     return pb.collection<LocationRecord>('locations').getFullList({
-      filter,
+      filter: finalFilter,
       sort,
       expand: 'user_id',
       requestKey: null,

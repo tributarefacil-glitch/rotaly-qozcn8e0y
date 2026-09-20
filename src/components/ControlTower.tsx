@@ -349,6 +349,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       courier: UserRecord
     }>
   >([])
+  // Indicador sutil de cálculo de rotas em segundo plano
+  const [isComputingRoutes, setIsComputingRoutes] = useState(false)
   // Banner de alerta de entrega em tempo real
   const [latestDeliveredNotice, setLatestDeliveredNotice] = useState<{
     orderId: string
@@ -525,13 +527,20 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Deve buscar de forma autônoma se NÃO houver gerenciamento pelo pai OU se o fallback autônomo foi ativado
   const shouldFetchAutonomously = !hasParentData || parentFallbackAutonomous
 
-  // Fetch initial/refreshed data (apenas quando não alimentado via props)
+  // Fetch initial/refreshed data: apenas busca o que não foi fornecido via props pelo pai
   const fetchData = async () => {
     try {
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
       const currentOpWindow = getOperationalWindow(new Date())
       const windowStartIso = new Date(currentOpWindow.start).toISOString()
       const fallbackOrdersFilter = `created >= '${windowStartIso}' || (route_started = true && (route_finished = false || route_finished = null))`
+
+      const needOrders = shouldFetchAutonomously && (!initialOrders || initialOrders.length === 0)
+      const needCouriers =
+        shouldFetchAutonomously && (!initialCouriers || initialCouriers.length === 0)
+      const needLocations = !propLocations || propLocations.length === 0
+      const needDeviations = propOffRouteEvents === undefined
+      const needSettings = propSettings === undefined
 
       const [
         fetchedOrders,
@@ -541,7 +550,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         fetchedDeviations,
         fetchedSettings,
       ] = await Promise.all([
-        shouldFetchAutonomously
+        needOrders
           ? deliveryService.getOrders(
               fallbackOrdersFilter,
               '-created',
@@ -553,13 +562,17 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           '-created',
           'customer_id,courier_id,seller_id',
         ),
-        shouldFetchAutonomously ? deliveryService.getCouriers() : Promise.resolve(couriers),
-        deliveryService.getLatestLocations(),
-        deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => []),
-        deliveryService.getSettings().catch(() => null),
+        needCouriers ? deliveryService.getCouriers() : Promise.resolve(couriers),
+        needLocations ? deliveryService.getLatestLocations() : Promise.resolve(locations),
+        needDeviations
+          ? deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => [])
+          : Promise.resolve(propOffRouteEvents || []),
+        needSettings
+          ? deliveryService.getSettings().catch(() => null)
+          : Promise.resolve(propSettings || null),
       ])
 
-      if (shouldFetchAutonomously) {
+      if (needOrders) {
         setOrders(fetchedOrders)
       }
       // Filtrar estritamente pedidos do dia para globalInTransitOrders
@@ -567,12 +580,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         isTodayOrder(o, operationalWindow),
       )
       setGlobalInTransitOrders(onlyTodayGlobal)
-      if (shouldFetchAutonomously) {
+      if (needCouriers) {
         setCouriers(fetchedCouriers)
       }
-      setLocations(fetchedLocations)
-      setRecentDeviations(fetchedDeviations || [])
-      if (fetchedSettings) {
+      if (needLocations && fetchedLocations) {
+        setLocations(fetchedLocations)
+      }
+      if (needDeviations && fetchedDeviations) {
+        setRecentDeviations(fetchedDeviations || [])
+      }
+      if (needSettings && fetchedSettings) {
         setAppSettings(fetchedSettings)
       }
       setLastUpdated(new Date())
@@ -1666,14 +1683,36 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
 
     if (activeRouteCouriers.length > 0) {
-      // Debounce reduzido de ~200ms para resposta ágil sem re-cálculos frenéticos
-      debounceTimer = setTimeout(() => {
-        if (isCurrent) {
-          computeActiveRoutes()
+      // Desacoplamento do primeiro paint: executa via requestIdleCallback (fallback setTimeout 500ms)
+      // para que os cards e pins apareçam primeiro antes do trabalho pesado viário (OSRM/Directions)
+      const runDeferred = () => {
+        if (!isCurrent) return
+        setIsComputingRoutes(true)
+        computeActiveRoutes().finally(() => {
+          if (isCurrent) setIsComputingRoutes(false)
+        })
+      }
+
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        const idleId = (window as any).requestIdleCallback(runDeferred, { timeout: 1500 })
+        return () => {
+          isCurrent = false
+          if ((window as any).cancelIdleCallback) {
+            ;(window as any).cancelIdleCallback(idleId)
+          }
         }
-      }, 200)
+      } else {
+        debounceTimer = setTimeout(runDeferred, 500)
+        return () => {
+          isCurrent = false
+          if (debounceTimer) {
+            clearTimeout(debounceTimer)
+          }
+        }
+      }
     } else {
       setActiveRoutesData([])
+      setIsComputingRoutes(false)
       notifiedEventsRef.current.clear()
     }
 
@@ -3314,6 +3353,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         setSearchQuery={setSearchQuery}
         couriers={couriers}
       />
+
+      {/* Indicador sutil de cálculo de rotas em segundo plano */}
+      {isComputingRoutes && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-950/60 border border-blue-500/30 text-blue-300 text-xs animate-pulse">
+          <span className="h-2 w-2 rounded-full bg-blue-400 animate-ping" />
+          <span>Calculando traçado viário e previsões de rotas...</span>
+        </div>
+      )}
 
       {/* 3. KANBAN LOGÍSTICO (COLUNAS HORIZONTAIS ESTILO VUUPT) */}
       {(activeTab === 'kanban' || activeTab === 'split') && (
