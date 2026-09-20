@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-20T22:21:43.876Z",
+  "generatedAt": "2026-09-20T22:30:43.066Z",
   "collections": [
     {
       "name": "users",
@@ -1333,7 +1333,7 @@
         "view": "@request.auth.id != \"\"",
         "create": "@request.auth.id != \"\"",
         "update": "@request.auth.id != \"\"",
-        "delete": "@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")"
+        "delete": "@request.auth.id != \"\" && (@request.auth.role = \"master\" || @request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")"
       },
       "fields": [
         {
@@ -1391,7 +1391,7 @@
         "view": "@request.auth.id != \"\"",
         "create": "@request.auth.id != \"\"",
         "update": "@request.auth.id != \"\"",
-        "delete": "@request.auth.id != \"\" && (@request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")"
+        "delete": "@request.auth.id != \"\" && (@request.auth.role = \"master\" || @request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")"
       },
       "fields": [
         {

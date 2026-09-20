@@ -236,8 +236,11 @@ export const CompaniesPage: React.FC = () => {
   // Confirmação de exclusão de vínculo de membro
   const [memberToDelete, setMemberToDelete] = useState<{
     membroId: string
+    userId: string
     userName: string
     userRole: string
+    empresaId: string
+    companyName: string
   } | null>(null)
   const [isDeletingMemberLink, setIsDeletingMemberLink] = useState(false)
 
@@ -793,16 +796,10 @@ export const CompaniesPage: React.FC = () => {
     })
   }
 
-  // Salvar alterações de papel e dados cadastrais do membro
+  // Salvar alterações de papel e dados cadastrais do membro (válido para Matriz e Filiais)
   const handleSaveMemberEdit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingMember || !editingEmpresa) return
-
-    const isMatriz = Boolean(matrizId && editingEmpresa.id === matrizId)
-    if (isMatriz) {
-      toast.error('Membros da Matriz não podem ser editados por este modal.')
-      return
-    }
 
     setIsSavingMemberEdit(true)
     try {
@@ -836,13 +833,81 @@ export const CompaniesPage: React.FC = () => {
     }
   }
 
+  // Validar e abrir diálogo de confirmação de exclusão do vínculo de membro
+  const requestDeleteMemberLink = (params: {
+    membroId: string
+    userId: string
+    userName: string
+    userRole: string
+    empresaId: string
+    companyName: string
+  }) => {
+    // Trava 1: Não permitir que o usuário remova o próprio vínculo
+    if (user?.id && params.userId === user.id) {
+      toast.error(
+        'Você não pode remover o seu próprio vínculo desta empresa para não perder o acesso.',
+      )
+      return
+    }
+
+    // Trava 2: Não permitir remover o vínculo do ÚLTIMO admin ativo da empresa
+    const companyActiveAdmins = membros.filter((m) => {
+      if (m.empresa_id !== params.empresaId || m.ativo === false) return false
+      if (m.papel === 'admin') return true
+      const usr = allUsers.find((u) => u.id === m.user_id)
+      return usr?.role === 'admin' || usr?.role === 'master'
+    })
+
+    const isTargetAdmin =
+      params.userRole.toLowerCase().includes('admin') ||
+      membros.some(
+        (m) =>
+          m.id === params.membroId &&
+          (m.papel === 'admin' || allUsers.find((u) => u.id === m.user_id)?.role === 'admin'),
+      )
+
+    if (isTargetAdmin && companyActiveAdmins.length <= 1) {
+      toast.error(
+        'Não é possível remover o último administrador ativo da empresa. Cadastre outro administrador antes de desvincular este.',
+      )
+      return
+    }
+
+    setMemberToDelete(params)
+  }
+
   // Confirmar exclusão do vínculo (membro) com a empresa
   const handleConfirmDeleteMemberLink = async () => {
-    if (!memberToDelete || !editingEmpresa) return
+    if (!memberToDelete) return
 
-    const isMatriz = Boolean(matrizId && editingEmpresa.id === matrizId)
-    if (isMatriz) {
-      toast.error('Vínculos de membros da Matriz não podem ser removidos.')
+    // Revalidar travas de segurança antes de prosseguir
+    if (user?.id && memberToDelete.userId === user.id) {
+      toast.error(
+        'Você não pode remover o seu próprio vínculo desta empresa para não perder o acesso.',
+      )
+      setMemberToDelete(null)
+      return
+    }
+
+    const companyActiveAdmins = membros.filter((m) => {
+      if (m.empresa_id !== memberToDelete.empresaId || m.ativo === false) return false
+      if (m.papel === 'admin') return true
+      const usr = allUsers.find((u) => u.id === m.user_id)
+      return usr?.role === 'admin' || usr?.role === 'master'
+    })
+
+    const isTargetAdmin =
+      memberToDelete.userRole.toLowerCase().includes('admin') ||
+      membros.some(
+        (m) =>
+          m.id === memberToDelete.membroId &&
+          (m.papel === 'admin' || allUsers.find((u) => u.id === m.user_id)?.role === 'admin'),
+      )
+
+    if (isTargetAdmin && companyActiveAdmins.length <= 1) {
+      toast.error(
+        'Não é possível remover o último administrador ativo da empresa. Cadastre outro administrador antes de desvincular este.',
+      )
       setMemberToDelete(null)
       return
     }
@@ -852,7 +917,7 @@ export const CompaniesPage: React.FC = () => {
       // Exclui EXCLUSIVAMENTE o vínculo (registro na coleção `membros`), NUNCA o registro de `users`
       await deliveryService.deleteMembro(memberToDelete.membroId)
       toast.success(
-        `Vínculo de "${memberToDelete.userName}" com esta empresa foi removido com sucesso. O histórico de entregas e pedidos do usuário foi preservado.`,
+        `Vínculo de "${memberToDelete.userName}" com ${memberToDelete.companyName || 'a empresa'} foi removido com sucesso. O histórico de rotas, entregas e pedidos do usuário foi preservado intacto.`,
       )
       setMemberToDelete(null)
       await loadData()
@@ -911,16 +976,22 @@ export const CompaniesPage: React.FC = () => {
     }
   }
 
-  const handleRemoveMember = async (membroId: string) => {
-    if (!confirm('Deseja realmente desvincular este usuário da empresa?')) return
-    try {
-      await deliveryService.deleteMembro(membroId)
-      toast.success('Membro desvinculado com sucesso.')
-      await loadData()
-    } catch (err) {
-      console.error('Erro ao remover membro:', err)
-      toast.error('Não foi possível remover o membro.')
-    }
+  const handleRemoveMember = (membroId: string) => {
+    const memb = membros.find((m) => m.id === membroId)
+    const emp =
+      selectedEmpresaForMembers || (memb ? empresas.find((e) => e.id === memb.empresa_id) : null)
+    const usr = memb ? allUsers.find((u) => u.id === memb.user_id) : null
+    const roleLabel = memb?.papel || usr?.role || 'membro'
+    const companyDisplayName = emp?.nome_fantasia || emp?.nome_razao_social || 'a empresa'
+
+    requestDeleteMemberLink({
+      membroId,
+      userId: memb?.user_id || '',
+      userName: usr?.name || usr?.email || 'Membro',
+      userRole: roleLabel,
+      empresaId: emp?.id || memb?.empresa_id || '',
+      companyName: companyDisplayName,
+    })
   }
 
   // Ação de Bloqueio / Desbloqueio
@@ -1810,16 +1881,16 @@ export const CompaniesPage: React.FC = () => {
 
                   {/* Aviso de Proteção da Matriz */}
                   {isEditingMatriz && (
-                    <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2.5 text-xs text-amber-900">
-                      <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="mt-3 bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-start gap-2.5 text-xs text-blue-900">
+                      <ShieldAlert className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
                       <div>
                         <strong className="block font-semibold">
-                          Proteção de Integridade da Matriz Ativa:
+                          Matriz Principal do Sistema:
                         </strong>
                         <span>
-                          O CNPJ, os limites enterprise ilimitados e a gestão de membros da Matriz
-                          Principal são estritamente protegidos e não podem ser alterados ou
-                          removidos por este formulário.
+                          O CNPJ e o plano enterprise ilimitado permanecem protegidos para
+                          integridade da plataforma. Os membros vinculados à matriz podem ser
+                          gerenciados na aba Membros com preservação do histórico operacional.
                         </span>
                       </div>
                     </div>
@@ -2192,29 +2263,26 @@ export const CompaniesPage: React.FC = () => {
                           {editingEmpresa?.max_users || 9999} no plano)
                         </span>
                         <p className="text-[11px] text-slate-500">
-                          {isEditingMatriz
-                            ? 'A Matriz gerencia usuários do núcleo do sistema de forma protegida.'
-                            : 'Adicione, edite dados e papéis ou desvincule membros sem apagar o histórico.'}
+                          Adicione, edite dados e papéis ou desvincule membros com preservação total
+                          de usuários e dados operacionais.
                         </p>
                       </div>
 
-                      {!isEditingMatriz && (
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            setIsEditAddMemberOpen(!isEditAddMemberOpen)
-                            setEditingMember(null)
-                          }}
-                          className="bg-[#00A3FF] hover:bg-[#008CE0] text-white text-xs font-bold gap-1.5 h-8 shrink-0"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                          {isEditAddMemberOpen ? 'Ver Lista' : 'Adicionar Membro'}
-                        </Button>
-                      )}
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setIsEditAddMemberOpen(!isEditAddMemberOpen)
+                          setEditingMember(null)
+                        }}
+                        className="bg-[#00A3FF] hover:bg-[#008CE0] text-white text-xs font-bold gap-1.5 h-8 shrink-0"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        {isEditAddMemberOpen ? 'Ver Lista' : 'Adicionar Membro'}
+                      </Button>
                     </div>
 
                     {/* Formulário de Adição de Membro (Criar Novo OU Vincular Existente) */}
-                    {isEditAddMemberOpen && !isEditingMatriz && (
+                    {isEditAddMemberOpen && (
                       <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 space-y-3.5">
                         <div className="flex items-center justify-between border-b border-blue-200 pb-2">
                           <span className="text-xs font-bold text-[#002855] flex items-center gap-1.5">
@@ -2477,7 +2545,7 @@ export const CompaniesPage: React.FC = () => {
                     )}
 
                     {/* Formulário de Edição do Membro Selecionado */}
-                    {editingMember && !isEditingMatriz && (
+                    {editingMember && (
                       <form
                         onSubmit={handleSaveMemberEdit}
                         className="rounded-xl border border-amber-300 bg-amber-50/50 p-4 space-y-3"
@@ -2672,7 +2740,7 @@ export const CompaniesPage: React.FC = () => {
                                   {roleLabel}
                                 </Badge>
 
-                                {!isEditingMatriz && isMaster && (
+                                {isMaster && (
                                   <>
                                     <Button
                                       size="icon"
@@ -2691,10 +2759,16 @@ export const CompaniesPage: React.FC = () => {
                                       size="icon"
                                       variant="ghost"
                                       onClick={() =>
-                                        setMemberToDelete({
+                                        requestDeleteMemberLink({
                                           membroId: m.id,
+                                          userId: m.user_id,
                                           userName: usr?.name || usr?.email || 'Membro',
                                           userRole: roleLabel,
+                                          empresaId: editingEmpresa.id,
+                                          companyName:
+                                            editingEmpresa.nome_fantasia ||
+                                            editingEmpresa.nome_razao_social ||
+                                            'Empresa',
                                         })
                                       }
                                       className="h-7 w-7 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg"
@@ -3006,15 +3080,37 @@ export const CompaniesPage: React.FC = () => {
                             {m.papel || usr?.role || 'membro'}
                           </Badge>
                           {isMaster && (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => handleRemoveMember(m.id)}
-                              className="h-7 w-7 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg"
-                              title="Desvincular membro"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => {
+                                  // Abre a edição do membro transferindo para o modal de edição ou abrindo edição direta
+                                  const targetEmp = empresas.find(
+                                    (e) => e.id === selectedEmpresaForMembers?.id,
+                                  )
+                                  if (targetEmp) {
+                                    setSelectedEmpresaForMembers(null)
+                                    setEditingEmpresa(targetEmp)
+                                    setEditActiveTab('membros')
+                                    handleOpenEditMember(m)
+                                  }
+                                }}
+                                className="h-7 w-7 text-slate-500 hover:text-[#002855] hover:bg-slate-200 rounded-lg"
+                                title="Editar membro"
+                              >
+                                <Edit2 className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleRemoveMember(m.id)}
+                                className="h-7 w-7 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg"
+                                title="Desvincular membro"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                           )}
                         </div>
                       </div>
