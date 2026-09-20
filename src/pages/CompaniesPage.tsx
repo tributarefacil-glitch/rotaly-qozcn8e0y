@@ -137,6 +137,7 @@ export const CompaniesPage: React.FC = () => {
   const [empresas, setEmpresas] = useState<EmpresaRecord[]>([])
   const [membros, setMembros] = useState<MembroRecord[]>([])
   const [allUsers, setAllUsers] = useState<UserRecord[]>([])
+  const [matrizId, setMatrizId] = useState<string>('')
   const [searchTerm, setSearchTerm] = useState('')
   const [isLoading, setIsLoading] = useState(true)
 
@@ -215,14 +216,16 @@ export const CompaniesPage: React.FC = () => {
   const loadData = async () => {
     setIsLoading(true)
     try {
-      const [empList, membList, usrList] = await Promise.all([
+      const [empList, membList, usrList, resolvedMatrizId] = await Promise.all([
         deliveryService.getEmpresas('', 'nome_razao_social'),
         deliveryService.getMembros('', '-created', 'empresa_id,user_id'),
         deliveryService.getAllUsers('ALL'),
+        deliveryService.getMatrizCompanyId(),
       ])
       setEmpresas(empList)
       setMembros(membList)
       setAllUsers(usrList)
+      setMatrizId(resolvedMatrizId || '')
     } catch (err) {
       console.error('Erro ao carregar dados multi-tenant:', err)
       toast.error('Erro ao carregar lista de empresas.')
@@ -573,10 +576,7 @@ export const CompaniesPage: React.FC = () => {
   // Ação de Bloqueio / Desbloqueio
   const handleConfirmToggleStatus = async () => {
     if (!toggleStatusTarget) return
-    if (
-      toggleStatusTarget.id === deliveryService.MATRIZ_EMPRESA_ID &&
-      toggleStatusTarget.ativa !== false
-    ) {
+    if (matrizId && toggleStatusTarget.id === matrizId && toggleStatusTarget.ativa !== false) {
       toast.error('A Matriz Principal não pode ser bloqueada.')
       setToggleStatusTarget(null)
       return
@@ -611,7 +611,7 @@ export const CompaniesPage: React.FC = () => {
   // Ação de Exclusão de Empresa com confirmação rigorosa
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return
-    if (deleteTarget.id === deliveryService.MATRIZ_EMPRESA_ID) {
+    if (matrizId && deleteTarget.id === matrizId) {
       toast.error('A Matriz Principal não pode ser excluída do sistema.')
       setDeleteTarget(null)
       return
@@ -800,7 +800,7 @@ export const CompaniesPage: React.FC = () => {
               {filteredEmpresas.map((emp) => {
                 const isSelected = currentCompany?.id === emp.id
                 const companyMembers = membros.filter((m) => m.empresa_id === emp.id)
-                const isMatriz = emp.id === deliveryService.MATRIZ_EMPRESA_ID
+                const isMatriz = Boolean(matrizId && emp.id === matrizId)
 
                 return (
                   <Card
