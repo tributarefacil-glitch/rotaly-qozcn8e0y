@@ -171,6 +171,118 @@ export const deliveryService = {
     return pb.collection<MembroRecord>('membros').create(data)
   },
 
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    const cleanEmail = email.trim().toLowerCase()
+    if (!cleanEmail) return null
+    try {
+      const records = await pb.collection<UserRecord>('users').getList(1, 1, {
+        filter: `email = '${cleanEmail}'`,
+        requestKey: null,
+      })
+      return records.items[0] || null
+    } catch {
+      return null
+    }
+  },
+
+  /**
+   * Vincula um usuário já cadastrado à empresa informada ou à empresa ativa.
+   * Não permite vínculo duplicado (se já existir vínculo ativo com essa empresa, retorna aviso).
+   */
+  async linkExistingUserToCompany(params: {
+    userId?: string
+    email?: string
+    empresaId?: string
+    role?: 'admin' | 'seller' | 'courier'
+  }): Promise<{
+    success: boolean
+    message: string
+    record?: MembroRecord
+    alreadyLinked?: boolean
+  }> {
+    const targetCompanyId =
+      params.empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+
+    if (!targetCompanyId) {
+      throw new Error('Empresa de destino não identificada.')
+    }
+
+    let user: UserRecord | null = null
+    if (params.userId) {
+      try {
+        user = await pb.collection<UserRecord>('users').getOne(params.userId, { requestKey: null })
+      } catch {
+        user = null
+      }
+    } else if (params.email) {
+      user = await this.getUserByEmail(params.email)
+    }
+
+    if (!user || !user.id) {
+      throw new Error('Usuário não encontrado para vincular à empresa.')
+    }
+
+    // Verificar se já existe vínculo ativo do usuário com essa empresa
+    const existingMembers = await pb.collection<MembroRecord>('membros').getFullList({
+      filter: `empresa_id = '${targetCompanyId}' && user_id = '${user.id}'`,
+      requestKey: null,
+    })
+
+    const activeMember = existingMembers.find((m) => m.ativo)
+    if (activeMember) {
+      return {
+        success: true,
+        alreadyLinked: true,
+        message: `O usuário ${user.name || user.email} já está vinculado e ativo nesta empresa.`,
+        record: activeMember,
+      }
+    }
+
+    // Se já existia um registro inativo, reativamos
+    const inactiveMember = existingMembers[0]
+    const papelMembro =
+      params.role === 'courier' || user.role === 'courier'
+        ? 'courier'
+        : params.role === 'seller' || user.role === 'seller'
+          ? 'seller'
+          : 'admin'
+
+    // Validar limites de plano da empresa
+    const limitCheck = await this.checkUserLimit(targetCompanyId, papelMembro === 'courier')
+    if (!limitCheck.allowed) {
+      throw new Error(
+        limitCheck.message || 'Limite de usuários do plano atingido para esta empresa.',
+      )
+    }
+
+    if (inactiveMember) {
+      const updated = await pb.collection<MembroRecord>('membros').update(inactiveMember.id, {
+        ativo: true,
+        papel: papelMembro,
+      })
+      return {
+        success: true,
+        alreadyLinked: false,
+        message: `Vínculo de ${user.name || user.email} reativado com sucesso na empresa!`,
+        record: updated,
+      }
+    }
+
+    const created = await pb.collection<MembroRecord>('membros').create({
+      user_id: user.id,
+      empresa_id: targetCompanyId,
+      papel: papelMembro,
+      ativo: true,
+    })
+
+    return {
+      success: true,
+      alreadyLinked: false,
+      message: `Usuário ${user.name || user.email} vinculado com sucesso à empresa!`,
+      record: created,
+    }
+  },
+
   async updateMembro(id: string, data: Partial<MembroRecord>) {
     return pb.collection<MembroRecord>('membros').update(id, data)
   },
@@ -1339,12 +1451,13 @@ export const deliveryService = {
       createdRecord = await pb.collection<UserRecord>('users').create(data)
     } else {
       const { empresa_id: _emp, ...rest } = data
-      const rawPassword = String(data.password || '')
+      const rawPassword = String(data.password || '').trim()
+      const rawConfirm = String(data.passwordConfirm || data.password || '').trim()
       const payload: Record<string, unknown> = {
         ...rest,
         email: data.email.trim().toLowerCase(),
         password: rawPassword,
-        passwordConfirm: data.passwordConfirm || rawPassword,
+        passwordConfirm: rawConfirm || rawPassword,
         verified: data.verified ?? true,
       }
 

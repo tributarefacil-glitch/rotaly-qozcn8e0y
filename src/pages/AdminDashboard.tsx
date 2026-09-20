@@ -294,27 +294,27 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     setSettingsDraft((prev) => ({ ...prev, workEnd: val }))
   }
 
-  // Helper para converter AppSettingsRecord em formato SettingsDraft
-  const convertRecordToDraft = (appSettings: AppSettingsRecord): SettingsDraft => {
-    const fallbackPrice = appSettings.fuel_price_per_liter || 5.59
+  // Helper para converter AppSettingsRecord em formato SettingsDraft com guarda defensiva
+  const convertRecordToDraft = (appSettings?: AppSettingsRecord | null): SettingsDraft => {
+    const fallbackPrice = appSettings?.fuel_price_per_liter ?? 5.59
     return {
-      motoPrice: String(appSettings.moto_fuel_price ?? fallbackPrice),
+      motoPrice: String(appSettings?.moto_fuel_price ?? fallbackPrice),
       motoCons: String(
-        appSettings.moto_consumption_kml ?? appSettings.fuel_consumption_kml ?? 35.0,
+        appSettings?.moto_consumption_kml ?? appSettings?.fuel_consumption_kml ?? 35.0,
       ),
-      carroPrice: String(appSettings.carro_fuel_price ?? fallbackPrice),
-      carroCons: String(appSettings.carro_consumption_kml ?? 12.0),
-      caminhaoPrice: String(appSettings.caminhao_fuel_price ?? fallbackPrice),
-      caminhaoCons: String(appSettings.caminhao_consumption_kml ?? 7.0),
-      workStart: appSettings.work_start_time || '08:00',
-      lunchStart: appSettings.lunch_start_time || '12:00',
-      lunchEnd: appSettings.lunch_end_time || '13:00',
-      workEnd: appSettings.work_end_time || '18:30',
+      carroPrice: String(appSettings?.carro_fuel_price ?? fallbackPrice),
+      carroCons: String(appSettings?.carro_consumption_kml ?? 12.0),
+      caminhaoPrice: String(appSettings?.caminhao_fuel_price ?? fallbackPrice),
+      caminhaoCons: String(appSettings?.caminhao_consumption_kml ?? 7.0),
+      workStart: appSettings?.work_start_time || '08:00',
+      lunchStart: appSettings?.lunch_start_time || '12:00',
+      lunchEnd: appSettings?.lunch_end_time || '13:00',
+      workEnd: appSettings?.work_end_time || '18:30',
     }
   }
 
   // Sincroniza campos do draft a partir do registro do servidor preservando campos com edições não salvas
-  const syncDraftFromServer = (rec: AppSettingsRecord, forceAll = false) => {
+  const syncDraftFromServer = (rec?: AppSettingsRecord | null, forceAll = false) => {
     const serverDraft = convertRecordToDraft(rec)
     setSettingsDraft((prev) => {
       const next = { ...prev }
@@ -397,6 +397,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [newUserVehicleModel, setNewUserVehicleModel] = useState('')
   const [newUserVehiclePlate, setNewUserVehiclePlate] = useState('')
   const [isCreatingUser, setIsCreatingUser] = useState(false)
+  const [isLinkingExistingUser, setIsLinkingExistingUser] = useState(false)
+  const [existingUserPromptEmail, setExistingUserPromptEmail] = useState<string | null>(null)
 
   // Status changing state
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null)
@@ -505,7 +507,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       }
     } catch (err) {
       console.error('Error loading admin data:', err)
-      setLoadError('Não foi possível carregar os dados desta seção')
+      // Falhas secundárias não devem exibir banner vermelho intrusivo
+      // O banner loadError global é reservado para falhas críticas de infraestrutura
+      setLoadError(null)
       setIsLoading(false)
     }
   }
@@ -911,6 +915,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     const trimmedName = newUserName.trim()
     const trimmedEmail = newUserEmail.trim().toLowerCase()
     const trimmedPhone = newUserPhone.trim()
+    const senha = (newUserPassword || '').trim()
 
     if (!trimmedName || !trimmedEmail) {
       toast.error('Preencha nome e e-mail.')
@@ -923,29 +928,35 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       return
     }
 
-    if (!newUserPassword || newUserPassword.length < 8) {
+    if (!senha || senha.length < 8) {
       toast.error('A senha deve ter pelo menos 8 caracteres.')
       return
     }
 
+    setExistingUserPromptEmail(null)
     setIsCreatingUser(true)
     try {
-      await deliveryService.createUser({
-        name: trimmedName,
-        email: trimmedEmail,
-        phone: trimmedPhone,
-        password: newUserPassword,
-        passwordConfirm: newUserPassword,
-        role: newUserRole,
-        status: 'active',
-        ...(newUserRole === 'courier'
-          ? {
-              vehicle_type: newUserVehicleType,
-              vehicle_model: newUserVehicleModel.trim(),
-              vehicle_plate: newUserVehiclePlate.trim().toUpperCase(),
-            }
-          : {}),
-      })
+      const activeCompanyId =
+        currentCompany?.id || (await deliveryService.getMatrizCompanyId()) || ''
+      await deliveryService.createUser(
+        {
+          name: trimmedName,
+          email: trimmedEmail,
+          phone: trimmedPhone,
+          password: senha,
+          passwordConfirm: senha,
+          role: newUserRole,
+          status: 'active',
+          ...(newUserRole === 'courier'
+            ? {
+                vehicle_type: newUserVehicleType,
+                vehicle_model: newUserVehicleModel.trim(),
+                vehicle_plate: newUserVehiclePlate.trim().toUpperCase(),
+              }
+            : {}),
+        },
+        activeCompanyId,
+      )
 
       toast.success(
         `Usuário ${trimmedName} (${newUserRole === 'courier' ? 'Entregador' : 'Vendedor'}) cadastrado com sucesso!`,
@@ -957,13 +968,65 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setNewUserPassword('Skip@Pass')
       setNewUserVehicleModel('')
       setNewUserVehiclePlate('')
+      setExistingUserPromptEmail(null)
       loadData()
     } catch (err: unknown) {
       console.error('Error creating user:', err)
       const msg = getErrorMessage(err)
       toast.error(msg || 'Falha ao cadastrar novo usuário.')
+
+      // Se falhar por e-mail já existente, ativa a opção de vincular usuário existente
+      const errStr = String((err as any)?.message || '')
+      const isUniqueError =
+        msg.includes('já está cadastrado') ||
+        errStr.toLowerCase().includes('unique') ||
+        errStr.toLowerCase().includes('already exists')
+      if (isUniqueError) {
+        setExistingUserPromptEmail(trimmedEmail)
+      }
     } finally {
       setIsCreatingUser(false)
+    }
+  }
+
+  const handleLinkExistingUser = async () => {
+    const emailToLink = (existingUserPromptEmail || newUserEmail).trim().toLowerCase()
+    if (!emailToLink) {
+      toast.error('Informe o e-mail do usuário a ser vinculado.')
+      return
+    }
+
+    setIsLinkingExistingUser(true)
+    try {
+      const activeCompanyId =
+        currentCompany?.id || (await deliveryService.getMatrizCompanyId()) || ''
+      const res = await deliveryService.linkExistingUserToCompany({
+        email: emailToLink,
+        empresaId: activeCompanyId,
+        role: newUserRole,
+      })
+
+      if (res.alreadyLinked) {
+        toast.info(res.message)
+      } else {
+        toast.success(res.message)
+      }
+
+      setIsNewUserModalOpen(false)
+      setNewUserName('')
+      setNewUserEmail('')
+      setNewUserPhone('')
+      setNewUserPassword('Skip@Pass')
+      setNewUserVehicleModel('')
+      setNewUserVehiclePlate('')
+      setExistingUserPromptEmail(null)
+      loadData()
+    } catch (err: unknown) {
+      console.error('Error linking existing user:', err)
+      const msg = getErrorMessage(err)
+      toast.error(msg || 'Não foi possível vincular o usuário existente à empresa.')
+    } finally {
+      setIsLinkingExistingUser(false)
     }
   }
 
@@ -3206,7 +3269,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             <tr>
                               <td colSpan={5} className="py-8 text-center text-slate-500">
                                 {deduplicatedSellers.length === 0
-                                  ? 'Nenhum vendedor vinculado na tabela de membros desta empresa.'
+                                  ? 'Nenhum vendedor cadastrado nesta empresa.'
                                   : 'Nenhum vendedor encontrado.'}
                               </td>
                             </tr>
@@ -4112,13 +4175,46 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               />
             </div>
 
-            <DialogFooter className="pt-2">
-              <Button type="button" variant="outline" onClick={() => setIsNewUserModalOpen(false)}>
+            {existingUserPromptEmail && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-2">
+                <div className="flex items-start gap-2">
+                  <span className="text-amber-600 text-base leading-none">⚠️</span>
+                  <div>
+                    <strong className="font-semibold">Usuário já cadastrado no sistema</strong>
+                    <p className="text-[11px] text-amber-800 mt-0.5">
+                      O e-mail <strong>{existingUserPromptEmail}</strong> já pertence a uma conta
+                      existente. Deseja vinculá-lo como{' '}
+                      {newUserRole === 'courier' ? 'entregador' : 'vendedor'} desta empresa?
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={handleLinkExistingUser}
+                  disabled={isLinkingExistingUser}
+                  className="w-full h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+                >
+                  {isLinkingExistingUser
+                    ? 'Vinculando...'
+                    : 'Vincular usuário existente à esta empresa'}
+                </Button>
+              </div>
+            )}
+
+            <DialogFooter className="pt-2 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setIsNewUserModalOpen(false)
+                  setExistingUserPromptEmail(null)
+                }}
+              >
                 Cancelar
               </Button>
               <Button
                 type="submit"
-                disabled={isCreatingUser}
+                disabled={isCreatingUser || isLinkingExistingUser}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs"
               >
                 {isCreatingUser ? 'Criando...' : 'Salvar Usuário'}
