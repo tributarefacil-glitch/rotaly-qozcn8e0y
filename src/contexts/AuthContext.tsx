@@ -32,11 +32,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Validate token on mount
     if (pb.authStore.isValid) {
       pb.collection('users')
-        .authRefresh()
+        .authRefresh({ requestKey: null })
         .then((res) => {
           setUser(res.record as unknown as UserRecord)
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[AuthContext] authRefresh falhou:', err)
           pb.authStore.clear()
           setUser(null)
           setToken(null)
@@ -50,11 +51,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setIsLoading(false)
         })
     } else {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('rotaly_active_empresa_id')
-        localStorage.removeItem('rotaly_active_company')
-        localStorage.removeItem('rotaly_empresa_id')
-      }
       setIsLoading(false)
     }
     return () => {
@@ -70,7 +66,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem('rotaly_active_company')
       localStorage.removeItem('rotaly_empresa_id')
     }
-    const authData = await pb.collection('users').authWithPassword(cleanEmail, pass)
+    const authData = await pb
+      .collection('users')
+      .authWithPassword(cleanEmail, pass, { requestKey: null })
     const authUser = authData.record as unknown as UserRecord
     setUser(authUser)
     setToken(authData.token)
@@ -91,7 +89,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshUser = async () => {
     if (pb.authStore.isValid) {
       try {
-        const res = await pb.collection('users').authRefresh()
+        const res = await pb.collection('users').authRefresh({ requestKey: null })
         setUser(res.record as unknown as UserRecord)
       } catch (err) {
         console.error('Error refreshing user:', err)

@@ -69,6 +69,22 @@ export default function Index() {
     }
   }, [navigate])
 
+  // Se o usuário acessar /login diretamente ou com ?profile= ou ?role=, abrir o formulário correto
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const pathname = window.location.pathname
+      const searchParams = new URLSearchParams(window.location.search)
+      const roleParam = searchParams.get('profile') || searchParams.get('role')
+      if (roleParam === 'admin' || roleParam === 'seller' || roleParam === 'courier') {
+        setSelectedProfile(roleParam)
+        setEmail((prev) => prev || profileConfig[roleParam].defaultEmail || '')
+      } else if (pathname === '/login' && !selectedProfile) {
+        setSelectedProfile('seller')
+        setEmail((prev) => prev || profileConfig['seller'].defaultEmail || '')
+      }
+    }
+  }, [])
+
   // Se o usuário já estiver autenticado e acessar a raiz "/" ou "/login",
   // redireciona diretamente para o painel correspondente ao seu papel
   useEffect(() => {
@@ -78,7 +94,20 @@ export default function Index() {
   }, [isAuthenticated, role])
 
   // Selected Profile for dedicated login view: null means full landing page
-  const [selectedProfile, setSelectedProfile] = useState<SelectedProfile>(null)
+  const [selectedProfile, setSelectedProfile] = useState<SelectedProfile>(() => {
+    if (typeof window !== 'undefined') {
+      const pathname = window.location.pathname
+      const searchParams = new URLSearchParams(window.location.search)
+      const roleParam = searchParams.get('profile') || searchParams.get('role')
+      if (roleParam === 'admin' || roleParam === 'seller' || roleParam === 'courier') {
+        return roleParam
+      }
+      if (pathname === '/login') {
+        return 'seller'
+      }
+    }
+    return null
+  })
 
   // Login form states
   const [email, setEmail] = useState('')
@@ -164,8 +193,14 @@ export default function Index() {
       redirectByRoleAndStatus(loggedUser.role || forcedRole, loggedUser.status)
     } catch (err: unknown) {
       console.error('Quick login error:', err)
-      const msg =
-        getErrorMessage(err) || 'Credenciais inválidas. Verifique seu e-mail e senha cadastrados.'
+      let msg = getErrorMessage(err)
+      if (
+        !msg ||
+        msg.toLowerCase().includes('something went wrong') ||
+        msg.toLowerCase().includes('failed to authenticate')
+      ) {
+        msg = 'E-mail ou senha incorretos. Verifique suas credenciais de acesso.'
+      }
       setLoginError(msg)
       toast.error(msg)
     } finally {
@@ -184,8 +219,8 @@ export default function Index() {
       return
     }
 
-    if (password.length < 8) {
-      const msg = 'A senha deve ter pelo menos 8 caracteres.'
+    if (password.length < 4) {
+      const msg = 'Informe sua senha de acesso.'
       setLoginError(msg)
       toast.error(msg)
       return
@@ -200,8 +235,12 @@ export default function Index() {
     } catch (err: unknown) {
       console.error('Login error:', err)
       let msg = getErrorMessage(err)
-      if (!msg || msg.toLowerCase().includes('something went wrong')) {
-        msg = 'E-mail ou senha inválidos. Verifique suas credenciais de acesso.'
+      if (
+        !msg ||
+        msg.toLowerCase().includes('something went wrong') ||
+        msg.toLowerCase().includes('failed to authenticate')
+      ) {
+        msg = 'E-mail ou senha incorretos. Verifique suas credenciais de acesso.'
       }
       setLoginError(msg)
       toast.error(msg)
@@ -289,7 +328,7 @@ export default function Index() {
       icon: Store,
       badgeBg: 'bg-[#00A3FF]/15 text-[#0066AA] border-[#00A3FF]/40',
       btnBg: 'bg-[#00A3FF] hover:bg-[#008CE0] text-white shadow-sm',
-      defaultEmail: 'vendedor@logistica.com',
+      defaultEmail: 'davidsmendes16@gmail.com',
       accessInfo: 'Cadastro de lojista realizado pelo administrador da plataforma.',
     },
     courier: {

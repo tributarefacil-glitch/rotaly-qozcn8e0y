@@ -330,7 +330,12 @@ function ProtectedRoute({
     if (location.pathname === '/login' || location.pathname === '/') {
       return <>{children}</>
     }
-    return <Navigate to="/login" state={{ from: location }} replace />
+    const target = location.pathname.startsWith('/courier')
+      ? '/login?profile=courier'
+      : location.pathname.startsWith('/admin')
+        ? '/login?profile=admin'
+        : '/login?profile=seller'
+    return <Navigate to={target} state={{ from: location }} replace />
   }
 
   // Check courier approval status: pending or inactive couriers are directed to pending approval page
