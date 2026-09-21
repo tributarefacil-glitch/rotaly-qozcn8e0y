@@ -49,6 +49,7 @@ import type {
 } from '@/types/delivery'
 import { useAuth } from '@/contexts/AuthContext'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { generateTrackingCode } from '@/lib/trackingCode'
 import { toast } from 'sonner'
 import {
   BRAZILIAN_STATES,
@@ -1020,10 +1021,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
     setIsSubmitting(true)
     try {
-      const randomSuffix = Math.floor(100 + Math.random() * 900)
-      const trackingCode = `TRK-${new Date().getFullYear()}-${randomSuffix}`
-
-      const now = new Date()
       const assignedCourier = courierId !== 'unassigned' ? courierId : undefined
       const assignmentType = suggestionState === 'accepted' ? 'automatic' : 'manual'
       const suggestionStatus =
@@ -1057,39 +1054,69 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         }
       }
 
-      await deliveryService.createOrder({
-        tracking_code: trackingCode,
-        seller_id: user?.id,
-        customer_id: finalCustomerId,
-        courier_id: assignedCourier,
-        status: 'pending',
-        sequence: null as any,
-        route_released: false,
-        route_released_at: undefined,
-        route_started: false,
-        route_started_at: undefined,
-        ...baseDataForOrder,
-        priority,
-        items: validItems,
-        total_price: totalPrice,
-        notes,
-        assignment_type: assignmentType,
-        route_suggestion_status: suggestionStatus,
-        route_suggestion_details: routeSuggestion || undefined,
-        distance_km: routeSuggestion?.distance_km || undefined,
-        estimated_arrival: undefined,
-      })
+      // Retry silencioso de criação de pedido: até 3 tentativas gerando novo tracking_code
+      // com backoff curto (~200ms) para neutralizar eventuais colisões de concorrência.
+      const MAX_ORDER_ATTEMPTS = 3
+      let createdOrder: OrderRecord | null = null
+      let usedTrackingCode = ''
+      let lastCreateError: unknown = null
+
+      for (let attempt = 1; attempt <= MAX_ORDER_ATTEMPTS; attempt++) {
+        usedTrackingCode = generateTrackingCode()
+        try {
+          createdOrder = await deliveryService.createOrder({
+            tracking_code: usedTrackingCode,
+            seller_id: user?.id,
+            customer_id: finalCustomerId,
+            courier_id: assignedCourier,
+            status: 'pending',
+            sequence: null as any,
+            route_released: false,
+            route_released_at: undefined,
+            route_started: false,
+            route_started_at: undefined,
+            ...baseDataForOrder,
+            priority,
+            items: validItems,
+            total_price: totalPrice,
+            notes,
+            assignment_type: assignmentType,
+            route_suggestion_status: suggestionStatus,
+            route_suggestion_details: routeSuggestion || undefined,
+            distance_km: routeSuggestion?.distance_km || undefined,
+            estimated_arrival: undefined,
+          })
+          break
+        } catch (orderErr) {
+          lastCreateError = orderErr
+          console.warn(
+            `Tentativa ${attempt}/${MAX_ORDER_ATTEMPTS} de criação do pedido ${usedTrackingCode} falhou:`,
+            orderErr,
+          )
+          if (attempt < MAX_ORDER_ATTEMPTS) {
+            await new Promise((resolve) => setTimeout(resolve, 200))
+          }
+        }
+      }
+
+      if (!createdOrder) {
+        throw lastCreateError || new Error('Falha ao criar registro de pedido após tentativas.')
+      }
 
       // Trigger automatic in-app notification
-      await deliveryService.createNotification({
-        title: 'Novo Pedido Registrado',
-        message: `Pedido ${trackingCode} criado com sucesso. Valor: R$ ${totalPrice.toFixed(2)}`,
-        type: 'order',
-        read: false,
-        user_id: user?.id,
-      })
+      try {
+        await deliveryService.createNotification({
+          title: 'Novo Pedido Registrado',
+          message: `Pedido ${usedTrackingCode} criado com sucesso. Valor: R$ ${totalPrice.toFixed(2)}`,
+          type: 'order',
+          read: false,
+          user_id: user?.id,
+        })
+      } catch (notifErr) {
+        console.warn('Erro ao enviar notificação interna do pedido:', notifErr)
+      }
 
-      toast.success(`Pedido ${trackingCode} registrado com sucesso!`)
+      toast.success(`Pedido ${usedTrackingCode} registrado com sucesso!`)
       onOrderCreated()
       onOpenChange(false)
 
@@ -1116,8 +1143,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setSelectedCoords(DEFAULT_CENTER)
     } catch (err: unknown) {
       console.error('Error creating order:', err)
-      const message = getErrorMessage(err)
-      toast.error(message || 'Falha ao registrar venda')
+      // No fluxo de vendas, NUNCA usar traduções/mensagens genéricas de e-mail de usuários.
+      toast.error('Não foi possível registrar a venda. Verifique os dados e tente novamente.')
     } finally {
       setIsSubmitting(false)
     }
