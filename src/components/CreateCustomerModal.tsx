@@ -372,7 +372,9 @@ export function CreateCustomerModal({
           isProgrammaticUpdateRef.current = true
           setLat(newLat)
           setLng(newLng)
+          // Doutrina do Pino Soberano: arraste explícito é soberano e travado
           setIsPinManuallyAdjusted(true)
+          isSelectedFromAutocompleteRef.current = true
           setHasPrecisionWarning(false)
           setPrecisionWarningDismissed(true)
           toast.success(`Pino ajustado manualmente (${newLat.toFixed(6)}, ${newLng.toFixed(6)})`)
@@ -385,7 +387,9 @@ export function CreateCustomerModal({
           marker.setPosition({ lat: clickLat, lng: clickLng })
           setLat(clickLat)
           setLng(clickLng)
+          // Doutrina do Pino Soberano: clique explícito no mapa é soberano e travado
           setIsPinManuallyAdjusted(true)
+          isSelectedFromAutocompleteRef.current = true
           setHasPrecisionWarning(false)
           setPrecisionWarningDismissed(true)
           toast.success(`Pino reposicionado para (${clickLat.toFixed(6)}, ${clickLng.toFixed(6)})`)
@@ -700,8 +704,12 @@ export function CreateCustomerModal({
       const parsedLng = parsed.lng
       setLat(parsedLat)
       setLng(parsedLng)
+      // Doutrina do Pino Soberano: pin explícito carregado de link do Google Maps é autoritativo e travado
+      setIsPinManuallyAdjusted(true)
+      isSelectedFromAutocompleteRef.current = true
+      isAddressManuallyEditedRef.current = false
       setHasPrecisionWarning(false)
-      setPrecisionWarningDismissed(false)
+      setPrecisionWarningDismissed(true)
       setIsLoadingLocationLink(true)
 
       const toastId = toast.loading(
@@ -805,21 +813,30 @@ export function CreateCustomerModal({
 
     const phonesToValidate = [mainPhone, phone2.trim() || undefined, phone3.trim() || undefined]
 
-    // BUG 1 FIX: Rastrear edição manual. Se a vendedora alterou qualquer campo textual sem ter selecionado
-    // explicitamente uma sugestão recente para aquele texto, ou se as coordenadas forem default de fallback,
-    // executar geocodificação direta e estrita sobre o texto digitado atual — NUNCA reutilizar coordenadas de consultas anteriores.
+    // DOUTRINA: "Pino Explícito é Soberano"
+    // Se o usuário calibrou o pino conscientemente (arraste, clique, URL Google Maps, lat/lng manual
+    // ou seleção explícita no autocomplete), essas coordenadas NÃO podem ser sobrescritas por
+    // re-geocodificação textual automática.
     let finalLat = lat
     let finalLng = lng
+
+    const hasExplicitPin =
+      Boolean(isPinManuallyAdjusted || isSelectedFromAutocompleteRef.current) &&
+      typeof finalLat === 'number' &&
+      typeof finalLng === 'number' &&
+      !(Math.abs(finalLat - -22.906847) < 0.0001 && Math.abs(finalLng - -43.172896) < 0.0001)
 
     const isDefaultFallback =
       !finalLat ||
       !finalLng ||
       (Math.abs(finalLat - -22.906847) < 0.0001 && Math.abs(finalLng - -43.172896) < 0.0001)
 
+    // A re-geocodificação estrita do texto digitado SÓ roda se NÃO houver pino explícito confirmado
     const needsStrictRegeocoding =
-      isAddressManuallyEditedRef.current ||
-      !isSelectedFromAutocompleteRef.current ||
-      isDefaultFallback
+      !hasExplicitPin &&
+      (isAddressManuallyEditedRef.current ||
+        !isSelectedFromAutocompleteRef.current ||
+        isDefaultFallback)
 
     if (needsStrictRegeocoding && !isPinManuallyAdjusted) {
       try {
@@ -866,9 +883,10 @@ export function CreateCustomerModal({
       }
     }
 
-    // Validação estrita de divergência: se a coordenada salva divergir > 3km do endereço digitado,
-    // avisar claramente a vendedora antes de salvar e não salvar coordenadas de outra origem silenciosamente
-    if (finalLat && finalLng && fullAddress && !isPinManuallyAdjusted) {
+    // Validação estrita de divergência (> 3 km):
+    // Se houver pino explícito confirmado, alertamos a divergência com o geocoder SEM destruir o pino soberano.
+    // Se NÃO houver pino explícito, a localização do texto digitado prevalece.
+    if (finalLat && finalLng && fullAddress) {
       try {
         const expected = {
           city: city.trim(),
@@ -889,14 +907,21 @@ export function CreateCustomerModal({
               geocoded.lng,
             )
             if (distMeters > 3000) {
-              toast.warning(
-                `Atenção: A coordenada anterior diverge em ${(distMeters / 1000).toFixed(1)} km do endereço "${fullAddress}". Atualizando para a localização do texto digitado!`,
-                { duration: 7000 },
-              )
-              finalLat = geocoded.lat
-              finalLng = geocoded.lng
-              setLat(finalLat)
-              setLng(finalLng)
+              if (isPinManuallyAdjusted) {
+                toast.warning(
+                  `Aviso: O pino confirmado diverge em ${(distMeters / 1000).toFixed(1)} km do endereço textual "${fullAddress}". O pino soberano foi mantido conforme sua escolha.`,
+                  { duration: 7000 },
+                )
+              } else {
+                toast.warning(
+                  `Atenção: A coordenada anterior diverge em ${(distMeters / 1000).toFixed(1)} km do endereço "${fullAddress}". Atualizando para a localização do texto digitado!`,
+                  { duration: 7000 },
+                )
+                finalLat = geocoded.lat
+                finalLng = geocoded.lng
+                setLat(finalLat)
+                setLng(finalLng)
+              }
             }
           }
         }
@@ -1467,7 +1492,9 @@ export function CreateCustomerModal({
                       if (!isNaN(parsed)) {
                         setLat(parsed)
                         setIsPinManuallyAdjusted(true)
+                        isSelectedFromAutocompleteRef.current = true
                         setHasPrecisionWarning(false)
+                        setPrecisionWarningDismissed(true)
                       } else if (e.target.value === '') {
                         setLat(undefined)
                       }
@@ -1485,7 +1512,9 @@ export function CreateCustomerModal({
                       if (!isNaN(parsed)) {
                         setLng(parsed)
                         setIsPinManuallyAdjusted(true)
+                        isSelectedFromAutocompleteRef.current = true
                         setHasPrecisionWarning(false)
+                        setPrecisionWarningDismissed(true)
                       } else if (e.target.value === '') {
                         setLng(undefined)
                       }

@@ -201,6 +201,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   // Rastreamento estrito de edição manual vs seleção explícita
   const isAddressManuallyEditedRef = useRef<boolean>(false)
   const isSelectedFromAutocompleteRef = useRef<boolean>(false)
+  const [isPinManuallyAdjusted, setIsPinManuallyAdjusted] = useState(false)
 
   // Refs de controle de geocodificação direta e anti-loop
   const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -478,10 +479,15 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             markerInstanceRef.current.addListener('dragend', (evt: any) => {
               if (!evt?.latLng) return
-              const newLat = evt.latLng.lat()
-              const newLng = evt.latLng.lng()
+              const newLat =
+                typeof evt.latLng.lat === 'function' ? evt.latLng.lat() : evt.latLng.lat
+              const newLng =
+                typeof evt.latLng.lng === 'function' ? evt.latLng.lng() : evt.latLng.lng
               setSelectedCoords({ lat: newLat, lng: newLng })
               setHasLocationPinned(true)
+              // Doutrina do Pino Soberano: arraste explícito é soberano e travado
+              setIsPinManuallyAdjusted(true)
+              isSelectedFromAutocompleteRef.current = true
               reverseGeocode(newLat, newLng)
             })
           }
@@ -527,18 +533,24 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         marker.addListener('dragend', (evt: any) => {
           if (!evt?.latLng) return
-          const newLat = evt.latLng.lat()
-          const newLng = evt.latLng.lng()
+          const newLat = typeof evt.latLng.lat === 'function' ? evt.latLng.lat() : evt.latLng.lat
+          const newLng = typeof evt.latLng.lng === 'function' ? evt.latLng.lng() : evt.latLng.lng
           setSelectedCoords({ lat: newLat, lng: newLng })
           setHasLocationPinned(true)
+          // Doutrina do Pino Soberano: arraste explícito é soberano e travado
+          setIsPinManuallyAdjusted(true)
+          isSelectedFromAutocompleteRef.current = true
           reverseGeocode(newLat, newLng)
         })
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         map.addListener('click', (evt: any) => {
           if (!evt?.latLng) return
-          const clickLat = evt.latLng.lat()
-          const clickLng = evt.latLng.lng()
+          const clickLat = typeof evt.latLng.lat === 'function' ? evt.latLng.lat() : evt.latLng.lat
+          const clickLng = typeof evt.latLng.lng === 'function' ? evt.latLng.lng() : evt.latLng.lng
+          // Doutrina do Pino Soberano: clique explícito no mapa é soberano e travado
+          setIsPinManuallyAdjusted(true)
+          isSelectedFromAutocompleteRef.current = true
           updateMapPosition(clickLat, clickLng, map.getZoom() || 16, true)
         })
 
@@ -618,6 +630,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     if (!open) {
       mapInstanceRef.current = null
       markerInstanceRef.current = null
+      setIsPinManuallyAdjusted(false)
     }
   }, [open])
 
@@ -667,6 +680,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       // 1. Direct coordinate extraction (Maps URLs, WhatsApp pins, lat/lng strings)
       const coords = parseCoordinatesFromText(inputVal)
       if (coords) {
+        // Doutrina do Pino Soberano: pin explícito carregado de link do Google Maps é autoritativo e travado
+        setIsPinManuallyAdjusted(true)
+        isSelectedFromAutocompleteRef.current = true
+        isAddressManuallyEditedRef.current = false
         updateMapPosition(coords.lat, coords.lng, 17, true)
         toast.success(
           `Localização identificada (${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}) e campos preenchidos!`,
@@ -915,17 +932,28 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           ? selectedCoords.lng
           : Number(selectedCoords.lng) || undefined
 
+      // DOUTRINA: "Pino Explícito é Soberano"
+      // Se o usuário calibrou o pino conscientemente (arraste, clique, URL Google Maps, lat/lng manual
+      // ou seleção explícita no autocomplete), essas coordenadas NÃO podem ser sobrescritas por
+      // re-geocodificação textual automática.
+      const hasExplicitPin =
+        Boolean(isPinManuallyAdjusted || isSelectedFromAutocompleteRef.current) &&
+        typeof parsedLat === 'number' &&
+        typeof parsedLng === 'number' &&
+        !(Math.abs(parsedLat - -22.906847) < 0.0001 && Math.abs(parsedLng - -43.172896) < 0.0001)
+
       const isDefaultCoords =
         !parsedLat ||
         !parsedLng ||
         (Math.abs(parsedLat - -22.906847) < 0.0001 && Math.abs(parsedLng - -43.172896) < 0.0001)
 
       const needsStrictRegeocoding =
-        isAddressManuallyEditedRef.current ||
-        !isSelectedFromAutocompleteRef.current ||
-        isDefaultCoords
+        !hasExplicitPin &&
+        (isAddressManuallyEditedRef.current ||
+          !isSelectedFromAutocompleteRef.current ||
+          isDefaultCoords)
 
-      if (needsStrictRegeocoding) {
+      if (needsStrictRegeocoding && !isPinManuallyAdjusted) {
         try {
           const expected = {
             city: city.trim(),
@@ -962,8 +990,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         }
       }
 
-      // Validação estrita de divergência: se a coordenada salva divergir > 3km do endereço digitado,
-      // avisar claramente a vendedora antes de salvar e não salvar coordenadas de outra origem silenciosamente
+      // Validação estrita de divergência (> 3 km):
+      // Se houver pino explícito confirmado, alertamos a divergência com o geocoder SEM destruir o pino soberano.
+      // Se NÃO houver pino explícito, a localização do texto digitado prevalece.
       if (parsedLat && parsedLng && (combinedAddress || streetAndNumber.trim())) {
         try {
           const expected = {
@@ -990,13 +1019,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               geocoded.lng,
             )
             if (distMeters > 3000) {
-              toast.warning(
-                `Atenção: A coordenada anterior diverge em ${(distMeters / 1000).toFixed(1)} km do endereço "${fullQuery}". Atualizando para a localização do texto digitado!`,
-                { duration: 7000 },
-              )
-              parsedLat = geocoded.lat
-              parsedLng = geocoded.lng
-              setSelectedCoords({ lat: parsedLat, lng: parsedLng })
+              if (isPinManuallyAdjusted) {
+                toast.warning(
+                  `Aviso: O pino confirmado diverge em ${(distMeters / 1000).toFixed(1)} km do endereço textual "${fullQuery}". O pino soberano foi mantido conforme sua escolha.`,
+                  { duration: 7000 },
+                )
+              } else {
+                toast.warning(
+                  `Atenção: A coordenada anterior diverge em ${(distMeters / 1000).toFixed(1)} km do endereço "${fullQuery}". Atualizando para a localização do texto digitado!`,
+                  { duration: 7000 },
+                )
+                parsedLat = geocoded.lat
+                parsedLng = geocoded.lng
+                setSelectedCoords({ lat: parsedLat, lng: parsedLng })
+              }
             }
           }
         } catch (err) {
@@ -1223,6 +1259,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setLocationLinkInput('')
       setHasLocationPinned(false)
       setSelectedCoords(DEFAULT_CENTER)
+      setIsPinManuallyAdjusted(false)
     } catch (err: unknown) {
       console.error('Error creating order:', err)
       // No fluxo de vendas, NUNCA usar traduções/mensagens genéricas de e-mail de usuários.
@@ -1682,6 +1719,91 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         </div>
                       </div>
                     </div>
+
+                    {/* Ajuste manual direto de Coordenadas Lat/Lng (Doutrina do Pino Soberano) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200 dark:border-slate-800">
+                      <div>
+                        <Label className="text-[10px] text-slate-500 font-mono">
+                          Latitude Manual
+                        </Label>
+                        <Input
+                          placeholder="-22.906847"
+                          value={
+                            selectedCoords.lat !== undefined && !isNaN(selectedCoords.lat)
+                              ? String(selectedCoords.lat)
+                              : ''
+                          }
+                          onChange={(e) => {
+                            const parsed = parseFloat(e.target.value)
+                            if (!isNaN(parsed)) {
+                              setSelectedCoords((prev) => ({ ...prev, lat: parsed }))
+                              setHasLocationPinned(true)
+                              setIsPinManuallyAdjusted(true)
+                              isSelectedFromAutocompleteRef.current = true
+                              const google = getGoogle()
+                              if (mapInstanceRef.current && google?.maps) {
+                                const pos = new google.maps.LatLng(parsed, selectedCoords.lng)
+                                mapInstanceRef.current.setCenter(pos)
+                                if (markerInstanceRef.current)
+                                  markerInstanceRef.current.setPosition(pos)
+                              }
+                            }
+                          }}
+                          className="mt-0.5 h-7 text-xs font-mono bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-[10px] text-slate-500 font-mono">
+                          Longitude Manual
+                        </Label>
+                        <Input
+                          placeholder="-43.172896"
+                          value={
+                            selectedCoords.lng !== undefined && !isNaN(selectedCoords.lng)
+                              ? String(selectedCoords.lng)
+                              : ''
+                          }
+                          onChange={(e) => {
+                            const parsed = parseFloat(e.target.value)
+                            if (!isNaN(parsed)) {
+                              setSelectedCoords((prev) => ({ ...prev, lng: parsed }))
+                              setHasLocationPinned(true)
+                              setIsPinManuallyAdjusted(true)
+                              isSelectedFromAutocompleteRef.current = true
+                              const google = getGoogle()
+                              if (mapInstanceRef.current && google?.maps) {
+                                const pos = new google.maps.LatLng(selectedCoords.lat, parsed)
+                                mapInstanceRef.current.setCenter(pos)
+                                if (markerInstanceRef.current)
+                                  markerInstanceRef.current.setPosition(pos)
+                              }
+                            }
+                          }}
+                          className="mt-0.5 h-7 text-xs font-mono bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                        />
+                      </div>
+                    </div>
+
+                    {hasLocationPinned &&
+                      typeof selectedCoords.lat === 'number' &&
+                      typeof selectedCoords.lng === 'number' && (
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-0.5">
+                          <span className="font-mono">
+                            Fixado em: {selectedCoords.lat.toFixed(6)},{' '}
+                            {selectedCoords.lng.toFixed(6)}
+                          </span>
+                          {isPinManuallyAdjusted ? (
+                            <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                              ✓ Pino calibrado manualmente (travado)
+                            </span>
+                          ) : (
+                            <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                              <Check className="h-3 w-3 text-emerald-500" />
+                              Geocodificado via Google Maps (travado)
+                            </span>
+                          )}
+                        </div>
+                      )}
                   </div>
                 </div>
               )}
