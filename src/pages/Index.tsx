@@ -219,13 +219,6 @@ export default function Index() {
       return
     }
 
-    if (password.length < 4) {
-      const msg = 'Informe sua senha de acesso.'
-      setLoginError(msg)
-      toast.error(msg)
-      return
-    }
-
     setIsLoading(true)
     try {
       const loggedUser = await login(trimmedEmail, password)
@@ -238,7 +231,8 @@ export default function Index() {
       if (
         !msg ||
         msg.toLowerCase().includes('something went wrong') ||
-        msg.toLowerCase().includes('failed to authenticate')
+        msg.toLowerCase().includes('failed to authenticate') ||
+        msg.toLowerCase().includes('failed to process request')
       ) {
         msg = 'E-mail ou senha incorretos. Verifique suas credenciais de acesso.'
       }
