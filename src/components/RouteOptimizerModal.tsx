@@ -4,6 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
 import {
@@ -5745,6 +5746,448 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Modal: Editar Rota Ativa (excluir/incluir paradas com reotimização automática ao salvar) */}
+      <Dialog
+        open={editRouteModalOpen && Boolean(targetCourierForEditRoute)}
+        onOpenChange={(isOpen) => {
+          if (!isOpen && !isSubmittingEditRoute) {
+            setEditRouteModalOpen(false)
+            setTargetCourierForEditRoute(null)
+            setEditRouteExcludedOrderIds([])
+            setEditRouteIncludedOrderIds([])
+            setEditRouteSearchAvailable('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-4 pb-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 shrink-0">
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-white">
+              <span className="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/60">
+                <Pencil className="h-4 w-4" />
+              </span>
+              Editar Rota — {targetCourierForEditRoute?.name || 'Entregador'}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Exclua ou inclua paradas; a rota será reotimizada automaticamente ao salvar.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Informações do Entregador e Veículo */}
+            {targetCourierForEditRoute && (
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-900/60 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                    Entregador:{' '}
+                    <strong className="text-indigo-700 dark:text-indigo-300">
+                      {targetCourierForEditRoute.name}
+                    </strong>
+                  </span>
+                  <span className="text-slate-400">•</span>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {targetCourierForEditRoute.vehicle_model ||
+                      targetCourierForEditRoute.vehicle_type ||
+                      'Moto'}
+                    {targetCourierForEditRoute.vehicle_plate
+                      ? ` (${targetCourierForEditRoute.vehicle_plate})`
+                      : ''}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] px-2 py-0.5 border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 bg-white/70 dark:bg-slate-900/70"
+                  >
+                    {editRoutePendingStops.length} pendente(s) na rota
+                  </Badge>
+                  {editRouteDeliveredStops.length > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] px-2 py-0.5 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40"
+                    >
+                      {editRouteDeliveredStops.length} entregue(s)
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SEÇÃO 1: PARADAS DA ROTA (PENDENTES E DELIVERED) */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Navigation className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                  Paradas da Rota ({editRoutePendingStops.length})
+                </Label>
+                {editRouteExcludedOrderIds.length > 0 && (
+                  <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                    {editRouteExcludedOrderIds.length} parada(s) marcada(s) para exclusão
+                  </span>
+                )}
+              </div>
+
+              {editRoutePendingStops.length === 0 ? (
+                <div className="p-4 text-center rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+                  Nenhuma parada pendente nesta rota.
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                  {editRoutePendingStops.map((stop) => {
+                    const cust =
+                      localCustomers.find((c) => c.id === stop.customer_id) ||
+                      stop.expand?.customer_id
+                    const isExcluded = editRouteExcludedOrderIds.includes(stop.id)
+
+                    return (
+                      <div
+                        key={stop.id}
+                        className={`p-2.5 rounded-lg border transition text-xs flex items-center justify-between gap-3 ${
+                          isExcluded
+                            ? 'border-rose-300 dark:border-rose-900/60 bg-rose-50/70 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 opacity-80'
+                            : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                          <span
+                            className={`shrink-0 h-6 w-6 rounded-full flex items-center justify-center font-bold text-[11px] ${
+                              isExcluded
+                                ? 'bg-rose-200 dark:bg-rose-900/70 text-rose-700 dark:text-rose-300 line-through'
+                                : 'bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300'
+                            }`}
+                          >
+                            #{stop.sequence ?? '—'}
+                          </span>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span
+                                className={`font-bold truncate ${isExcluded ? 'line-through text-rose-800 dark:text-rose-300' : 'text-slate-900 dark:text-white'}`}
+                              >
+                                {cust?.name || 'Cliente'}
+                              </span>
+                              {isExcluded && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[9px] px-1.5 py-0 bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 font-bold shrink-0"
+                                >
+                                  Excluída da Rota
+                                </Badge>
+                              )}
+                              {stop.status === 'in_transit' && !isExcluded && (
+                                <Badge
+                                  variant="secondary"
+                                  className="text-[9px] px-1.5 py-0 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border-blue-200 font-semibold shrink-0"
+                                >
+                                  Em Trânsito
+                                </Badge>
+                              )}
+                            </div>
+
+                            <p
+                              className={`text-[11px] truncate mt-0.5 ${isExcluded ? 'text-rose-600 dark:text-rose-400 line-through' : 'text-slate-500'}`}
+                            >
+                              {cust?.address || 'Sem endereço cadastrado'}
+                            </p>
+
+                            <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">
+                              Rastreio: {stop.tracking_code || stop.id.slice(0, 8)}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Toggle de Exclusão */}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={isExcluded ? 'outline' : 'ghost'}
+                          onClick={() => handleToggleExcludeOrderFromRoute(stop.id)}
+                          className={`h-7 px-2.5 text-xs font-semibold shrink-0 gap-1 transition ${
+                            isExcluded
+                              ? 'border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950/60'
+                              : 'text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                          }`}
+                          title={
+                            isExcluded ? 'Desfazer exclusão desta parada' : 'Excluir parada da rota'
+                          }
+                        >
+                          {isExcluded ? (
+                            <>
+                              <RotateCcw className="h-3 w-3" />
+                              Desfazer
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="h-3 w-3" />
+                              Excluir
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Paradas Já Entregues (Somente Leitura) */}
+              {editRouteDeliveredStops.length > 0 && (
+                <div className="pt-2">
+                  <Label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mb-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    Entregues (não editáveis) — {editRouteDeliveredStops.length} concluída(s)
+                  </Label>
+                  <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                    {editRouteDeliveredStops.map((del) => {
+                      const cust =
+                        localCustomers.find((c) => c.id === del.customer_id) ||
+                        del.expand?.customer_id
+                      return (
+                        <div
+                          key={del.id}
+                          className="p-2 rounded-lg border border-slate-200/60 dark:border-slate-800/60 bg-slate-50/60 dark:bg-slate-900/40 text-[11px] flex items-center justify-between text-slate-500 dark:text-slate-400"
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="shrink-0 h-5 w-5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 flex items-center justify-center font-bold text-[10px]">
+                              #{del.sequence ?? '✓'}
+                            </span>
+                            <div className="min-w-0 flex-1 truncate">
+                              <span className="font-semibold text-slate-700 dark:text-slate-300 truncate">
+                                {cust?.name || 'Cliente'}
+                              </span>
+                              <span className="text-[10px] text-slate-400 ml-1 truncate">
+                                • {cust?.address || 'Sem endereço'}
+                              </span>
+                            </div>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] px-1.5 py-0 border-emerald-300 text-emerald-700 dark:text-emerald-400 shrink-0"
+                          >
+                            Concluída
+                          </Badge>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* SEÇÃO 2: INCLUIR ENTREGAS DISPONÍVEIS */}
+            <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <Label className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Plus className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                  Incluir Entregas Disponíveis
+                </Label>
+                {editRouteIncludedOrderIds.length > 0 && (
+                  <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                    +{editRouteIncludedOrderIds.length} nova(s) entrega(s) selecionada(s)
+                  </span>
+                )}
+              </div>
+
+              {/* Campo de Busca em Entregas Disponíveis */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filtrar disponíveis por cliente, endereço ou código de rastreio..."
+                  value={editRouteSearchAvailable}
+                  onChange={(e) => setEditRouteSearchAvailable(e.target.value)}
+                  className="h-8 pl-8 pr-8 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white w-full placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                {editRouteSearchAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => setEditRouteSearchAvailable('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    title="Limpar busca"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Lista de Entregas Disponíveis para Inclusão */}
+              {(() => {
+                const searchLower = editRouteSearchAvailable.toLowerCase().trim()
+                const availableOrders = strictlyPendingOrders.filter((ord) => {
+                  if (!searchLower) return true
+                  const cust =
+                    localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
+                  const matchesName = (cust?.name || '').toLowerCase().includes(searchLower)
+                  const matchesAddress = (cust?.address || '').toLowerCase().includes(searchLower)
+                  const matchesTracking = (ord.tracking_code || '')
+                    .toLowerCase()
+                    .includes(searchLower)
+                  const matchesId = ord.id.toLowerCase().includes(searchLower)
+                  return matchesName || matchesAddress || matchesTracking || matchesId
+                })
+
+                if (availableOrders.length === 0) {
+                  return (
+                    <div className="p-4 text-center rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400">
+                      {strictlyPendingOrders.length === 0
+                        ? 'Nenhuma entrega pendente disponível para inclusão no momento.'
+                        : 'Nenhuma entrega pendente corresponde ao filtro de busca.'}
+                    </div>
+                  )
+                }
+
+                return (
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                    {availableOrders.map((ord) => {
+                      const cust =
+                        localCustomers.find((c) => c.id === ord.customer_id) ||
+                        ord.expand?.customer_id
+                      const isIncluded = editRouteIncludedOrderIds.includes(ord.id)
+
+                      return (
+                        <div
+                          key={ord.id}
+                          onClick={() => handleToggleIncludeOrderInEditRoute(ord.id)}
+                          className={`p-2.5 rounded-lg border transition cursor-pointer select-none text-xs flex items-center justify-between gap-3 ${
+                            isIncluded
+                              ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/60 ring-1 ring-indigo-500/30'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                            <Checkbox
+                              checked={isIncluded}
+                              onCheckedChange={() => handleToggleIncludeOrderInEditRoute(ord.id)}
+                              className="data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600 mt-0.5 h-4 w-4 shrink-0"
+                            />
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="font-bold text-slate-900 dark:text-white truncate">
+                                  {cust?.name || 'Cliente'}
+                                </p>
+                                {isIncluded && (
+                                  <Badge className="text-[9px] px-1.5 py-0 bg-indigo-600 text-white font-semibold shrink-0">
+                                    + Incluir na Rota
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500 truncate mt-0.5">
+                                {cust?.address || 'Sem endereço'}
+                              </p>
+                              <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono mt-0.5">
+                                Rastreio: {ord.tracking_code || ord.id.slice(0, 8)}
+                              </p>
+                            </div>
+                          </div>
+
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={isIncluded ? 'default' : 'outline'}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleToggleIncludeOrderInEditRoute(ord.id)
+                            }}
+                            className={`h-7 px-2.5 text-xs font-semibold shrink-0 gap-1 ${
+                              isIncluded
+                                ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                : 'text-indigo-700 border-indigo-200 hover:bg-indigo-50 dark:text-indigo-300 dark:border-indigo-800 dark:hover:bg-indigo-950/40'
+                            }`}
+                          >
+                            {isIncluded ? (
+                              <>
+                                <Check className="h-3 w-3" />
+                                Incluído
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="h-3 w-3" />
+                                Incluir
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+
+          {/* RODAPÉ DO MODAL: CONTADOR EM TEMPO REAL + BOTÕES */}
+          {(() => {
+            const finalStopsCount =
+              editRoutePendingStops.length -
+              editRouteExcludedOrderIds.length +
+              editRouteIncludedOrderIds.length
+
+            return (
+              <DialogFooter className="p-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 flex-col sm:flex-row items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-2 text-xs w-full sm:w-auto">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-900 dark:text-indigo-200 font-bold border border-indigo-200 dark:border-indigo-800">
+                    <Navigation className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                    {finalStopsCount} parada(s) na rota após alterações
+                  </span>
+                  {(editRouteExcludedOrderIds.length > 0 ||
+                    editRouteIncludedOrderIds.length > 0) && (
+                    <span className="text-[11px] text-slate-500 hidden sm:inline">
+                      (
+                      {editRouteExcludedOrderIds.length > 0
+                        ? `-${editRouteExcludedOrderIds.length} excluída(s)`
+                        : ''}
+                      {editRouteExcludedOrderIds.length > 0 && editRouteIncludedOrderIds.length > 0
+                        ? ', '
+                        : ''}
+                      {editRouteIncludedOrderIds.length > 0
+                        ? `+${editRouteIncludedOrderIds.length} incluída(s)`
+                        : ''}
+                      )
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setEditRouteModalOpen(false)
+                      setTargetCourierForEditRoute(null)
+                      setEditRouteExcludedOrderIds([])
+                      setEditRouteIncludedOrderIds([])
+                      setEditRouteSearchAvailable('')
+                    }}
+                    disabled={isSubmittingEditRoute}
+                    className="h-8 text-xs flex-1 sm:flex-initial"
+                  >
+                    Cancelar
+                  </Button>
+
+                  <Button
+                    type="button"
+                    onClick={handleConfirmSaveRouteEdit}
+                    disabled={isSubmittingEditRoute}
+                    className="h-8 px-3 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold flex items-center gap-1.5 flex-1 sm:flex-initial shadow-sm"
+                  >
+                    {isSubmittingEditRoute ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Salvando e Reotimizando...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Salvar e Reotimizar
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </DialogFooter>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {/* Alerta de Blindagem: Base de Partida a mais de 100 km do centróide das entregas */}
       <AlertDialog open={distanceAlertOpen} onOpenChange={setDistanceAlertOpen}>
