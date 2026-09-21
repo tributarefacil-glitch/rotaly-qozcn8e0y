@@ -386,9 +386,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       postalCode?: string
       complement?: string
     }) => {
-      if (parsed.streetAndNumber) {
+      const pCityNorm = (parsed.city || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+      const pStreetNorm = (parsed.streetAndNumber || parsed.street || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+
+      if (parsed.streetAndNumber && (!pCityNorm || pStreetNorm !== pCityNorm)) {
         setStreetAndNumber(parsed.streetAndNumber)
-      } else if (parsed.street) {
+      } else if (parsed.street && (!pCityNorm || pStreetNorm !== pCityNorm)) {
         setStreetAndNumber(parsed.number ? `${parsed.street}, ${parsed.number}` : parsed.street)
       }
 
@@ -408,7 +419,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       }
 
       if (parsed.postalCode) {
-        setPostalCode(parsed.postalCode)
+        const cleanCep = parsed.postalCode.replace(/\D/g, '')
+        const formattedCep =
+          cleanCep.length === 8 ? `${cleanCep.slice(0, 5)}-${cleanCep.slice(5)}` : parsed.postalCode
+        setPostalCode(formattedCep)
       }
 
       if (parsed.complement) {
@@ -580,8 +594,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
       if (result.parsed) {
         applyAddressData(result.parsed)
-      } else {
-        setStreetAndNumber(result.address || result.name || '')
+      } else if (result.address || result.name) {
+        const full = result.address || result.name || ''
+        setStreetAndNumber(full.split(',')[0] || full)
       }
 
       const fullStr = result.address || result.name || ''

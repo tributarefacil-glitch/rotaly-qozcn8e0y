@@ -258,15 +258,38 @@ export function CreateCustomerModal({
     isAddressManuallyEditedRef.current = false
 
     if (result.parsed) {
-      if (result.parsed.streetAndNumber) {
-        setStreetAndNumber(result.parsed.streetAndNumber)
-      } else if (result.parsed.street) {
-        const fullStreet = result.parsed.number
-          ? `${result.parsed.street}, ${result.parsed.number}`
-          : result.parsed.street
-        setStreetAndNumber(fullStreet)
+      const p = result.parsed
+      // Proteção: nunca permitir que streetAndNumber receba o valor de city quando houver nome de rua
+      const pCityNorm = (p.city || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+      const pStreetNorm = (p.streetAndNumber || p.street || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+
+      let finalStreet = ''
+      if (p.streetAndNumber && (!pCityNorm || pStreetNorm !== pCityNorm)) {
+        finalStreet = p.streetAndNumber
+      } else if (p.street && (!pCityNorm || pStreetNorm !== pCityNorm)) {
+        finalStreet = p.number ? `${p.street}, ${p.number}` : p.street
       } else if (result.address) {
-        setStreetAndNumber(result.address.split(',')[0] || result.address)
+        const firstSegment = result.address.split(',')[0] || result.address
+        const firstNorm = firstSegment
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .trim()
+        if (!pCityNorm || firstNorm !== pCityNorm) {
+          finalStreet = firstSegment
+        }
+      }
+
+      if (finalStreet) {
+        setStreetAndNumber(finalStreet)
       }
 
       if (result.parsed.neighborhood) {
@@ -282,7 +305,12 @@ export function CreateCustomerModal({
         }
       }
       if (result.parsed.postalCode) {
-        setPostalCode(result.parsed.postalCode)
+        const cleanCep = result.parsed.postalCode.replace(/\D/g, '')
+        const formattedCep =
+          cleanCep.length === 8
+            ? `${cleanCep.slice(0, 5)}-${cleanCep.slice(5)}`
+            : result.parsed.postalCode
+        setPostalCode(formattedCep)
       }
     } else if (result.address) {
       setStreetAndNumber(result.address.split(',')[0] || result.address)

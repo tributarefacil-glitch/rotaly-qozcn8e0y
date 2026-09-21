@@ -371,16 +371,42 @@ export function parseGoogleAddressComponents(
     streetAndNumber = streetNumber ? `${streetName}, ${streetNumber}` : streetName
   } else if (fallbackFormatted) {
     // Usually formatted as "Rua Exemplo, 123 - Bairro, Cidade - UF, 00000-000, Brazil"
-    const firstSegment = fallbackFormatted.split('-')[0] || ''
+    // CUIDADO: Se o Google retornar apenas nível de cidade/bairro (sem rota), o fallbackFormatted
+    // começa com a própria cidade ou bairro (ex: "Duque de Caxias - RJ, 25231, Brasil").
+    // NUNCA preencher streetAndNumber com o nome da cidade ou bairro!
+    const firstSegment = (fallbackFormatted.split('-')[0] || '').trim()
     const parts = firstSegment.split(',')
-    if (parts.length >= 2) {
-      streetAndNumber = `${parts[0].trim()}, ${parts[1].trim()}`
-    } else {
-      streetAndNumber = (parts[0] || '').trim()
+    const candidate =
+      parts.length >= 2 ? `${parts[0].trim()}, ${parts[1].trim()}` : (parts[0] || '').trim()
+    const normCand = candidate
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+    const normCity = cityName
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+    const normNeigh = neighborhoodName
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+
+    // Se o candidato for idêntico ou muito similar à cidade ou bairro, não inventa rua
+    const isCityOrNeighborhood =
+      (normCity && normCand === normCity) ||
+      (normNeigh && normCand === normNeigh) ||
+      (normCity && normCand.includes(normCity) && candidate.split(' ').length <= 3)
+
+    if (!isCityOrNeighborhood) {
+      streetAndNumber = candidate
     }
   }
 
   const normalizedState = normalizeBrazilianUF(stateCode)
+  const isApproximate = !streetName
 
   return {
     street: streetName,
@@ -392,6 +418,7 @@ export function parseGoogleAddressComponents(
     postalCode: postal,
     formattedAddress: fallbackFormatted,
     source: 'google',
+    isApproximate,
   }
 }
 

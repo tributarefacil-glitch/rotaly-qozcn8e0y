@@ -595,12 +595,53 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
         const geo = await fallbackGeocodeAddress(fullAddr, effectiveBias)
         const lat = geo?.lat ?? defaultLat
         const lng = geo?.lng ?? defaultLng
-        onAddressSelect({
-          name: suggestion.mainText,
-          address: suggestion.fullText,
+
+        // FIX A: Os dados estruturados do ViaCEP são SOBERANOS!
+        // O geocode do Google muitas vezes retorna apenas no nível cidade/localidade sem route,
+        // com CEP truncado (5 dígitos) e sem nome de rua. Aproveitamos APENAS lat/lng do Google.
+        const via = suggestion.preloadedParsed
+        const cleanCepDigits = (via.postalCode || '').replace(/\D/g, '')
+        const formattedCep =
+          cleanCepDigits.length === 8
+            ? `${cleanCepDigits.slice(0, 5)}-${cleanCepDigits.slice(5)}`
+            : via.postalCode || ''
+
+        const streetPart = via.streetAndNumber || via.street || suggestion.mainText
+        const parts: string[] = []
+        if (streetPart) parts.push(streetPart)
+        if (via.neighborhood) parts.push(via.neighborhood)
+        if (via.city && via.state) {
+          parts.push(`${via.city} - ${via.state}`)
+        } else if (via.city) {
+          parts.push(via.city)
+        }
+        if (formattedCep) parts.push(formattedCep)
+
+        const finalFormatted = parts.length > 0 ? parts.join(', ') : fullAddr
+
+        const mergedParsed: ParsedAddress = {
+          ...via,
+          street: via.street || suggestion.mainText,
+          streetAndNumber: via.streetAndNumber || via.street || suggestion.mainText,
+          neighborhood: via.neighborhood,
+          city: via.city,
+          state: via.state,
+          postalCode: formattedCep,
+          formattedAddress: finalFormatted,
           lat,
           lng,
-          parsed: geo?.parsed || suggestion.preloadedParsed,
+          source: 'viacep',
+          isApproximate: false,
+          locationType: 'ROOFTOP',
+        }
+
+        onChange(finalFormatted)
+        onAddressSelect({
+          name: suggestion.mainText,
+          address: finalFormatted,
+          lat,
+          lng,
+          parsed: mergedParsed,
         })
         resetSessionToken()
         return
