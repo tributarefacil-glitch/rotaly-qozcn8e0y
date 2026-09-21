@@ -98,27 +98,36 @@ export interface PlaceSuggestion {
   lng?: number
 }
 
-// Utilitário para destacar substrings no texto da sugestão
+// Blindado com translate="no" e notranslate para impedir que extensões de tradução injetem tags <font>
 function HighlightMatch({ text, query }: { text: string; query: string }) {
   if (!text) return null
   const cleanQ = query.trim()
-  if (!cleanQ) return <span>{text}</span>
+  if (!cleanQ) {
+    return (
+      <span translate="no" className="notranslate">
+        {text}
+      </span>
+    )
+  }
 
   const regex = new RegExp(`(${cleanQ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
   const parts = text.split(regex)
 
   return (
-    <span>
+    <span translate="no" className="notranslate">
       {parts.map((part, i) =>
         part.toLowerCase() === cleanQ.toLowerCase() ? (
           <mark
             key={i}
-            className="bg-amber-100 text-amber-950 font-bold px-0.5 rounded-sm dark:bg-amber-500/30 dark:text-amber-200"
+            translate="no"
+            className="notranslate bg-amber-100 text-amber-950 font-bold px-0.5 rounded-sm dark:bg-amber-500/30 dark:text-amber-200"
           >
             {part}
           </mark>
         ) : (
-          <span key={i}>{part}</span>
+          <span key={i} translate="no" className="notranslate">
+            {part}
+          </span>
         ),
       )}
     </span>
@@ -179,6 +188,19 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
       lat: -22.906847,
       lng: -43.172896,
     }
+
+  // Limpeza atômica de timers, abort controllers e referências de Places no unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort()
+      }
+      sessionTokenRef.current = null
+    }
+  }, [])
 
   // Pre-carregar Google Maps Script
   useEffect(() => {
@@ -788,8 +810,12 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
   }
 
   return (
-    <div ref={containerRef} className={`relative flex items-center gap-1.5 ${className}`}>
-      <div className="relative flex-1">
+    <div
+      ref={containerRef}
+      translate="no"
+      className={`notranslate relative flex items-center gap-1.5 ${className}`}
+    >
+      <div translate="no" className="notranslate relative flex-1">
         <MapPin className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#FF6B35] pointer-events-none z-10" />
         <Input
           ref={inputRef}
@@ -797,6 +823,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
           value={value}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
+          translate="no"
           onFocus={() => {
             triggerGeolocation()
             if (suggestions.length > 0 && !isSelectedRef.current) {
@@ -804,7 +831,7 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
             }
           }}
           placeholder={placeholder}
-          className={`pl-8 pr-16 text-xs transition-colors focus-visible:ring-1 focus-visible:ring-blue-500 ${inputClassName}`}
+          className={`notranslate pl-8 pr-16 text-xs transition-colors focus-visible:ring-1 focus-visible:ring-blue-500 ${inputClassName}`}
           autoComplete="off"
           data-form-type="other"
           data-lpignore="true"
@@ -848,11 +875,15 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
         {/* Dropdown de sugestões estruturadas */}
         {isOpen && (suggestions.length > 0 || emptyMessage) && (
           <div
-            className={`absolute left-0 right-0 top-full mt-1.5 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 text-xs shadow-2xl z-50 dark:border-slate-800 dark:bg-slate-900 ${dropdownClassName}`}
+            translate="no"
+            className={`notranslate absolute left-0 right-0 top-full mt-1.5 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 text-xs shadow-2xl z-50 dark:border-slate-800 dark:bg-slate-900 ${dropdownClassName}`}
           >
             {/* Header explicativo do dropdown */}
             {suggestions.length > 0 && (
-              <div className="flex items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-100 dark:border-slate-800">
+              <div
+                translate="no"
+                className="notranslate flex items-center justify-between px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-100 dark:border-slate-800"
+              >
                 <span>Escolha o endereço correto:</span>
                 <span className="text-slate-400 font-normal normal-case">
                   {suggestions.length} {suggestions.length === 1 ? 'opção' : 'opções'}
@@ -865,7 +896,8 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
               <ul
                 ref={listRef}
                 role="listbox"
-                className="divide-y divide-slate-100 dark:divide-slate-800"
+                translate="no"
+                className="notranslate divide-y divide-slate-100 dark:divide-slate-800"
               >
                 {suggestions.map((suggestion, idx) => {
                   const isSelected = idx === selectedIndex
@@ -874,13 +906,14 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
                       key={`${suggestion.placeId}-${idx}`}
                       data-index={idx}
                       role="option"
+                      translate="no"
                       aria-selected={isSelected}
                       onMouseDown={(e) => {
                         e.preventDefault()
                         handleSelectSuggestion(suggestion)
                       }}
                       onMouseEnter={() => setSelectedIndex(idx)}
-                      className={`flex items-start gap-2.5 px-3 py-2.5 cursor-pointer rounded-lg transition-colors ${
+                      className={`notranslate flex items-start gap-2.5 px-3 py-2.5 cursor-pointer rounded-lg transition-colors ${
                         isSelected
                           ? 'bg-blue-50 text-blue-900 dark:bg-blue-950/60 dark:text-blue-100 ring-1 ring-blue-300 dark:ring-blue-800'
                           : 'text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800/80'
@@ -902,7 +935,10 @@ export const BaseAddressAutocomplete: React.FC<BaseAddressAutocompleteProps> = (
                           <HighlightMatch text={suggestion.mainText} query={value} />
                         </p>
                         {suggestion.secondaryText && (
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight truncate">
+                          <p
+                            translate="no"
+                            className="notranslate text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight truncate"
+                          >
                             {suggestion.secondaryText}
                           </p>
                         )}

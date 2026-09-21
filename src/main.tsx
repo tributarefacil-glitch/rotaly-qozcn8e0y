@@ -3,6 +3,74 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './main.css'
 
+// Blindagem defensiva anti-crash para extensões de tradução (ex: Google Translate)
+// Extensões envolvem nós de texto em <font> e alteram a hierarquia do DOM; quando o React tenta
+// desmontar esses nós com removeChild/insertBefore, lança "NotFoundError: The node to be removed is not a child of this node".
+if (typeof window !== 'undefined' && typeof Node !== 'undefined' && Node.prototype) {
+  try {
+    const originalRemoveChild = Node.prototype.removeChild
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(Node.prototype as any).removeChild = function <T extends Node>(child: T): T {
+      try {
+        return originalRemoveChild.call(this, child) as T
+      } catch (err: any) {
+        if (
+          err instanceof DOMException ||
+          err?.name === 'NotFoundError' ||
+          err?.message?.includes('not a child of this node')
+        ) {
+          console.warn(
+            '[DOM Safe Patch] removeChild ignorou remoção de nó não-filho alterado por extensão:',
+            child,
+          )
+          if (child && typeof (child as any).remove === 'function') {
+            try {
+              ;(child as any).remove()
+            } catch {
+              /* noop */
+            }
+          }
+          return child
+        }
+        throw err
+      }
+    }
+
+    const originalInsertBefore = Node.prototype.insertBefore
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(Node.prototype as any).insertBefore = function <T extends Node>(
+      newNode: T,
+      referenceNode: Node | null,
+    ): T {
+      try {
+        return originalInsertBefore.call(this, newNode, referenceNode) as T
+      } catch (err: any) {
+        if (
+          err instanceof DOMException ||
+          err?.name === 'NotFoundError' ||
+          err?.message?.includes('not a child of this node')
+        ) {
+          console.warn(
+            '[DOM Safe Patch] insertBefore contornado para nó alterado por extensão:',
+            newNode,
+          )
+          try {
+            return this.appendChild(newNode) as T
+          } catch {
+            return newNode
+          }
+        }
+        throw err
+      }
+    }
+  } catch (patchErr) {
+    console.warn(
+      '[DOM Safe Patch] Não foi possível aplicar monkey-patch defensivo de Node:',
+      patchErr,
+    )
+  }
+}
+
 // Invalidação de cache legado de empresa ativa entre versões
 const APP_BUILD_VERSION = '2026-09-14.02'
 if (typeof window !== 'undefined') {

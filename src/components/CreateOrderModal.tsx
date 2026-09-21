@@ -65,7 +65,9 @@ import {
   normalizeBrazilianUF,
   geocodeAddressWithValidation,
 } from '@/lib/googleMaps'
+import { haversineDistanceMeters } from '@/lib/geo'
 import { BaseAddressAutocomplete, BaseAddressResult } from '@/components/BaseAddressAutocomplete'
+import { FormErrorBoundary } from '@/components/FormErrorBoundary'
 import { CustomerSearchCombobox } from '@/components/CustomerSearchCombobox'
 
 interface CreateOrderModalProps {
@@ -195,6 +197,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const markerInstanceRef = useRef<any>(null)
   const isReverseGeocodingRef = useRef<boolean>(false)
+
+  // Rastreamento estrito de edição manual vs seleção explícita
+  const isAddressManuallyEditedRef = useRef<boolean>(false)
+  const isSelectedFromAutocompleteRef = useRef<boolean>(false)
 
   // Refs de controle de geocodificação direta e anti-loop
   const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -555,13 +561,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   // Callback when user selects address from BaseAddressAutocomplete
   const handleAddressSelectFromAutocomplete = useCallback(
     (result: BaseAddressResult) => {
+      isProgrammaticUpdateRef.current = true
+      // Marca atomicamente que este endereço veio de uma seleção explícita válida
+      isSelectedFromAutocompleteRef.current = true
+      isAddressManuallyEditedRef.current = false
+
       if (result.parsed) {
         applyAddressData(result.parsed)
       } else {
         setStreetAndNumber(result.address || result.name || '')
       }
 
-      setAddressSearchQuery(result.address || result.name || '')
+      const fullStr = result.address || result.name || ''
+      setAddressSearchQuery(fullStr)
+      lastGeocodedAddressRef.current = fullStr
 
       if (typeof result.lat === 'number' && typeof result.lng === 'number') {
         updateMapPosition(result.lat, result.lng, 16, false)
@@ -843,11 +856,14 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   )
 
   // Handler unificado para alterações nos inputs de endereço com debounce de 800ms
+  // Qualquer edição manual nos campos de endereço invalida vinculação com sugestão anterior
   const handleAddressFieldChange = (
     setter: (val: string) => void,
     fieldKey: 'streetAndNumber' | 'neighborhood' | 'city' | 'ufState' | 'postalCode',
     value: string,
   ) => {
+    isAddressManuallyEditedRef.current = true
+    isSelectedFromAutocompleteRef.current = false
     setter(value)
 
     if (addressDebounceRef.current) {
@@ -887,7 +903,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         return
       }
 
-      // Validação de coordenadas: nunca gravar silenciosamente fallback do Centro do RJ sem aviso
+      // BUG 1 FIX: Rastrear edição manual. Se a vendedora alterou qualquer campo textual de endereço
+      // sem ter selecionado explicitamente uma sugestão do dropdown para aquele endereço, executar
+      // geocodificação direta e estrita sobre o texto digitado atual — NUNCA reutilizar coordenadas de consultas anteriores.
       let parsedLat =
         typeof selectedCoords.lat === 'number' && !isNaN(selectedCoords.lat)
           ? selectedCoords.lat
@@ -902,13 +920,25 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         !parsedLng ||
         (Math.abs(parsedLat - -22.906847) < 0.0001 && Math.abs(parsedLng - -43.172896) < 0.0001)
 
-      if (isDefaultCoords && !hasLocationPinned) {
-        // Tentar resolver pelo endereço antes de salvar
+      const needsStrictRegeocoding =
+        isAddressManuallyEditedRef.current ||
+        !isSelectedFromAutocompleteRef.current ||
+        isDefaultCoords
+
+      if (needsStrictRegeocoding) {
         try {
-          const geocoded = await fallbackGeocodeAddress(combinedAddress || streetAndNumber.trim())
+          const expected = {
+            city: city.trim(),
+            postalCode: postalCode.trim(),
+            street: streetAndNumber.trim(),
+            neighborhood: neighborhood.trim(),
+          }
+          const fullQuery = combinedAddress || streetAndNumber.trim()
+          const geocoded = await geocodeAddressWithValidation(fullQuery, expected)
           if (
             geocoded &&
             typeof geocoded.lat === 'number' &&
+            typeof geocoded.lng === 'number' &&
             !(
               Math.abs(geocoded.lat - -22.906847) < 0.0001 &&
               Math.abs(geocoded.lng - -43.172896) < 0.0001
@@ -916,9 +946,61 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           ) {
             parsedLat = geocoded.lat
             parsedLng = geocoded.lng
+            setSelectedCoords({ lat: parsedLat, lng: parsedLng })
+            setHasLocationPinned(true)
+            isAddressManuallyEditedRef.current = false
+            isSelectedFromAutocompleteRef.current = true
+          } else {
+            // Geocodificação falhou ou retornou fallback
+            toast.warning(
+              'Atenção: Não foi possível calibrar a localização exata do endereço digitado no mapa.',
+              { duration: 6000 },
+            )
           }
         } catch {
           // segue
+        }
+      }
+
+      // Validação estrita de divergência: se a coordenada salva divergir > 3km do endereço digitado,
+      // avisar claramente a vendedora antes de salvar e não salvar coordenadas de outra origem silenciosamente
+      if (parsedLat && parsedLng && (combinedAddress || streetAndNumber.trim())) {
+        try {
+          const expected = {
+            city: city.trim(),
+            postalCode: postalCode.trim(),
+            street: streetAndNumber.trim(),
+            neighborhood: neighborhood.trim(),
+          }
+          const fullQuery = combinedAddress || streetAndNumber.trim()
+          const geocoded = await geocodeAddressWithValidation(fullQuery, expected)
+          if (
+            geocoded &&
+            typeof geocoded.lat === 'number' &&
+            typeof geocoded.lng === 'number' &&
+            !(
+              Math.abs(geocoded.lat - -22.906847) < 0.0001 &&
+              Math.abs(geocoded.lng - -43.172896) < 0.0001
+            )
+          ) {
+            const distMeters = haversineDistanceMeters(
+              parsedLat,
+              parsedLng,
+              geocoded.lat,
+              geocoded.lng,
+            )
+            if (distMeters > 3000) {
+              toast.warning(
+                `Atenção: A coordenada anterior diverge em ${(distMeters / 1000).toFixed(1)} km do endereço "${fullQuery}". Atualizando para a localização do texto digitado!`,
+                { duration: 7000 },
+              )
+              parsedLat = geocoded.lat
+              parsedLng = geocoded.lng
+              setSelectedCoords({ lat: parsedLat, lng: parsedLng })
+            }
+          }
+        } catch (err) {
+          console.warn('Erro ao validar divergência de coordenadas vs endereço digitado:', err)
         }
       }
 
@@ -1153,764 +1235,772 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-lg font-bold text-[#1a1a1a] font-heading">
-            <ShoppingBag className="h-5 w-5 text-[#FF6B35]" />
-            Registrar Nova Venda & Entrega Rotaly
-          </DialogTitle>
-        </DialogHeader>
+        <FormErrorBoundary formName="Registrar Nova Venda">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-[#1a1a1a] font-heading">
+              <ShoppingBag className="h-5 w-5 text-[#FF6B35]" />
+              Registrar Nova Venda & Entrega Rotaly
+            </DialogTitle>
+          </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-5 py-2">
-          {/* Billing / Auth error notice banner (non-intrusive fallback helper) */}
-          {mapsAuthWarning && (
-            <Alert className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200 py-2.5">
-              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-              <AlertDescription className="text-xs">
-                <strong>Aviso de Mapa:</strong> A chave do Google Maps precisa de faturamento ativo
-                no Google Cloud Console.
-                <span className="font-semibold text-emerald-700 dark:text-emerald-400 ml-1">
-                  O modo inteligente está ativo:
-                </span>{' '}
-                você pode digitar o CEP para preencher o endereço automaticamente (Rua, Bairro,
-                Cidade e UF) ou arrastar o pino.
-              </AlertDescription>
-            </Alert>
-          )}
+          <form onSubmit={handleSubmit} className="space-y-5 py-2">
+            {/* Billing / Auth error notice banner (non-intrusive fallback helper) */}
+            {mapsAuthWarning && (
+              <Alert className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200 py-2.5">
+                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                <AlertDescription className="text-xs">
+                  <strong>Aviso de Mapa:</strong> A chave do Google Maps precisa de faturamento
+                  ativo no Google Cloud Console.
+                  <span className="font-semibold text-emerald-700 dark:text-emerald-400 ml-1">
+                    O modo inteligente está ativo:
+                  </span>{' '}
+                  você pode digitar o CEP para preencher o endereço automaticamente (Rua, Bairro,
+                  Cidade e UF) ou arrastar o pino.
+                </AlertDescription>
+              </Alert>
+            )}
 
-          {/* Customer Selection or Creation Box */}
-          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-blue-600" />
-                <Label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-                  Dados do Cliente & Localização de Entrega
-                </Label>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setIsAddingCustomer(!isAddingCustomer)}
-                className="h-7 text-xs font-semibold text-blue-600 hover:text-blue-700 bg-white dark:bg-slate-800"
-              >
-                {isAddingCustomer ? 'Selecionar Existente' : '+ Cadastrar Novo Cliente'}
-              </Button>
-            </div>
-
-            {!isAddingCustomer ? (
-              <div className="space-y-3">
-                <CustomerSearchCombobox
-                  customers={localCustomers}
-                  selectedCustomerId={customerId}
-                  onSelectCustomer={(c) => handleSelectExistingCustomer(c.id)}
-                  onOpenCreateNewCustomer={() => setIsAddingCustomer(true)}
-                  placeholder="Buscar cliente por nome, CPF, CNPJ ou telefone..."
-                />
-
-                {customerId && (
-                  <div className="rounded-lg bg-white p-3 border border-slate-200 text-xs dark:bg-slate-800 dark:border-slate-700 flex items-start justify-between">
-                    {(() => {
-                      const sel = localCustomers.find((c) => c.id === customerId)
-                      if (!sel) return null
-                      return (
-                        <div className="space-y-1">
-                          <p className="font-bold text-slate-900 dark:text-white">{sel.name}</p>
-                          <p className="text-slate-600 dark:text-slate-300">
-                            📞 {sel.phone} {sel.phone2 ? `| 2: ${sel.phone2}` : ''}{' '}
-                            {sel.phone3 ? `| 3: ${sel.phone3}` : ''}
-                          </p>
-                          <p className="text-slate-600 dark:text-slate-300">📍 {sel.address}</p>
-                          {sel.lat && sel.lng && (
-                            <Badge
-                              variant="outline"
-                              className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200"
-                            >
-                              ✓ Coordenadas GPS Fixadas
-                            </Badge>
-                          )}
-                        </div>
-                      )
-                    })()}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        const sel = localCustomers.find((c) => c.id === customerId)
-                        if (sel) {
-                          populateCustomerForm(sel)
-                          setIsAddingCustomer(true)
-                        }
-                      }}
-                      className="h-7 text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                    >
-                      <Edit3 className="h-3.5 w-3.5" /> Editar Dados
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {/* Notice if editing existing matched customer */}
-                {existingMatchedCustomerId && (
-                  <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300">
-                    <span className="flex items-center gap-1.5 font-medium">
-                      <UserCheck className="h-4 w-4 text-emerald-600" />
-                      Cliente identificado! Você pode editar nome, telefones e endereço diretamente
-                      aqui.
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setExistingMatchedCustomerId(null)
-                        setNewCustName('')
-                        setNewCustPhone('')
-                        setNewCustPhone2('')
-                        setNewCustPhone3('')
-                        setStreetAndNumber('')
-                        setNeighborhood('')
-                        setCity('')
-                        setPostalCode('')
-                        setComplement('')
-                      }}
-                      className="h-6 text-[11px] text-slate-500 hover:text-slate-700 px-2"
-                    >
-                      Limpar
-                    </Button>
-                  </div>
-                )}
-
-                {/* Name & Primary Phone */}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Nome / Razão Social <span className="text-rose-500">*</span>
-                    </Label>
-                    <Input
-                      placeholder="Ex: João da Silva / Padaria Imperial"
-                      value={newCustName}
-                      onChange={(e) => setNewCustName(e.target.value)}
-                      className="mt-1 bg-white dark:bg-slate-800 text-xs"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                        <Phone className="h-3 w-3 text-blue-600" /> Telefone Principal (WhatsApp){' '}
-                        <span className="text-rose-500">*</span>
-                      </Label>
-                      {isSearchingPhone && (
-                        <span className="text-[10px] text-blue-600 flex items-center gap-1">
-                          <Loader2 className="h-2.5 w-2.5 animate-spin" /> buscando...
-                        </span>
-                      )}
-                    </div>
-                    <Input
-                      placeholder="Ex: (11) 98765-4321"
-                      value={newCustPhone}
-                      onChange={handlePhoneInputChange}
-                      className="mt-1 bg-white dark:bg-slate-800 text-xs"
-                      required
-                    />
-                  </div>
+            {/* Customer Selection or Creation Box */}
+            <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-4 w-4 text-blue-600" />
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                    Dados do Cliente & Localização de Entrega
+                  </Label>
                 </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsAddingCustomer(!isAddingCustomer)}
+                  className="h-7 text-xs font-semibold text-blue-600 hover:text-blue-700 bg-white dark:bg-slate-800"
+                >
+                  {isAddingCustomer ? 'Selecionar Existente' : '+ Cadastrar Novo Cliente'}
+                </Button>
+              </div>
 
-                {/* Additional Phones (Up to 3 phones support) */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowExtraPhones(!showExtraPhones)}
-                      className="h-6 px-1.5 text-[11px] text-indigo-600 hover:text-indigo-700"
-                    >
-                      {showExtraPhones
-                        ? '− Ocultar telefones secundários'
-                        : '+ Adicionar telefone 2 e 3 (até 3 números)'}
-                    </Button>
-                  </div>
-
-                  {showExtraPhones && (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 p-2.5 rounded-lg bg-white/70 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
-                      <div>
-                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                          Telefone 2 (Secundário / Fixo / Comercial)
-                        </Label>
-                        <Input
-                          placeholder="Ex: (11) 3456-7890"
-                          value={newCustPhone2}
-                          onChange={(e) => setNewCustPhone2(e.target.value)}
-                          className="mt-1 bg-white dark:bg-slate-900 text-xs"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                          Telefone 3 (Recado / Outro)
-                        </Label>
-                        <Input
-                          placeholder="Ex: (11) 91234-5678"
-                          value={newCustPhone3}
-                          onChange={(e) => setNewCustPhone3(e.target.value)}
-                          className="mt-1 bg-white dark:bg-slate-900 text-xs"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 1. Google Places / ViaCEP Autocomplete Search Bar */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                      <Search className="h-3.5 w-3.5 text-blue-600" />
-                      Buscar Endereço (Autocompletar Google Maps / CEP)
-                    </Label>
-                    <span className="text-[10px] text-slate-400">
-                      Selecione uma opção na lista para preencher os dados
-                    </span>
-                  </div>
-                  <BaseAddressAutocomplete
-                    value={addressSearchQuery}
-                    onChange={(val) => setAddressSearchQuery(val)}
-                    onAddressSelect={handleAddressSelectFromAutocomplete}
-                    placeholder="Digite o endereço ou CEP, ex: Rua Diogo Gulart ou Duque de Caxias..."
-                    className="w-full"
-                    inputClassName="bg-white dark:bg-slate-800 text-xs border-blue-200 focus-visible:ring-blue-500 text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
-                    biasCoordinates={hasLocationPinned ? selectedCoords : null}
-                    showSearchButton={true}
+              {!isAddingCustomer ? (
+                <div className="space-y-3">
+                  <CustomerSearchCombobox
+                    customers={localCustomers}
+                    selectedCustomerId={customerId}
+                    onSelectCustomer={(c) => handleSelectExistingCustomer(c.id)}
+                    onOpenCreateNewCustomer={() => setIsAddingCustomer(true)}
+                    placeholder="Buscar cliente por nome, CPF, CNPJ ou telefone..."
                   />
-                </div>
 
-                {/* 2. Customer Location Link Importer (WhatsApp / Google Maps pin) */}
-                <div className="rounded-lg border border-slate-200/80 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-800/80 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <Link2 className="h-3.5 w-3.5 text-indigo-600" />
-                      Colar Link ou Localização enviada pelo Cliente
-                    </Label>
-                    <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                      <HelpCircle className="h-3 w-3" /> Pin de WhatsApp / Maps
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Cole link do Google Maps, WhatsApp ou coordenadas (-22.90, -43.17)..."
-                      value={locationLinkInput}
-                      onChange={(e) => setLocationLinkInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          handleApplyLocationLink()
-                        }
-                      }}
-                      className="bg-slate-50 dark:bg-slate-900 text-xs flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleApplyLocationLink}
-                      disabled={isParsingLink || !locationLinkInput.trim()}
-                      className="text-xs font-semibold gap-1 whitespace-nowrap bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-300"
-                    >
-                      {isParsingLink ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Crosshair className="h-3.5 w-3.5" />
-                      )}
-                      Carregar Ponto
-                    </Button>
-                  </div>
-                </div>
-
-                {/* 3. Separate Address Fields (Rua, Número, Bairro, Cidade, UF, CEP) */}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-12 pt-1">
-                  {/* Rua e Número */}
-                  <div className="sm:col-span-8">
-                    <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Rua e Número <span className="text-rose-500">*</span>
-                    </Label>
-                    <Input
-                      placeholder="Ex: Rua Manuel Vieira, 196"
-                      value={streetAndNumber}
-                      onChange={(e) =>
-                        handleAddressFieldChange(
-                          setStreetAndNumber,
-                          'streetAndNumber',
-                          e.target.value,
+                  {customerId && (
+                    <div className="rounded-lg bg-white p-3 border border-slate-200 text-xs dark:bg-slate-800 dark:border-slate-700 flex items-start justify-between">
+                      {(() => {
+                        const sel = localCustomers.find((c) => c.id === customerId)
+                        if (!sel) return null
+                        return (
+                          <div className="space-y-1">
+                            <p className="font-bold text-slate-900 dark:text-white">{sel.name}</p>
+                            <p className="text-slate-600 dark:text-slate-300">
+                              📞 {sel.phone} {sel.phone2 ? `| 2: ${sel.phone2}` : ''}{' '}
+                              {sel.phone3 ? `| 3: ${sel.phone3}` : ''}
+                            </p>
+                            <p className="text-slate-600 dark:text-slate-300">📍 {sel.address}</p>
+                            {sel.lat && sel.lng && (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200"
+                              >
+                                ✓ Coordenadas GPS Fixadas
+                              </Badge>
+                            )}
+                          </div>
                         )
-                      }
-                      onBlur={() => triggerAddressGeocoding()}
-                      className="mt-1 bg-white dark:bg-slate-800 text-xs"
-                      required
-                    />
-                  </div>
-
-                  {/* Complemento */}
-                  <div className="sm:col-span-4">
-                    <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Complemento / Apto / Bloco
-                    </Label>
-                    <Input
-                      placeholder="Ex: Apto 42, Bloco B"
-                      value={complement}
-                      onChange={(e) => setComplement(e.target.value)}
-                      className="mt-1 bg-white dark:bg-slate-800 text-xs"
-                    />
-                  </div>
-
-                  {/* Bairro */}
-                  <div className="sm:col-span-4">
-                    <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Bairro
-                    </Label>
-                    <Input
-                      placeholder="Ex: Pinheiros"
-                      value={neighborhood}
-                      onChange={(e) =>
-                        handleAddressFieldChange(setNeighborhood, 'neighborhood', e.target.value)
-                      }
-                      className="mt-1 bg-white dark:bg-slate-800 text-xs"
-                    />
-                  </div>
-
-                  {/* Cidade */}
-                  <div className="sm:col-span-4">
-                    <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Cidade
-                    </Label>
-                    <Input
-                      placeholder="Ex: Rio de Janeiro"
-                      value={city}
-                      onChange={(e) => handleAddressFieldChange(setCity, 'city', e.target.value)}
-                      className="mt-1 bg-white dark:bg-slate-800 text-xs"
-                    />
-                  </div>
-
-                  {/* UF */}
-                  <div className="sm:col-span-2">
-                    <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                      UF (Estado)
-                    </Label>
-                    <Select
-                      value={ufState}
-                      onValueChange={(val) => handleAddressFieldChange(setUfState, 'ufState', val)}
-                    >
-                      <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs h-9">
-                        <SelectValue placeholder="UF" />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-52">
-                        {BRAZILIAN_STATES.map((st) => (
-                          <SelectItem key={st} value={st} className="text-xs">
-                            {st}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* CEP */}
-                  <div className="sm:col-span-2">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                        CEP
-                      </Label>
-                      {isLoadingViaCep && (
-                        <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
-                      )}
-                    </div>
-                    <Input
-                      placeholder="00000-000"
-                      value={postalCode}
-                      onChange={handleCepChange}
-                      maxLength={9}
-                      className="mt-1 bg-white dark:bg-slate-800 text-xs font-mono"
-                    />
-                  </div>
-                </div>
-
-                {/* Helper badge explaining auto-fill status */}
-                {(streetAndNumber || neighborhood || city || postalCode) && (
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 bg-slate-100 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <Sparkles className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
-                    <span>
-                      Endereço formatado: <strong>{getFullFormattedAddress()}</strong>
-                    </span>
-                  </div>
-                )}
-
-                {/* 4. Interactive Location Picker Map */}
-                <div className="space-y-1.5 pt-2">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <Navigation className="h-3.5 w-3.5 text-blue-600" />
-                      <Label className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        Ponto Exato de Entrega (Arraste o Marcador 📍 no Mapa)
-                      </Label>
-                    </div>
-                    <div className="flex items-center gap-2">
+                      })()}
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={handleUseCurrentLocation}
-                        className="h-6 px-2 text-[11px] text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                        onClick={() => {
+                          const sel = localCustomers.find((c) => c.id === customerId)
+                          if (sel) {
+                            populateCustomerForm(sel)
+                            setIsAddingCustomer(true)
+                          }
+                        }}
+                        className="h-7 text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
                       >
-                        <Crosshair className="h-3 w-3" /> Minha Posição Atual
+                        <Edit3 className="h-3.5 w-3.5" /> Editar Dados
                       </Button>
-                      {hasLocationPinned && (
-                        <span className="text-[10px] font-mono text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5">
-                          <Check className="h-3 w-3" /> {selectedCoords.lat.toFixed(4)},{' '}
-                          {selectedCoords.lng.toFixed(4)}
-                        </span>
-                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Notice if editing existing matched customer */}
+                  {existingMatchedCustomerId && (
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300">
+                      <span className="flex items-center gap-1.5 font-medium">
+                        <UserCheck className="h-4 w-4 text-emerald-600" />
+                        Cliente identificado! Você pode editar nome, telefones e endereço
+                        diretamente aqui.
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setExistingMatchedCustomerId(null)
+                          setNewCustName('')
+                          setNewCustPhone('')
+                          setNewCustPhone2('')
+                          setNewCustPhone3('')
+                          setStreetAndNumber('')
+                          setNeighborhood('')
+                          setCity('')
+                          setPostalCode('')
+                          setComplement('')
+                        }}
+                        className="h-6 text-[11px] text-slate-500 hover:text-slate-700 px-2"
+                      >
+                        Limpar
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Name & Primary Phone */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Nome / Razão Social <span className="text-rose-500">*</span>
+                      </Label>
+                      <Input
+                        placeholder="Ex: João da Silva / Padaria Imperial"
+                        value={newCustName}
+                        onChange={(e) => setNewCustName(e.target.value)}
+                        className="mt-1 bg-white dark:bg-slate-800 text-xs"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                          <Phone className="h-3 w-3 text-blue-600" /> Telefone Principal (WhatsApp){' '}
+                          <span className="text-rose-500">*</span>
+                        </Label>
+                        {isSearchingPhone && (
+                          <span className="text-[10px] text-blue-600 flex items-center gap-1">
+                            <Loader2 className="h-2.5 w-2.5 animate-spin" /> buscando...
+                          </span>
+                        )}
+                      </div>
+                      <Input
+                        placeholder="Ex: (11) 98765-4321"
+                        value={newCustPhone}
+                        onChange={handlePhoneInputChange}
+                        className="mt-1 bg-white dark:bg-slate-800 text-xs"
+                        required
+                      />
                     </div>
                   </div>
 
-                  {/* Google Map Canvas Container */}
-                  <div className="relative w-full h-48 sm:h-56 rounded-xl overflow-hidden border border-slate-300 dark:border-slate-700 shadow-inner bg-slate-100 dark:bg-slate-900">
-                    <div ref={mapContainerRef} className="w-full h-full" />
+                  {/* Additional Phones (Up to 3 phones support) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowExtraPhones(!showExtraPhones)}
+                        className="h-6 px-1.5 text-[11px] text-indigo-600 hover:text-indigo-700"
+                      >
+                        {showExtraPhones
+                          ? '− Ocultar telefones secundários'
+                          : '+ Adicionar telefone 2 e 3 (até 3 números)'}
+                      </Button>
+                    </div>
 
-                    {/* Fallback info when maps is still loading or offline */}
-                    {!isMapsLoaded && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 text-white p-4 text-center">
-                        <MapPin className="h-8 w-8 text-blue-400 animate-bounce mb-2" />
-                        <p className="text-xs font-semibold">Carregando Mapa de Localização...</p>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          Você pode preencher o CEP ou endereço acima enquanto o mapa conecta.
-                        </p>
+                    {showExtraPhones && (
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 p-2.5 rounded-lg bg-white/70 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
+                        <div>
+                          <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                            Telefone 2 (Secundário / Fixo / Comercial)
+                          </Label>
+                          <Input
+                            placeholder="Ex: (11) 3456-7890"
+                            value={newCustPhone2}
+                            onChange={(e) => setNewCustPhone2(e.target.value)}
+                            className="mt-1 bg-white dark:bg-slate-900 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                            Telefone 3 (Recado / Outro)
+                          </Label>
+                          <Input
+                            placeholder="Ex: (11) 91234-5678"
+                            value={newCustPhone3}
+                            onChange={(e) => setNewCustPhone3(e.target.value)}
+                            className="mt-1 bg-white dark:bg-slate-900 text-xs"
+                          />
+                        </div>
                       </div>
                     )}
+                  </div>
 
-                    {/* Instructions Banner Overlay */}
-                    <div className="absolute bottom-2 left-2 right-2 pointer-events-none flex justify-center">
-                      <div className="bg-slate-900/80 backdrop-blur-sm text-white px-3 py-1 rounded-full text-[10px] font-medium shadow flex items-center gap-1.5 border border-slate-700">
-                        <MapPin className="h-3 w-3 text-red-400" />
-                        <span>
-                          Clique no mapa ou arraste o marcador vermelho para o ponto exato da
-                          entrega
-                        </span>
+                  {/* 1. Google Places / ViaCEP Autocomplete Search Bar */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                        <Search className="h-3.5 w-3.5 text-blue-600" />
+                        Buscar Endereço (Autocompletar Google Maps / CEP)
+                      </Label>
+                      <span className="text-[10px] text-slate-400">
+                        Selecione uma opção na lista para preencher os dados
+                      </span>
+                    </div>
+                    <BaseAddressAutocomplete
+                      value={addressSearchQuery}
+                      onChange={(val) => setAddressSearchQuery(val)}
+                      onAddressSelect={handleAddressSelectFromAutocomplete}
+                      placeholder="Digite o endereço ou CEP, ex: Rua Diogo Gulart ou Duque de Caxias..."
+                      className="w-full"
+                      inputClassName="bg-white dark:bg-slate-800 text-xs border-blue-200 focus-visible:ring-blue-500 text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
+                      biasCoordinates={hasLocationPinned ? selectedCoords : null}
+                      showSearchButton={true}
+                    />
+                  </div>
+
+                  {/* 2. Customer Location Link Importer (WhatsApp / Google Maps pin) */}
+                  <div className="rounded-lg border border-slate-200/80 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-800/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                        <Link2 className="h-3.5 w-3.5 text-indigo-600" />
+                        Colar Link ou Localização enviada pelo Cliente
+                      </Label>
+                      <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                        <HelpCircle className="h-3 w-3" /> Pin de WhatsApp / Maps
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Cole link do Google Maps, WhatsApp ou coordenadas (-22.90, -43.17)..."
+                        value={locationLinkInput}
+                        onChange={(e) => setLocationLinkInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            handleApplyLocationLink()
+                          }
+                        }}
+                        className="bg-slate-50 dark:bg-slate-900 text-xs flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleApplyLocationLink}
+                        disabled={isParsingLink || !locationLinkInput.trim()}
+                        className="text-xs font-semibold gap-1 whitespace-nowrap bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-300"
+                      >
+                        {isParsingLink ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Crosshair className="h-3.5 w-3.5" />
+                        )}
+                        Carregar Ponto
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* 3. Separate Address Fields (Rua, Número, Bairro, Cidade, UF, CEP) */}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-12 pt-1">
+                    {/* Rua e Número */}
+                    <div className="sm:col-span-8">
+                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Rua e Número <span className="text-rose-500">*</span>
+                      </Label>
+                      <Input
+                        placeholder="Ex: Rua Manuel Vieira, 196"
+                        value={streetAndNumber}
+                        onChange={(e) =>
+                          handleAddressFieldChange(
+                            setStreetAndNumber,
+                            'streetAndNumber',
+                            e.target.value,
+                          )
+                        }
+                        onBlur={() => triggerAddressGeocoding()}
+                        className="mt-1 bg-white dark:bg-slate-800 text-xs"
+                        required
+                      />
+                    </div>
+
+                    {/* Complemento */}
+                    <div className="sm:col-span-4">
+                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Complemento / Apto / Bloco
+                      </Label>
+                      <Input
+                        placeholder="Ex: Apto 42, Bloco B"
+                        value={complement}
+                        onChange={(e) => setComplement(e.target.value)}
+                        className="mt-1 bg-white dark:bg-slate-800 text-xs"
+                      />
+                    </div>
+
+                    {/* Bairro */}
+                    <div className="sm:col-span-4">
+                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Bairro
+                      </Label>
+                      <Input
+                        placeholder="Ex: Pinheiros"
+                        value={neighborhood}
+                        onChange={(e) =>
+                          handleAddressFieldChange(setNeighborhood, 'neighborhood', e.target.value)
+                        }
+                        className="mt-1 bg-white dark:bg-slate-800 text-xs"
+                      />
+                    </div>
+
+                    {/* Cidade */}
+                    <div className="sm:col-span-4">
+                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Cidade
+                      </Label>
+                      <Input
+                        placeholder="Ex: Rio de Janeiro"
+                        value={city}
+                        onChange={(e) => handleAddressFieldChange(setCity, 'city', e.target.value)}
+                        className="mt-1 bg-white dark:bg-slate-800 text-xs"
+                      />
+                    </div>
+
+                    {/* UF */}
+                    <div className="sm:col-span-2">
+                      <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                        UF (Estado)
+                      </Label>
+                      <Select
+                        value={ufState}
+                        onValueChange={(val) =>
+                          handleAddressFieldChange(setUfState, 'ufState', val)
+                        }
+                      >
+                        <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs h-9">
+                          <SelectValue placeholder="UF" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-52">
+                          {BRAZILIAN_STATES.map((st) => (
+                            <SelectItem key={st} value={st} className="text-xs">
+                              {st}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* CEP */}
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                          CEP
+                        </Label>
+                        {isLoadingViaCep && (
+                          <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
+                        )}
+                      </div>
+                      <Input
+                        placeholder="00000-000"
+                        value={postalCode}
+                        onChange={handleCepChange}
+                        maxLength={9}
+                        className="mt-1 bg-white dark:bg-slate-800 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Helper badge explaining auto-fill status */}
+                  {(streetAndNumber || neighborhood || city || postalCode) && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500 bg-slate-100 dark:bg-slate-800/60 p-2 rounded-lg border border-slate-200 dark:border-slate-700">
+                      <Sparkles className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+                      <span>
+                        Endereço formatado: <strong>{getFullFormattedAddress()}</strong>
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 4. Interactive Location Picker Map */}
+                  <div className="space-y-1.5 pt-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <Navigation className="h-3.5 w-3.5 text-blue-600" />
+                        <Label className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                          Ponto Exato de Entrega (Arraste o Marcador 📍 no Mapa)
+                        </Label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleUseCurrentLocation}
+                          className="h-6 px-2 text-[11px] text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                        >
+                          <Crosshair className="h-3 w-3" /> Minha Posição Atual
+                        </Button>
+                        {hasLocationPinned && (
+                          <span className="text-[10px] font-mono text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5">
+                            <Check className="h-3 w-3" /> {selectedCoords.lat.toFixed(4)},{' '}
+                            {selectedCoords.lng.toFixed(4)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Google Map Canvas Container */}
+                    <div className="relative w-full h-48 sm:h-56 rounded-xl overflow-hidden border border-slate-300 dark:border-slate-700 shadow-inner bg-slate-100 dark:bg-slate-900">
+                      <div ref={mapContainerRef} className="w-full h-full" />
+
+                      {/* Fallback info when maps is still loading or offline */}
+                      {!isMapsLoaded && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 text-white p-4 text-center">
+                          <MapPin className="h-8 w-8 text-blue-400 animate-bounce mb-2" />
+                          <p className="text-xs font-semibold">Carregando Mapa de Localização...</p>
+                          <p className="text-[11px] text-slate-400 mt-1">
+                            Você pode preencher o CEP ou endereço acima enquanto o mapa conecta.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Instructions Banner Overlay */}
+                      <div className="absolute bottom-2 left-2 right-2 pointer-events-none flex justify-center">
+                        <div className="bg-slate-900/80 backdrop-blur-sm text-white px-3 py-1 rounded-full text-[10px] font-medium shadow flex items-center gap-1.5 border border-slate-700">
+                          <MapPin className="h-3 w-3 text-red-400" />
+                          <span>
+                            Clique no mapa ou arraste o marcador vermelho para o ponto exato da
+                            entrega
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* MÓDULO 3: SUGESTÃO AUTOMÁTICA DE ROTA AO REGISTRAR NOVA ENTREGA */}
+            {routeSuggestion && (
+              <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-3.5 dark:border-indigo-900/60 dark:bg-indigo-950/40 text-xs space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-indigo-950 dark:text-indigo-200 uppercase tracking-wide flex items-center gap-1.5">
+                    <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                    SUGESTÃO DO SISTEMA:
+                  </span>
+                  {suggestionState === 'accepted' ? (
+                    <Badge className="bg-emerald-600 text-white text-[10px]">
+                      ✓ Sugestão Aceita
+                    </Badge>
+                  ) : suggestionState === 'rejected' ? (
+                    <Badge variant="destructive" className="text-[10px]">
+                      Rejeitada (Manual)
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="text-indigo-700 border-indigo-300 text-[10px]"
+                    >
+                      Otimização Ativa
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Texto exato solicitado pelo Módulo 3 */}
+                <div className="bg-white dark:bg-slate-900/90 rounded-lg p-3 border border-indigo-100 dark:border-indigo-900 font-mono text-slate-800 dark:text-slate-200 space-y-1">
+                  <p>
+                    → Enviar para:{' '}
+                    <b className="text-indigo-600 dark:text-indigo-400">
+                      {routeSuggestion.courier_name}
+                    </b>{' '}
+                    (
+                    {routeSuggestion.vehicle_type === 'motorcycle'
+                      ? 'Moto'
+                      : routeSuggestion.vehicle_type === 'car'
+                        ? 'Carro'
+                        : routeSuggestion.vehicle_type === 'van'
+                          ? 'Van'
+                          : 'Caminhão'}
+                    )
+                  </p>
+                  <p>
+                    → Ordem na rota: <b>{routeSuggestion.order_in_route}ª entrega</b>
+                  </p>
+                  <p>
+                    → Tempo estimado: <b>{routeSuggestion.estimated_time}</b>
+                  </p>
+                  <p>
+                    → Economia:{' '}
+                    <b className="text-emerald-600 dark:text-emerald-400">
+                      {routeSuggestion.km_saved}km
+                    </b>{' '}
+                    vs rota manual
+                  </p>
+                </div>
+
+                {/* Botões de Ação Exatos: [ACEITAR] [REJEITAR] [EDITAR] */}
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className={`h-7 px-3 text-xs font-bold ${
+                      suggestionState === 'accepted'
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white ring-2 ring-emerald-400'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                    }`}
+                    onClick={() => {
+                      setCourierId(routeSuggestion.courier_id)
+                      setSuggestionState('accepted')
+                      toast.success(
+                        `Sugestão aceita! Pedido atribuído a ${routeSuggestion.courier_name} como ${routeSuggestion.order_in_route}ª entrega.`,
+                      )
+                    }}
+                  >
+                    ACEITAR
+                  </Button>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className={`h-7 px-3 text-xs ${
+                      suggestionState === 'rejected'
+                        ? 'border-rose-400 text-rose-600 bg-rose-50'
+                        : 'border-slate-300 hover:bg-slate-100 dark:border-slate-700'
+                    }`}
+                    onClick={() => {
+                      setSuggestionState('rejected')
+                      toast.info(
+                        'Sugestão rejeitada. Você pode selecionar o entregador manualmente.',
+                      )
+                    }}
+                  >
+                    REJEITAR
+                  </Button>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2.5 text-xs text-indigo-700 hover:bg-indigo-100 dark:text-indigo-300"
+                    onClick={() => {
+                      setSuggestionState('edited')
+                      toast.info('Modo de edição manual liberado no seletor abaixo.')
+                    }}
+                  >
+                    EDITAR
+                  </Button>
                 </div>
               </div>
             )}
-          </div>
 
-          {/* MÓDULO 3: SUGESTÃO AUTOMÁTICA DE ROTA AO REGISTRAR NOVA ENTREGA */}
-          {routeSuggestion && (
-            <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50/70 p-3.5 dark:border-indigo-900/60 dark:bg-indigo-950/40 text-xs space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-indigo-950 dark:text-indigo-200 uppercase tracking-wide flex items-center gap-1.5">
-                  <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                  SUGESTÃO DO SISTEMA:
-                </span>
-                {suggestionState === 'accepted' ? (
-                  <Badge className="bg-emerald-600 text-white text-[10px]">✓ Sugestão Aceita</Badge>
-                ) : suggestionState === 'rejected' ? (
-                  <Badge variant="destructive" className="text-[10px]">
-                    Rejeitada (Manual)
-                  </Badge>
-                ) : (
-                  <Badge
-                    variant="outline"
-                    className="text-indigo-700 border-indigo-300 text-[10px]"
-                  >
-                    Otimização Ativa
-                  </Badge>
-                )}
-              </div>
-
-              {/* Texto exato solicitado pelo Módulo 3 */}
-              <div className="bg-white dark:bg-slate-900/90 rounded-lg p-3 border border-indigo-100 dark:border-indigo-900 font-mono text-slate-800 dark:text-slate-200 space-y-1">
-                <p>
-                  → Enviar para:{' '}
-                  <b className="text-indigo-600 dark:text-indigo-400">
-                    {routeSuggestion.courier_name}
-                  </b>{' '}
-                  (
-                  {routeSuggestion.vehicle_type === 'motorcycle'
-                    ? 'Moto'
-                    : routeSuggestion.vehicle_type === 'car'
-                      ? 'Carro'
-                      : routeSuggestion.vehicle_type === 'van'
-                        ? 'Van'
-                        : 'Caminhão'}
-                  )
-                </p>
-                <p>
-                  → Ordem na rota: <b>{routeSuggestion.order_in_route}ª entrega</b>
-                </p>
-                <p>
-                  → Tempo estimado: <b>{routeSuggestion.estimated_time}</b>
-                </p>
-                <p>
-                  → Economia:{' '}
-                  <b className="text-emerald-600 dark:text-emerald-400">
-                    {routeSuggestion.km_saved}km
-                  </b>{' '}
-                  vs rota manual
-                </p>
-              </div>
-
-              {/* Botões de Ação Exatos: [ACEITAR] [REJEITAR] [EDITAR] */}
-              <div className="flex items-center gap-2 pt-1">
-                <Button
-                  type="button"
-                  size="sm"
-                  className={`h-7 px-3 text-xs font-bold ${
-                    suggestionState === 'accepted'
-                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white ring-2 ring-emerald-400'
-                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                  }`}
-                  onClick={() => {
-                    setCourierId(routeSuggestion.courier_id)
-                    setSuggestionState('accepted')
-                    toast.success(
-                      `Sugestão aceita! Pedido atribuído a ${routeSuggestion.courier_name} como ${routeSuggestion.order_in_route}ª entrega.`,
-                    )
+            {/* Logistics: Courier Assignment & Priority */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Atribuir Entregador
+                  </Label>
+                  {isCalculatingSuggestion && (
+                    <span className="text-[10px] text-indigo-600 flex items-center gap-1">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> analisando rotas...
+                    </span>
+                  )}
+                </div>
+                <Select
+                  value={courierId}
+                  onValueChange={(val) => {
+                    setCourierId(val)
+                    if (routeSuggestion && val !== routeSuggestion.courier_id) {
+                      setSuggestionState('edited')
+                    }
                   }}
                 >
-                  ACEITAR
-                </Button>
-
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className={`h-7 px-3 text-xs ${
-                    suggestionState === 'rejected'
-                      ? 'border-rose-400 text-rose-600 bg-rose-50'
-                      : 'border-slate-300 hover:bg-slate-100 dark:border-slate-700'
-                  }`}
-                  onClick={() => {
-                    setSuggestionState('rejected')
-                    toast.info('Sugestão rejeitada. Você pode selecionar o entregador manualmente.')
-                  }}
-                >
-                  REJEITAR
-                </Button>
-
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 px-2.5 text-xs text-indigo-700 hover:bg-indigo-100 dark:text-indigo-300"
-                  onClick={() => {
-                    setSuggestionState('edited')
-                    toast.info('Modo de edição manual liberado no seletor abaixo.')
-                  }}
-                >
-                  EDITAR
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Logistics: Courier Assignment & Priority */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                  Atribuir Entregador
-                </Label>
-                {isCalculatingSuggestion && (
-                  <span className="text-[10px] text-indigo-600 flex items-center gap-1">
-                    <Loader2 className="h-2.5 w-2.5 animate-spin" /> analisando rotas...
-                  </span>
-                )}
-              </div>
-              <Select
-                value={courierId}
-                onValueChange={(val) => {
-                  setCourierId(val)
-                  if (routeSuggestion && val !== routeSuggestion.courier_id) {
-                    setSuggestionState('edited')
-                  }
-                }}
-              >
-                <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs">
-                  <SelectValue placeholder="Selecione um entregador" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned" className="text-xs">
-                    Sem entregador (Pendente)
-                  </SelectItem>
-                  {couriers.map((c) => (
-                    <SelectItem key={c.id} value={c.id} className="text-xs">
-                      🛵 {c.name} ({c.status === 'busy' ? 'Ocupado' : 'Disponível'})
+                  <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs">
+                    <SelectValue placeholder="Selecione um entregador" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned" className="text-xs">
+                      Sem entregador (Pendente)
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    {couriers.map((c) => (
+                      <SelectItem key={c.id} value={c.id} className="text-xs">
+                        🛵 {c.name} ({c.status === 'busy' ? 'Ocupado' : 'Disponível'})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Prioridade de Entrega
+                </Label>
+                <Select
+                  value={priority}
+                  onValueChange={(val) => {
+                    setPriority(val as OrderPriority)
+                    if (hasLocationPinned) {
+                      calculateSmartRouteSuggestion(selectedCoords.lat, selectedCoords.lng)
+                    }
+                  }}
+                >
+                  <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="normal" className="text-xs">
+                      🟢 Normal (Até 90 min)
+                    </SelectItem>
+                    <SelectItem value="high" className="text-xs">
+                      🟡 Alta (Até 60 min)
+                    </SelectItem>
+                    <SelectItem value="urgent" className="text-xs">
+                      🔴 Urgente (Até 30 min)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
+            {/* Items Table */}
+            <div className="space-y-2 rounded-xl border border-slate-200 p-3.5 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                  Itens do Pedido
+                </Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddItem}
+                  className="h-7 text-xs flex items-center gap-1 bg-white dark:bg-slate-800"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Adicionar Item
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                {items.map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <Input
+                      placeholder="Descrição do produto / mercadoria"
+                      value={item.name}
+                      onChange={(e) => handleItemChange(idx, 'name', e.target.value)}
+                      className="flex-1 text-xs bg-white dark:bg-slate-800"
+                    />
+                    <Input
+                      type="number"
+                      min="1"
+                      placeholder="Qtd"
+                      value={item.qty || ''}
+                      onChange={(e) =>
+                        handleItemChange(idx, 'qty', parseInt(e.target.value, 10) || 1)
+                      }
+                      className="w-16 text-xs text-center bg-white dark:bg-slate-800"
+                    />
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="R$ Unit"
+                      value={item.price || ''}
+                      onChange={(e) =>
+                        handleItemChange(idx, 'price', parseFloat(e.target.value) || 0)
+                      }
+                      className="w-24 text-xs text-right bg-white dark:bg-slate-800"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveItem(idx)}
+                      disabled={items.length === 1}
+                      className="h-8 w-8 text-slate-400 hover:text-rose-500"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end pt-2 border-t text-sm font-bold text-slate-900 dark:text-white">
+                Total Calculado: R$ {totalPrice.toFixed(2)}
+              </div>
+            </div>
+
+            {/* Notes */}
             <div>
-              <Label className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                Prioridade de Entrega
+              <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Observações / Instruções de Entrega
               </Label>
-              <Select
-                value={priority}
-                onValueChange={(val) => {
-                  setPriority(val as OrderPriority)
-                  if (hasLocationPinned) {
-                    calculateSmartRouteSuggestion(selectedCoords.lat, selectedCoords.lng)
-                  }
-                }}
-              >
-                <SelectTrigger className="mt-1 bg-white dark:bg-slate-800 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="normal" className="text-xs">
-                    🟢 Normal (Até 90 min)
-                  </SelectItem>
-                  <SelectItem value="high" className="text-xs">
-                    🟡 Alta (Até 60 min)
-                  </SelectItem>
-                  <SelectItem value="urgent" className="text-xs">
-                    🔴 Urgente (Até 30 min)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Items Table */}
-          <div className="space-y-2 rounded-xl border border-slate-200 p-3.5 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                Itens do Pedido
-              </Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleAddItem}
-                className="h-7 text-xs flex items-center gap-1 bg-white dark:bg-slate-800"
-              >
-                <Plus className="h-3.5 w-3.5" /> Adicionar Item
-              </Button>
+              <Textarea
+                placeholder="Ex: Entregar na recepção, portaria libera sem interfone, etc..."
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="mt-1 text-xs resize-none bg-white dark:bg-slate-800"
+                rows={2}
+              />
             </div>
 
-            <div className="space-y-2">
-              {items.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <Input
-                    placeholder="Descrição do produto / mercadoria"
-                    value={item.name}
-                    onChange={(e) => handleItemChange(idx, 'name', e.target.value)}
-                    className="flex-1 text-xs bg-white dark:bg-slate-800"
-                  />
-                  <Input
-                    type="number"
-                    min="1"
-                    placeholder="Qtd"
-                    value={item.qty || ''}
-                    onChange={(e) =>
-                      handleItemChange(idx, 'qty', parseInt(e.target.value, 10) || 1)
-                    }
-                    className="w-16 text-xs text-center bg-white dark:bg-slate-800"
-                  />
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="R$ Unit"
-                    value={item.price || ''}
-                    onChange={(e) =>
-                      handleItemChange(idx, 'price', parseFloat(e.target.value) || 0)
-                    }
-                    className="w-24 text-xs text-right bg-white dark:bg-slate-800"
-                  />
+            {/* AVISO PREVENTIVO: CLIENTE COM PEDIDO ATIVO NAS ÚLTIMAS 24H (DIRETRIZ: AVISAR, NUNCA BLOQUEAR) */}
+            {recentCustomerOrders.length > 0 && !ignoredRecentOrderWarning && (
+              <div className="rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50/90 dark:bg-amber-950/30 p-3.5 shadow-sm space-y-2">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1 flex-1">
+                    <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                      Aviso: Cliente com Pedido Recente (Possível Venda Dupla)
+                    </h4>
+                    <p className="text-xs text-amber-800 dark:text-amber-300/90 leading-relaxed">
+                      Este cliente já possui o pedido{' '}
+                      <strong className="font-mono text-amber-950 dark:text-amber-100 font-bold">
+                        {recentCustomerOrders.map((o) => o.tracking_code || o.id).join(', ')}
+                      </strong>{' '}
+                      pendente/registrado hoje ({recentCustomerOrders.length}{' '}
+                      {recentCustomerOrders.length === 1 ? 'pedido ativo' : 'pedidos ativos'} nas
+                      últimas 24h).
+                    </p>
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                      Deseja lançar assim mesmo? Você pode confirmar normalmente.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-1 border-t border-amber-200 dark:border-amber-800/40">
                   <Button
                     type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveItem(idx)}
-                    disabled={items.length === 1}
-                    className="h-8 w-8 text-slate-400 hover:text-rose-500"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIgnoredRecentOrderWarning(true)}
+                    className="h-7 text-xs bg-white dark:bg-slate-900 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 hover:bg-amber-100"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    Ciente, prosseguir com nova entrega
                   </Button>
                 </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end pt-2 border-t text-sm font-bold text-slate-900 dark:text-white">
-              Total Calculado: R$ {totalPrice.toFixed(2)}
-            </div>
-          </div>
-
-          {/* Notes */}
-          <div>
-            <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Observações / Instruções de Entrega
-            </Label>
-            <Textarea
-              placeholder="Ex: Entregar na recepção, portaria libera sem interfone, etc..."
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="mt-1 text-xs resize-none bg-white dark:bg-slate-800"
-              rows={2}
-            />
-          </div>
-
-          {/* AVISO PREVENTIVO: CLIENTE COM PEDIDO ATIVO NAS ÚLTIMAS 24H (DIRETRIZ: AVISAR, NUNCA BLOQUEAR) */}
-          {recentCustomerOrders.length > 0 && !ignoredRecentOrderWarning && (
-            <div className="rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50/90 dark:bg-amber-950/30 p-3.5 shadow-sm space-y-2">
-              <div className="flex items-start gap-2.5">
-                <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <div className="space-y-1 flex-1">
-                  <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">
-                    Aviso: Cliente com Pedido Recente (Possível Venda Dupla)
-                  </h4>
-                  <p className="text-xs text-amber-800 dark:text-amber-300/90 leading-relaxed">
-                    Este cliente já possui o pedido{' '}
-                    <strong className="font-mono text-amber-950 dark:text-amber-100 font-bold">
-                      {recentCustomerOrders.map((o) => o.tracking_code || o.id).join(', ')}
-                    </strong>{' '}
-                    pendente/registrado hoje ({recentCustomerOrders.length}{' '}
-                    {recentCustomerOrders.length === 1 ? 'pedido ativo' : 'pedidos ativos'} nas
-                    últimas 24h).
-                  </p>
-                  <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                    Deseja lançar assim mesmo? Você pode confirmar normalmente.
-                  </p>
-                </div>
               </div>
-              <div className="flex justify-end gap-2 pt-1 border-t border-amber-200 dark:border-amber-800/40">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIgnoredRecentOrderWarning(true)}
-                  className="h-7 text-xs bg-white dark:bg-slate-900 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 hover:bg-amber-100"
-                >
-                  Ciente, prosseguir com nova entrega
-                </Button>
-              </div>
-            </div>
-          )}
+            )}
 
-          <DialogFooter className="gap-2 sm:gap-0 pt-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              disabled={isSubmitting}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold"
-            >
-              {isSubmitting ? 'Registrando...' : 'Emitir Pedido'}
-            </Button>
-          </DialogFooter>
-        </form>
+            <DialogFooter className="gap-2 sm:gap-0 pt-2">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                disabled={isSubmitting}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+              >
+                {isSubmitting ? 'Registrando...' : 'Emitir Pedido'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </FormErrorBoundary>
       </DialogContent>
     </Dialog>
   )
