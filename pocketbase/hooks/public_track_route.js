@@ -122,11 +122,12 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
     // Ordenar paradas anteriores por sequência crescente
     stopsBefore.sort((a, b) => a.sequence - b.sequence)
 
-    return e.json(200, {
-      ...baseResponse,
+    const finalResponse = Object.assign({}, baseResponse, {
       stops_before: stopsBefore,
       total_stops_before: stopsBefore.length,
     })
+
+    return e.json(200, finalResponse)
   } catch (globalErr) {
     console.log('Erro no endpoint de rota pública:', globalErr)
     return e.json(500, { error: 'Erro interno ao consultar rota pública.' })

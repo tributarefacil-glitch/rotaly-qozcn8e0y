@@ -25,6 +25,8 @@ import {
 import { deliveryService } from '@/services/deliveryService'
 import type { OrderRecord, CompletionReason, OrderStatus } from '@/types/delivery'
 import { toast } from 'sonner'
+import { compressImageFile, dataUrlToFile } from '@/lib/imageCompression'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 
 interface DeliveryConfirmationModalProps {
   order: OrderRecord | null
@@ -48,6 +50,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   // Módulo 2: Comprovante Digital com Foto e Assinatura
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
+  const [isCompressingPhoto, setIsCompressingPhoto] = useState(false)
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null)
   const [hasSignature, setHasSignature] = useState(false)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -169,13 +172,30 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
     }
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      setPhotoFile(file)
-      const previewUrl = URL.createObjectURL(file)
-      setPhotoPreview(previewUrl)
-      toast.success('Foto capturada com sucesso!')
+      setIsCompressingPhoto(true)
+      try {
+        // Redimensionar no cliente para máx ~1600px no lado maior e qualidade ~0.8 JPEG
+        const compressed = await compressImageFile(file, {
+          maxSide: 1600,
+          quality: 0.8,
+          mimeType: 'image/jpeg',
+        })
+        setPhotoFile(compressed)
+        const previewUrl = URL.createObjectURL(compressed)
+        setPhotoPreview(previewUrl)
+        toast.success('Foto capturada e otimizada com sucesso!')
+      } catch (err) {
+        console.warn('Erro ao comprimir foto, mantendo arquivo original:', err)
+        setPhotoFile(file)
+        const previewUrl = URL.createObjectURL(file)
+        setPhotoPreview(previewUrl)
+        toast.success('Foto anexada.')
+      } finally {
+        setIsCompressingPhoto(false)
+      }
     }
   }
 
@@ -236,14 +256,23 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       // Converter dataURL da assinatura em File se existir
       let signatureFile: File | null = null
       if (finalSignature && finalSignature.startsWith('data:image')) {
+        signatureFile = await dataUrlToFile(
+          finalSignature,
+          `signature_${order.id || 'sig'}_${Date.now()}.png`,
+        )
+      }
+
+      // Garantir que a foto anexada esteja devidamente comprimida antes de subir
+      let finalPhotoFile: File | null = photoFile
+      if (finalPhotoFile && finalPhotoFile.size > 2 * 1024 * 1024) {
         try {
-          const res = await fetch(finalSignature)
-          const blob = await res.blob()
-          signatureFile = new File([blob], `signature_${order.id || 'sig'}_${Date.now()}.png`, {
-            type: 'image/png',
+          finalPhotoFile = await compressImageFile(finalPhotoFile, {
+            maxSide: 1600,
+            quality: 0.8,
+            mimeType: 'image/jpeg',
           })
         } catch (e) {
-          console.warn('Não foi possível converter assinatura para arquivo:', e)
+          console.warn('Compressão pré-envio falhou, usando arquivo atual:', e)
         }
       }
 
@@ -298,7 +327,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       }
 
       // Preparar envio (FormData caso haja arquivos como proof_photo ou signature)
-      if (photoFile || signatureFile) {
+      if (finalPhotoFile || signatureFile) {
         const formData = new FormData()
         formData.append('status', finalStatus)
         formData.append('completion_reason', reason)
@@ -308,8 +337,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         formData.append('route_started', 'true')
         if (distanceKm > 0) formData.append('distance_km', String(distanceKm))
         if (returnTripKm > 0) formData.append('return_trip_km', String(returnTripKm))
-        if (photoFile) {
-          formData.append('proof_photo', photoFile)
+        if (finalPhotoFile) {
+          formData.append('proof_photo', finalPhotoFile)
         }
         if (signatureFile) {
           formData.append('signature', signatureFile)
@@ -354,7 +383,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       onOpenChange(false)
     } catch (err: unknown) {
       console.error('Error confirming delivery:', err)
-      toast.error('Erro ao registrar status da entrega. Tente novamente.')
+      const errorMsg = getErrorMessage(err)
+      toast.error(errorMsg || 'Erro ao registrar status da entrega. Tente novamente.')
     } finally {
       setIsSubmitting(false)
     }
@@ -500,7 +530,12 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                   )}
                 </div>
 
-                {!photoPreview ? (
+                {isCompressingPhoto ? (
+                  <div className="p-4 rounded-md border border-blue-200 bg-blue-50/50 flex items-center justify-center gap-2 text-xs text-[#0052CC] font-semibold">
+                    <span className="inline-block w-4 h-4 border-2 border-[#0052CC] border-t-transparent rounded-full animate-spin" />
+                    Otimizando tamanho da foto para envio...
+                  </div>
+                ) : !photoPreview ? (
                   <div className="grid grid-cols-2 gap-2 mt-1">
                     <Button
                       type="button"
