@@ -48,6 +48,7 @@ import type {
   LocationRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
+import { fuelAccountService } from '@/services/fuelAccountService'
 import { DEVIATION_THRESHOLD_METERS, haversineDistanceMeters } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 

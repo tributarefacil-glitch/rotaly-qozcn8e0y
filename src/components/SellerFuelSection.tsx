@@ -170,6 +170,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         deliveriesCount: unifiedAccount.deliveriesCount,
         advances: unifiedAccount.advances,
         calculationSource: unifiedAccount.calculationSource,
+        carryOverBalance: unifiedAccount.carryOverBalance,
       }
 
       return {
