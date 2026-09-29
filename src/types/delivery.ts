@@ -356,6 +356,7 @@ export interface CourierFuelAccount {
   deliveriesCount: number
   advances?: FuelAdvanceRecord[]
   calculationSource?: 'odometro' | 'gps' | 'road' | 'historico_viario' | 'viario'
+  carryOverBalance?: number
 }
 
 export type GpsFailureReason =

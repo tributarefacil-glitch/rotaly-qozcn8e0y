@@ -221,11 +221,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   }
 
   const [settingsDraft, setSettingsDraft] = useState<SettingsDraft>({
-    motoPrice: '5.59',
+    motoPrice: '6.49',
     motoCons: '35.0',
-    carroPrice: '5.59',
+    carroPrice: '6.49',
     carroCons: '12.0',
-    caminhaoPrice: '5.59',
+    caminhaoPrice: '6.49',
     caminhaoCons: '7.0',
     workStart: '08:00',
     lunchStart: '12:00',
@@ -296,7 +296,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
   // Helper para converter AppSettingsRecord em formato SettingsDraft com guarda defensiva
   const convertRecordToDraft = (appSettings?: AppSettingsRecord | null): SettingsDraft => {
-    const fallbackPrice = appSettings?.fuel_price_per_liter ?? 5.59
+    const fallbackPrice = appSettings?.fuel_price_per_liter ?? 6.49
     return {
       motoPrice: String(appSettings?.moto_fuel_price ?? fallbackPrice),
       motoCons: String(
@@ -1237,13 +1237,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       ? fuelHistoryOrders
       : orders
 
-  // Recalcular fuelAccounts de forma LAZY — somente quando a aba de combustível ou o modal de histórico estiverem ativos
-  // Consome EXCLUSIVAMENTE o motor único calculateCourierFuelMetrics via fuelAccountService / deliveryService
-  // e é alimentado por fuelHistoryOrders (dataset histórico completo sob demanda)
+  // Recalcular fuelAccounts com o motor único calculateCourierFuelMetrics via fuelAccountService / deliveryService
+  // Alimentado por fuelHistoryOrders (dataset histórico completo sob demanda)
+  // Conta corrente sempre calculada para alimentar o modal de histórico e cards de qualquer ponto de entrada
   const currentFuelAccounts = useMemo(() => {
-    if (!isFuelViewActive) {
-      return []
-    }
     return couriers.map((courier) => {
       return fuelAccountService.calculateAccountForCourier({
         courier,
@@ -1256,7 +1253,6 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       })
     })
   }, [
-    isFuelViewActive,
     couriers,
     fuelAdvances,
     activeFuelOrdersPool,
@@ -2138,7 +2134,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 value={motoPriceInput}
                                 onChange={(e) => setMotoPriceInput(e.target.value)}
                                 className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
-                                placeholder="5.59"
+                                placeholder="6.49"
                               />
                             </div>
                           </div>
@@ -2173,7 +2169,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             <p className="font-mono font-bold text-blue-600 dark:text-blue-400">
                               R${' '}
                               {(
-                                (parseFloat(motoPriceInput.replace(',', '.')) || 5.59) /
+                                (parseFloat(motoPriceInput.replace(',', '.')) || 6.49) /
                                 (parseFloat(motoConsInput.replace(',', '.')) || 35.0)
                               ).toFixed(4)}
                               /km
@@ -2181,7 +2177,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             <p className="text-[10px] text-slate-500 mt-0.5">
                               Ex: 10 km = R${' '}
                               {(
-                                (10 * (parseFloat(motoPriceInput.replace(',', '.')) || 5.59)) /
+                                (10 * (parseFloat(motoPriceInput.replace(',', '.')) || 6.49)) /
                                 (parseFloat(motoConsInput.replace(',', '.')) || 35.0)
                               ).toFixed(2)}
                             </p>
@@ -2237,7 +2233,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 value={carroPriceInput}
                                 onChange={(e) => setCarroPriceInput(e.target.value)}
                                 className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
-                                placeholder="5.59"
+                                placeholder="6.49"
                               />
                             </div>
                           </div>
@@ -2272,7 +2268,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             <p className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
                               R${' '}
                               {(
-                                (parseFloat(carroPriceInput.replace(',', '.')) || 5.59) /
+                                (parseFloat(carroPriceInput.replace(',', '.')) || 6.49) /
                                 (parseFloat(carroConsInput.replace(',', '.')) || 12.0)
                               ).toFixed(4)}
                               /km
@@ -2280,7 +2276,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             <p className="text-[10px] text-slate-500 mt-0.5">
                               Ex: 10 km = R${' '}
                               {(
-                                (10 * (parseFloat(carroPriceInput.replace(',', '.')) || 5.59)) /
+                                (10 * (parseFloat(carroPriceInput.replace(',', '.')) || 6.49)) /
                                 (parseFloat(carroConsInput.replace(',', '.')) || 12.0)
                               ).toFixed(2)}
                             </p>
@@ -2334,7 +2330,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 value={caminhaoPriceInput}
                                 onChange={(e) => setCaminhaoPriceInput(e.target.value)}
                                 className="pl-9 font-mono font-bold text-xs bg-white dark:bg-slate-900"
-                                placeholder="5.59"
+                                placeholder="6.49"
                               />
                             </div>
                           </div>
@@ -2369,7 +2365,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             <p className="font-mono font-bold text-orange-600 dark:text-orange-400">
                               R${' '}
                               {(
-                                (parseFloat(caminhaoPriceInput.replace(',', '.')) || 5.59) /
+                                (parseFloat(caminhaoPriceInput.replace(',', '.')) || 6.49) /
                                 (parseFloat(caminhaoConsInput.replace(',', '.')) || 7.0)
                               ).toFixed(4)}
                               /km
@@ -2377,7 +2373,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             <p className="text-[10px] text-slate-500 mt-0.5">
                               Ex: 10 km = R${' '}
                               {(
-                                (10 * (parseFloat(caminhaoPriceInput.replace(',', '.')) || 5.59)) /
+                                (10 * (parseFloat(caminhaoPriceInput.replace(',', '.')) || 6.49)) /
                                 (parseFloat(caminhaoConsInput.replace(',', '.')) || 7.0)
                               ).toFixed(2)}
                             </p>
@@ -4273,6 +4269,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         offRouteEvents={offRouteEvents}
         locations={locations}
         settings={settings}
+        initialPeriodFilter={fuelPeriodFilter}
+        advances={fuelAdvances}
       />
 
       {/* ================= MODAL: CADASTRAR NOVO VENDEDOR ================= */}

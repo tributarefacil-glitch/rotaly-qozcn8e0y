@@ -96,6 +96,7 @@ interface CourierDeliveryHistoryModalProps {
   locations?: LocationRecord[]
   settings: AppSettingsRecord | null
   initialPeriodFilter?: 'all' | 'today' | 'week' | 'month'
+  advances?: FuelAdvanceRecord[]
 }
 
 export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalProps> = ({
@@ -108,10 +109,26 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   locations: externalLocations,
   settings,
   initialPeriodFilter = 'month',
+  advances: externalAdvances,
 }) => {
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>(
     initialPeriodFilter,
   )
+  const [officialSettings, setOfficialSettings] = useState<AppSettingsRecord | null>(settings)
+
+  // Assegurar que settings venha do global_settings oficial, nunca sintetizado/vazio
+  React.useEffect(() => {
+    if (settings && settings.fuel_price_per_liter && settings.fuel_price_per_liter > 0) {
+      setOfficialSettings(settings)
+    } else {
+      deliveryService
+        .getSettings()
+        .then((s) => {
+          setOfficialSettings(s)
+        })
+        .catch(() => null)
+    }
+  }, [settings])
 
   // Sincronizar período padrão quando o modal for aberto ou initialPeriodFilter mudar
   React.useEffect(() => {
@@ -162,16 +179,68 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
   // Obter parâmetros de combustível específicos do entregador
   const fuelParams = useMemo(() => {
+    const effectiveSettings = officialSettings || settings
     if (courier?.consumption_kml && courier.consumption_kml > 0) {
-      const defaultSettings = deliveryService.getVehicleFuelParams(settings, courier?.vehicle_type)
+      const defaultSettings = deliveryService.getVehicleFuelParams(
+        effectiveSettings,
+        courier?.vehicle_type,
+      )
       return {
         consumptionKml: courier.consumption_kml,
         pricePerLiter: defaultSettings.pricePerLiter,
         category: defaultSettings.category,
       }
     }
-    return deliveryService.getVehicleFuelParams(settings, courier?.vehicle_type)
-  }, [settings, courier])
+    return deliveryService.getVehicleFuelParams(effectiveSettings, courier?.vehicle_type)
+  }, [officialSettings, settings, courier])
+
+  // Lista consolidada de adiantamentos do entregador
+  const allCourierAdvances = useMemo(() => {
+    if (externalAdvances && externalAdvances.length > 0) {
+      return externalAdvances.filter((a) => a.courier_id === courier?.id)
+    }
+    if (fuelAccount?.advances && fuelAccount.advances.length > 0) {
+      return fuelAccount.advances.filter((a) => a.courier_id === courier?.id)
+    }
+    if (fuelAccount && fuelAccount.totalAdvances > 0 && courier?.id) {
+      return [
+        {
+          id: `synthetic_adv_${courier.id}`,
+          courier_id: courier.id,
+          amount: fuelAccount.totalAdvances,
+          date: new Date().toISOString(),
+          collectionId: 'fuel_advances',
+          collectionName: 'fuel_advances',
+          created: new Date().toISOString(),
+          updated: new Date().toISOString(),
+        } as any,
+      ]
+    }
+    return []
+  }, [externalAdvances, fuelAccount, courier?.id])
+
+  // Calcular o carryOverBalance acumulado até o mês anterior
+  const carryOverBalance = useMemo(() => {
+    if (!courier?.id) return 0
+    if (fuelAccount?.carryOverBalance !== undefined) {
+      return fuelAccount.carryOverBalance
+    }
+    return fuelAccountService.calculateCarryOverBalance({
+      courierId: courier.id,
+      courierVehicleType: courier.vehicle_type,
+      advances: allCourierAdvances,
+      orders,
+      settings: officialSettings || settings,
+    })
+  }, [
+    courier?.id,
+    courier?.vehicle_type,
+    fuelAccount?.carryOverBalance,
+    allCourierAdvances,
+    orders,
+    officialSettings,
+    settings,
+  ])
 
   // Executar o motor consolidado de telemetria e combustível (o mesmo motor do useCourierFuelMetrics)
   // Agrupa por lotes de rota, desconta desvios/paradas de rota e rateia proporcionalmente sem duplicações
@@ -179,34 +248,26 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   const consolidatedMetrics = useMemo(() => {
     if (!courier) return null
 
-    const advancesList =
-      fuelAccount?.advances && fuelAccount.advances.length > 0
-        ? fuelAccount.advances
-        : fuelAccount && fuelAccount.totalAdvances > 0
-          ? [
-              {
-                id: `synthetic_adv_${courier.id}`,
-                courier_id: courier.id,
-                amount: fuelAccount.totalAdvances,
-                date: new Date().toISOString(),
-                collectionId: 'fuel_advances',
-                collectionName: 'fuel_advances',
-                created: new Date().toISOString(),
-                updated: new Date().toISOString(),
-              } as any,
-            ]
-          : []
-
     return calculateCourierFuelMetrics({
       courier,
       orders,
       locations: allLocations,
       offRouteEvents,
-      advances: advancesList,
-      settings,
+      advances: allCourierAdvances,
+      settings: officialSettings || settings,
       periodFilter: 'all',
+      carryOverBalance,
     })
-  }, [courier, orders, allLocations, offRouteEvents, fuelAccount, settings])
+  }, [
+    courier,
+    orders,
+    allLocations,
+    offRouteEvents,
+    allCourierAdvances,
+    officialSettings,
+    settings,
+    carryOverBalance,
+  ])
 
   // Eventos de desvio e paradas do entregador para exibição na auditoria do modal:
   const courierEvents = useMemo(() => {
@@ -399,30 +460,47 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     })
   }, [historyItems, periodFilter, statusFilter, searchQuery])
 
-  // Totais do período filtrado
+  // Totais do período filtrado com CARRY-OVER contínuo
   const metricsSummary = useMemo(() => {
-    // Adiantamentos: obtidos de fuelAccount ou consolidatedMetrics
-    let totalAdiantado = 0
-    if (
-      fuelAccount &&
-      typeof fuelAccount.totalAdvances === 'number' &&
-      fuelAccount.totalAdvances > 0
-    ) {
-      totalAdiantado = fuelAccount.totalAdvances
-    } else if (consolidatedMetrics && consolidatedMetrics.totalAdvances > 0) {
-      totalAdiantado = consolidatedMetrics.totalAdvances
-    } else if (fuelAccount?.advances && fuelAccount.advances.length > 0) {
-      totalAdiantado = fuelAccount.advances.reduce((s, a) => s + (Number(a.amount) || 0), 0)
-    }
+    const now = new Date()
 
-    // Regra "linha = cabeçalho": soma exata das linhas da tabela
+    // Filtrar adiantamentos de acordo com o periodFilter
+    const filteredAdvances = allCourierAdvances.filter((a) => {
+      if (periodFilter === 'all') return true
+      const advDate = new Date(a.date || a.created || Date.now())
+      if (periodFilter === 'today') {
+        return (
+          advDate.getDate() === now.getDate() &&
+          advDate.getMonth() === now.getMonth() &&
+          advDate.getFullYear() === now.getFullYear()
+        )
+      }
+      if (periodFilter === 'week') {
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        return advDate >= sevenDaysAgo
+      }
+      if (periodFilter === 'month') {
+        return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
+      }
+      return true
+    })
+
+    const totalAdiantado = filteredAdvances.reduce((s, a) => s + (Number(a.amount) || 0), 0)
+
+    // Regra "linha = cabeçalho": soma exata das linhas da tabela do período
     const totalKm = filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
     const totalFuelCost = filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
     const totalLiters = filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
-    // Saldo = Total Adiantado - Combustível Gasto
-    const saldoContaCorrente = totalAdiantado - totalFuelCost
+
+    // Saldo:
+    // Se periodFilter === 'month', saldo = carryOverBalance + adiantamentos do mês - gasto do mês
+    // Se periodFilter === 'all', saldo = total adiantamentos históricos - total gasto histórico
+    let saldoContaCorrente = totalAdiantado - totalFuelCost
+    if (periodFilter === 'month') {
+      saldoContaCorrente = carryOverBalance + totalAdiantado - totalFuelCost
+    }
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
@@ -433,8 +511,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       saldoContaCorrente: Number(saldoContaCorrente.toFixed(2)),
       totalAdiantado: Number(totalAdiantado.toFixed(2)),
       totalDeliveries: filteredItems.length,
+      carryOverBalance: Number(carryOverBalance.toFixed(2)),
     }
-  }, [filteredItems, fuelAccount, consolidatedMetrics])
+  }, [allCourierAdvances, periodFilter, filteredItems, carryOverBalance])
 
   // Exportar dados em CSV com KM Real e KM de Desvios em colunas separadas
   const handleExportCSV = () => {
@@ -579,6 +658,11 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
               </p>
               <span className="text-[10px] text-slate-400 block mt-0.5">
                 {isSaldoPositivo ? 'Crédito disponível' : 'Saldo a repor'}
+                {periodFilter === 'month' && (
+                  <span className="block text-[9px] text-slate-400 font-mono mt-0.5">
+                    (Carry-over mês anterior: R$ {metricsSummary.carryOverBalance.toFixed(2)})
+                  </span>
+                )}
               </span>
             </div>
 

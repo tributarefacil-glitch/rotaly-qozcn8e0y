@@ -1741,13 +1741,13 @@ export const deliveryService = {
     return {
       id: 'default',
       key: 'global_settings',
-      fuel_price_per_liter: 5.59,
+      fuel_price_per_liter: 6.49,
       fuel_consumption_kml: 35.0,
-      moto_fuel_price: 5.59,
+      moto_fuel_price: 6.49,
       moto_consumption_kml: 35.0,
-      carro_fuel_price: 5.59,
+      carro_fuel_price: 6.49,
       carro_consumption_kml: 12.0,
-      caminhao_fuel_price: 5.59,
+      caminhao_fuel_price: 6.49,
       caminhao_consumption_kml: 7.0,
       work_start_time: '08:00',
       lunch_start_time: '12:00',
@@ -1780,7 +1780,7 @@ export const deliveryService = {
     category: 'moto' | 'carro' | 'caminhao' | 'bicicleta'
   } {
     const category = this.normalizeVehicleCategory(vehicleType)
-    const baseFallbackPrice = settings?.fuel_price_per_liter || 5.59
+    const baseFallbackPrice = settings?.fuel_price_per_liter || 6.49
 
     if (category === 'bicicleta') {
       return {
@@ -2796,7 +2796,7 @@ export const deliveryService = {
 
   // Calculate Fuel Cost
   // Formula: Distância (km) * Preço do Litro (R$/L) / Consumo (km/L)
-  calculateFuelCost(distanceKm: number, fuelPrice = 5.59, consumptionKml = 35.0): number {
+  calculateFuelCost(distanceKm: number, fuelPrice = 6.49, consumptionKml = 35.0): number {
     if (consumptionKml <= 0 || fuelPrice <= 0 || distanceKm <= 0) return 0
     return (distanceKm * fuelPrice) / consumptionKml
   },

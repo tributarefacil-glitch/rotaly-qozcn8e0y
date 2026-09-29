@@ -92,10 +92,12 @@ export interface CourierFuelCalculationResult {
   jointDeliveriesOrdersCount: number
   jointSavedKm: number
   jointSavedFuelCost: number
+  carryOverBalance?: number
 }
 
 export interface UseCourierFuelOptions {
   periodFilter?: 'all' | 'month' | 'week' | 'today'
+  carryOverBalance?: number
 }
 
 /**
@@ -120,6 +122,7 @@ export function calculateCourierFuelMetrics(params: {
     offRouteEvents,
     settings,
     periodFilter = 'all',
+    carryOverBalance = 0,
   } = params
 
   if (!courier?.id) {
@@ -146,6 +149,7 @@ export function calculateCourierFuelMetrics(params: {
       jointDeliveriesOrdersCount: 0,
       jointSavedKm: 0,
       jointSavedFuelCost: 0,
+      carryOverBalance: 0,
     }
   }
 
@@ -623,7 +627,14 @@ export function calculateCourierFuelMetrics(params: {
     totalSpent = Number(orderCalculations.reduce((acc, c) => acc + c.fuelCost, 0).toFixed(2))
   }
 
-  const balance = totalAdvances - totalSpent
+  // REGRA DE OURO DO DONO (CARRY-OVER MENSAL DE CONTA CORRENTE):
+  // O saldo dos entregadores sempre é levado para o próximo mês (contínuo).
+  // O KM e combustível apurados sempre são calculados dentro do mês fechado.
+  // No filtro de mês ('month'): saldo = carryOverBalance (saldo acumulado até o mês anterior) + adiantamentos do mês - gasto do mês
+  let balance = totalAdvances - totalSpent
+  if (periodFilter === 'month') {
+    balance = carryOverBalance + totalAdvances - totalSpent
+  }
 
   const calculationSource: 'odometro' | 'historico_viario' | 'gps' = hasAnyOdometer
     ? 'odometro'
@@ -644,6 +655,7 @@ export function calculateCourierFuelMetrics(params: {
     advanceCount: courierAdvances.length,
     deliveriesCount: eligibleOrders.length,
     advances: courierAdvances,
+    carryOverBalance: Number(carryOverBalance.toFixed(2)),
   }
 
   return {
@@ -668,6 +680,7 @@ export function calculateCourierFuelMetrics(params: {
     jointDeliveriesOrdersCount,
     jointSavedKm: Number(jointSavedKm.toFixed(1)),
     jointSavedFuelCost: Number(jointSavedFuelCost.toFixed(2)),
+    carryOverBalance: Number(carryOverBalance.toFixed(2)),
   }
 }
 
@@ -682,6 +695,7 @@ export function useCourierFuelMetrics(params: {
   offRouteEvents: OffRouteEventRecord[]
   settings: Partial<AppSettingsRecord> | null
   periodFilter?: 'all' | 'month' | 'week' | 'today'
+  carryOverBalance?: number
 }): CourierFuelCalculationResult {
   const {
     courier,
@@ -691,6 +705,7 @@ export function useCourierFuelMetrics(params: {
     offRouteEvents,
     settings,
     periodFilter = 'all',
+    carryOverBalance,
   } = params
 
   return useMemo(() => {
@@ -702,6 +717,16 @@ export function useCourierFuelMetrics(params: {
       offRouteEvents,
       settings,
       periodFilter,
+      carryOverBalance,
     })
-  }, [courier, advances, orders, locations, offRouteEvents, settings, periodFilter])
+  }, [
+    courier,
+    advances,
+    orders,
+    locations,
+    offRouteEvents,
+    settings,
+    periodFilter,
+    carryOverBalance,
+  ])
 }

@@ -22,11 +22,11 @@ export interface UnifiedCourierFuelAccount {
   balance: number
   advanceCount: number
   deliveriesCount: number
-  advances?: FuelAdvanceRecord[]
-  calculationSource: 'odometro' | 'gps' | 'historico_viario'
-  metrics: CourierFuelCalculationResult
+  advances: FuelAdvanceRecord[]
+  calculationSource?: 'odometro' | 'historico_viario' | 'gps'
+  metrics?: CourierFuelCalculationResult
+  carryOverBalance?: number
 }
-
 export class FuelAccountService {
   private static instance: FuelAccountService
 
@@ -213,6 +213,7 @@ export class FuelAccountService {
     locations?: LocationRecord[]
     offRouteEvents?: OffRouteEventRecord[]
     periodFilter?: 'all' | 'month' | 'week'
+    carryOverBalance?: number
   }): UnifiedCourierFuelAccount {
     const {
       courier,
@@ -222,7 +223,20 @@ export class FuelAccountService {
       locations = [],
       offRouteEvents = [],
       periodFilter = 'all',
+      carryOverBalance: providedCarryOver,
     } = params
+
+    // Se o filtro for 'month', calculamos ou usamos o carryOverBalance acumulado até o mês anterior
+    let carryOverBalance = providedCarryOver ?? 0
+    if (providedCarryOver === undefined && periodFilter === 'month') {
+      carryOverBalance = this.calculateCarryOverBalance({
+        courierId: courier.id,
+        courierVehicleType: courier.vehicle_type,
+        advances,
+        orders,
+        settings,
+      })
+    }
 
     const metrics = calculateCourierFuelMetrics({
       courier,
@@ -232,6 +246,7 @@ export class FuelAccountService {
       offRouteEvents,
       settings,
       periodFilter,
+      carryOverBalance,
     })
 
     const isBicycle =
@@ -256,7 +271,63 @@ export class FuelAccountService {
       advances: courierAdvances,
       calculationSource: metrics.calculationSource,
       metrics,
+      carryOverBalance,
     }
+  }
+
+  /**
+   * Computa o carry-over de conta corrente acumulado até o mês anterior.
+   * Regra inviolável:
+   * "O saldo dos entregadores sempre é levado para o próximo mês, saldo negativo ou positivo de conta corrente.
+   *  O km sempre será calculado dentro do mês fechado."
+   *
+   * carryOverBalance = (adiantamentos acumulados até antes do mês atual) - (combustível das rotas até antes do mês atual)
+   */
+  calculateCarryOverBalance(params: {
+    courierId: string
+    courierVehicleType?: string
+    advances: FuelAdvanceRecord[]
+    orders: OrderRecord[]
+    settings: Partial<AppSettingsRecord> | null
+  }): number {
+    const { courierId, courierVehicleType, advances, orders, settings } = params
+    const now = new Date()
+    // Primeiro milissegundo do mês atual (ano e mês locais/SP)
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+
+    // 1. Adiantamentos até o mês anterior
+    const pastAdvances = advances.filter((a) => {
+      if (a.courier_id !== courierId) return false
+      const advDate = new Date(a.date || a.created || Date.now())
+      return advDate < currentMonthStart
+    })
+    const pastAdvancesTotal = pastAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+
+    // 2. Pedidos até o mês anterior
+    const pastOrders = orders.filter((o) => {
+      if (o.courier_id !== courierId) return false
+      const oDate = new Date(o.created || Date.now())
+      return oDate < currentMonthStart
+    })
+
+    if (pastOrders.length === 0) {
+      return Number(pastAdvancesTotal.toFixed(2))
+    }
+
+    // Calcular gasto das ordens passadas com as regras de combustível
+    const pastMetrics = calculateCourierFuelMetrics({
+      courier: { id: courierId, vehicle_type: courierVehicleType } as UserRecord,
+      advances: pastAdvances,
+      orders: pastOrders,
+      locations: [],
+      offRouteEvents: [],
+      settings,
+      periodFilter: 'all',
+      carryOverBalance: 0,
+    })
+
+    const pastSpentTotal = pastMetrics.vehicleCategory === 'bicicleta' ? 0 : pastMetrics.totalSpent
+    return Number((pastAdvancesTotal - pastSpentTotal).toFixed(2))
   }
 
   /**
@@ -303,8 +374,14 @@ export class FuelAccountService {
           }),
         pb
           .collection<AppSettingsRecord>('app_settings')
-          .getFirstListItem("key = 'main_settings'", { requestKey: null })
-          .catch(() => null),
+          .getFirstListItem("key = 'global_settings'", { requestKey: null })
+          .catch(async () => {
+            try {
+              return await deliveryService.getSettings()
+            } catch {
+              return null
+            }
+          }),
         pb
           .collection<LocationRecord>('locations')
           .getFullList({
@@ -360,8 +437,14 @@ export class FuelAccountService {
       this.getFuelAdvances(courierIds, targetCompanyId),
       pb
         .collection<AppSettingsRecord>('app_settings')
-        .getFirstListItem("key = 'main_settings'", { requestKey: null })
-        .catch(() => null),
+        .getFirstListItem("key = 'global_settings'", { requestKey: null })
+        .catch(async () => {
+          try {
+            return await deliveryService.getSettings()
+          } catch {
+            return null
+          }
+        }),
       pb
         .collection<LocationRecord>('locations')
         .getFullList({

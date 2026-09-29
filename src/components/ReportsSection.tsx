@@ -101,7 +101,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   const [selectedCourierForModal, setSelectedCourierForModal] = useState<UserRecord | null>(null)
   const [isCourierModalOpen, setIsCourierModalOpen] = useState(false)
 
-  const fuelPrice = settings?.fuel_price_per_liter || 5.59
+  const fuelPrice = settings?.fuel_price_per_liter || 6.49
   const fuelConsumption = settings?.fuel_consumption_kml || 35.0
 
   // Se sellers não foi passado via props, carregar do deliveryService
