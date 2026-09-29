@@ -76,9 +76,12 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
     new Map(),
   )
 
+  // Versão de sincronização global para invalidar caches legados e forçar recarga imediata
+  const FUEL_GLOBAL_VERSION = 'v0088_recalc_global'
+
   const fetchFuelHistoryOrders = useCallback(
     async (forceRefresh = false) => {
-      const cacheKey = fuelPeriodFilter
+      const cacheKey = `${fuelPeriodFilter}_${FUEL_GLOBAL_VERSION}`
       const now = Date.now()
       const cached = fuelOrdersCacheRef.current.get(cacheKey)
 
