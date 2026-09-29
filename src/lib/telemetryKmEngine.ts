@@ -42,9 +42,7 @@ export function getOrderRoadDistanceFromBase(order: OrderRecord): number {
 
   if (custLat !== 0 && custLng !== 0) {
     const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
-    const directKm = directMeters / 1000
-    // Fator mínimo de rota urbana/rodoviária 1.3x
-    const roadKm = directKm * 1.3
+    const roadKm = directMeters / 1000
     return Math.max(roadKm, 0.8)
   }
 
@@ -70,7 +68,7 @@ export function calculateDeliveryRouteWeight(order: OrderRecord): number {
   if (custLat !== 0 && custLng !== 0) {
     const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
     const directKm = directMeters / 1000
-    roadDist = Math.max(directKm * 1.3, 0.8)
+    roadDist = Math.max(directKm, 0.8)
   }
 
   // Se distance_km foi informado e é maior que roadDist, respeitamos a distância viária real salva
@@ -316,9 +314,7 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
       return false
     }
     // Pontos com status offline ou falha de sinal reportando accuracy 0 ou indefinida
-    // (ex.: gps_status='offline' ou gps_reason='weak_signal' ou accuracy <= 0 quando sem sinal)
-    // são coordenadas estimadas/imprecisas do fallback de erro do aparelho e NÃO devem passar
-    // no filtro de qualidade como "precisão perfeita de 0 metros".
+    // são coordenadas estimadas/imprecisas do fallback de erro do aparelho
     const isWeakOrOfflineSignal =
       p.gps_status === 'offline' ||
       p.gps_reason === 'weak_signal' ||
@@ -343,9 +339,6 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
   }
 
   // Segmentação estrita entre pontos ao vivo (offline_buffered !== true) e pontos do buffer offline (offline_buffered === true).
-  // A sincronização em lote do buffer offline grava pontos com timestamps de inserção muito próximos
-  // intercalados com os pontos ao vivo mais recentes. Para nunca somar deslocamentos fantasmas de ida-e-volta
-  // entre o ponto ao vivo e os pontos do buffer, particionamos a lista em sequências contíguas por flag.
   type Segment = { isOffline: boolean; points: LocationRecord[] }
   const segments: Segment[] = []
   let currentSegment: Segment | null = null
@@ -361,6 +354,11 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
   }
 
   // Filtrar ruído DENTRO de cada segmento contíguo individualmente
+  // REGRAS RIGOROSAS ANTI-JITTER & REJEIÇÃO DE SPIKES:
+  // - Descartar sensor com velocidade < 1.2 km/h (veículo parado)
+  // - Descartar deslocamento < 12m em intervalos < 45s (deriva de antena/jitter)
+  // - Zerar deslocamento quando consecutivo dentro da precisão (accuracy)
+  // - Rejeitar saltos acima de 90 km/h (moto/veículo) ou 30 km/h (bicicleta) registrando km descartado
   const cleanedPoints: LocationRecord[] = []
 
   for (const segment of segments) {
@@ -379,16 +377,31 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
 
       const distMeters = haversineDistanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
 
-      // (c) Duplicados (< 10 s e < 5 m) ou coordenadas idênticas consecutivas sem movimento
-      if (distMeters < 5 && (dtSeconds < 10 || distMeters === 0)) {
+      // Regra A: Sensor reporta velocidade explícita < 1.2 km/h (0.333 m/s) e deslocamento residual insignificante
+      if (
+        typeof curr.speed === 'number' &&
+        curr.speed >= 0 &&
+        curr.speed < 0.333 &&
+        distMeters < 25
+      ) {
+        noiseCount++
+        continue
+      }
+
+      // Regra B: Jitter estacionário — deslocamento < 12 m em menos de 45 segundos (veículo parado/semáforo/antena flutuando)
+      if (distMeters < 12 && dtSeconds < 45) {
+        noiseCount++
+        continue
+      }
+
+      // Regra C: O ponto está dentro do raio de precisão (accuracy) de ambas as leituras
+      const combinedAccuracy = Math.max(curr.accuracy || 10, prev.accuracy || 10)
+      if (distMeters <= combinedAccuracy && dtSeconds < 60) {
         noiseCount++
         continue
       }
 
       // Se for segmento offline sincronizado em lote, os timestamps criados são quase idênticos (dt < 1s).
-      // A ordem relativa dos pontos preserva a rota cronológica real de captura do entregador.
-      // Nesse caso (segment.isOffline), validamos apenas saltos anômalos por distância (> 15 km),
-      // enquanto para segmentos ao vivo aplicamos o filtro clássico de velocidade implícita > 120 km/h.
       if (segment.isOffline) {
         if (distMeters > 15000) {
           noiseCount++
@@ -397,7 +410,8 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
         }
       } else {
         const speedKmh = (distMeters / dtSeconds) * 3.6
-        if (speedKmh > 120) {
+        // Regra D: Limiar rigoroso de velocidade (90 km/h para motos/carros). Acima disso é spike/salto GPS.
+        if (speedKmh > 90) {
           noiseCount++
           discardedNoiseMeters += distMeters
           continue
@@ -420,7 +434,7 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
       )
       const speed01 = (d01 / t01) * 3.6
 
-      if (speed01 > 120 || (d01 > 15000 && d12 < 3000)) {
+      if (speed01 > 90 || (d01 > 15000 && d12 < 3000)) {
         segValid.shift()
         noiseCount++
         discardedNoiseMeters += d01
@@ -486,13 +500,7 @@ export function calculateRealKmForOrder(params: {
     plannedReturnKm = 0
   }
 
-  if (
-    plannedBaseKm === 0 &&
-    (order.status === 'address_error' || order.status === 'client_absent' || order.route_started)
-  ) {
-    plannedBaseKm = 4.5
-    if (plannedReturnKm === 0 && !isDestAtBase) plannedReturnKm = 4.5
-  }
+  // Se plannedBaseKm for 0 e não houver distância, NÃO inventar 4.5 km arbitrário
   const plannedTotalKm = plannedBaseKm + plannedReturnKm
   const hasReturnKm = plannedReturnKm > 0
 
@@ -521,17 +529,32 @@ export function calculateRealKmForOrder(params: {
 
   const discardedNoiseKm = sanitized.discardedNoiseKm || 0
 
+  const isCompletedOrAttempted =
+    order.status === 'delivered' ||
+    order.status === 'client_absent' ||
+    order.status === 'address_error' ||
+    (order.status === 'cancelled' && Boolean(order.route_started_at || order.actual_arrival))
+
   // Se não houver telemetria GPS suficiente (< 2 pontos válidos)
   if (validPoints.length < 2) {
     // Aplicar hierarquia: Odômetro > Histórico Viário > Planejado
-    let officialKmFallback = Number(plannedTotalKm.toFixed(1))
+    // Regra dura: NÃO INVENTAR NÚMEROS. Se não houver dados, o valor é 0
+    let officialKmFallback = 0
     let source: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
+    let hasData = false
+
     if (odometerDifference && odometerDifference > 0) {
       officialKmFallback = odometerDifference
       source = 'odometro'
+      hasData = true
     } else if (routeTotalRoadKm > 0) {
       officialKmFallback = routeTotalRoadKm
       source = 'historico_viario'
+      hasData = true
+    } else if (isCompletedOrAttempted && plannedTotalKm > 0) {
+      officialKmFallback = Number(plannedTotalKm.toFixed(1))
+      source = 'historico_viario'
+      hasData = true
     }
 
     return {
@@ -548,7 +571,9 @@ export function calculateRealKmForOrder(params: {
       hasReturnKm,
       calculationSource: source,
       odometerKm: odometerDifference || undefined,
-      auditNotes: `Cálculo via ${source === 'odometro' ? 'Odômetro da Moto' : 'Histórico Viário de Rotas'}.`,
+      auditNotes: hasData
+        ? `Cálculo via ${source === 'odometro' ? 'Odômetro da Moto' : 'Trajeto Viário das Paradas'}.`
+        : 'Sem telemetria GPS nem odômetro ou trajeto viário gravado.',
     }
   }
 
@@ -625,94 +650,39 @@ export function calculateRealKmForOrder(params: {
   const rawDeviationKm = rawDeviationMeters / 1000
   const rawTotalGpsKm = (rawOfficialMeters + rawDeviationMeters) / 1000
 
-  // 7. Fator de Correção de Sinuosidade e Amostragem (Sinuosity & Curvature Compensation)
-  // Amostragens de GPS em intervalos de 30 segundos (ou com gaps de sinal em túneis/vias expressas)
-  // cortam curvas de ruas, viadutos e contornos viários, gerando cordas retas e subestimando
-  // em ~20% a 30% a distância real percorrida no asfalto (comparada ao odômetro do veículo).
-  //
-  // Se houver pontos de GPS reais válidos:
-  // Calculamos a distância média entre amostras e o tempo decorrido.
-  let curvatureFactor = 1.0
+  // 7. REGRA DURA DO USUÁRIO: PROIBIDO MULTIPLICADORES ARTIFICIAIS (*1.31, *1.25).
+  // O deslocamento por telemetria GPS é 100% puro e medido a partir dos pontos reais saneados.
+  // Nenhum fator artificial de inflação deve ser multiplicado.
+  const curvatureFactor = 1.0
+  const adjustedOfficialKm = rawOfficialKm
+  const adjustedDeviationKm = rawDeviationKm
 
-  if (validPoints.length >= 2) {
-    const firstPointTime = new Date(validPoints[0].created).getTime()
-    const lastPointTime = new Date(validPoints[validPoints.length - 1].created).getTime()
-    const durationMinutes = (lastPointTime - firstPointTime) / (60 * 1000)
-    const averageStepSeconds =
-      durationMinutes > 0 ? (durationMinutes * 60) / (validPoints.length - 1) : 30
+  // 8. HIERARQUIA DE FONTES EXIGIDA:
+  // Prioridade 1 = Odômetro físico informado pelo entregador (odometro_final - odometro_inicial ou km_odometro)
+  // Prioridade 2 = Trajeto viário das paradas da rota (total_route_with_return_km do lote viário ou trajeto planejado viário)
+  // Prioridade 3 = Telemetria GPS saneada (descontando desvios fora da rota)
+  // REGRA DE PROTEÇÃO AO ENTREGADOR: Falha transitória de GPS / perda de sinal NUNCA reduz o km do entregador
+  // (se o GPS saneado for menor que o trajeto viário planejado, usa o trajeto viário planejado).
 
-    // Se o intervalo médio entre pontos for >= 15 segundos ou o trajeto bruto for de longa distância
-    // Aplicamos o fator padrão de sinuosidade viária urbana/rodoviária (1.25 a 1.30)
-    if (averageStepSeconds >= 20 || rawTotalGpsKm >= 5.0) {
-      curvatureFactor = 1.25
-    }
-  }
-
-  // Fator aplicado proporcionalmente sobre o deslocamento oficial e desvios
-  let adjustedOfficialKm = rawOfficialKm * curvatureFactor
-  let adjustedDeviationKm = rawDeviationKm * curvatureFactor
-
-  // 8. Conciliação com Odômetro Real e Distância Mínima Viária Planejada:
-  // REGRA 4 DO USUÁRIO: Sem sinal nunca reduz km do entregador: cobrir lacunas de GPS com o percurso viário do sistema.
-  // Garantir officialRealKm = max(km viário da rota, km bruto GPS) quando houver gaps.
-  // Aplica para entregas entregues ou com tentativa no local (client_absent, address_error, desistência no local).
-  const isCompletedOrAttempted =
-    order.status === 'delivered' ||
-    order.status === 'client_absent' ||
-    order.status === 'address_error' ||
-    (order.status === 'cancelled' && Boolean(order.route_started_at || order.actual_arrival))
-
-  if (isCompletedOrAttempted) {
-    const isReasonableDistance = plannedBaseKm > 0 && rawOfficialKm <= plannedBaseKm * 2.5
-    if (plannedBaseKm > 0 && rawOfficialKm >= plannedBaseKm * 0.85 && isReasonableDistance) {
-      // Quando a corda GPS reta foi registrada em amostragem esparsa (~30s) e a entrega foi realizada
-      // ou tentada no local dentro da rota planejada, incorpora o traçado viário completo (+31% sobre a corda reta).
-      adjustedOfficialKm = Math.max(adjustedOfficialKm, rawOfficialKm * 1.31)
-      if (rawDeviationKm > 0) {
-        adjustedDeviationKm = rawDeviationKm * 1.31
-      }
-    } else if (plannedBaseKm > 0 && adjustedOfficialKm < plannedBaseKm) {
-      // Regra 4: Se o GPS registrou menos por perda de sinal, eleva ao km viário planejado
-      adjustedOfficialKm = plannedBaseKm
-    }
-  }
-
-  // Garantir proporcionalidade para entregas com telemetria
-  if (
-    isCompletedOrAttempted &&
-    adjustedOfficialKm < 1.0 &&
-    rawTotalGpsKm >= 1.0 &&
-    rawTotalGpsKm < 5.0
-  ) {
-    adjustedOfficialKm = rawTotalGpsKm * curvatureFactor * 0.85
-    adjustedDeviationKm = rawTotalGpsKm * curvatureFactor * 0.15
-  }
-
-  const finalTotalGpsKm = adjustedOfficialKm + adjustedDeviationKm
-
-  // HIERARQUIA DE PRECEDÊNCIA EXIGIDA PELO USUÁRIO (REGRAS 3, 4 E 6):
-  // - PRIORIDADE 1: Odômetro da moto (odometro_final − odometro_inicial da rota), se informado.
-  // - PRIORIDADE 2: Histórico viário das rotas do entregador (total_route_with_return_km da rota no banco: Base -> paradas -> retorno).
-  // - PRIORIDADE 3: GPS serve para apurar deslocamento e auditoria de desvios (>600m).
-  //   REGRA 4: Sem sinal NUNCA reduz km do entregador. officialRealKm = max(km viário da rota, km bruto GPS/ajustado).
   let finalOfficialKm = Number(adjustedOfficialKm.toFixed(1))
-  let calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
+  let calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'gps'
 
   if (odometerDifference && odometerDifference > 0) {
-    // Prioridade 1: Odômetro físico
+    // Prioridade 1: Odômetro Físico Real Registrado
     finalOfficialKm = odometerDifference
     calculationSource = 'odometro'
   } else if (routeTotalRoadKm > 0) {
-    // Prioridade 2: Histórico viário do banco (Regra 4: max(km viário da rota, km GPS apurado))
+    // Prioridade 2: Trajeto viário das paradas gravado na rota
+    // Falha de GPS nunca reduz o km oficial: max(trajeto viário, GPS medido)
     finalOfficialKm = Math.max(routeTotalRoadKm, finalOfficialKm)
     calculationSource = 'historico_viario'
-  } else if (plannedTotalKm > 0) {
-    // Regra 4: Sem sinal nunca reduz km do entregador -> max(km planejado viário, km GPS)
+  } else if (isCompletedOrAttempted && plannedTotalKm > 0) {
+    // Falha transitória de GPS nunca reduz: usa o trajeto viário planejado
     finalOfficialKm = Math.max(plannedTotalKm, finalOfficialKm)
-    calculationSource = 'historico_viario'
-  } else {
-    calculationSource = 'gps'
+    calculationSource = finalOfficialKm > adjustedOfficialKm ? 'historico_viario' : 'gps'
   }
+
+  const finalTotalGpsKm = adjustedOfficialKm + adjustedDeviationKm
 
   return {
     officialRealKm: Number(finalOfficialKm.toFixed(1)),
@@ -733,8 +703,8 @@ export function calculateRealKmForOrder(params: {
       calculationSource === 'odometro'
         ? 'Odômetro da Moto'
         : calculationSource === 'historico_viario'
-          ? 'Histórico Viário de Rotas'
-          : 'Telemetria GPS'
-    }. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km.`,
+          ? 'Trajeto Viário das Paradas'
+          : 'Telemetria GPS Saneada'
+    }. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
   }
 }

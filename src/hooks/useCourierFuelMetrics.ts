@@ -393,19 +393,21 @@ export function calculateCourierFuelMetrics(params: {
     }, 0)
 
     // APLICAR HIERARQUIA NO LOTE DA ROTA:
-    // PRIORIDADE 1: Odômetro da moto, se informado
-    // PRIORIDADE 2: Histórico viário de rotas (total_route_with_return_km)
-    // PRIORIDADE 3: GPS (nunca reduz o histórico viário oficial)
+    // PRIORIDADE 1: Odômetro da moto (se informado pelo entregador)
+    // PRIORIDADE 2: Trajeto viário oficial das paradas da rota (maxRoadKmInBatch ou trajeto planejado)
+    // PRIORIDADE 3: Telemetria GPS saneada (falha de sinal nunca reduz km do entregador)
     if (batchOdometerKm > 0) {
       batchTelemetry.officialRealKm = Number(batchOdometerKm.toFixed(1))
       batchTelemetry.calculationSource = 'odometro'
       batchTelemetry.odometerKm = batchOdometerKm
     } else if (maxRoadKmInBatch > 0) {
-      // O histórico viário gravado na rota é o KM real oficial
       batchTelemetry.officialRealKm = Number(
         Math.max(maxRoadKmInBatch, batchTelemetry.officialRealKm).toFixed(1),
       )
-      batchTelemetry.calculationSource = 'historico_viario'
+      batchTelemetry.calculationSource =
+        batchTelemetry.officialRealKm > maxRoadKmInBatch ? 'gps' : 'historico_viario'
+    } else if (batchTelemetry.officialRealKm > 0) {
+      batchTelemetry.calculationSource = batchTelemetry.calculationSource || 'gps'
     } else {
       batchTelemetry.calculationSource = 'historico_viario'
     }
@@ -433,9 +435,8 @@ export function calculateCourierFuelMetrics(params: {
 
     let roadDist = 0.8
     if (custLat !== 0 && custLng !== 0) {
-      // Distância Haversine direta * 1.3 fator viário mínimo saneado
       const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
-      roadDist = Math.max((directMeters / 1000) * 1.3, 0.8)
+      roadDist = Math.max(directMeters / 1000, 0.8)
     }
 
     // Se distance_km da ordem for válido e maior (já computado no asfalto), utiliza
