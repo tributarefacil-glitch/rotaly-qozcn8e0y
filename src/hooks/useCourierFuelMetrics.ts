@@ -113,6 +113,7 @@ export function calculateCourierFuelMetrics(params: {
   offRouteEvents: OffRouteEventRecord[]
   settings: Partial<AppSettingsRecord> | null
   periodFilter?: 'all' | 'month' | 'week' | 'today'
+  carryOverBalance?: number
 }): CourierFuelCalculationResult {
   const {
     courier,

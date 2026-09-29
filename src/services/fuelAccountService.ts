@@ -12,6 +12,7 @@ import {
   calculateCourierFuelMetrics,
   type CourierFuelCalculationResult,
 } from '@/hooks/useCourierFuelMetrics'
+import { deliveryService } from '@/services/deliveryService'
 import { getMatrizCompanyId } from '@/lib/companyResolver'
 
 export interface UnifiedCourierFuelAccount {

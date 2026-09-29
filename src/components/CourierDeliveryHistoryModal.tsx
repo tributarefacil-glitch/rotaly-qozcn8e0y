@@ -46,6 +46,7 @@ import type {
   OffRouteEventRecord,
   CourierFuelAccount,
   LocationRecord,
+  FuelAdvanceRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
 import { fuelAccountService } from '@/services/fuelAccountService'
