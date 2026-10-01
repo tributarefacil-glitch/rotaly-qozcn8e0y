@@ -14,6 +14,11 @@ import {
 } from '@/hooks/useCourierFuelMetrics'
 import { deliveryService } from '@/services/deliveryService'
 import { getMatrizCompanyId } from '@/lib/companyResolver'
+import {
+  isBeforeCurrentMonthInTz,
+  isCurrentMonthInTz,
+  parseSafeTimestamp,
+} from '@/lib/operationalWindow'
 
 export interface UnifiedCourierFuelAccount {
   courier: UserRecord
@@ -290,25 +295,30 @@ export class FuelAccountService {
     advances: FuelAdvanceRecord[]
     orders: OrderRecord[]
     settings: Partial<AppSettingsRecord> | null
+    referenceDate?: Date
   }): number {
-    const { courierId, courierVehicleType, advances, orders, settings } = params
-    const now = new Date()
-    // Primeiro milissegundo do mês atual (ano e mês locais/SP)
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+    const {
+      courierId,
+      courierVehicleType,
+      advances,
+      orders,
+      settings,
+      referenceDate = new Date(),
+    } = params
 
-    // 1. Adiantamentos até o mês anterior
+    // 1. Adiantamentos até o mês anterior (fuso America/Sao_Paulo)
     const pastAdvances = advances.filter((a) => {
       if (a.courier_id !== courierId) return false
-      const advDate = new Date(a.date || a.created || Date.now())
-      return advDate < currentMonthStart
+      const advRaw = a.date || a.created
+      return isBeforeCurrentMonthInTz(advRaw, referenceDate)
     })
     const pastAdvancesTotal = pastAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
 
-    // 2. Pedidos até o mês anterior
+    // 2. Pedidos até o mês anterior (fuso America/Sao_Paulo)
     const pastOrders = orders.filter((o) => {
       if (o.courier_id !== courierId) return false
-      const oDate = new Date(o.created || Date.now())
-      return oDate < currentMonthStart
+      const oDateVal = o.route_finished_at || o.actual_arrival || o.created
+      return isBeforeCurrentMonthInTz(oDateVal, referenceDate)
     })
 
     if (pastOrders.length === 0) {

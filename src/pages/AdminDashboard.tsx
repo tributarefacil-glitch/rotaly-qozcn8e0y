@@ -1238,8 +1238,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       : orders
 
   // Recalcular fuelAccounts com o motor único calculateCourierFuelMetrics via fuelAccountService / deliveryService
-  // Alimentado por fuelHistoryOrders (dataset histórico completo sob demanda)
-  // Conta corrente sempre calculada para alimentar o modal de histórico e cards de qualquer ponto de entrada
+  // REGRA CONTRATUAL DO ROTALY:
+  // Os cards da Conta Corrente dos Entregadores mostram SEMPRE a visão do MÊS CORRENTE:
+  // - Saldo = carry-over (saldo acumulado até o mês anterior) + adiantamentos do mês corrente − gasto do mês corrente
+  // - Km rodado = SOMENTE do mês corrente (zera no dia 1)
+  // - Total Adiantado = SOMENTE do mês corrente
+  // - Gasto Rota Oficial = SOMENTE do mês corrente
+  // Meses anteriores ficam acessíveis exclusivamente no Histórico detalhado / Histórico Viário.
   const currentFuelAccounts = useMemo(() => {
     return couriers.map((courier) => {
       return fuelAccountService.calculateAccountForCourier({
@@ -1249,18 +1254,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         settings,
         locations,
         offRouteEvents,
-        periodFilter: fuelPeriodFilter,
+        periodFilter: 'month',
       })
     })
-  }, [
-    couriers,
-    fuelAdvances,
-    activeFuelOrdersPool,
-    settings,
-    fuelPeriodFilter,
-    locations,
-    offRouteEvents,
-  ])
+  }, [couriers, fuelAdvances, activeFuelOrdersPool, settings, locations, offRouteEvents])
 
   // Filtered Fuel Advances by Courier & Period (REQUISITO 5)
   const filteredFuelAdvances = fuelAdvances.filter((adv) => {
@@ -1719,22 +1716,29 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
                               {/* KM Oficial vs KM Desvios com Badge da Fonte Real (Odômetro / Rota Viária / GPS) */}
                               <div className="flex items-center justify-between pt-0.5 text-[10px]">
-                                <Badge
-                                  variant="outline"
-                                  className={`text-[9px] px-1.5 py-0.2 font-bold ${
-                                    acc.calculationSource === 'odometro'
-                                      ? 'border-indigo-400 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30'
-                                      : acc.calculationSource === 'gps'
-                                        ? 'border-emerald-400 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
-                                        : 'border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30'
-                                  }`}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedCourierForHistory(acc.courier)
+                                    setIsCourierHistoryModalOpen(true)
+                                  }}
+                                  className="inline-flex items-center"
                                 >
-                                  {acc.calculationSource === 'odometro'
-                                    ? '🏍️ Odômetro da Moto'
-                                    : acc.calculationSource === 'gps'
-                                      ? '🛰️ Telemetria GPS'
-                                      : '🗺️ Histórico Viário de Rotas'}
-                                </Badge>
+                                  {' '}
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[9px] px-1.5 py-0.2 font-bold hover:opacity-80 transition-opacity cursor-pointer ${
+                                      acc.calculationSource === 'odometro'
+                                        ? 'border-indigo-400 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30'
+                                        : acc.calculationSource === 'gps'
+                                          ? 'border-emerald-400 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
+                                          : 'border-blue-400 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30'
+                                    }`}
+                                  >
+                                    📖 Histórico Viário de Rotas
+                                  </Badge>
+                                </button>
                                 <span className="text-slate-500 font-mono">
                                   KM Oficial:{' '}
                                   <strong className="text-slate-700 dark:text-slate-200">
@@ -1742,7 +1746,6 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   </strong>
                                 </span>
                               </div>
-
                               {/* Dica / Botão de clique para histórico */}
                               <div className="pt-1 flex items-center justify-between text-[11px] text-[#0052CC] dark:text-[#60A5FA] font-medium group-hover:underline">
                                 <span>Ver histórico detalhado de entregas & telemetria</span>

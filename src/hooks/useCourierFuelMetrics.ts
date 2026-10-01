@@ -16,6 +16,7 @@ import {
   haversineDistanceMeters,
 } from '@/lib/telemetryKmEngine'
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
+import { isCurrentMonthInTz, parseSafeTimestamp } from '@/lib/operationalWindow'
 
 export interface CourierOrderTelemetryCalculation {
   order: OrderRecord
@@ -160,12 +161,15 @@ export function calculateCourierFuelMetrics(params: {
   const now = new Date()
 
   // 1. Filtrar adiantamentos do entregador (com filtro de período opcional)
+  // Regra contratual do Rotaly:
+  // No início de cada mês, "Total Adiantado" no card = SOMENTE adiantamentos do mês corrente no fuso America/Sao_Paulo.
   const courierAdvances = advances.filter((a) => {
     if (a.courier_id !== courier.id) return false
     if (periodFilter === 'all') return true
 
-    const advDate = new Date(a.date || a.created || Date.now())
+    const advRaw = a.date || a.created
     if (periodFilter === 'today') {
+      const advDate = new Date(parseSafeTimestamp(advRaw) || Date.now())
       return (
         advDate.getDate() === now.getDate() &&
         advDate.getMonth() === now.getMonth() &&
@@ -173,11 +177,12 @@ export function calculateCourierFuelMetrics(params: {
       )
     }
     if (periodFilter === 'week') {
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      return advDate >= sevenDaysAgo
+      const advTs = parseSafeTimestamp(advRaw) || 0
+      const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
+      return advTs >= sevenDaysAgo
     }
     if (periodFilter === 'month') {
-      return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
+      return isCurrentMonthInTz(advRaw, now)
     }
     return true
   })
@@ -261,8 +266,9 @@ export function calculateCourierFuelMetrics(params: {
   const eligibleOrders = allCourierOrders.filter((o) => {
     if (periodFilter === 'all') return true
 
-    const oDate = new Date(o.created || Date.now())
+    const oDateVal = o.route_finished_at || o.actual_arrival || o.created
     if (periodFilter === 'today') {
+      const oDate = new Date(parseSafeTimestamp(oDateVal) || Date.now())
       return (
         oDate.getDate() === now.getDate() &&
         oDate.getMonth() === now.getMonth() &&
@@ -270,11 +276,12 @@ export function calculateCourierFuelMetrics(params: {
       )
     }
     if (periodFilter === 'week') {
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      return oDate >= sevenDaysAgo
+      const oTs = parseSafeTimestamp(oDateVal) || 0
+      const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
+      return oTs >= sevenDaysAgo
     }
     if (periodFilter === 'month') {
-      return oDate.getMonth() === now.getMonth() && oDate.getFullYear() === now.getFullYear()
+      return isCurrentMonthInTz(oDateVal, now)
     }
     return true
   })

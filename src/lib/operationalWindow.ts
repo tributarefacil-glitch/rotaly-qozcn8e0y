@@ -50,6 +50,58 @@ export function formatPbTimestamp(dateOrTs: Date | number): string {
  */
 export const SAO_PAULO_TZ = 'America/Sao_Paulo'
 
+/**
+ * Retorna ano e mês (1-12) de uma data no fuso de São Paulo.
+ */
+export function getYearMonthInTz(dateOrStrOrTs?: Date | string | number | null): {
+  year: number
+  month: number
+} {
+  const ts = parseSafeTimestamp(dateOrStrOrTs || Date.now())
+  const d = new Date(ts > 0 ? ts : Date.now())
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: SAO_PAULO_TZ,
+    year: 'numeric',
+    month: 'numeric',
+  })
+  const parts = formatter.formatToParts(d)
+  let year = d.getFullYear()
+  let month = d.getMonth() + 1
+  for (const part of parts) {
+    if (part.type === 'year') year = Number(part.value)
+    if (part.type === 'month') month = Number(part.value)
+  }
+  return { year, month }
+}
+
+/**
+ * Avalia se um timestamp pertence ao mês corrente no fuso de São Paulo.
+ */
+export function isCurrentMonthInTz(
+  dateOrStrOrTs?: Date | string | number | null,
+  referenceDate: Date = new Date(),
+): boolean {
+  if (!dateOrStrOrTs) return false
+  const target = getYearMonthInTz(dateOrStrOrTs)
+  const ref = getYearMonthInTz(referenceDate)
+  return target.year === ref.year && target.month === ref.month
+}
+
+/**
+ * Avalia se um timestamp pertence a meses ANTERIORES ao mês corrente no fuso de São Paulo.
+ */
+export function isBeforeCurrentMonthInTz(
+  dateOrStrOrTs?: Date | string | number | null,
+  referenceDate: Date = new Date(),
+): boolean {
+  if (!dateOrStrOrTs) return false
+  const target = getYearMonthInTz(dateOrStrOrTs)
+  const ref = getYearMonthInTz(referenceDate)
+  if (target.year < ref.year) return true
+  if (target.year === ref.year && target.month < ref.month) return true
+  return false
+}
+
 export function formatTimeInTz(
   dateOrStrOrTs: Date | string | number | null | undefined,
   includeSeconds = false,

@@ -130,18 +130,25 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
               R$ {balanceNum.toFixed(2)}
             </span>
             <div className="flex items-center gap-1.5 mt-1">
-              <Badge
-                variant="outline"
-                className={`text-[9px] px-1.5 py-0.5 font-bold ${
-                  metrics?.calculationSource === 'odometro'
-                    ? 'border-indigo-400 text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-300'
-                    : 'border-blue-400 text-blue-600 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300'
-                }`}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (onOpenHistoryModal) onOpenHistoryModal()
+                }}
+                className="inline-flex items-center"
               >
-                {metrics?.calculationSource === 'odometro'
-                  ? '🏍️ Odômetro da Moto'
-                  : '🗺️ Histórico Viário de Rotas'}
-              </Badge>
+                <Badge
+                  variant="outline"
+                  className={`text-[9px] px-1.5 py-0.5 font-bold hover:opacity-80 transition-opacity cursor-pointer ${
+                    metrics?.calculationSource === 'odometro'
+                      ? 'border-indigo-400 text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-300'
+                      : 'border-blue-400 text-blue-600 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300'
+                  }`}
+                >
+                  📖 Histórico Viário de Rotas
+                </Badge>
+              </button>
             </div>
             {subtitle && (
               <span className="text-[10px] text-slate-400 block mt-0.5">{subtitle}</span>

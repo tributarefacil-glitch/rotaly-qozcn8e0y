@@ -205,6 +205,10 @@ export default function CourierFuelPage() {
   })
 
   // Hook Compartilhado: mesmo motor de telemetria e regras de consumo do Admin
+  // REGRA CONTRATUAL DO ROTALY:
+  // O card principal do entregador sempre reflete o MÊS CORRENTE com carry-over acumulado.
+  // Se o usuário alternar tabs (all, month, week), o detalhamento abaixo se adapta,
+  // mas no modo 'month' (ou padrão) o saldo inclui carry-over e km restrito ao mês corrente.
   const metrics = useCourierFuelMetrics({
     courier: user,
     advances,
@@ -213,6 +217,18 @@ export default function CourierFuelPage() {
     offRouteEvents,
     settings,
     periodFilter,
+  })
+
+  // Métricas fixas do Mês Corrente para o Card de Saldo e Conta Corrente do Entregador
+  // garantindo consistência com Admin e Seller mesmo se a tab de detalhamento for alterada
+  const currentMonthMetrics = useCourierFuelMetrics({
+    courier: user,
+    advances,
+    orders,
+    locations,
+    offRouteEvents,
+    settings,
+    periodFilter: 'month',
   })
 
   const {
@@ -289,10 +305,10 @@ export default function CourierFuelPage() {
 
         {/* COMPONENTE COMPARTILHADO: CARD DE CONTA CORRENTE (IDENTICO AO ADMIN) */}
         <CourierFuelSummaryCard
-          metrics={metrics}
+          metrics={currentMonthMetrics}
           courier={user}
           onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
-          subtitle="Valores 100% sincronizados com a contabilidade do gestor"
+          subtitle="Valores do mês corrente 100% sincronizados com a contabilidade do gestor"
         />
 
         {/* BOTÃO RÁPIDO PARA ABRIR O HISTÓRICO COMPLETO */}

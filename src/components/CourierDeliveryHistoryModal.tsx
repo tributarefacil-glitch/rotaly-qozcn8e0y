@@ -52,6 +52,7 @@ import { deliveryService } from '@/services/deliveryService'
 import { fuelAccountService } from '@/services/fuelAccountService'
 import { DEVIATION_THRESHOLD_METERS, haversineDistanceMeters } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
+import { isCurrentMonthInTz, parseSafeTimestamp } from '@/lib/operationalWindow'
 
 export interface CourierDeliveryHistoryItem {
   order: OrderRecord
@@ -420,7 +421,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     const now = new Date()
 
     return historyItems.filter((item) => {
-      // Filtro de período
+      // Filtro de período (respeitando fuso America/Sao_Paulo)
       if (periodFilter === 'today') {
         const isToday =
           item.dateObj.getDate() === now.getDate() &&
@@ -428,12 +429,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
           item.dateObj.getFullYear() === now.getFullYear()
         if (!isToday) return false
       } else if (periodFilter === 'week') {
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-        if (item.dateObj < sevenDaysAgo) return false
+        const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
+        if (item.dateObj.getTime() < sevenDaysAgo) return false
       } else if (periodFilter === 'month') {
-        const isCurrentMonth =
-          item.dateObj.getMonth() === now.getMonth() &&
-          item.dateObj.getFullYear() === now.getFullYear()
+        const isCurrentMonth = isCurrentMonthInTz(item.dateObj, now)
         if (!isCurrentMonth) return false
       }
 
@@ -466,11 +465,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   const metricsSummary = useMemo(() => {
     const now = new Date()
 
-    // Filtrar adiantamentos de acordo com o periodFilter
+    // Filtrar adiantamentos de acordo com o periodFilter (fuso America/Sao_Paulo)
     const filteredAdvances = allCourierAdvances.filter((a) => {
       if (periodFilter === 'all') return true
-      const advDate = new Date(a.date || a.created || Date.now())
+      const advRaw = a.date || a.created
       if (periodFilter === 'today') {
+        const advDate = new Date(parseSafeTimestamp(advRaw) || Date.now())
         return (
           advDate.getDate() === now.getDate() &&
           advDate.getMonth() === now.getMonth() &&
@@ -478,11 +478,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         )
       }
       if (periodFilter === 'week') {
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-        return advDate >= sevenDaysAgo
+        const advTs = parseSafeTimestamp(advRaw) || 0
+        const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
+        return advTs >= sevenDaysAgo
       }
       if (periodFilter === 'month') {
-        return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
+        return isCurrentMonthInTz(advRaw, now)
       }
       return true
     })

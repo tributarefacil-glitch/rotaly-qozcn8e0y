@@ -148,6 +148,13 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
 
   // 1. Calcular métricas de cada entregador usando o MESMO fuelAccountService unificado (/admin e /seller)
+  // REGRA CONTRATUAL DO ROTALY:
+  // Os cards da Conta Corrente dos Entregadores mostram SEMPRE a visão do MÊS CORRENTE:
+  // - Saldo = carry-over (saldo acumulado até o mês anterior) + adiantamentos do mês corrente − gasto do mês corrente
+  // - Km rodado = SOMENTE do mês corrente (zera no dia 1)
+  // - Total Adiantado = SOMENTE do mês corrente
+  // - Gasto Rota Oficial = SOMENTE do mês corrente
+  // Meses anteriores ficam acessíveis exclusivamente no Histórico detalhado / Histórico Viário.
   const calculatedAccounts = useMemo(() => {
     return couriers.map((courier) => {
       const unifiedAccount = fuelAccountService.calculateAccountForCourier({
@@ -157,7 +164,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         settings,
         locations,
         offRouteEvents,
-        periodFilter: fuelPeriodFilter,
+        periodFilter: 'month',
       })
 
       const fuelAccount: CourierFuelAccount = {
@@ -180,15 +187,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         unifiedAccount,
       }
     })
-  }, [
-    couriers,
-    fuelAdvances,
-    activeFuelOrdersPool,
-    locations,
-    offRouteEvents,
-    settings,
-    fuelPeriodFilter,
-  ])
+  }, [couriers, fuelAdvances, activeFuelOrdersPool, locations, offRouteEvents, settings])
 
   // 2. Filtrar os cards dos entregadores por busca e categoria
   const filteredAccounts = useMemo(() => {
