@@ -15,7 +15,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "preview": "vite preview",
-    "test": "node scripts/apply-tower-perf.mjs",
+    "test": "vitest run",
     "test:watch": "echo \"there are no tests for this project\" && exit 0"
   },
   "dependencies": {
