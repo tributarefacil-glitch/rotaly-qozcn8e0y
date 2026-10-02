@@ -657,29 +657,24 @@ export function calculateRealKmForOrder(params: {
   const adjustedOfficialKm = rawOfficialKm
   const adjustedDeviationKm = rawDeviationKm
 
-  // 8. HIERARQUIA DE FONTES EXIGIDA:
-  // Prioridade 1 = Odômetro físico informado pelo entregador (odometro_final - odometro_inicial ou km_odometro)
-  // Prioridade 2 = Trajeto viário das paradas da rota (total_route_with_return_km do lote viário ou trajeto planejado viário)
-  // Prioridade 3 = Telemetria GPS saneada (descontando desvios fora da rota)
-  // REGRA DE PROTEÇÃO AO ENTREGADOR: Falha transitória de GPS / perda de sinal NUNCA reduz o km do entregador
-  // (se o GPS saneado for menor que o trajeto viário planejado, usa o trajeto viário planejado).
+  // 8. REGRA DO KM OFICIAL (DECISÃO FECHADA DO PRODUTO):
+  // KM OFICIAL = Trajeto viário planejado pelo otimizador, calculado SOMENTE sobre as paradas
+  // efetivamente visitadas, no ciclo completo: base → paradas visitadas → retorno à base.
+  // GPS e odômetro do entregador NÃO são fonte do km oficial — são apenas telemetria de auditoria.
+  // NUNCA usar max(km_viario, km_gps): o GPS NUNCA aumenta o km oficial.
 
-  let finalOfficialKm = Number(adjustedOfficialKm.toFixed(1))
-  let calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'gps'
+  let finalOfficialKm = 0
+  let calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
 
-  if (odometerDifference && odometerDifference > 0) {
-    // Prioridade 1: Odômetro Físico Real Registrado
-    finalOfficialKm = odometerDifference
-    calculationSource = 'odometro'
-  } else if (routeTotalRoadKm > 0) {
-    // Prioridade 2: Trajeto viário das paradas gravado na rota
-    // Falha de GPS nunca reduz o km oficial: max(trajeto viário, GPS medido)
-    finalOfficialKm = Math.max(routeTotalRoadKm, finalOfficialKm)
+  if (routeTotalRoadKm > 0) {
+    finalOfficialKm = routeTotalRoadKm
     calculationSource = 'historico_viario'
   } else if (isCompletedOrAttempted && plannedTotalKm > 0) {
-    // Falha transitória de GPS nunca reduz: usa o trajeto viário planejado
-    finalOfficialKm = Math.max(plannedTotalKm, finalOfficialKm)
-    calculationSource = finalOfficialKm > adjustedOfficialKm ? 'historico_viario' : 'gps'
+    finalOfficialKm = plannedTotalKm
+    calculationSource = 'historico_viario'
+  } else if (routeTotalRoadKm === 0 && !isCompletedOrAttempted) {
+    finalOfficialKm = 0
+    calculationSource = 'historico_viario'
   }
 
   const finalTotalGpsKm = adjustedOfficialKm + adjustedDeviationKm
@@ -687,7 +682,7 @@ export function calculateRealKmForOrder(params: {
   return {
     officialRealKm: Number(finalOfficialKm.toFixed(1)),
     deviationKm: Number(adjustedDeviationKm.toFixed(1)),
-    totalGpsKm: Number(Math.max(finalTotalGpsKm, finalOfficialKm).toFixed(1)),
+    totalGpsKm: Number(finalTotalGpsKm.toFixed(1)),
     discardedNoiseKm,
     isRealTelemetry: true,
     gpsPointsCount: validPoints.length,
@@ -699,12 +694,6 @@ export function calculateRealKmForOrder(params: {
     samplingCurvatureFactor: curvatureFactor,
     calculationSource,
     odometerKm: odometerDifference || undefined,
-    auditNotes: `Fonte: ${
-      calculationSource === 'odometro'
-        ? 'Odômetro da Moto'
-        : calculationSource === 'historico_viario'
-          ? 'Trajeto Viário das Paradas'
-          : 'Telemetria GPS Saneada'
-    }. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
+    auditNotes: `Fonte: Trajeto Viário das Paradas. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
   }
 }

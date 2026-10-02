@@ -998,7 +998,47 @@ export const deliveryService = {
   },
 
   async updateCustomer(id: string, data: Partial<CustomerRecord>) {
-    return pb.collection<CustomerRecord>('customers').update(id, data)
+    const updated = await pb.collection<CustomerRecord>('customers').update(id, data)
+
+    // Se as coordenadas foram alteradas, sincronizar pedidos afetados não entregues/cancelados
+    // e recalcular na hora o trajeto viário oficial de rotas ativas
+    if (data.lat !== undefined || data.lng !== undefined || data.address !== undefined) {
+      try {
+        const affectedOrders = await pb.collection<OrderRecord>('orders').getFullList({
+          filter: `customer_id = '${id}' && status != 'delivered' && status != 'cancelled'`,
+          requestKey: null,
+        })
+        const courierIdsToResequence = new Set<string>()
+        for (const ord of affectedOrders) {
+          const ordUpdate: Partial<OrderRecord> = {}
+          if (data.lat !== undefined) ordUpdate.end_address_lat = Number(data.lat)
+          if (data.lng !== undefined) ordUpdate.end_address_lng = Number(data.lng)
+          if (data.address !== undefined) ordUpdate.end_address_text = data.address
+          await pb.collection('orders').update(ord.id, ordUpdate)
+          if (ord.courier_id) {
+            courierIdsToResequence.add(ord.courier_id)
+          }
+        }
+        for (const courierId of courierIdsToResequence) {
+          try {
+            await this.resequenceActiveRouteForCourier(courierId)
+          } catch (reseqErr) {
+            console.warn(
+              '[updateCustomer] Erro ao resequenciar rota de courier:',
+              courierId,
+              reseqErr,
+            )
+          }
+        }
+      } catch (cascadeErr) {
+        console.warn(
+          '[updateCustomer] Erro ao sincronizar pedidos com novas coordenadas:',
+          cascadeErr,
+        )
+      }
+    }
+
+    return updated
   },
 
   /**
@@ -2287,7 +2327,7 @@ export const deliveryService = {
             Math.pow((s.lat - prevLat) * 111000, 2) +
               Math.pow((s.lng - prevLng) * 111000 * Math.cos((originPoint.lat * Math.PI) / 180), 2),
           )
-          const stepMeters = Math.max(500, Math.round(direct * 1.3))
+          const stepMeters = Math.round(direct)
           fallbackOutboundMeters += stepMeters
           prevLat = s.lat
           prevLng = s.lng
@@ -2299,18 +2339,15 @@ export const deliveryService = {
             step_duration_seconds: Math.round((stepMeters / 1000) * 160 + 300),
           }
         })
-        const returnMeters = Math.max(
-          500,
-          Math.round(
-            Math.sqrt(
-              Math.pow((prevLat - destinationPoint.lat) * 111000, 2) +
-                Math.pow(
-                  (prevLng - destinationPoint.lng) *
-                    111000 *
-                    Math.cos((originPoint.lat * Math.PI) / 180),
-                  2,
-                ),
-            ) * 1.3,
+        const returnMeters = Math.round(
+          Math.sqrt(
+            Math.pow((prevLat - destinationPoint.lat) * 111000, 2) +
+              Math.pow(
+                (prevLng - destinationPoint.lng) *
+                  111000 *
+                  Math.cos((originPoint.lat * Math.PI) / 180),
+                2,
+              ),
           ),
         )
         const totalDistKm = Number(((fallbackOutboundMeters + returnMeters) / 1000).toFixed(2))

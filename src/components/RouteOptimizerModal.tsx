@@ -1190,7 +1190,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }
 
   // Recompute plan distances and metrics when stops order changes (Drag or manual shift)
-  // Utiliza fator de malha viária urbana (1.28x) e identificação de mesma rua (1.05x)
+  // Ciclo completo: Base -> Paradas visitadas -> Retorno à base
   const recalculatePlanMetrics = useCallback(
     (
       stops: OptimizedStop[],
@@ -1211,12 +1211,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       let curLng = startLng
       let cumMeters = 0
 
-      const updatedStops: OptimizedStop[] = stops.map((stop, idx) => {
+      const updatedStops: OptimizedStop[] = stops.map((stop) => {
+        // Usa step_distance_meters se já apurado viariamente ou distância direta
         const directMeters = haversineDistance(curLat, curLng, stop.lat, stop.lng)
-        const prevAddr = idx === 0 ? '' : stops[idx - 1].address
-        const isSameStreet = prevAddr ? areAddressesOnSameStreet(prevAddr, stop.address) : false
-        const roadFactor = isSameStreet ? 1.05 : 1.28
-        const stepDist = Math.round(directMeters * roadFactor)
+        const stepDist =
+          stop.step_distance_meters > 0 ? stop.step_distance_meters : Math.round(directMeters)
         cumMeters += stepDist
         curLat = stop.lat
         curLng = stop.lng
@@ -1228,7 +1227,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       })
 
       const directReturn = stops.length > 0 ? haversineDistance(curLat, curLng, endLat, endLng) : 0
-      const returnMeters = Math.round(directReturn * 1.28)
+      const returnMeters = Math.round(directReturn)
       const totalMeters = cumMeters + returnMeters
       const outboundKm = Number((cumMeters / 1000).toFixed(2))
       const returnKm = Number((returnMeters / 1000).toFixed(2))

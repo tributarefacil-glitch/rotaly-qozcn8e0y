@@ -578,17 +578,30 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   })
 
   // REQUISITO 2: PERMISSÕES DO VENDEDOR/ADMIN sobre entregas
-  // 1. Cancelar entrega
+  // 1. Cancelar entrega (Regra 2: não foi ao local = não conta; recalcula a rota na hora sem a parada)
   const handleCancelOrder = async (orderId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     if (!window.confirm('Tem certeza que deseja cancelar esta entrega?')) return
+
+    const order = orders.find((o) => o.id === orderId)
+    const courierId = order?.courier_id
 
     try {
       await deliveryService.updateOrder(orderId, {
         status: 'cancelled',
         completion_reason: 'cancelado_vendedor',
       })
-      toast.warning('Entrega cancelada pelo vendedor com sucesso.')
+
+      // Se estava em rota de entregador, resequenciar e recalcular na hora o trajeto viário oficial
+      if (courierId) {
+        try {
+          await deliveryService.resequenceActiveRouteForCourier(courierId, settings)
+        } catch (reseqErr) {
+          console.warn('Erro ao resequenciar após cancelamento:', reseqErr)
+        }
+      }
+
+      toast.warning('Entrega cancelada pelo vendedor com sucesso. Rota recalculada!')
       loadData()
     } catch (err) {
       console.error('Error cancelling order:', err)
@@ -596,7 +609,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   }
 
-  // 2. Retirar da rota / Excluir cliente da rota em andamento (volta para status "pending" e notifica o entregador)
+  // 2. Retirar da rota / Excluir cliente da rota em andamento (Regra 2 e 3: não foi ao local = não conta; recalcula na hora)
   const handleRemoveFromRoute = async (orderId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
 
@@ -605,7 +618,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     const isStarted = order?.route_started || order?.status === 'in_transit'
 
     const confirmMsg = isStarted
-      ? `Tem certeza que deseja remover ${custName} da rota em andamento? O cliente sairá do app do entregador imediatamente.`
+      ? `Tem certeza que deseja remover ${custName} da rota em andamento? O cliente sairá do app do entregador imediatamente e o km será recalculado.`
       : `Deseja desfazer a rota da entrega para ${custName}? Ela voltará para o status "Pendente".`
 
     if (!window.confirm(confirmMsg)) return
@@ -621,26 +634,15 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         route_started_at: undefined,
       })
 
-      // Se havia entregador, reordenar as sequências restantes e notificar
+      // Se havia entregador, reordenar as sequências restantes viariamente pelo menor trajeto e notificar
       if (courierId) {
         try {
-          const remainingOrders = orders
-            .filter(
-              (o) =>
-                o.courier_id === courierId &&
-                o.id !== orderId &&
-                o.status !== 'delivered' &&
-                o.status !== 'cancelled',
-            )
-            .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
-
-          // Resequenciar a rota restante viariamente pelo menor trajeto
           await deliveryService.resequenceActiveRouteForCourier(courierId, settings)
 
           await deliveryService.createNotification({
             user_id: courierId,
             title: '⚠️ Rota Atualizada: Parada Removida',
-            message: `A entrega para ${custName} foi removida da sua rota pela central.`,
+            message: `A entrega para ${custName} foi removida da sua rota pela central e o km viário foi recalculado.`,
             type: 'order',
             read: false,
           })
@@ -649,7 +651,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         }
       }
 
-      toast.info(`Cliente ${custName} removido da rota e retornado para "Pendente" com sucesso.`)
+      toast.info(`Cliente ${custName} removido da rota e km recalculado imediatamente.`)
       loadData()
     } catch (err) {
       console.error('Error removing order from route:', err)

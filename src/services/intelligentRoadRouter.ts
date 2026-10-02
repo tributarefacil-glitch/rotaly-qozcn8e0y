@@ -373,15 +373,26 @@ export async function optimizeRouteSequence(params: {
       stepDurationSec = legsData[i].durationSeconds
     }
 
-    // Se não temos dados da perna do Google ou stepMeters veio zero, calcula Haversine com fator viário (1.28)
+    // Se não temos dados da perna do Google ou stepMeters veio zero, tenta OSRM viário real
     if (!stepMeters || stepMeters <= 0) {
-      const directMeters = calcDistanceMeters(curLat, curLng, stop.lat, stop.lng)
-      // Se for mesma rua do ponto anterior, fator viário quase 1.05x; senão curva viária urbana ~1.28x
-      const prevAddr = i === 0 ? '' : finalStops[i - 1].address
-      const isSameStreet = prevAddr ? areAddressesOnSameStreet(prevAddr, stop.address) : false
-      const streetFactor = isSameStreet ? 1.05 : 1.28
-      stepMeters = Math.round(directMeters * streetFactor)
-      stepDurationSec = Math.round((stepMeters / 1000) * 160 + 300) // ~22 km/h + 5 min parada
+      try {
+        const { fetchStreetRoute } = await import('@/services/osrmRoutingService')
+        const osrmLeg = await fetchStreetRoute(
+          { lat: curLat, lng: curLng },
+          { lat: stop.lat, lng: stop.lng },
+        )
+        if (osrmLeg && osrmLeg.distanceMeters > 0) {
+          stepMeters = osrmLeg.distanceMeters
+          stepDurationSec = osrmLeg.durationSeconds || Math.round((stepMeters / 1000) * 160 + 300)
+        }
+      } catch {
+        /* fallback direct */
+      }
+      if (!stepMeters || stepMeters <= 0) {
+        const directMeters = calcDistanceMeters(curLat, curLng, stop.lat, stop.lng)
+        stepMeters = Math.round(directMeters)
+        stepDurationSec = Math.round((stepMeters / 1000) * 160 + 300)
+      }
     }
 
     outboundDistanceMeters += stepMeters
@@ -402,17 +413,36 @@ export async function optimizeRouteSequence(params: {
   // Trecho de Retorno (última parada -> destination/base)
   const lastStop = finalStops[finalStops.length - 1]
   let returnMeters = 0
+  let isReturnRealStreet = false
   if (lastStop) {
     if (isGoogleOptimized && legsData && legsData[finalStops.length]) {
       returnMeters = legsData[finalStops.length].distanceMeters
+      isReturnRealStreet = true
     } else {
-      const directReturn = calcDistanceMeters(
-        lastStop.lat,
-        lastStop.lng,
-        destination.lat,
-        destination.lng,
-      )
-      returnMeters = Math.round(directReturn * 1.28)
+      // Tentar roteamento viário real via OSRM fallback
+      try {
+        const { fetchStreetRoute } = await import('@/services/osrmRoutingService')
+        const osrmReturn = await fetchStreetRoute(
+          { lat: lastStop.lat, lng: lastStop.lng },
+          { lat: destination.lat, lng: destination.lng },
+        )
+        if (osrmReturn && osrmReturn.distanceMeters > 0) {
+          returnMeters = osrmReturn.distanceMeters
+          isReturnRealStreet = true
+        }
+      } catch {
+        /* fallback handled below */
+      }
+      if (!isReturnRealStreet) {
+        // Sem inventar número: se não apurou viário real, calcular distância direta
+        const directReturn = calcDistanceMeters(
+          lastStop.lat,
+          lastStop.lng,
+          destination.lat,
+          destination.lng,
+        )
+        returnMeters = Math.round(directReturn)
+      }
     }
   }
 

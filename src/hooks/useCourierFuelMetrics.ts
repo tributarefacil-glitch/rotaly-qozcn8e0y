@@ -404,24 +404,21 @@ export function calculateCourierFuelMetrics(params: {
       return acc
     }, 0)
 
-    // APLICAR HIERARQUIA NO LOTE DA ROTA:
-    // PRIORIDADE 1: Odômetro da moto (se informado pelo entregador)
-    // PRIORIDADE 2: Trajeto viário oficial das paradas da rota (maxRoadKmInBatch ou trajeto planejado)
-    // PRIORIDADE 3: Telemetria GPS saneada (falha de sinal nunca reduz km do entregador)
-    if (batchOdometerKm > 0) {
-      batchTelemetry.officialRealKm = Number(batchOdometerKm.toFixed(1))
-      batchTelemetry.calculationSource = 'odometro'
-      batchTelemetry.odometerKm = batchOdometerKm
-    } else if (maxRoadKmInBatch > 0) {
-      batchTelemetry.officialRealKm = Number(
-        Math.max(maxRoadKmInBatch, batchTelemetry.officialRealKm).toFixed(1),
-      )
-      batchTelemetry.calculationSource =
-        batchTelemetry.officialRealKm > maxRoadKmInBatch ? 'gps' : 'historico_viario'
+    // KM OFICIAL (DECISÃO FECHADA DO PRODUTO):
+    // KM oficial = Trajeto viário planejado pelo otimizador sobre paradas efetivamente visitadas
+    // ciclo completo base -> paradas -> base.
+    // GPS e odômetro são apenas telemetria de auditoria, NUNCA fonte de km oficial nem aumentam km.
+    if (maxRoadKmInBatch > 0) {
+      batchTelemetry.officialRealKm = Number(maxRoadKmInBatch.toFixed(1))
+      batchTelemetry.calculationSource = 'historico_viario'
     } else if (batchTelemetry.officialRealKm > 0) {
-      batchTelemetry.calculationSource = batchTelemetry.calculationSource || 'gps'
+      batchTelemetry.officialRealKm = Number(batchTelemetry.officialRealKm.toFixed(1))
+      batchTelemetry.calculationSource = 'historico_viario'
     } else {
       batchTelemetry.calculationSource = 'historico_viario'
+    }
+    if (batchOdometerKm > 0) {
+      batchTelemetry.odometerKm = batchOdometerKm
     }
 
     batchTelemetryMap.set(key, batchTelemetry)
@@ -644,15 +641,8 @@ export function calculateCourierFuelMetrics(params: {
     balance = carryOverBalance + totalAdvances - totalSpent
   }
 
-  const calculationSource: 'odometro' | 'historico_viario' | 'gps' = hasAnyOdometer
-    ? 'odometro'
-    : 'historico_viario'
-  const calculationSourceLabel =
-    calculationSource === 'odometro'
-      ? 'Odômetro da Moto'
-      : calculationSource === 'historico_viario'
-        ? 'Histórico Viário de Rotas'
-        : 'Telemetria GPS'
+  const calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
+  const calculationSourceLabel = 'Trajeto Viário Oficial'
 
   const fuelAccount: CourierFuelAccount = {
     courier,
