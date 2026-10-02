@@ -47,6 +47,27 @@ export const Header: React.FC = () => {
   const [isNotifOpen, setIsNotifOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
+  const [pendingAddressAlerts, setPendingAddressAlerts] = useState(0)
+
+  useEffect(() => {
+    let isMounted = true
+    const checkAlerts = async () => {
+      try {
+        const count = await deliveryService.getPendingAddressAlertsCount(
+          role === 'master' ? 'ALL' : currentCompany?.id,
+        )
+        if (isMounted) setPendingAddressAlerts(count)
+      } catch (err) {
+        console.warn('Erro ao obter contagem de alertas no Header:', err)
+      }
+    }
+    checkAlerts()
+    const interval = setInterval(checkAlerts, 30000)
+    return () => {
+      isMounted = false
+      clearInterval(interval)
+    }
+  }, [currentCompany?.id, role])
 
   // Fetch initial notifications
   const loadNotifications = async () => {
@@ -158,6 +179,22 @@ export const Header: React.FC = () => {
             </span>
           </div>
         </div>
+
+        {/* Badge de Endereços Suspeitos na Barra Superior se houver pendências */}
+        {pendingAddressAlerts > 0 &&
+          (role === 'admin' || role === 'master' || role === 'seller') && (
+            <div
+              onClick={() => navigate(role === 'seller' ? '/seller' : '/admin')}
+              className="hidden lg:flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs text-amber-900 font-semibold cursor-pointer hover:bg-amber-100 transition shadow-xs"
+              title={`${pendingAddressAlerts} endereço(s) suspeito(s) aguardando revisão`}
+            >
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+              <span>
+                {pendingAddressAlerts} Endereço{pendingAddressAlerts === 1 ? '' : 's'} Suspeito
+                {pendingAddressAlerts === 1 ? '' : 's'}
+              </span>
+            </div>
+          )}
       </div>
 
       {/* Center section: Global Tracking Code Search */}

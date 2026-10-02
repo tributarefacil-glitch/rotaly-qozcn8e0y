@@ -14,8 +14,11 @@ import {
   Search,
   Building2,
   Globe,
+  AlertTriangle,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCompany } from '@/contexts/CompanyContext'
+import { deliveryService } from '@/services/deliveryService'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
@@ -109,9 +112,31 @@ const navItems: NavItem[] = [
 export const Sidebar: React.FC = () => {
   const location = useLocation()
   const { user } = useAuth()
+  const { currentCompany } = useCompany()
   const role = user?.role || 'seller'
-
   const isMaster = role === 'master'
+
+  const [pendingAlertsCount, setPendingAlertsCount] = React.useState<number>(0)
+
+  React.useEffect(() => {
+    let isMounted = true
+    const checkAlerts = async () => {
+      try {
+        const count = await deliveryService.getPendingAddressAlertsCount(
+          isMaster ? 'ALL' : currentCompany?.id,
+        )
+        if (isMounted) setPendingAlertsCount(count)
+      } catch (err) {
+        console.warn('Erro ao obter contagem de alertas:', err)
+      }
+    }
+    checkAlerts()
+    const interval = setInterval(checkAlerts, 30000)
+    return () => {
+      isMounted = false
+      clearInterval(interval)
+    }
+  }, [currentCompany?.id, isMaster])
 
   const filteredItems = navItems
     .filter((item) => {
@@ -133,9 +158,20 @@ export const Sidebar: React.FC = () => {
         }
         return { ...item, href: '/admin?tab=fuel' }
       }
+      if (item.title === 'Painel Executivo' && pendingAlertsCount > 0) {
+        return {
+          ...item,
+          badge: `${pendingAlertsCount} suspeito${pendingAlertsCount === 1 ? '' : 's'}`,
+        }
+      }
+      if (item.title === 'Painel do Lojista' && pendingAlertsCount > 0) {
+        return {
+          ...item,
+          badge: `${pendingAlertsCount} suspeito${pendingAlertsCount === 1 ? '' : 's'}`,
+        }
+      }
       return item
     })
-
   return (
     <aside className="hidden md:flex h-[calc(100vh-4rem)] w-64 flex-col border-r border-slate-200 bg-white text-slate-700 shadow-sm select-none">
       {/* Navigation Links */}

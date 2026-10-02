@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-02T23:17:01.879Z",
+  "generatedAt": "2026-10-02T23:51:25.680Z",
   "collections": [
     {
       "name": "users",
@@ -1900,6 +1900,117 @@
         }
       ],
       "indexes": ["CREATE UNIQUE INDEX idx_site_content_key ON site_content (key)"]
+    },
+    {
+      "name": "address_alerts",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || company = '' || company = null || @collection.membros.empresa_id ?= company && @collection.membros.user_id ?= @request.auth.id)",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || company = '' || company = null || @collection.membros.empresa_id ?= company && @collection.membros.user_id ?= @request.auth.id)",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || @request.auth.role = 'seller')",
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')"
+      },
+      "fields": [
+        {
+          "name": "company",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "customer",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "customers"
+        },
+        {
+          "name": "current_address",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "suggested_address",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "origin",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["varredura_cep", "pin_entregador"]
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["pendente", "aprovado", "reprovado"]
+        },
+        {
+          "name": "distance_meters",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "marked_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "marked_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "reviewed_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "reviewed_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "notes",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_address_alerts_company ON address_alerts (company)",
+        "CREATE INDEX idx_address_alerts_customer ON address_alerts (customer)",
+        "CREATE INDEX idx_address_alerts_status ON address_alerts (status)",
+        "CREATE INDEX idx_address_alerts_origin ON address_alerts (origin)"
+      ]
     }
   ]
 }

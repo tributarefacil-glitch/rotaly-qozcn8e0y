@@ -26,6 +26,9 @@ import type {
   RotaRecord,
   EntregaRecord,
   RelatorioRecord,
+  AddressAlertRecord,
+  AddressAlertStatus,
+  AddressAlertOrigin,
 } from '@/types/delivery'
 
 export const deliveryService = {
@@ -3311,5 +3314,176 @@ export const deliveryService = {
       estimated_fuel_cost: roadRouteResult.estimated_fuel_cost,
       stops_count: optimized.length,
     }
+  },
+
+  // ==========================================
+  // Address Alerts (Endereços Suspeitos)
+  // ==========================================
+
+  /**
+   * Listar alertas de endereços suspeitos com filtro por empresa e status.
+   * Master vê todos se não informado empresa.
+   */
+  async getAddressAlerts(options?: {
+    empresaId?: string
+    status?: AddressAlertStatus | 'all'
+    limit?: number
+  }): Promise<AddressAlertRecord[]> {
+    const authUser = pb.authStore.record as any
+    const isMaster = authUser?.role === 'master'
+    const targetCompanyId =
+      options?.empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+
+    const filters: string[] = []
+    if (!isMaster || (options?.empresaId && options.empresaId !== 'ALL')) {
+      if (targetCompanyId) {
+        filters.push(`company = '${targetCompanyId}'`)
+      }
+    }
+
+    if (options?.status && options.status !== 'all') {
+      filters.push(`status = '${options.status}'`)
+    }
+
+    const filterStr = filters.join(' && ')
+
+    try {
+      return await pb.collection<AddressAlertRecord>('address_alerts').getFullList({
+        filter: filterStr,
+        sort: '-created',
+        expand: 'customer,company,marked_by,reviewed_by',
+        requestKey: null,
+      })
+    } catch (err) {
+      console.error('[deliveryService] Erro ao buscar address_alerts:', err)
+      return []
+    }
+  },
+
+  /**
+   * Obter a contagem de alertas pendentes para badges de navegação.
+   */
+  async getPendingAddressAlertsCount(empresaId?: string): Promise<number> {
+    const alerts = await this.getAddressAlerts({ empresaId, status: 'pendente' })
+    return alerts.length
+  },
+
+  /**
+   * Criar um alerta de endereço suspeito (ex.: via GPS do entregador).
+   */
+  async createAddressAlert(data: {
+    customer: string
+    company?: string
+    origin: AddressAlertOrigin
+    current_address?: Record<string, unknown>
+    suggested_address: Record<string, unknown>
+    distance_meters?: number
+    notes?: string
+  }): Promise<AddressAlertRecord> {
+    const authUser = pb.authStore.record as any
+    const activeCompanyId =
+      data.company || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+
+    const payload: Partial<AddressAlertRecord> = {
+      customer: data.customer,
+      company: activeCompanyId,
+      origin: data.origin,
+      status: 'pendente',
+      distance_meters: data.distance_meters || 0,
+      notes: data.notes || '',
+      current_address: data.current_address || {},
+      suggested_address: data.suggested_address,
+      marked_by: authUser?.id || undefined,
+      marked_at: new Date().toISOString(),
+    }
+
+    return await pb.collection<AddressAlertRecord>('address_alerts').create(payload)
+  },
+
+  /**
+   * Aprovar um alerta de endereço suspeito:
+   * 1. Aplica o endereço sugerido (rua, bairro, CEP, lat, lng) no cadastro do cliente respeitando Pino Explícito Soberano.
+   * 2. O updateCustomer(id, data) dispara imediatamente a atualização em cascata dos pedidos afetados
+   *    e o recálculo viário / resequenciamento com motor viário inteligente nas rotas ativas.
+   * 3. Marca o alerta como aprovado com reviewed_by e reviewed_at.
+   */
+  async approveAddressAlert(
+    alertId: string,
+    customNotes?: string,
+  ): Promise<{
+    success: boolean
+    alert: AddressAlertRecord
+  }> {
+    const authUser = pb.authStore.record as any
+    const alert = await pb.collection<AddressAlertRecord>('address_alerts').getOne(alertId, {
+      expand: 'customer',
+      requestKey: null,
+    })
+
+    const suggested = (alert.suggested_address || {}) as Record<string, any>
+    const customerId = alert.customer
+
+    // Preparar dados para o cadastro do cliente
+    const customerUpdate: Partial<CustomerRecord> = {}
+    if (suggested.address) customerUpdate.address = String(suggested.address)
+    if (suggested.street) customerUpdate.street = String(suggested.street)
+    if (suggested.neighborhood) customerUpdate.neighborhood = String(suggested.neighborhood)
+    if (suggested.city) customerUpdate.city = String(suggested.city)
+    if (suggested.state) customerUpdate.state = String(suggested.state)
+    if (suggested.postal_code) customerUpdate.postal_code = String(suggested.postal_code)
+    if (suggested.lat !== undefined && suggested.lat !== null && !isNaN(Number(suggested.lat))) {
+      customerUpdate.lat = Number(suggested.lat)
+    }
+    if (suggested.lng !== undefined && suggested.lng !== null && !isNaN(Number(suggested.lng))) {
+      customerUpdate.lng = Number(suggested.lng)
+    }
+
+    // Adiciona nota no cadastro do cliente registrando a aprovação
+    const prevNotes = (alert.expand?.customer as CustomerRecord)?.notes || ''
+    const approvalAuditNote = `[ALERTA APROVADO ${new Date().toLocaleDateString('pt-BR')}]: Endereço corrigido via alerta #${alertId} (${alert.origin}).`
+    customerUpdate.notes = prevNotes ? `${prevNotes} | ${approvalAuditNote}` : approvalAuditNote
+
+    // 1. Atualizar cliente - dispara automaticamente sincronização de pedidos e resequenciamento viário de rotas!
+    await this.updateCustomer(customerId, customerUpdate)
+
+    // 2. Atualizar o alerta para aprovado
+    const updatedAlert = await pb.collection<AddressAlertRecord>('address_alerts').update(alertId, {
+      status: 'aprovado',
+      reviewed_by: authUser?.id || undefined,
+      reviewed_at: new Date().toISOString(),
+      notes: customNotes
+        ? `${alert.notes ? alert.notes + ' | ' : ''}Revisão: ${customNotes}`
+        : alert.notes,
+    })
+
+    return { success: true, alert: updatedAlert }
+  },
+
+  /**
+   * Reprovar um alerta de endereço suspeito:
+   * Marca status = 'reprovado', com reviewed_by e reviewed_at. O cliente sai da fila pendente.
+   */
+  async rejectAddressAlert(
+    alertId: string,
+    reason?: string,
+  ): Promise<{
+    success: boolean
+    alert: AddressAlertRecord
+  }> {
+    const authUser = pb.authStore.record as any
+    const alert = await pb.collection<AddressAlertRecord>('address_alerts').getOne(alertId, {
+      requestKey: null,
+    })
+
+    const updatedAlert = await pb.collection<AddressAlertRecord>('address_alerts').update(alertId, {
+      status: 'reprovado',
+      reviewed_by: authUser?.id || undefined,
+      reviewed_at: new Date().toISOString(),
+      notes: reason
+        ? `${alert.notes ? alert.notes + ' | ' : ''}Reprovação: ${reason}`
+        : alert.notes,
+    })
+
+    return { success: true, alert: updatedAlert }
   },
 }

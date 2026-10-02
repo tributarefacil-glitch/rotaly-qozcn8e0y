@@ -450,3 +450,44 @@ export interface MultiCourierOptimizationResult {
   startBase?: BaseAddressRecord | { name: string; address: string; lat: number; lng: number }
   endBase?: BaseAddressRecord | { name: string; address: string; lat: number; lng: number }
 }
+
+export type AddressAlertOrigin = 'varredura_cep' | 'pin_entregador'
+export type AddressAlertStatus = 'pendente' | 'aprovado' | 'reprovado'
+
+export interface AddressAlertAddressData {
+  address?: string
+  street?: string
+  number?: string
+  neighborhood?: string
+  city?: string
+  state?: string
+  postal_code?: string
+  lat?: number
+  lng?: number
+  accuracy_meters?: number
+}
+
+export interface AddressAlertRecord {
+  id: string
+  company?: string
+  customer: string
+  current_address?: AddressAlertAddressData | Record<string, unknown>
+  suggested_address?: AddressAlertAddressData | Record<string, unknown>
+  origin: AddressAlertOrigin
+  status: AddressAlertStatus
+  distance_meters?: number
+  marked_by?: string
+  marked_at?: string
+  reviewed_by?: string
+  reviewed_at?: string
+  notes?: string
+  created: string
+  updated: string
+  // Relações expandidas
+  expand?: {
+    customer?: CustomerRecord
+    company?: EmpresaRecord
+    marked_by?: UserRecord
+    reviewed_by?: UserRecord
+  }
+}
