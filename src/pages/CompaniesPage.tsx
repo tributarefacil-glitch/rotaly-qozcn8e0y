@@ -573,7 +573,13 @@ export const CompaniesPage: React.FC = () => {
     setEditFormData((prev) => ({ ...prev, cnpj: formatted }))
 
     const raw = formatted.replace(/\D/g, '')
-    if (raw.length === 14) {
+    const originalRaw = (editingEmpresa?.cnpj || '').replace(/\D/g, '')
+    const isMatriz = Boolean(matrizId && editingEmpresa?.id === matrizId)
+
+    // Se for matriz ou idêntico ao original gravado, não marcar erro
+    if (isMatriz || (originalRaw && raw === originalRaw)) {
+      setEditCnpjError(null)
+    } else if (raw.length === 14) {
       if (!validateCNPJ(raw)) {
         setEditCnpjError('CNPJ inválido (dígitos verificadores incorretos).')
       } else {
@@ -597,7 +603,11 @@ export const CompaniesPage: React.FC = () => {
     const isMatriz = Boolean(matrizId && editingEmpresa.id === matrizId)
 
     const cleanCnpj = editFormData.cnpj.replace(/\D/g, '')
-    if (cleanCnpj) {
+    const originalCleanCnpj = (editingEmpresa.cnpj || '').replace(/\D/g, '')
+    const isCnpjUnchanged = cleanCnpj === originalCleanCnpj
+
+    // Validação de CNPJ apenas quando o campo NÃO está travado (não-Matriz) E foi alterado
+    if (cleanCnpj && !isMatriz && !isCnpjUnchanged) {
       if (!validateCNPJ(cleanCnpj)) {
         toast.error('CNPJ informado é inválido.')
         return
