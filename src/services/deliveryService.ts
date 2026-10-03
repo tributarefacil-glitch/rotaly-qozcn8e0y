@@ -547,6 +547,8 @@ export const deliveryService = {
         )
         .replace(/route_finished\s*=\s*false/g, 'route_finished != true')
         .replace(/route_finished\s*=\s*null/g, 'route_finished != true')
+        .replace(/\bdata_entrega\b/g, 'actual_arrival')
+        .replace(/\bdelivery_date\b/g, 'actual_arrival')
         .replace(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/g, '$1 $2')
     }
 
@@ -588,6 +590,8 @@ export const deliveryService = {
         )
         .replace(/route_finished\s*=\s*false/g, 'route_finished != true')
         .replace(/route_finished\s*=\s*null/g, 'route_finished != true')
+        .replace(/\bdata_entrega\b/g, 'actual_arrival')
+        .replace(/\bdelivery_date\b/g, 'actual_arrival')
         .replace(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/g, '$1 $2')
     }
 
@@ -1718,8 +1722,18 @@ export const deliveryService = {
             timestamp: now,
           })
           return updated
-        } catch {
-          // Se o update falhar (ex: registro apagado), cai para o create abaixo
+        } catch (err: any) {
+          // Se o update falhar (ex: registro apagado 404 ou 400), limpa o cache e recria
+          this._lastCourierLocationRecordMap.delete(userId)
+          const createdFallback = await pb.collection<LocationRecord>('locations').create(payload)
+          this._lastCourierLocationRecordMap.set(userId, {
+            id: createdFallback.id,
+            lat,
+            lng,
+            accuracy,
+            timestamp: now,
+          })
+          return createdFallback
         }
       }
     }
@@ -1938,25 +1952,11 @@ export const deliveryService = {
     try {
       let existingRecord: AppSettingsRecord | null = null
       try {
-        const records = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1, {
-          filter: "key = 'global_settings'",
-          requestKey: null,
-        })
-        if (records.items.length > 0) {
-          existingRecord = records.items[0]
-        }
-      } catch (findErr) {
-        console.warn(
-          'Aviso ao consultar app_settings por filtro, tentando getFirstListItem:',
-          findErr,
-        )
-        try {
-          existingRecord = await pb
-            .collection<AppSettingsRecord>('app_settings')
-            .getFirstListItem("key = 'global_settings'", { requestKey: null })
-        } catch {
-          existingRecord = null
-        }
+        existingRecord = await pb
+          .collection<AppSettingsRecord>('app_settings')
+          .getFirstListItem("key = 'global_settings'", { requestKey: null })
+      } catch {
+        existingRecord = null
       }
 
       if (existingRecord?.id) {
@@ -1965,12 +1965,7 @@ export const deliveryService = {
             .collection<AppSettingsRecord>('app_settings')
             .update(existingRecord.id, data)
         } catch (updateErr: any) {
-          // Se retornar 404 (ex: se o registro tiver sido recriado ou ID modificado), tenta fallback com create
-          if (updateErr?.status === 404) {
-            console.warn(
-              'Registro app_settings não encontrado pelo ID no update, tentando recriar ou upsert:',
-              updateErr,
-            )
+          if (updateErr?.status === 404 || updateErr?.status === 400) {
             return await pb.collection<AppSettingsRecord>('app_settings').create({
               key: 'global_settings',
               ...data,
@@ -2929,7 +2924,8 @@ export const deliveryService = {
     expand = 'courier_id,created_by',
     empresaId?: string,
   ) {
-    let finalFilter = filter
+    // Saneamento de filtro: a coleção fuel_advances tem courier_id, não user_id
+    let finalFilter = filter ? filter.replace(/\buser_id\b/g, 'courier_id') : ''
 
     // A coleção fuel_advances não possui empresa_id diretamente.
     // O isolamento multiempresa é feito via entregadores da empresa ativa:
@@ -2943,7 +2939,7 @@ export const deliveryService = {
       }
     }
 
-    if (!filter.includes('courier_id')) {
+    if (!finalFilter.includes('courier_id')) {
       try {
         let couriers = await this.getCouriers(targetCompanyId)
 
@@ -3023,15 +3019,45 @@ export const deliveryService = {
     }
   },
 
-  async createFuelAdvance(data: Partial<FuelAdvanceRecord>) {
-    // fuel_advances NÃO possui campo empresa_id no schema do PocketBase.
-    // Remove qualquer menção a empresa_id para não causar HTTP 400.
-    const { empresa_id: _empresaId, ...payloadWithoutEmpresaId } = (data as any) || {}
-    const payload = {
-      status: 'active',
-      entry_type: 'advance',
-      ...payloadWithoutEmpresaId,
+  async createFuelAdvance(data: Partial<FuelAdvanceRecord> | Record<string, any>) {
+    const raw = (data as any) || {}
+
+    // Mapeamento e sanitização estrita para os campos reais da coleção fuel_advances:
+    // courier_id, amount (número), date (YYYY-MM-DD), notes, payment_method, created_by,
+    // status, entry_type, previous_balance, new_balance
+    const courierId = raw.courier_id || raw.user_id || ''
+    const amountVal = Number(raw.amount !== undefined ? raw.amount : raw.valor) || 0
+    let dateVal = raw.date || raw.data || ''
+    if (typeof dateVal === 'string' && dateVal.includes('T')) {
+      dateVal = dateVal.split('T')[0]
     }
+    if (!dateVal) {
+      dateVal = new Date().toISOString().split('T')[0]
+    }
+    const notesVal = raw.notes !== undefined ? raw.notes : raw.observacao || ''
+    const paymentMethodVal = raw.payment_method || 'outro'
+    const createdByVal = raw.created_by || pb.authStore.record?.id || ''
+    const statusVal = raw.status || 'active'
+    const entryTypeVal = raw.entry_type || 'advance'
+
+    const payload: Record<string, any> = {
+      courier_id: courierId,
+      amount: amountVal,
+      date: dateVal,
+      notes: notesVal,
+      payment_method: paymentMethodVal,
+      created_by: createdByVal,
+      status: statusVal,
+      entry_type: entryTypeVal,
+    }
+
+    if (raw.previous_balance !== undefined && raw.previous_balance !== null) {
+      payload.previous_balance = Number(raw.previous_balance)
+    }
+    if (raw.new_balance !== undefined && raw.new_balance !== null) {
+      payload.new_balance = Number(raw.new_balance)
+    }
+
     return pb.collection<FuelAdvanceRecord>('fuel_advances').create(payload)
   },
 

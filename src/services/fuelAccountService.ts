@@ -149,6 +149,7 @@ export class FuelAccountService {
   async getFuelAdvances(
     courierIds?: string | string[],
     companyId?: string,
+    filterInput?: string,
   ): Promise<FuelAdvanceRecord[]> {
     let targetCourierIds: string[] = []
 
@@ -166,6 +167,10 @@ export class FuelAccountService {
     let filter = ''
     if (targetCourierIds.length > 0) {
       filter = targetCourierIds.map((id) => `courier_id = '${id}'`).join(' || ')
+    }
+    if (filterInput) {
+      const sanitizedExtra = filterInput.replace(/\buser_id\b/g, 'courier_id')
+      filter = filter ? `(${filter}) && (${sanitizedExtra})` : sanitizedExtra
     }
 
     try {
