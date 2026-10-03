@@ -1928,14 +1928,48 @@ export const deliveryService = {
 
   async updateSettings(data: Partial<AppSettingsRecord>) {
     try {
-      const records = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1, {
-        filter: "key = 'global_settings'",
-        requestKey: null,
-      })
-      if (records.items.length > 0) {
-        return await pb
-          .collection<AppSettingsRecord>('app_settings')
-          .update(records.items[0].id, data)
+      let existingRecord: AppSettingsRecord | null = null
+      try {
+        const records = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1, {
+          filter: "key = 'global_settings'",
+          requestKey: null,
+        })
+        if (records.items.length > 0) {
+          existingRecord = records.items[0]
+        }
+      } catch (findErr) {
+        console.warn(
+          'Aviso ao consultar app_settings por filtro, tentando getFirstListItem:',
+          findErr,
+        )
+        try {
+          existingRecord = await pb
+            .collection<AppSettingsRecord>('app_settings')
+            .getFirstListItem("key = 'global_settings'", { requestKey: null })
+        } catch {
+          existingRecord = null
+        }
+      }
+
+      if (existingRecord?.id) {
+        try {
+          return await pb
+            .collection<AppSettingsRecord>('app_settings')
+            .update(existingRecord.id, data)
+        } catch (updateErr: any) {
+          // Se retornar 404 (ex: se o registro tiver sido recriado ou ID modificado), tenta fallback com create
+          if (updateErr?.status === 404) {
+            console.warn(
+              'Registro app_settings não encontrado pelo ID no update, tentando recriar ou upsert:',
+              updateErr,
+            )
+            return await pb.collection<AppSettingsRecord>('app_settings').create({
+              key: 'global_settings',
+              ...data,
+            })
+          }
+          throw updateErr
+        }
       } else {
         return await pb.collection<AppSettingsRecord>('app_settings').create({
           key: 'global_settings',
@@ -3026,17 +3060,18 @@ export const deliveryService = {
     paymentMethod?: FuelPaymentMethod
   }) {
     const today = params.date || new Date().toISOString().split('T')[0]
+    const delta = Number(Number(params.amountDelta).toFixed(2))
     return pb.collection<FuelAdvanceRecord>('fuel_advances').create({
       courier_id: params.courierId,
-      amount: params.amountDelta,
+      amount: delta, // Suporta negativos (débito) e positivos (crédito)
       date: today,
       status: 'active',
       entry_type: 'balance_adjustment',
       created_by: params.createdBy,
       payment_method: params.paymentMethod || 'outro',
       notes: params.reason,
-      previous_balance: params.previousBalance,
-      new_balance: params.targetBalance,
+      previous_balance: Number(Number(params.previousBalance).toFixed(2)),
+      new_balance: Number(Number(params.targetBalance).toFixed(2)),
     })
   },
 

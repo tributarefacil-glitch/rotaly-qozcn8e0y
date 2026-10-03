@@ -46,6 +46,7 @@ import {
 import { toast } from 'sonner'
 import { deliveryService } from '@/services/deliveryService'
 import { fuelAccountService } from '@/services/fuelAccountService'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 import type {
   UserRecord,
   FuelAdvanceRecord,
@@ -343,7 +344,12 @@ export const FuelAdvanceModal: React.FC<FuelAdvanceModalProps> = ({
       }
     } catch (err) {
       console.error('Erro ao ajustar saldo:', err)
-      toast.error('Erro ao realizar ajuste de saldo.')
+      const errorMsg = getErrorMessage(err)
+      toast.error(
+        errorMsg
+          ? `Erro ao realizar ajuste de saldo: ${errorMsg}`
+          : 'Erro ao realizar ajuste de saldo.',
+      )
     } finally {
       setIsSubmittingAdjustment(false)
     }
