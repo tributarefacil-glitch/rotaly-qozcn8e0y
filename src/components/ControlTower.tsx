@@ -605,7 +605,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     if (shouldFetchAutonomously) {
       fetchData()
       const interval = setInterval(() => {
-        fetchData()
+        if (shouldFetchAutonomously) {
+          fetchData()
+        }
       }, 30000)
       return () => clearInterval(interval)
     }
@@ -673,6 +675,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
   }, [propOffRouteEvents])
 
+  // Buffer de telemetria GPS (throttle de 2,5s para evitar dezenas de re-renders por segundo)
+  const locationBufferRef = useRef<Map<string, LocationRecord>>(new Map())
+
   // Realtime PocketBase subscriptions:
   // Se o componente pai fornecer as props memoizadas (locations, settings, offRouteEvents),
   // desligamos as subscrições manuais correspondentes para evitar re-renders duplicados.
@@ -682,22 +687,39 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   useEffect(() => {
     let isSubscribed = true
 
+    // Intervalo de flush único a cada 2,5s para as posições acumuladas em buffer
+    const flushInterval = setInterval(() => {
+      if (locationBufferRef.current.size === 0) return
+      const bufferedMap = new Map(locationBufferRef.current)
+      locationBufferRef.current.clear()
+
+      setLocations((prev) => {
+        const updated = [...prev]
+        bufferedMap.forEach((newLoc, userId) => {
+          const idx = updated.findIndex((l) => l.user_id === userId)
+          if (idx >= 0) {
+            updated[idx] = newLoc
+          } else {
+            updated.unshift(newLoc)
+          }
+        })
+        return updated
+      })
+      setLastUpdated(new Date())
+    }, 2500)
+
     // Subscrição SEMPRE ativa para telemetria em tempo real
     pb.collection('locations')
       .subscribe('*', (e) => {
         if (!isSubscribed) return
         if (e.action === 'create' || e.action === 'update') {
           const newLoc = e.record as unknown as LocationRecord
-          setLocations((prev) => {
-            const existingIndex = prev.findIndex((l) => l.user_id === newLoc.user_id)
-            if (existingIndex >= 0) {
-              const updated = [...prev]
-              updated[existingIndex] = newLoc
-              return updated
-            }
-            return [newLoc, ...prev]
-          })
-          // Atualização imediata do pin no mapa nativo para movimento em tempo real instantâneo
+          if (newLoc.user_id) {
+            // 1. Grava no buffer sem disparar setState de locations imediatamente
+            locationBufferRef.current.set(newLoc.user_id, newLoc)
+          }
+
+          // 2. Atualização imediata do pin no mapa nativo para movimento suave em tempo real
           if (
             newLoc.user_id &&
             typeof newLoc.lat === 'number' &&
@@ -741,7 +763,6 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               }
             }
           }
-          setLastUpdated(new Date())
         }
       })
       .catch((err) => {
@@ -926,6 +947,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     return () => {
       isSubscribed = false
+      clearInterval(flushInterval)
+      locationBufferRef.current.clear()
       pb.collection('locations')
         .unsubscribe('*')
         .catch(() => {})
@@ -3351,8 +3374,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         lastUpdated={lastUpdated}
         isLoading={isLoading}
         onRefresh={() => {
-          setIsLoading(true)
-          fetchData().finally(() => setIsLoading(false))
+          if (onRefresh) {
+            onRefresh()
+          } else {
+            setIsLoading(true)
+            fetchData().finally(() => setIsLoading(false))
+          }
         }}
       />
 

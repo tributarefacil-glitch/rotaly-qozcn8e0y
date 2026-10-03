@@ -23,18 +23,47 @@ import {
 import type { BaseAddressRecord } from '@/types/delivery'
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
-import { LiveMap, type MapMarkerItem } from '@/components/LiveMap'
+import { Suspense, lazy } from 'react'
+import type { MapMarkerItem } from '@/components/LiveMap'
 import { CreateOrderModal } from '@/components/CreateOrderModal'
 import { CreateCourierModal } from '@/components/CreateCourierModal'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import { CustomerSearchModal } from '@/components/CustomerSearchModal'
-import { CustomerAddressAuditModal } from '@/components/CustomerAddressAuditModal'
-import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
-import { ControlTower } from '@/components/ControlTower'
-import { ReportsSection } from '@/components/ReportsSection'
-import { SellerFuelSection } from '@/components/SellerFuelSection'
+
+// Lazy loading das seções e modais pesados com named exports
+const LiveMap = lazy(() => import('@/components/LiveMap').then((m) => ({ default: m.LiveMap })))
+const RouteOptimizerModal = lazy(() =>
+  import('@/components/RouteOptimizerModal').then((m) => ({ default: m.RouteOptimizerModal })),
+)
+const ControlTower = lazy(() =>
+  import('@/components/ControlTower').then((m) => ({ default: m.ControlTower })),
+)
+const ReportsSection = lazy(() =>
+  import('@/components/ReportsSection').then((m) => ({ default: m.ReportsSection })),
+)
+const SellerFuelSection = lazy(() =>
+  import('@/components/SellerFuelSection').then((m) => ({ default: m.SellerFuelSection })),
+)
+const CustomerAddressAuditModal = lazy(() =>
+  import('@/components/CustomerAddressAuditModal').then((m) => ({
+    default: m.CustomerAddressAuditModal,
+  })),
+)
+
+function SectionSkeleton() {
+  return (
+    <div className="space-y-4 p-4 animate-pulse">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="h-28 rounded-xl bg-[#0E1738] border border-[#1E2B58]" />
+        <div className="h-28 rounded-xl bg-[#0E1738] border border-[#1E2B58]" />
+        <div className="h-28 rounded-xl bg-[#0E1738] border border-[#1E2B58]" />
+      </div>
+      <div className="h-64 rounded-xl bg-[#0E1738] border border-[#1E2B58]" />
+    </div>
+  )
+}
 import { deliveryService } from '@/services/deliveryService'
 import { getMyCompany } from '@/lib/companyResolver'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -1264,41 +1293,47 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
           {/* TAB 1: TORRE DE CONTROLE (MÓDULO 1) */}
           {mainViewTab === 'control-tower' && (
-            <ControlTower
-              orders={orders}
-              couriers={couriers}
-              locations={locations}
-              settings={settings}
-              offRouteEvents={offRouteEvents}
-              onRefresh={loadData}
-              userRole="seller"
-            />
+            <Suspense fallback={<SectionSkeleton />}>
+              <ControlTower
+                orders={orders}
+                couriers={couriers}
+                locations={locations}
+                settings={settings}
+                offRouteEvents={offRouteEvents}
+                onRefresh={loadData}
+                userRole="seller"
+              />
+            </Suspense>
           )}
 
           {/* TAB 2: CONTROLE DE COMBUSTÍVEL & CONTA CORRENTE */}
           {mainViewTab === 'fuel' && (
-            <SellerFuelSection
-              couriers={couriers}
-              orders={orders}
-              fuelAdvances={fuelAdvances}
-              locations={locations}
-              offRouteEvents={offRouteEvents}
-              settings={settings}
-              onRefresh={loadData}
-              isReadOnly={true}
-            />
+            <Suspense fallback={<SectionSkeleton />}>
+              <SellerFuelSection
+                couriers={couriers}
+                orders={orders}
+                fuelAdvances={fuelAdvances}
+                locations={locations}
+                offRouteEvents={offRouteEvents}
+                settings={settings}
+                onRefresh={loadData}
+                isReadOnly={true}
+              />
+            </Suspense>
           )}
 
           {/* TAB 3: RELATÓRIOS (MÓDULO 4) */}
           {mainViewTab === 'reports' && (
-            <ReportsSection
-              orders={orders}
-              couriers={couriers}
-              customers={customers}
-              settings={settings}
-              offRouteEvents={offRouteEvents}
-              locations={locations}
-            />
+            <Suspense fallback={<SectionSkeleton />}>
+              <ReportsSection
+                orders={orders}
+                couriers={couriers}
+                customers={customers}
+                settings={settings}
+                offRouteEvents={offRouteEvents}
+                locations={locations}
+              />
+            </Suspense>
           )}
 
           {/* TAB: GESTÃO & BUSCA DE CLIENTES (BUSCAR POR NOME, CPF, CNPJ E TELEFONE) */}
@@ -1566,17 +1601,25 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                   </span>
                 </div>
 
-                <LiveMap
-                  markers={mapMarkers}
-                  selectedMarkerId={selectedMarkerId}
-                  onSelectMarker={(m) => {
-                    setSelectedMarkerId(m.id)
-                    if (m.tracking_code) {
-                      setSearchQuery(m.tracking_code)
-                    }
-                  }}
-                  height="440px"
-                />
+                <Suspense
+                  fallback={
+                    <div className="h-[440px] rounded-2xl bg-[#0E1738] border border-[#1E2B58] animate-pulse flex items-center justify-center text-slate-500 text-xs">
+                      Carregando mapa ao vivo...
+                    </div>
+                  }
+                >
+                  <LiveMap
+                    markers={mapMarkers}
+                    selectedMarkerId={selectedMarkerId}
+                    onSelectMarker={(m) => {
+                      setSelectedMarkerId(m.id)
+                      if (m.tracking_code) {
+                        setSearchQuery(m.tracking_code)
+                      }
+                    }}
+                    height="440px"
+                  />
+                </Suspense>
               </div>
 
               {/* Orders Management Table with Filters */}
@@ -2104,26 +2147,34 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       />
 
       {/* Modal de Auditoria e Verificação Anti-Descalibração de Endereços */}
-      <CustomerAddressAuditModal
-        open={isCustomerAddressAuditModalOpen}
-        onOpenChange={setIsCustomerAddressAuditModalOpen}
-        customers={customers}
-        onEditCustomer={(c) => {
-          setCustomerToEdit(c)
-          setIsCreateCustomerModalOpen(true)
-        }}
-        onRefreshCustomers={loadData}
-      />
+      {isCustomerAddressAuditModalOpen && (
+        <Suspense fallback={null}>
+          <CustomerAddressAuditModal
+            open={isCustomerAddressAuditModalOpen}
+            onOpenChange={setIsCustomerAddressAuditModalOpen}
+            customers={customers}
+            onEditCustomer={(c) => {
+              setCustomerToEdit(c)
+              setIsCreateCustomerModalOpen(true)
+            }}
+            onRefreshCustomers={loadData}
+          />
+        </Suspense>
+      )}
       {/* Multi-Courier Route Optimizer Assistant Modal */}
-      <RouteOptimizerModal
-        open={isOptimizerModalOpen}
-        onOpenChange={setIsOptimizerModalOpen}
-        orders={orders}
-        couriers={couriers}
-        customers={customers}
-        locations={locations}
-        onRoutesApplied={loadData}
-      />
+      {isOptimizerModalOpen && (
+        <Suspense fallback={null}>
+          <RouteOptimizerModal
+            open={isOptimizerModalOpen}
+            onOpenChange={setIsOptimizerModalOpen}
+            orders={orders}
+            couriers={couriers}
+            customers={customers}
+            locations={locations}
+            onRoutesApplied={loadData}
+          />
+        </Suspense>
+      )}
 
       {/* MODAL: Adicionar Entrega a Rota JÁ INICIADA do Entregador */}
       <Dialog open={isAddToRouteModalOpen} onOpenChange={setIsAddToRouteModalOpen}>

@@ -52,15 +52,39 @@ import {
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
-import { ControlTower } from '@/components/ControlTower'
-import { ReportsSection } from '@/components/ReportsSection'
+import { Suspense, lazy } from 'react'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 import { CreateSellerModal } from '@/components/CreateSellerModal'
 import { EditSellerModal } from '@/components/EditSellerModal'
 import { EditUserModal } from '@/components/EditUserModal'
 import { SiteContentManager } from '@/components/SiteContentManager'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
-import { CustomerAddressAuditModal } from '@/components/CustomerAddressAuditModal'
+
+// Lazy loading das seções pesadas com named exports
+const ControlTower = lazy(() =>
+  import('@/components/ControlTower').then((m) => ({ default: m.ControlTower })),
+)
+const ReportsSection = lazy(() =>
+  import('@/components/ReportsSection').then((m) => ({ default: m.ReportsSection })),
+)
+const CustomerAddressAuditModal = lazy(() =>
+  import('@/components/CustomerAddressAuditModal').then((m) => ({
+    default: m.CustomerAddressAuditModal,
+  })),
+)
+
+function SectionSkeleton() {
+  return (
+    <div className="space-y-4 p-4 animate-pulse">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="h-28 rounded-xl bg-slate-200 dark:bg-slate-800" />
+        <div className="h-28 rounded-xl bg-slate-200 dark:bg-slate-800" />
+        <div className="h-28 rounded-xl bg-slate-200 dark:bg-slate-800" />
+      </div>
+      <div className="h-64 rounded-xl bg-slate-200 dark:bg-slate-800" />
+    </div>
+  )
+}
 import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
 import { FuelAdvanceModal } from '@/components/FuelAdvanceModal'
 import { Globe, KeyRound, Lock } from 'lucide-react'
@@ -1495,15 +1519,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
               {/* MÓDULO 1: TORRE DE CONTROLE NA ABA DO ADMIN */}
               <TabsContent value="control-tower" className="space-y-6">
-                <ControlTower
-                  orders={orders}
-                  couriers={couriers}
-                  locations={locations}
-                  settings={settings}
-                  offRouteEvents={offRouteEvents}
-                  onRefresh={loadData}
-                  userRole="admin"
-                />
+                <Suspense fallback={<SectionSkeleton />}>
+                  <ControlTower
+                    orders={orders}
+                    couriers={couriers}
+                    locations={locations}
+                    settings={settings}
+                    offRouteEvents={offRouteEvents}
+                    onRefresh={loadData}
+                    userRole="admin"
+                  />
+                </Suspense>
               </TabsContent>
 
               {/* TAB: CONTROLE DE COMBUSTÍVEL & CONTA CORRENTE EM TEMPO REAL (REQUISITO 5) */}
@@ -2076,15 +2102,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
               {/* TAB: RELATÓRIOS COMPLETOS (MÓDULO 4) */}
               <TabsContent value="reports" className="space-y-6">
-                <ReportsSection
-                  orders={orders}
-                  couriers={couriers}
-                  sellers={sellers}
-                  customers={customers}
-                  settings={settings}
-                  offRouteEvents={offRouteEvents}
-                  locations={locations}
-                />
+                <Suspense fallback={<SectionSkeleton />}>
+                  <ReportsSection
+                    orders={orders}
+                    couriers={couriers}
+                    sellers={sellers}
+                    customers={customers}
+                    settings={settings}
+                    offRouteEvents={offRouteEvents}
+                    locations={locations}
+                  />
+                </Suspense>
               </TabsContent>
 
               {/* TAB: CONFIGURAÇÕES DO ADMINISTRADOR (PARÂMETROS DE COMBUSTÍVEL POR TIPO DE VEÍCULO) */}
@@ -3725,16 +3753,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       />
 
       {/* Modal de Auditoria e Verificação de Endereços no Mapa (Doutrina Vuupt/Rotaly) */}
-      <CustomerAddressAuditModal
-        open={isCustomerAddressAuditModalOpen}
-        onOpenChange={setIsCustomerAddressAuditModalOpen}
-        customers={customers}
-        onEditCustomer={(c) => {
-          setCustomerToEdit(c)
-          setIsCreateCustomerModalOpen(true)
-        }}
-        onRefreshCustomers={loadData}
-      />
+      {isCustomerAddressAuditModalOpen && (
+        <Suspense fallback={null}>
+          <CustomerAddressAuditModal
+            open={isCustomerAddressAuditModalOpen}
+            onOpenChange={setIsCustomerAddressAuditModalOpen}
+            customers={customers}
+            onEditCustomer={(c) => {
+              setCustomerToEdit(c)
+              setIsCreateCustomerModalOpen(true)
+            }}
+            onRefreshCustomers={loadData}
+          />
+        </Suspense>
+      )}
 
       {/* Floating AI Assistant */}
       <AiLogisticsAssistant />
