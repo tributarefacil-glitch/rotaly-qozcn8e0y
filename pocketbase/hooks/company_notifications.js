@@ -108,7 +108,8 @@ routerAdd('POST', '/backend/v1/company-notifications/send', (c) => {
   }
 
   try {
-    const authRecord = c.get('authRecord')
+    const authRecord =
+      (typeof c.Auth === 'function' ? c.Auth() : null) || c.auth || c.get('authRecord')
     const role = authRecord ? authRecord.getString('role') : ''
     if (!authRecord || (role !== 'master' && role !== 'admin')) {
       return c.json(403, { error: 'Acesso negado. Apenas administradores.' })
