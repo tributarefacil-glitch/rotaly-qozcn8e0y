@@ -163,8 +163,10 @@ export function calculateCourierFuelMetrics(params: {
   // 1. Filtrar adiantamentos do entregador (com filtro de período opcional)
   // Regra contratual do Rotaly:
   // No início de cada mês, "Total Adiantado" no card = SOMENTE adiantamentos do mês corrente no fuso America/Sao_Paulo.
+  // Regra de Cancelamento/Estorno: adiantamentos com status = 'cancelled' NÃO entram na soma de adiantamentos nem no saldo
   const courierAdvances = advances.filter((a) => {
     if (a.courier_id !== courier.id) return false
+    if (a.status === 'cancelled') return false
     if (periodFilter === 'all') return true
 
     const advRaw = a.date || a.created

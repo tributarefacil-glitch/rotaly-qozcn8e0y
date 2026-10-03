@@ -466,7 +466,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     const now = new Date()
 
     // Filtrar adiantamentos de acordo com o periodFilter (fuso America/Sao_Paulo)
+    // Ignorar cancelados
     const filteredAdvances = allCourierAdvances.filter((a) => {
+      if (a.status === 'cancelled') return false
       if (periodFilter === 'all') return true
       const advRaw = a.date || a.created
       if (periodFilter === 'today') {

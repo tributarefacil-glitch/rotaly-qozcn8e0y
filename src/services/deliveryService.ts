@@ -2984,7 +2984,59 @@ export const deliveryService = {
     // fuel_advances NÃO possui campo empresa_id no schema do PocketBase.
     // Remove qualquer menção a empresa_id para não causar HTTP 400.
     const { empresa_id: _empresaId, ...payloadWithoutEmpresaId } = (data as any) || {}
-    return pb.collection<FuelAdvanceRecord>('fuel_advances').create(payloadWithoutEmpresaId)
+    const payload = {
+      status: 'active',
+      entry_type: 'advance',
+      ...payloadWithoutEmpresaId,
+    }
+    return pb.collection<FuelAdvanceRecord>('fuel_advances').create(payload)
+  },
+
+  async cancelFuelAdvance(params: {
+    id: string
+    cancellationReason: string
+    cancelledBy: string
+    previousBalance?: number
+  }) {
+    const record = await pb.collection<FuelAdvanceRecord>('fuel_advances').getOne(params.id)
+    const newBal =
+      params.previousBalance !== undefined
+        ? params.previousBalance - (record.amount || 0)
+        : undefined
+
+    return pb.collection<FuelAdvanceRecord>('fuel_advances').update(params.id, {
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: params.cancelledBy,
+      cancellation_reason: params.cancellationReason,
+      ...(params.previousBalance !== undefined ? { previous_balance: params.previousBalance } : {}),
+      ...(newBal !== undefined ? { new_balance: newBal } : {}),
+    })
+  },
+
+  async createBalanceAdjustment(params: {
+    courierId: string
+    amountDelta: number // positivo adiciona ao saldo (crédito), negativo subtrai (débito)
+    targetBalance: number
+    previousBalance: number
+    reason: string
+    createdBy: string
+    date?: string
+    paymentMethod?: FuelPaymentMethod
+  }) {
+    const today = params.date || new Date().toISOString().split('T')[0]
+    return pb.collection<FuelAdvanceRecord>('fuel_advances').create({
+      courier_id: params.courierId,
+      amount: params.amountDelta,
+      date: today,
+      status: 'active',
+      entry_type: 'balance_adjustment',
+      created_by: params.createdBy,
+      payment_method: params.paymentMethod || 'outro',
+      notes: params.reason,
+      previous_balance: params.previousBalance,
+      new_balance: params.targetBalance,
+    })
   },
 
   async deleteFuelAdvance(id: string) {

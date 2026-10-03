@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T01:25:24.334Z",
+  "generatedAt": "2026-10-03T01:43:12.743Z",
   "collections": [
     {
       "name": "users",
@@ -898,6 +898,51 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["active", "cancelled"]
+        },
+        {
+          "name": "entry_type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["advance", "balance_adjustment"]
+        },
+        {
+          "name": "cancelled_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cancelled_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "cancellation_reason",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "previous_balance",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "new_balance",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE INDEX idx_fuel_advances_courier ON fuel_advances (courier_id, date DESC)"]

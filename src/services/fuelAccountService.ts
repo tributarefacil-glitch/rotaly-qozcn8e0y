@@ -309,9 +309,11 @@ export class FuelAccountService {
       referenceDate = new Date(),
     } = params
 
-    // 1. Adiantamentos até o mês anterior (fuso America/Sao_Paulo)
+    // 1. Adiantamentos ativos até o mês anterior (fuso America/Sao_Paulo)
+    // Cancelados são desconsiderados no saldo
     const pastAdvances = advances.filter((a) => {
       if (a.courier_id !== courierId) return false
+      if (a.status === 'cancelled') return false
       const advRaw = a.date || a.created
       return isBeforeCurrentMonthInTz(advRaw, referenceDate)
     })

@@ -300,6 +300,9 @@ export interface AppSettingsRecord extends RecordModel {
 
 export type FuelPaymentMethod = 'pix' | 'dinheiro' | 'transferencia' | 'outro'
 
+export type FuelAdvanceStatus = 'active' | 'cancelled'
+export type FuelAdvanceEntryType = 'advance' | 'balance_adjustment'
+
 export interface FuelAdvanceRecord extends RecordModel {
   courier_id: string
   amount: number
@@ -307,9 +310,17 @@ export interface FuelAdvanceRecord extends RecordModel {
   notes?: string
   payment_method?: FuelPaymentMethod
   created_by?: string
+  status?: FuelAdvanceStatus
+  entry_type?: FuelAdvanceEntryType
+  cancelled_at?: string
+  cancelled_by?: string
+  cancellation_reason?: string
+  previous_balance?: number
+  new_balance?: number
   expand?: {
     courier_id?: UserRecord
     created_by?: UserRecord
+    cancelled_by?: UserRecord
   }
 }
 
