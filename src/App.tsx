@@ -19,6 +19,7 @@ import CourierHistoryPage from './pages/CourierHistoryPage'
 import CourierProfilePage from './pages/CourierProfilePage'
 import PublicTrackingPage from './pages/PublicTrackingPage'
 import CompaniesPage from './pages/CompaniesPage'
+import CourierRedirectionPdfGuidePage from './pages/CourierRedirectionPdfGuidePage'
 import NotFound from './pages/NotFound'
 
 // Code-split heavy dashboard pages to optimize initial bundle
@@ -437,6 +438,11 @@ const App = () => (
             <Toaster />
             <Sonner richColors position="top-right" />
             <Routes>
+              {/* Material de Treinamento e Guia em PDF (Acesso livre para WhatsApp dos entregadores) */}
+              <Route path="/guia-entregador" element={<CourierRedirectionPdfGuidePage />} />
+              <Route path="/guia-redirecionamento" element={<CourierRedirectionPdfGuidePage />} />
+              <Route path="/courier/guia-pdf" element={<CourierRedirectionPdfGuidePage />} />
+
               {/* Public Track Routes (com suporte a sufixos e variações de path) */}
               <Route path="/track/:tracking_code" element={<PublicTrackingPage />} />
               <Route path="/track" element={<PublicTrackingPage />} />

@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
-import { Compass, BookOpen, ChevronRight } from 'lucide-react'
+import { Compass, BookOpen, ChevronRight, FileDown } from 'lucide-react'
 import { CourierRedirectionTutorialModal } from '@/components/CourierRedirectionTutorialModal'
 
 export default function CourierProfilePage() {
@@ -220,19 +220,33 @@ export default function CourierProfilePage() {
             </div>
           </div>
 
-          <div className="mt-3 pt-3 border-t border-[#1E2B58] flex items-center justify-between gap-2">
+          <div className="mt-3 pt-3 border-t border-[#1E2B58] flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-slate-400 flex items-center gap-1">
-              <BookOpen className="h-3.5 w-3.5 text-[#60A5FA]" /> 4 telas ilustradas
+              <BookOpen className="h-3.5 w-3.5 text-[#60A5FA]" /> 4 etapas ilustradas
             </span>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setIsTutorialOpen(true)}
-              className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs h-8 px-3 rounded-lg shadow-sm flex items-center gap-1 transition"
-            >
-              <span>Ver tutorial ilustrado</span>
-              <ChevronRight className="h-3.5 w-3.5" />
-            </Button>
+
+            <div className="flex items-center gap-2">
+              <a
+                href="/guia-entregador"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-cyan-400/50 bg-[#00A3FF]/15 hover:bg-[#00A3FF]/25 text-cyan-300 hover:text-white font-bold text-xs transition shadow-xs"
+                title="Abrir e salvar em PDF para enviar no WhatsApp dos entregadores"
+              >
+                <FileDown className="h-3.5 w-3.5 text-cyan-300" />
+                <span>Baixar guia em PDF</span>
+              </a>
+
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setIsTutorialOpen(true)}
+                className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs h-8 px-3 rounded-lg shadow-sm flex items-center gap-1 transition"
+              >
+                <span>Ver tutorial</span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
         </div>
 

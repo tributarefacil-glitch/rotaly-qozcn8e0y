@@ -3044,6 +3044,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
+                        <a
+                          href="/guia-entregador"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-cyan-500/40 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold text-xs shadow-xs transition"
+                          title="Abrir o Guia de Entrega Redirecionada formatado para impressão em PDF / WhatsApp"
+                        >
+                          <FileText className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" />
+                          <span>Guia PDF Redireção</span>
+                        </a>
+
                         {/* Filter by status */}
                         <Select
                           value={courierStatusFilter}
