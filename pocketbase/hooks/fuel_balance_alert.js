@@ -184,6 +184,17 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
     if (notes.indexOf('erro de sistema') !== -1) return false
     if (ord.getString('completion_reason') === 'cancelado_vendedor') return false
 
+    var baseLat = Number(ord.getFloat('start_base_lat')) || 0
+    var baseLng = Number(ord.getFloat('start_base_lng')) || 0
+    if (
+      baseLat === 0 &&
+      baseLng === 0 &&
+      !ord.getString('start_base_name') &&
+      !ord.getString('start_base_address')
+    ) {
+      return false
+    }
+
     var status = ord.getString('status')
     if (status === 'delivered') return true
     if (status === 'address_error' || status === 'client_absent') return true
@@ -199,12 +210,20 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       var o = orders[i]
       var cId = o.getString('courier_id')
       var custId = o.getString('customer_id')
-      if (!cId || !custId) continue
+      if (!cId) continue
+
+      var effectiveCustomerKey = custId
+      if (!effectiveCustomerKey) {
+        var rawAddr = (o.getString('end_address_text') || o.getString('start_base_address') || o.id)
+          .toLowerCase()
+          .trim()
+        effectiveCustomerKey = 'addr_' + rawAddr
+      }
 
       var oDateVal =
         o.getString('actual_arrival') || o.getString('route_finished_at') || o.getString('created')
       var dayKey = getBrazilDateString(new Date(parseSafeTimestamp(oDateVal)))
-      var bKey = cId + ':::' + custId + ':::' + dayKey
+      var bKey = cId + ':::' + effectiveCustomerKey + ':::' + dayKey
 
       if (!buckets[bKey]) buckets[bKey] = []
       buckets[bKey].push(o)
@@ -224,7 +243,10 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
           parseSafeTimestamp(bOrd.getString('actual_arrival')) ||
           parseSafeTimestamp(bOrd.getString('route_finished_at')) ||
           parseSafeTimestamp(bOrd.getString('created'))
-        return ta - tb
+        if (ta !== tb) return ta - tb
+        return (
+          parseSafeTimestamp(a.getString('created')) - parseSafeTimestamp(bOrd.getString('created'))
+        )
       })
 
       var clusters = []
@@ -242,19 +264,21 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
           parseSafeTimestamp(prevOrd.getString('route_finished_at')) ||
           parseSafeTimestamp(prevOrd.getString('created'))
 
-        if (tOrd - tPrev <= JOINT_DELIVERY_WINDOW_MS) {
+        if (Math.abs(tOrd - tPrev) <= JOINT_DELIVERY_WINDOW_MS) {
           curCluster.push(ord)
         } else {
-          clusters.push(curCluster)
+          if (curCluster.length >= 2) {
+            clusters.push(curCluster)
+          }
           curCluster = [ord]
         }
       }
-      clusters.push(curCluster)
+      if (curCluster.length >= 2) {
+        clusters.push(curCluster)
+      }
 
       for (var k = 0; k < clusters.length; k++) {
         var cluster = clusters[k]
-        if (cluster.length < 2) continue
-
         var primary = cluster[0]
         for (var ci = 0; ci < cluster.length; ci++) {
           var cOrd = cluster[ci]
@@ -993,6 +1017,17 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
     if (notes.indexOf('erro de sistema') !== -1) return false
     if (ord.getString('completion_reason') === 'cancelado_vendedor') return false
 
+    var baseLat = Number(ord.getFloat('start_base_lat')) || 0
+    var baseLng = Number(ord.getFloat('start_base_lng')) || 0
+    if (
+      baseLat === 0 &&
+      baseLng === 0 &&
+      !ord.getString('start_base_name') &&
+      !ord.getString('start_base_address')
+    ) {
+      return false
+    }
+
     var status = ord.getString('status')
     if (status === 'delivered') return true
     if (status === 'address_error' || status === 'client_absent') return true
@@ -1008,12 +1043,20 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       var o = orders[i]
       var cId = o.getString('courier_id')
       var custId = o.getString('customer_id')
-      if (!cId || !custId) continue
+      if (!cId) continue
+
+      var effectiveCustomerKey = custId
+      if (!effectiveCustomerKey) {
+        var rawAddr = (o.getString('end_address_text') || o.getString('start_base_address') || o.id)
+          .toLowerCase()
+          .trim()
+        effectiveCustomerKey = 'addr_' + rawAddr
+      }
 
       var oDateVal =
         o.getString('actual_arrival') || o.getString('route_finished_at') || o.getString('created')
       var dayKey = getBrazilDateString(new Date(parseSafeTimestamp(oDateVal)))
-      var bKey = cId + ':::' + custId + ':::' + dayKey
+      var bKey = cId + ':::' + effectiveCustomerKey + ':::' + dayKey
 
       if (!buckets[bKey]) buckets[bKey] = []
       buckets[bKey].push(o)
@@ -1033,7 +1076,10 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
           parseSafeTimestamp(bOrd.getString('actual_arrival')) ||
           parseSafeTimestamp(bOrd.getString('route_finished_at')) ||
           parseSafeTimestamp(bOrd.getString('created'))
-        return ta - tb
+        if (ta !== tb) return ta - tb
+        return (
+          parseSafeTimestamp(a.getString('created')) - parseSafeTimestamp(bOrd.getString('created'))
+        )
       })
 
       var clusters = []
@@ -1051,19 +1097,21 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
           parseSafeTimestamp(prevOrd.getString('route_finished_at')) ||
           parseSafeTimestamp(prevOrd.getString('created'))
 
-        if (tOrd - tPrev <= JOINT_DELIVERY_WINDOW_MS) {
+        if (Math.abs(tOrd - tPrev) <= JOINT_DELIVERY_WINDOW_MS) {
           curCluster.push(ord)
         } else {
-          clusters.push(curCluster)
+          if (curCluster.length >= 2) {
+            clusters.push(curCluster)
+          }
           curCluster = [ord]
         }
       }
-      clusters.push(curCluster)
+      if (curCluster.length >= 2) {
+        clusters.push(curCluster)
+      }
 
       for (var k = 0; k < clusters.length; k++) {
         var cluster = clusters[k]
-        if (cluster.length < 2) continue
-
         var primary = cluster[0]
         for (var ci = 0; ci < cluster.length; ci++) {
           var cOrd = cluster[ci]
