@@ -3,47 +3,27 @@
  *
  * Buffer offline e sincronização em ordem cronológica de telemetria GPS para o app do entregador (Rotaly).
  *
- * Requisitos:
+ * Requisitos e Arquitetura:
  * 1. Enquanto a rota está ativa (route_started e ainda não finalizada na base), se o envio falhar
- *    (sem rede/sem sinal) OU o GPS estiver com erro/desligado, armazena no buffer local:
- *    { id, userId, lat, lng, accuracy, speed, heading, batteryLevel, timestamp, reason, synced }
- * 2. Quando o sinal/GPS voltar: envia TODOS os pontos do buffer à coleção de telemetria ('locations')
- *    em ordem cronológica estrita, marcando-os como sincronizados e limpando o buffer após envio bem-sucedido.
- * 3. Notifica ouvintes/UI sobre o número de pontos pendentes para aviso discreto no app do entregador.
+ *    (sem rede/sem sinal) OU o GPS estiver com erro/desligado, armazena no buffer persistente em IndexedDB
+ *    (com fallback para localStorage).
+ * 2. Quando o sinal/GPS voltar (evento 'online', 'visibilitychange' ou 'SYNC_TRIGGER' do SW):
+ *    envia TODOS os pontos do buffer à coleção de telemetria ('locations') em ordem cronológica estrita,
+ *    marcando e enviando o timestamp original de cada ponto (não o momento do reenvio), para que
+ *    a auditoria de telemetria e análise de desvios da Torre de Controle continuem precisas.
+ * 3. O cálculo oficial de km viário do Rotaly continua desacoplado da telemetria bruta.
+ * 4. Notifica ouvintes/UI sobre o número de pontos pendentes para badge/aviso discreto no app do entregador.
  */
 
 import { haversineDistanceMeters } from '@/lib/geo'
 import { deliveryService } from './deliveryService'
+import { offlineRouteStorage, type OfflineLocationPoint } from './offlineRouteStorage'
 
-export interface OfflineTelemetryPoint {
-  id: string
-  userId: string
-  lat: number
-  lng: number
-  accuracy?: number
-  speed?: number
-  heading?: number
-  batteryLevel?: number | null
-  timestamp: number
-  reason:
-    | 'network_offline'
-    | 'send_failed'
-    | 'gps_disabled'
-    | 'gps_unavailable'
-    | 'permission_denied'
-    | 'weak_signal'
-    | 'cached_while_offline'
-    | 'sem-fix'
-  synced?: boolean
-  error?: string
-}
+export type OfflineTelemetryPoint = OfflineLocationPoint
 
 const STORAGE_PREFIX = 'rotaly_offline_telemetry_'
 const MAX_BUFFER_POINTS = 500
 
-// Limiares de deduplicação no buffer offline
-// Se o novo ponto tiver distância < 5 metros E intervalo de tempo < 10 segundos,
-// não adiciona uma nova cópia duplicada (atualiza timestamp e mantém o buffer enxuto).
 const DEDUPLICATION_MAX_DISTANCE_METERS = 10
 const DEDUPLICATION_MIN_INTERVAL_MS = 30 * 1000
 
@@ -51,9 +31,49 @@ class OfflineTelemetryBufferService {
   private syncInProgress = false
   private listeners = new Set<(count: number) => void>()
   private lastSuccessfulOnlinePingTimes = new Map<string, number>()
+  private inMemoryCache = new Map<string, OfflineTelemetryPoint[]>()
+  private initializedUsers = new Set<string>()
 
   private getStorageKey(userId: string): string {
     return `${STORAGE_PREFIX}${userId}`
+  }
+
+  /**
+   * Inicializa o cache em memória lendo do IndexedDB e localStorage na inicialização
+   */
+  async initUserBuffer(userId: string): Promise<OfflineTelemetryPoint[]> {
+    if (!userId) return []
+    if (this.initializedUsers.has(userId) && this.inMemoryCache.has(userId)) {
+      return this.inMemoryCache.get(userId) || []
+    }
+
+    try {
+      // Lê do IndexedDB
+      const points = await offlineRouteStorage.getTelemetryPoints(userId)
+      // Mescla com legado do localStorage caso exista migração
+      const legacy = this.getLegacyBuffer(userId)
+      const mergedMap = new Map<string, OfflineTelemetryPoint>()
+
+      for (const p of legacy) {
+        mergedMap.set(p.id, p)
+      }
+      for (const p of points) {
+        mergedMap.set(p.id, p)
+      }
+
+      const merged = Array.from(mergedMap.values())
+      merged.sort((a, b) => a.timestamp - b.timestamp)
+
+      this.inMemoryCache.set(userId, merged)
+      this.initializedUsers.add(userId)
+      this.notify(userId)
+      return merged
+    } catch {
+      const fallback = this.getLegacyBuffer(userId)
+      this.inMemoryCache.set(userId, fallback)
+      this.initializedUsers.add(userId)
+      return fallback
+    }
   }
 
   /**
@@ -65,39 +85,57 @@ class OfflineTelemetryBufferService {
   }
 
   /**
-   * Obtém os pontos atualmente armazenados no buffer local para este entregador.
+   * Leitura rápida síncrona do buffer local do usuário.
    */
   getBuffer(userId: string): OfflineTelemetryPoint[] {
     if (typeof window === 'undefined' || !userId) return []
+
+    if (this.inMemoryCache.has(userId)) {
+      return [...(this.inMemoryCache.get(userId) || [])]
+    }
+
+    // Se ainda não inicializou, lê de imediato do localStorage
+    const legacy = this.getLegacyBuffer(userId)
+    this.inMemoryCache.set(userId, legacy)
+    // Dispara init assíncrono em background
+    this.initUserBuffer(userId).catch(() => {})
+    return legacy
+  }
+
+  private getLegacyBuffer(userId: string): OfflineTelemetryPoint[] {
     try {
       const raw = localStorage.getItem(this.getStorageKey(userId))
       if (!raw) return []
       const parsed = JSON.parse(raw)
       return Array.isArray(parsed) ? parsed : []
-    } catch (err) {
-      console.warn('Erro ao ler buffer offline de telemetria:', err)
+    } catch {
       return []
     }
   }
 
   /**
-   * Salva os pontos no buffer local.
+   * Salva os pontos no buffer local (em memória, localStorage e IndexedDB).
    */
   private setBuffer(userId: string, points: OfflineTelemetryPoint[]): void {
     if (typeof window === 'undefined' || !userId) return
     try {
-      // Limita ao número máximo para proteção de armazenamento
       const trimmed = points.slice(-MAX_BUFFER_POINTS)
-      localStorage.setItem(this.getStorageKey(userId), JSON.stringify(trimmed))
+      trimmed.sort((a, b) => a.timestamp - b.timestamp)
+      this.inMemoryCache.set(userId, trimmed)
+
+      // Salva de imediato no localStorage
+      try {
+        localStorage.setItem(this.getStorageKey(userId), JSON.stringify(trimmed))
+      } catch {
+        /* ignore */
+      }
+
       this.notify(userId)
     } catch (err) {
       console.error('Erro ao gravar buffer offline de telemetria:', err)
     }
   }
 
-  /**
-   * Adiciona um ponto ao buffer offline (se a rota estiver ativa).
-   */
   /**
    * Adiciona um ponto ao buffer offline (se a rota estiver ativa). Alias enqueuePoint para compatibilidade.
    */
@@ -111,7 +149,6 @@ class OfflineTelemetryBufferService {
     const lastOnlinePing = this.lastSuccessfulOnlinePingTimes.get(point.userId) || 0
     const timeSinceOnlinePing = Date.now() - lastOnlinePing
     if (isOnline && timeSinceOnlinePing < 30 * 1000) {
-      // Já transmitido com sucesso no mesmo ciclo (<30s): não polui o buffer offline
       return {
         ...point,
         id: `discarded_${point.timestamp}`,
@@ -120,8 +157,6 @@ class OfflineTelemetryBufferService {
     }
 
     const current = this.getBuffer(point.userId)
-
-    // Ordenar cronologicamente para avaliar o último ponto registrado
     current.sort((a, b) => a.timestamp - b.timestamp)
 
     if (current.length > 0) {
@@ -130,10 +165,9 @@ class OfflineTelemetryBufferService {
       const distMeters = haversineDistanceMeters(last.lat, last.lng, point.lat, point.lng)
       const isWeak = (point.accuracy ?? 2000) >= 500 || (last.accuracy ?? 2000) >= 500
 
-      // Regra 1: Deduplicação defensiva no enfileiramento:
+      // Deduplicação defensiva no enfileiramento:
       // Se a coordenada mudou menos de 10m OU o fix continua fraco/sem-fix (>=500m) em intervalo < 30s:
-      // NÃO enfileirar mais uma cópia repetida. Apenas atualizamos o ponto existente em vez de empilhar,
-      // evitando inflar o banco e trajetos.
+      // Apenas atualiza o último ponto ao invés de empilhar duplicatas.
       if (
         (distMeters < DEDUPLICATION_MAX_DISTANCE_METERS &&
           timeDiff < DEDUPLICATION_MIN_INTERVAL_MS) ||
@@ -151,6 +185,9 @@ class OfflineTelemetryBufferService {
         }
         last.reason = point.reason
         this.setBuffer(point.userId, current)
+
+        // Persiste no IndexedDB
+        offlineRouteStorage.enqueueTelemetryPoint(last).catch(() => {})
         return last
       }
     }
@@ -163,9 +200,12 @@ class OfflineTelemetryBufferService {
     }
 
     current.push(fullPoint)
-    // Garantir ordenação cronológica rigorosa
     current.sort((a, b) => a.timestamp - b.timestamp)
     this.setBuffer(point.userId, current)
+
+    // Persiste no IndexedDB em background
+    offlineRouteStorage.enqueueTelemetryPoint(fullPoint).catch(() => {})
+
     return fullPoint
   }
 
@@ -190,7 +230,17 @@ class OfflineTelemetryBufferService {
   clear(userId: string): void {
     if (typeof window === 'undefined' || !userId) return
     try {
+      this.inMemoryCache.set(userId, [])
       localStorage.removeItem(this.getStorageKey(userId))
+      offlineRouteStorage
+        .getTelemetryPoints(userId)
+        .then((pts) => {
+          return offlineRouteStorage.removeTelemetryPoints(
+            userId,
+            pts.map((p) => p.id),
+          )
+        })
+        .catch(() => {})
       this.notify(userId)
     } catch (err) {
       console.warn('Erro ao limpar buffer offline:', err)
@@ -199,7 +249,6 @@ class OfflineTelemetryBufferService {
 
   /**
    * Inscreve um callback para ser notificado de alterações na contagem de pontos pendentes.
-   * Suporta chamada com userId ou callback direto.
    */
   subscribe(
     userIdOrListener: string | ((count: number) => void),
@@ -211,10 +260,17 @@ class OfflineTelemetryBufferService {
     if (!listener) return () => {}
 
     this.listeners.add(listener)
-    // Dispara contagem atual imediatamente se tiver userId
     if (userId) {
+      // Dispara contagem atual imediatamente
       listener(this.getPendingCount(userId))
+      // Inicializa IndexedDB em background
+      this.initUserBuffer(userId)
+        .then(() => {
+          listener(this.getPendingCount(userId))
+        })
+        .catch(() => {})
     }
+
     return () => {
       this.listeners.delete(listener)
     }
@@ -233,17 +289,20 @@ class OfflineTelemetryBufferService {
 
   /**
    * Sincroniza todos os pontos do buffer com o banco PocketBase em ordem cronológica estrita.
-   * Retorna o número de pontos enviados com sucesso.
+   * Preserva e marca o timestamp original de cada ponto na auditoria.
+   * Retorna o número de pontos enviados com sucesso e quantos restaram.
    */
   async flush(userId: string): Promise<{ sent: number; remaining: number }> {
     if (this.syncInProgress || !userId) {
       return { sent: 0, remaining: this.getPendingCount(userId) }
     }
 
-    // Se estiver explicitamente offline pelo navegador, não tentar agora
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       return { sent: 0, remaining: this.getPendingCount(userId) }
     }
+
+    // Garante que o buffer foi sincronizado com IndexedDB antes de descarregar
+    await this.initUserBuffer(userId)
 
     const points = this.getBuffer(userId)
     if (points.length === 0) {
@@ -252,15 +311,14 @@ class OfflineTelemetryBufferService {
 
     this.syncInProgress = true
     let sentCount = 0
+    const sentIds: string[] = []
     const remainingPoints: OfflineTelemetryPoint[] = []
 
     try {
-      // Ordenação cronológica rigorosa: do mais antigo para o mais recente
+      // 1. Ordenação cronológica estrita: do mais antigo para o mais recente
       points.sort((a, b) => a.timestamp - b.timestamp)
 
-      // Regra 2: Deduplicação defensiva no envio ao sincronizar o buffer.
-      // Caso existam cópias acumuladas anteriormente na fila (ex.: mesma coordenada em janela <10s),
-      // filtra e envia apenas uma cópia representativa em ordem cronológica.
+      // 2. Deduplicação defensiva no envio
       const deduplicatedPoints: OfflineTelemetryPoint[] = []
       for (const pt of points) {
         if (deduplicatedPoints.length === 0) {
@@ -276,30 +334,28 @@ class OfflineTelemetryBufferService {
           pt.lng,
         )
 
-        // Se for o mesmo ponto (<5m e <10s), descarta a cópia redundante
         if (dist < DEDUPLICATION_MAX_DISTANCE_METERS && dt < DEDUPLICATION_MIN_INTERVAL_MS) {
-          // Atualiza timestamp para o mais recente do grupo
           lastSentOrQueued.timestamp = Math.max(lastSentOrQueued.timestamp, pt.timestamp)
           continue
         }
         deduplicatedPoints.push(pt)
       }
 
-      // Descartar envio de pontos do buffer se um ping online foi transmitido com sucesso no mesmo ciclo (<30s)
       const lastOnlinePingTime = this.lastSuccessfulOnlinePingTimes.get(userId) || 0
-      const now = Date.now()
 
       for (let i = 0; i < deduplicatedPoints.length; i++) {
         const pt = deduplicatedPoints[i]
 
-        // Se o ponto do buffer for muito recente e estiver dentro da janela (<30s) de um ping online já aceito,
-        // descarta para evitar duplicidade na coleção locations.
+        // Se o ponto coincidir exatamente (<30s) com um ping que já foi enviado online, não reenviar
         if (lastOnlinePingTime > 0 && Math.abs(pt.timestamp - lastOnlinePingTime) < 30 * 1000) {
+          sentIds.push(pt.id)
           continue
         }
 
-        // Se o ponto tiver timestamp antigo e velocidade espúria, sanitiza a velocidade para 0 se delta não justificar
         const speedToSend = typeof pt.speed === 'number' && pt.speed < 2 ? 0 : (pt.speed ?? 0)
+
+        // Converter timestamp original em formato legível ISO para o log de auditoria
+        const originalTimeIso = new Date(pt.timestamp).toISOString()
 
         try {
           await deliveryService.updateCourierLocation(
@@ -314,34 +370,36 @@ class OfflineTelemetryBufferService {
                 pt.reason === 'permission_denied' || pt.reason.startsWith('gps')
                   ? 'disabled'
                   : 'offline',
-              gps_reason: pt.reason,
+              gps_reason: `${pt.reason} (coletado em ${originalTimeIso})`,
               offline_buffered: true,
               accuracy: pt.accuracy,
             },
           )
           sentCount++
+          sentIds.push(pt.id)
         } catch (err: any) {
           console.warn('Falha ao enviar ponto offline para PocketBase:', err?.message || err)
-          // Se falhou o envio de rede, para a sincronização mantendo este e os seguintes no buffer
           remainingPoints.push({
             ...pt,
             error: err?.message || 'Falha de rede ao descarregar buffer',
           })
-          // Interrompe o loop para não inundar o servidor se perdeu a rede novamente
           const unattempted = deduplicatedPoints.slice(i)
           this.setBuffer(userId, unattempted)
           break
         }
       }
 
+      // Remover do IndexedDB os que foram enviados
+      if (sentIds.length > 0) {
+        await offlineRouteStorage.removeTelemetryPoints(userId, sentIds).catch(() => {})
+      }
+
       // Se alguns falharam, preservamos os restantes no buffer
       if (remainingPoints.length > 0) {
-        // Encontra o índice a partir do qual parou e mantém os não enviados
         const stopIndex = points.findIndex((p) => p.id === remainingPoints[0].id)
         const unattempted = stopIndex >= 0 ? points.slice(stopIndex) : remainingPoints
         this.setBuffer(userId, unattempted)
       } else {
-        // Todos foram enviados com sucesso! Limpar buffer completamente
         this.clear(userId)
       }
     } finally {

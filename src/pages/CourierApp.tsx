@@ -16,6 +16,8 @@ import {
   Sun,
   Radio,
   AlertTriangle,
+  WifiOff,
+  Database,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { CourierBottomNav } from '@/components/CourierBottomNav'
@@ -24,6 +26,7 @@ import { CancelDeliveryModal } from '@/components/CancelDeliveryModal'
 import { IPhoneGpsGuideModal } from '@/components/IPhoneGpsGuideModal'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
+import { offlineRouteStorage } from '@/services/offlineRouteStorage'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { OrderRecord } from '@/types/delivery'
@@ -70,6 +73,8 @@ export default function CourierApp() {
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   )
+  const [isServingFromOfflineCache, setIsServingFromOfflineCache] = useState(false)
+  const [offlineCacheSavedAt, setOfflineCacheSavedAt] = useState<number | null>(null)
   const [pendingBufferedPoints, setPendingBufferedPoints] = useState<number>(0)
   const [isFlushingBuffer, setIsFlushingBuffer] = useState<boolean>(false)
   const [isIPhoneGuideOpen, setIsIPhoneGuideOpen] = useState(false)
@@ -130,19 +135,35 @@ export default function CourierApp() {
   }
 
   // Carrega apenas pedidos liberados pelo vendedor ("assigned" com route_released=true ou em rota)
+  // Com suporte completo offline: salva no IndexedDB a cada sucesso e lê do cache local na ausência de rede
   const loadCourierOrders = async (options?: { force?: boolean }) => {
     const now = Date.now()
     if (!options?.force && isOrdersFetchingRef.current) return
     if (!options?.force && now - lastLoadOrdersTimestampRef.current < 3000) return
 
+    if (!user?.id) {
+      setOrders([])
+      setIsLoading(false)
+      return
+    }
+
     try {
       isOrdersFetchingRef.current = true
       lastLoadOrdersTimestampRef.current = now
 
-      if (!user?.id) {
-        setOrders([])
-        return
+      // Se o navegador já está offline, tenta carregar direto do cache local (IndexedDB)
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        const cached = await offlineRouteStorage.getCachedRouteOrders(user.id)
+        if (cached && cached.orders && cached.orders.length > 0) {
+          setOrders(cached.orders)
+          setIsServingFromOfflineCache(true)
+          setOfflineCacheSavedAt(cached.savedAt)
+          isOrdersFetchingRef.current = false
+          setIsLoading(false)
+          return
+        }
       }
+
       // Regra: O cliente fica disponível após o vendedor otimizar e liberar a rota (Salvar & Liberar Rota)
       // Inclui tanto route_released=true quanto status assigned/in_transit/delivered
       const courierFilter = `courier_id = '${user.id}' && (route_released = true || status = 'assigned' || status = 'in_transit' || status = 'delivered' || status = 'address_error' || status = 'client_absent')`
@@ -152,8 +173,29 @@ export default function CourierApp() {
         'customer_id,courier_id,seller_id',
       )
       setOrders(allOrders)
+      setIsServingFromOfflineCache(false)
+
+      // Salva no IndexedDB para persistência offline da rota do dia
+      if (allOrders.length > 0) {
+        await offlineRouteStorage.saveRouteOrders(user.id, allOrders)
+        setOfflineCacheSavedAt(Date.now())
+      }
     } catch (err) {
-      console.error('Error loading courier orders:', err)
+      console.warn('Falha na rede ao carregar pedidos, recorrendo ao cache offline IndexedDB:', err)
+      // Fallback gracioso: ler do IndexedDB
+      try {
+        const cached = await offlineRouteStorage.getCachedRouteOrders(user.id)
+        if (cached && cached.orders && cached.orders.length > 0) {
+          setOrders(cached.orders)
+          setIsServingFromOfflineCache(true)
+          setOfflineCacheSavedAt(cached.savedAt)
+          toast.info('Modo Offline: exibindo a rota salva no dispositivo.')
+        } else {
+          toast.error('Sem conexão e sem rota pré-carregada neste aparelho.')
+        }
+      } catch (cacheErr) {
+        console.error('Erro ao ler cache offline de pedidos:', cacheErr)
+      }
     } finally {
       isOrdersFetchingRef.current = false
       setIsLoading(false)
@@ -1241,9 +1283,9 @@ export default function CourierApp() {
               ) : !isOnline ? (
                 <div className="flex items-center gap-2">
                   <span className="relative flex h-2.5 w-2.5">
-                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
                   </span>
-                  <span className="text-xs font-semibold text-amber-400">Sem Internet</span>
+                  <span className="text-xs font-semibold text-amber-400">Modo Offline</span>
                 </div>
               ) : gpsFailureDetail === 'weak_signal' ||
                 gpsFailureDetail === 'position_unavailable' ? (
@@ -1273,6 +1315,48 @@ export default function CourierApp() {
             </div>
           </div>
         </div>
+
+        {/* INDICADOR VISUAL DESTACADO: MODO OFFLINE COM DADOS EM CACHE LOCAL */}
+        {(!isOnline || isServingFromOfflineCache) && (
+          <div className="rounded-xl border border-amber-500/50 bg-gradient-to-r from-amber-950/80 to-amber-900/50 p-3.5 space-y-2 text-xs text-amber-200 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 shrink-0 mt-0.5">
+                  <WifiOff className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge className="bg-amber-500 text-slate-950 text-[10px] font-black uppercase px-2 py-0.5">
+                      Modo Offline Ativo
+                    </Badge>
+                    {isServingFromOfflineCache && (
+                      <span className="text-[10px] font-mono font-semibold text-amber-300 flex items-center gap-1">
+                        <Database className="h-3 w-3" /> Rota Salva no Aparelho
+                      </span>
+                    )}
+                  </div>
+                  <p className="font-bold text-white text-xs mt-1">
+                    Sem conexão com a internet. Rota do dia aberta via cache local.
+                  </p>
+                  <p className="text-[11px] text-amber-200/90 mt-0.5 leading-relaxed">
+                    Você pode consultar clientes, endereços, telefones e abrir navegação no Google
+                    Maps/Waze normalmente. Posições de GPS e ações serão sincronizadas
+                    automaticamente assim que o sinal voltar.
+                  </p>
+                  {offlineCacheSavedAt && (
+                    <p className="text-[10px] text-amber-300/70 mt-1 font-mono">
+                      Última atualização da rota:{' '}
+                      {new Date(offlineCacheSavedAt).toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* AVISO PERSISTENTE E AMIGÁVEL: DETECÇÃO DE PINGS PRESOS (> 3 MINUTOS) EM ROTA ATIVA */}
         {hasActiveStartedRoute && minutesSinceLastPing >= 3 && (

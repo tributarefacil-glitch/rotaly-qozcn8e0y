@@ -55,6 +55,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const [hasSignature, setHasSignature] = useState(false)
   const [isDrawing, setIsDrawing] = useState(false)
   const [lastPos, setLastPos] = useState<{ x: number; y: number } | null>(null)
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -423,6 +424,21 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           className="hidden"
           id="gallery-file-input"
         />
+
+        {/* Banner informativo de conectividade para confirmação com upload */}
+        {!isOnline && (
+          <div className="p-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-xs flex items-start gap-2.5">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Aparelho sem conexão de internet</p>
+              <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                A confirmação com foto e assinatura exige upload de arquivo na nuvem. Você pode
+                preencher os dados do cliente e salvar a ocorrência quando o sinal voltar, ou se
+                aproximar de uma área com sinal para concluir.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="space-y-4 py-2">
           {/* Resumo da entrega */}
