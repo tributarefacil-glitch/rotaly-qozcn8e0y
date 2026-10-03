@@ -1037,10 +1037,7 @@ export default function CourierApp() {
         current_address: currentAddressJson,
         suggested_address: suggestedAddressJson,
         origin: 'pin_entregador',
-        status: 'pendente',
         distance_meters: distanceMeters,
-        marked_by: user.id,
-        marked_at: new Date().toISOString(),
         notes: `Marcado no local pelo entregador ${user.name || user.email} (precisão GPS: ~${accuracy}m${distanceMeters !== undefined ? `, desvio: ${distanceMeters}m` : ''}).`,
       })
 
