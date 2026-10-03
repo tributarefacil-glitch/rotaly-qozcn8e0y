@@ -22,6 +22,7 @@ import type {
   BaseAddressType,
   EmpresaRecord,
   MembroRecord,
+  MembroPapel,
   ColaboradorRecord,
   RotaRecord,
   EntregaRecord,
@@ -244,15 +245,15 @@ export const deliveryService = {
 
     // Se já existia um registro inativo, reativamos
     const inactiveMember = existingMembers[0]
-    const papelMembro =
+    const papelMembro: MembroPapel =
       params.role === 'courier' || user.role === 'courier'
-        ? 'courier'
+        ? 'entregador'
         : params.role === 'seller' || user.role === 'seller'
-          ? 'seller'
+          ? 'vendedor'
           : 'admin'
 
     // Validar limites de plano da empresa
-    const limitCheck = await this.checkUserLimit(targetCompanyId, papelMembro === 'courier')
+    const limitCheck = await this.checkUserLimit(targetCompanyId, papelMembro === 'entregador')
     if (!limitCheck.allowed) {
       throw new Error(
         limitCheck.message || 'Limite de usuários do plano atingido para esta empresa.',
@@ -411,7 +412,9 @@ export const deliveryService = {
     }
 
     if (isCourier) {
-      const courierMembers = currentMembers.filter((m) => m.papel === 'courier')
+      const courierMembers = currentMembers.filter(
+        (m) => m.papel === 'entregador' || (m.papel as string) === 'courier',
+      )
       if (courierMembers.length >= limits.max_couriers) {
         return {
           allowed: false,
@@ -1494,7 +1497,11 @@ export const deliveryService = {
       }
       createdRecord = await pb.collection<UserRecord>('users').create(data)
     } else {
-      const { empresa_id: _emp, ...rest } = data
+      const {
+        empresa_id: _emp,
+        username: _ignoredUsername,
+        ...rest
+      } = data as Record<string, unknown>
       const rawPassword = String(data.password || '').trim()
       const rawConfirm = String(data.passwordConfirm || data.password || '').trim()
       const payload: Record<string, unknown> = {
@@ -1502,14 +1509,19 @@ export const deliveryService = {
         email: data.email.trim().toLowerCase(),
         password: rawPassword,
         passwordConfirm: rawConfirm || rawPassword,
-        verified: data.verified ?? true,
+        verified: (data as any).verified ?? true,
       }
 
-      // Auto-generate username from email if not provided
-      if (!payload.username) {
-        const emailPrefix = data.email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '')
-        const randomSuffix = Math.floor(1000 + Math.random() * 9000)
-        payload.username = `${emailPrefix || 'user'}_${randomSuffix}`
+      // IMPORTANTE: A coleção users do PocketBase NÃO possui o campo username.
+      // Nunca enviar username no payload para evitar erro 400 "Failed to create record."
+      delete payload.username
+
+      // Limpar vehicle_type e vehicle_plate para papéis que não sejam courier
+      if (payload.role && payload.role !== 'courier') {
+        delete payload.vehicle_type
+        delete payload.vehicle_model
+        delete payload.vehicle_year
+        delete payload.vehicle_plate
       }
 
       createdRecord = await pb.collection<UserRecord>('users').create(payload)
@@ -1518,11 +1530,11 @@ export const deliveryService = {
     // Vincular imediatamente o usuário na coleção membros da empresa ativa
     if (createdRecord?.id && activeCompanyId) {
       try {
-        const papelMembro =
+        const papelMembro: MembroPapel =
           createdRecord.role === 'courier'
-            ? 'courier'
+            ? 'entregador'
             : createdRecord.role === 'seller'
-              ? 'seller'
+              ? 'vendedor'
               : 'admin'
 
         await pb.collection<MembroRecord>('membros').create({

@@ -41,7 +41,13 @@ import { Sidebar } from '@/components/Sidebar'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
-import type { EmpresaRecord, MembroRecord, UserRecord, PlanoEmpresa } from '@/types/delivery'
+import type {
+  EmpresaRecord,
+  MembroRecord,
+  UserRecord,
+  PlanoEmpresa,
+  MembroPapel,
+} from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -65,6 +71,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { lookupCnpj } from '@/services/cnpjService'
 
 // Validação de CNPJ
@@ -496,7 +503,7 @@ export const CompaniesPage: React.FC = () => {
         } catch (admErr: any) {
           console.warn('Aviso na criação do admin da empresa:', admErr)
           toast.warning(
-            `Empresa criada, mas verifique o admin: ${admErr?.message || 'Erro no usuário'}`,
+            `Empresa criada, mas verifique o admin: ${getErrorMessage(admErr) || 'Erro no usuário'}`,
           )
         }
       }
@@ -532,7 +539,7 @@ export const CompaniesPage: React.FC = () => {
       await refreshCompanyData()
     } catch (err: any) {
       console.error('Erro ao cadastrar empresa:', err)
-      toast.error(err?.message || 'Não foi possível cadastrar a empresa.')
+      toast.error(getErrorMessage(err) || 'Não foi possível cadastrar a empresa.')
     } finally {
       setIsSubmitting(false)
     }
@@ -666,7 +673,7 @@ export const CompaniesPage: React.FC = () => {
       await loadData()
       await refreshCompanyData()
     } catch (err: any) {
-      toast.error(err?.message || 'Erro ao atualizar dados da empresa.')
+      toast.error(getErrorMessage(err) || 'Erro ao atualizar dados da empresa.')
     } finally {
       setIsSubmitting(false)
     }
@@ -706,6 +713,7 @@ export const CompaniesPage: React.FC = () => {
         }
 
         // Criar usuário novo via deliveryService.createUser (já cria membro vinculado)
+        const isCourierMember = editNewMemberForm.role === 'courier'
         const createdUser = await deliveryService.createUser(
           {
             name: editNewMemberForm.name,
@@ -715,8 +723,12 @@ export const CompaniesPage: React.FC = () => {
             role: editNewMemberForm.role,
             phone: editNewMemberForm.phone,
             status: 'active',
-            vehicle_type: editNewMemberForm.vehicle_type,
-            vehicle_plate: editNewMemberForm.vehicle_plate,
+            ...(isCourierMember
+              ? {
+                  vehicle_type: editNewMemberForm.vehicle_type,
+                  vehicle_plate: editNewMemberForm.vehicle_plate,
+                }
+              : {}),
             verified: true,
           },
           editingEmpresa.id,
@@ -752,11 +764,18 @@ export const CompaniesPage: React.FC = () => {
           return
         }
 
-        // Criar registro na coleção membros
+        // Criar registro na coleção membros com papel mapeado para o enum ('admin' | 'vendedor' | 'entregador' | 'gestor')
+        const papelMembroLink: MembroPapel =
+          existingUserRole === 'courier'
+            ? 'entregador'
+            : existingUserRole === 'seller'
+              ? 'vendedor'
+              : 'admin'
+
         await pb.collection<MembroRecord>('membros').create({
           empresa_id: editingEmpresa.id,
           user_id: selectedExistingUserId,
-          papel: existingUserRole,
+          papel: papelMembroLink,
           ativo: true,
         })
 
@@ -790,7 +809,7 @@ export const CompaniesPage: React.FC = () => {
       await loadData()
     } catch (err: any) {
       console.error('Erro ao adicionar membro na empresa:', err)
-      toast.error(err?.message || 'Falha ao adicionar membro.')
+      toast.error(getErrorMessage(err) || 'Falha ao adicionar membro.')
     } finally {
       setIsAddingMemberInEdit(false)
     }
@@ -799,7 +818,13 @@ export const CompaniesPage: React.FC = () => {
   // Abrir modal de edição de dados/papel do membro
   const handleOpenEditMember = (m: MembroRecord) => {
     const usr = allUsers.find((u) => u.id === m.user_id)
-    const papel = (m.papel || usr?.role || 'seller') as 'admin' | 'seller' | 'courier'
+    const rawPapel = m.papel || usr?.role || 'seller'
+    const roleNormalized: 'admin' | 'seller' | 'courier' =
+      rawPapel === 'admin'
+        ? 'admin'
+        : rawPapel === 'entregador' || rawPapel === 'courier'
+          ? 'courier'
+          : 'seller'
 
     setEditingMember({
       membroId: m.id,
@@ -807,7 +832,7 @@ export const CompaniesPage: React.FC = () => {
       name: usr?.name || '',
       email: usr?.email || '',
       phone: usr?.phone || '',
-      role: papel === 'admin' || papel === 'courier' ? papel : 'seller',
+      role: roleNormalized,
       vehicle_type: usr?.vehicle_type || 'moto',
       vehicle_plate: usr?.vehicle_plate || '',
     })
@@ -820,9 +845,16 @@ export const CompaniesPage: React.FC = () => {
 
     setIsSavingMemberEdit(true)
     try {
-      // 1. Atualizar vínculo na tabela `membros` (papel)
+      // 1. Atualizar vínculo na tabela `membros` (papel mapeado para o enum)
+      const papelMembroEdit: MembroPapel =
+        editingMember.role === 'courier'
+          ? 'entregador'
+          : editingMember.role === 'seller'
+            ? 'vendedor'
+            : 'admin'
+
       await pb.collection<MembroRecord>('membros').update(editingMember.membroId, {
-        papel: editingMember.role,
+        papel: papelMembroEdit,
         ativo: true,
       })
 
@@ -844,7 +876,7 @@ export const CompaniesPage: React.FC = () => {
       await loadData()
     } catch (err: any) {
       console.error('Erro ao salvar membro:', err)
-      toast.error(err?.message || 'Falha ao atualizar dados do membro.')
+      toast.error(getErrorMessage(err) || 'Falha ao atualizar dados do membro.')
     } finally {
       setIsSavingMemberEdit(false)
     }
@@ -940,7 +972,7 @@ export const CompaniesPage: React.FC = () => {
       await loadData()
     } catch (err: any) {
       console.error('Erro ao excluir vínculo de membro:', err)
-      toast.error(err?.message || 'Falha ao desvincular membro da empresa.')
+      toast.error(getErrorMessage(err) || 'Falha ao desvincular membro da empresa.')
     } finally {
       setIsDeletingMemberLink(false)
     }
@@ -957,6 +989,7 @@ export const CompaniesPage: React.FC = () => {
 
     setIsSavingMember(true)
     try {
+      const isCourierNewMember = newMemberForm.role === 'courier'
       const createdUser = await deliveryService.createUser(
         {
           name: newMemberForm.name,
@@ -966,8 +999,12 @@ export const CompaniesPage: React.FC = () => {
           role: newMemberForm.role,
           phone: newMemberForm.phone,
           status: 'active',
-          vehicle_type: newMemberForm.vehicle_type,
-          vehicle_plate: newMemberForm.vehicle_plate,
+          ...(isCourierNewMember
+            ? {
+                vehicle_type: newMemberForm.vehicle_type,
+                vehicle_plate: newMemberForm.vehicle_plate,
+              }
+            : {}),
           verified: true,
         },
         selectedEmpresaForMembers.id,
@@ -987,7 +1024,7 @@ export const CompaniesPage: React.FC = () => {
       await loadData()
     } catch (err: any) {
       console.error('Erro ao criar membro:', err)
-      toast.error(err?.message || 'Falha ao criar usuário na empresa.')
+      toast.error(getErrorMessage(err) || 'Falha ao criar usuário na empresa.')
     } finally {
       setIsSavingMember(false)
     }
@@ -1040,7 +1077,7 @@ export const CompaniesPage: React.FC = () => {
       await refreshCompanyData()
     } catch (err: any) {
       console.error('Erro ao alternar status da empresa:', err)
-      toast.error(err?.message || 'Falha ao alterar status da empresa.')
+      toast.error(getErrorMessage(err) || 'Falha ao alterar status da empresa.')
     } finally {
       setIsTogglingStatus(false)
     }
@@ -1075,7 +1112,7 @@ export const CompaniesPage: React.FC = () => {
       await refreshCompanyData()
     } catch (err: any) {
       console.error('Erro ao excluir empresa:', err)
-      toast.error(err?.message || 'Falha ao excluir a empresa.')
+      toast.error(getErrorMessage(err) || 'Falha ao excluir a empresa.')
     } finally {
       setIsDeleting(false)
     }
