@@ -9,6 +9,7 @@ import {
   Building,
   Phone,
   Mail,
+  Bell,
   MapPin,
   FileText,
   Shield,
@@ -169,6 +170,7 @@ export const CompaniesPage: React.FC = () => {
     cep: '',
     telefone: '',
     email: '',
+    notifications_email: '',
     plano: 'profissional' as PlanoEmpresa,
     max_users: 15,
     max_couriers: 10,
@@ -196,6 +198,7 @@ export const CompaniesPage: React.FC = () => {
     cep: '',
     telefone: '',
     email: '',
+    notifications_email: '',
     plano: 'profissional' as PlanoEmpresa,
     max_users: 15,
     max_couriers: 10,
@@ -456,6 +459,7 @@ export const CompaniesPage: React.FC = () => {
         endereco_completo: enderecoCompleto,
         telefone: formData.telefone,
         email: formData.email,
+        notifications_email: formData.notifications_email.trim(),
         plano: formData.plano,
         max_users: Number(formData.max_users) || 10,
         max_couriers: Number(formData.max_couriers) || 5,
@@ -514,6 +518,7 @@ export const CompaniesPage: React.FC = () => {
         cep: '',
         telefone: '',
         email: '',
+        notifications_email: '',
         plano: 'profissional',
         max_users: 15,
         max_couriers: 10,
@@ -554,6 +559,7 @@ export const CompaniesPage: React.FC = () => {
       cep: emp.cep || '',
       telefone: emp.telefone || '',
       email: emp.email || '',
+      notifications_email: emp.notifications_email || '',
       plano: (emp.plano as PlanoEmpresa) || 'profissional',
       max_users: emp.max_users || 15,
       max_couriers: emp.max_couriers || 10,
@@ -636,6 +642,7 @@ export const CompaniesPage: React.FC = () => {
         endereco_completo: enderecoCompleto,
         telefone: editFormData.telefone,
         email: editFormData.email,
+        notifications_email: editFormData.notifications_email.trim(),
         plano: isMatriz ? 'enterprise' : editFormData.plano,
         max_users: isMatriz ? 9999 : Number(editFormData.max_users),
         max_couriers: isMatriz ? 9999 : Number(editFormData.max_couriers),
@@ -1319,9 +1326,20 @@ export const CompaniesPage: React.FC = () => {
                             </div>
                           )}
                           {emp.email && (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2" title="E-mail Comercial">
                               <Mail className="h-3.5 w-3.5 text-slate-400" />
                               <span className="text-[11px] truncate">{emp.email}</span>
+                            </div>
+                          )}
+                          {emp.notifications_email && (
+                            <div
+                              className="flex items-center gap-2 text-[#0052CC]"
+                              title="E-mail de Notificações Automáticas (alerta de combustível, plano, créditos)"
+                            >
+                              <Bell className="h-3.5 w-3.5 text-[#00A3FF]" />
+                              <span className="text-[11px] truncate font-medium">
+                                {emp.notifications_email}
+                              </span>
                             </div>
                           )}
                           {emp.cidade && (
@@ -1568,6 +1586,26 @@ export const CompaniesPage: React.FC = () => {
                   onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
                   className="h-9 border-slate-200 text-xs"
                 />
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Mail className="h-3.5 w-3.5 text-[#00A3FF]" />
+                  E-mail de Notificações (avisos automáticos)
+                </Label>
+                <Input
+                  type="email"
+                  placeholder="avisos@empresa.com.br"
+                  value={formData.notifications_email}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, notifications_email: e.target.value }))
+                  }
+                  className="h-9 border-slate-200 text-xs"
+                />
+                <p className="text-[11px] text-slate-500">
+                  E-mail que recebe os avisos automáticos do sistema: alerta de combustível, uso do
+                  plano e consumo de créditos.
+                </p>
               </div>
             </div>
 
@@ -2004,6 +2042,29 @@ export const CompaniesPage: React.FC = () => {
                           }
                           className="h-9 border-slate-200 text-xs"
                         />
+                      </div>
+
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                          <Mail className="h-3.5 w-3.5 text-[#00A3FF]" />
+                          E-mail de Notificações (avisos automáticos)
+                        </Label>
+                        <Input
+                          type="email"
+                          placeholder="avisos@empresa.com.br"
+                          value={editFormData.notifications_email}
+                          onChange={(e) =>
+                            setEditFormData((p) => ({
+                              ...p,
+                              notifications_email: e.target.value,
+                            }))
+                          }
+                          className="h-9 border-slate-200 text-xs"
+                        />
+                        <p className="text-[11px] text-slate-500">
+                          E-mail que recebe os avisos automáticos do sistema: alerta de combustível,
+                          uso do plano e consumo de créditos.
+                        </p>
                       </div>
                     </div>
 

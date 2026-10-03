@@ -269,10 +269,11 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       }
       suggestedRecharge = Number(suggestedRecharge.toFixed(2))
 
-      // Identificar empresa e administrador destinatário
+      // Identificar empresa do entregador
       let empresaId = ''
       let empresaNome = 'Rotaly Logística'
-      let empresaEmail = ''
+      let notificationsEmail = ''
+      let commercialEmail = ''
 
       const courierMembro = allMembros.find((m) => m.getString('user_id') === courierId)
       if (courierMembro) {
@@ -281,35 +282,53 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         if (emp) {
           empresaNome =
             emp.getString('nome_fantasia') || emp.getString('nome_razao_social') || empresaNome
-          empresaEmail = emp.getString('email') || ''
+          notificationsEmail = (emp.getString('notifications_email') || '').trim()
+          commercialEmail = (emp.getString('email') || '').trim()
         }
       }
 
+      // RESOLUÇÃO DE DESTINATÁRIO CONFORME ORDEM DE PRIORIDADE OFICIAL:
+      // 1. notifications_email da empresa do entregador
+      // 2. admin membro ativo da empresa do entregador
+      // 3. e-mail cadastrado na empresa (email comercial)
+      // 4. primeiro admin/master do sistema
+      // 5. fallback: tributarefacil@gmail.com
       let targetAdminEmail = ''
       let targetAdminName = 'Administrador'
 
-      if (empresaId) {
+      // (1) notifications_email da empresa
+      if (notificationsEmail) {
+        targetAdminEmail = notificationsEmail
+        targetAdminName = empresaNome
+      }
+
+      // (2) admin membro da empresa
+      if (!targetAdminEmail && empresaId) {
         const adminMembro = allMembros.find(
           (m) => m.getString('empresa_id') === empresaId && m.getString('papel') === 'admin',
         )
         if (adminMembro) {
           const adminUser = adminUsers.find((u) => u.id === adminMembro.getString('user_id'))
           if (adminUser) {
-            targetAdminEmail = adminUser.getString('email')
+            targetAdminEmail = (adminUser.getString('email') || '').trim()
             targetAdminName = adminUser.getString('name') || targetAdminName
           }
         }
       }
 
-      if (!targetAdminEmail && empresaEmail) {
-        targetAdminEmail = empresaEmail
+      // (3) e-mail comercial da empresa
+      if (!targetAdminEmail && commercialEmail) {
+        targetAdminEmail = commercialEmail
+        targetAdminName = empresaNome
       }
 
+      // (4) primeiro admin/master do sistema
       if (!targetAdminEmail && adminUsers.length > 0) {
-        targetAdminEmail = adminUsers[0].getString('email')
+        targetAdminEmail = (adminUsers[0].getString('email') || '').trim()
         targetAdminName = adminUsers[0].getString('name') || targetAdminName
       }
 
+      // (5) fallback
       if (!targetAdminEmail) {
         targetAdminEmail = 'tributarefacil@gmail.com'
       }
@@ -661,7 +680,8 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
 
       let empresaId = ''
       let empresaNome = 'Rotaly Logística'
-      let empresaEmail = ''
+      let notificationsEmail = ''
+      let commercialEmail = ''
 
       const courierMembro = allMembros.find((m) => m.getString('user_id') === courierId)
       if (courierMembro) {
@@ -670,31 +690,53 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         if (emp) {
           empresaNome =
             emp.getString('nome_fantasia') || emp.getString('nome_razao_social') || empresaNome
-          empresaEmail = emp.getString('email') || ''
+          notificationsEmail = (emp.getString('notifications_email') || '').trim()
+          commercialEmail = (emp.getString('email') || '').trim()
         }
       }
 
+      // RESOLUÇÃO DE DESTINATÁRIO CONFORME ORDEM DE PRIORIDADE OFICIAL:
+      // 1. notifications_email da empresa do entregador
+      // 2. admin membro ativo da empresa do entregador
+      // 3. e-mail cadastrado na empresa (email comercial)
+      // 4. primeiro admin/master do sistema
+      // 5. fallback: tributarefacil@gmail.com
       let targetAdminEmail = ''
       let targetAdminName = 'Administrador'
 
-      if (empresaId) {
+      // (1) notifications_email da empresa
+      if (notificationsEmail) {
+        targetAdminEmail = notificationsEmail
+        targetAdminName = empresaNome
+      }
+
+      // (2) admin membro da empresa
+      if (!targetAdminEmail && empresaId) {
         const adminMembro = allMembros.find(
           (m) => m.getString('empresa_id') === empresaId && m.getString('papel') === 'admin',
         )
         if (adminMembro) {
           const adminUser = adminUsers.find((u) => u.id === adminMembro.getString('user_id'))
           if (adminUser) {
-            targetAdminEmail = adminUser.getString('email')
+            targetAdminEmail = (adminUser.getString('email') || '').trim()
             targetAdminName = adminUser.getString('name') || targetAdminName
           }
         }
       }
 
-      if (!targetAdminEmail && empresaEmail) targetAdminEmail = empresaEmail
+      // (3) e-mail comercial da empresa
+      if (!targetAdminEmail && commercialEmail) {
+        targetAdminEmail = commercialEmail
+        targetAdminName = empresaNome
+      }
+
+      // (4) primeiro admin/master do sistema
       if (!targetAdminEmail && adminUsers.length > 0) {
-        targetAdminEmail = adminUsers[0].getString('email')
+        targetAdminEmail = (adminUsers[0].getString('email') || '').trim()
         targetAdminName = adminUsers[0].getString('name') || targetAdminName
       }
+
+      // (5) fallback
       if (!targetAdminEmail) targetAdminEmail = 'tributarefacil@gmail.com'
 
       const senderAddress =

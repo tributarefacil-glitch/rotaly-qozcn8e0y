@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T02:38:37.937Z",
+  "generatedAt": "2026-10-03T02:52:26.789Z",
   "collections": [
     {
       "name": "users",
@@ -1361,6 +1361,12 @@
         {
           "name": "max_orders_month",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "notifications_email",
+          "type": "email",
           "required": false,
           "system": false
         }

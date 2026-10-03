@@ -35,6 +35,7 @@ export interface EmpresaRecord extends RecordModel {
   endereco_completo?: string
   telefone?: string
   email?: string
+  notifications_email?: string
   ativa?: boolean
   plano?: PlanoEmpresa
   max_users?: number
