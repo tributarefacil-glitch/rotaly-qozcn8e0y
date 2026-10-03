@@ -31,6 +31,7 @@ import { CustomerSearchModal } from '@/components/CustomerSearchModal'
 import { CustomerAddressAuditModal } from '@/components/CustomerAddressAuditModal'
 import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
+import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
 import { ControlTower } from '@/components/ControlTower'
 import { ReportsSection } from '@/components/ReportsSection'
 import { SellerFuelSection } from '@/components/SellerFuelSection'
@@ -153,6 +154,33 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       setMainViewTab(defaultTab)
     }
   }, [defaultTab])
+
+  // Listener para evento rotaly:open-address-alerts e hash #enderecos-suspeitos
+  useEffect(() => {
+    const scrollToSuspiciousBox = () => {
+      setMainViewTab('overview')
+      setTimeout(() => {
+        const el = document.getElementById('suspicious-addresses-box')
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 150)
+    }
+
+    const handleOpenAddressAlerts = () => {
+      scrollToSuspiciousBox()
+    }
+
+    window.addEventListener('rotaly:open-address-alerts', handleOpenAddressAlerts)
+
+    if (window.location.hash === '#enderecos-suspeitos') {
+      scrollToSuspiciousBox()
+    }
+
+    return () => {
+      window.removeEventListener('rotaly:open-address-alerts', handleOpenAddressAlerts)
+    }
+  }, [])
 
   // Diagnóstico discreto no rodapé
   const [isDiagExpanded, setIsDiagExpanded] = useState(false)
@@ -1446,6 +1474,18 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           {/* TAB 4: VISÃO GERAL & GESTÃO DE PEDIDOS (PRESERVANDO FLUXO ORIGINAL) */}
           {mainViewTab === 'overview' && (
             <div className="space-y-6">
+              {/* CAIXA DE AUDITORIA DE ENDEREÇOS SUSPEITOS & ANTI-CEP */}
+              <div id="suspicious-addresses-box" className="mb-6">
+                <SuspiciousAddressesBox
+                  empresaId={currentCompany?.id}
+                  isMaster={false}
+                  onAlertUpdated={() => {
+                    loadData()
+                    window.dispatchEvent(new CustomEvent('rotaly:address-alerts-updated'))
+                  }}
+                />
+              </div>
+
               {/* KPI Summary Cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <Card className="border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark">

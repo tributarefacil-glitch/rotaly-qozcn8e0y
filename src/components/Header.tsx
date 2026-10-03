@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Bell,
   Search,
@@ -14,7 +14,7 @@ import {
   ExternalLink,
   KeyRound,
 } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { RotalyLogo } from '@/components/RotalyLogo'
@@ -42,6 +42,7 @@ export const Header: React.FC = () => {
   const { user, role, logout } = useAuth()
   const { currentCompany, allCompanies, setCurrentCompany, hasMultiCompanyAccess } = useCompany()
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchTracking, setSearchTracking] = useState('')
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isNotifOpen, setIsNotifOpen] = useState(false)
@@ -49,25 +50,31 @@ export const Header: React.FC = () => {
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
   const [pendingAddressAlerts, setPendingAddressAlerts] = useState(0)
 
-  useEffect(() => {
-    let isMounted = true
-    const checkAlerts = async () => {
-      try {
-        const count = await deliveryService.getPendingAddressAlertsCount(
-          role === 'master' ? 'ALL' : currentCompany?.id,
-        )
-        if (isMounted) setPendingAddressAlerts(count)
-      } catch (err) {
-        console.warn('Erro ao obter contagem de alertas no Header:', err)
-      }
-    }
-    checkAlerts()
-    const interval = setInterval(checkAlerts, 30000)
-    return () => {
-      isMounted = false
-      clearInterval(interval)
+  const checkAlerts = useCallback(async () => {
+    try {
+      const count = await deliveryService.getPendingAddressAlertsCount(
+        role === 'master' ? 'ALL' : currentCompany?.id,
+      )
+      setPendingAddressAlerts(count)
+    } catch (err) {
+      console.warn('Erro ao obter contagem de alertas no Header:', err)
     }
   }, [currentCompany?.id, role])
+
+  useEffect(() => {
+    checkAlerts()
+    const interval = setInterval(checkAlerts, 30000)
+
+    const handleAlertsUpdated = () => {
+      checkAlerts()
+    }
+    window.addEventListener('rotaly:address-alerts-updated', handleAlertsUpdated)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('rotaly:address-alerts-updated', handleAlertsUpdated)
+    }
+  }, [checkAlerts])
 
   // Fetch initial notifications
   const loadNotifications = async () => {
@@ -184,7 +191,29 @@ export const Header: React.FC = () => {
         {pendingAddressAlerts > 0 &&
           (role === 'admin' || role === 'master' || role === 'seller') && (
             <div
-              onClick={() => navigate(role === 'seller' ? '/seller' : '/admin')}
+              onClick={() => {
+                // 1. Dispara evento global para listeners ativos
+                window.dispatchEvent(new CustomEvent('rotaly:open-address-alerts'))
+
+                const currentPath = location.pathname
+                const isAlreadyOnDashboard =
+                  currentPath.startsWith('/admin') || currentPath.startsWith('/seller')
+
+                if (!isAlreadyOnDashboard) {
+                  // Rota externa: redireciona para o admin com hash
+                  navigate(
+                    role === 'seller'
+                      ? '/seller#enderecos-suspeitos'
+                      : '/admin#enderecos-suspeitos',
+                  )
+                } else {
+                  // Já está no dashboard: rola suavemente até a caixa se existir no DOM
+                  const el = document.getElementById('suspicious-addresses-box')
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }
+                }
+              }}
               className="hidden lg:flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs text-amber-900 font-semibold cursor-pointer hover:bg-amber-100 transition shadow-xs"
               title={`${pendingAddressAlerts} endereço(s) suspeito(s) aguardando revisão`}
             >

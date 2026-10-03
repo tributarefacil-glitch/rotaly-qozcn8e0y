@@ -61,6 +61,7 @@ import { EditUserModal } from '@/components/EditUserModal'
 import { SiteContentManager } from '@/components/SiteContentManager'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import { CustomerAddressAuditModal } from '@/components/CustomerAddressAuditModal'
+import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
 import { Globe, KeyRound, Lock } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
@@ -198,6 +199,33 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       setActiveTab(defaultTab)
     }
   }, [location.search, defaultTab])
+
+  // Listener para evento rotaly:open-address-alerts e hash #enderecos-suspeitos
+  useEffect(() => {
+    const scrollToSuspiciousBox = () => {
+      setActiveTab('overview')
+      setTimeout(() => {
+        const el = document.getElementById('suspicious-addresses-box')
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }, 150)
+    }
+
+    const handleOpenAddressAlerts = () => {
+      scrollToSuspiciousBox()
+    }
+
+    window.addEventListener('rotaly:open-address-alerts', handleOpenAddressAlerts)
+
+    if (window.location.hash === '#enderecos-suspeitos') {
+      scrollToSuspiciousBox()
+    }
+
+    return () => {
+      window.removeEventListener('rotaly:open-address-alerts', handleOpenAddressAlerts)
+    }
+  }, [])
 
   const [searchCouriers, setSearchCouriers] = useState('')
   const [courierStatusFilter, setCourierStatusFilter] = useState<string>('all')
@@ -2651,6 +2679,18 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
               {/* TAB 1: OVERVIEW */}
               <TabsContent value="overview" className="space-y-6">
+                {/* CAIXA DE AUDITORIA DE ENDEREÇOS SUSPEITOS & ANTI-CEP */}
+                <div id="suspicious-addresses-box" className="mb-6">
+                  <SuspiciousAddressesBox
+                    empresaId={resolvedCompany?.id || currentCompany?.id}
+                    isMaster={user?.role === 'master'}
+                    onAlertUpdated={() => {
+                      loadData()
+                      window.dispatchEvent(new CustomEvent('rotaly:address-alerts-updated'))
+                    }}
+                  />
+                </div>
+
                 {/* KPI CARDS */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   {/* KPI 1: Total Sales */}
