@@ -75,6 +75,7 @@ export function CreateCustomerModal({
   const [phone2, setPhone2] = useState('')
   const [phone3, setPhone3] = useState('')
   const [showExtraPhones, setShowExtraPhones] = useState(false)
+  const [email, setEmail] = useState('')
   const [streetAndNumber, setStreetAndNumber] = useState('')
   const [complement, setComplement] = useState('')
   const [neighborhood, setNeighborhood] = useState('')
@@ -126,6 +127,7 @@ export function CreateCustomerModal({
       setPhone(customerToEdit.phone || '')
       setPhone2(customerToEdit.phone2 || '')
       setPhone3(customerToEdit.phone3 || '')
+      setEmail(customerToEdit.email || '')
       if (customerToEdit.phone2 || customerToEdit.phone3) {
         setShowExtraPhones(true)
       } else {
@@ -173,6 +175,7 @@ export function CreateCustomerModal({
     setPhone2('')
     setPhone3('')
     setShowExtraPhones(false)
+    setEmail('')
     setStreetAndNumber('')
     setComplement('')
     setNeighborhood('')
@@ -211,6 +214,7 @@ export function CreateCustomerModal({
         setPhone(found.phone || '')
         setPhone2(found.phone2 || '')
         setPhone3(found.phone3 || '')
+        setEmail(found.email || '')
         if (found.phone2 || found.phone3) setShowExtraPhones(true)
         setStreetAndNumber(found.street || found.address?.split(',')[0] || '')
         setNeighborhood(found.neighborhood || '')
@@ -976,6 +980,7 @@ export function CreateCustomerModal({
       name: trimmedName,
       document: document.trim() || undefined,
       phone: mainPhone,
+      email: email.trim() || undefined,
       phone2: phone2.trim() || undefined,
       phone3: phone3.trim() || undefined,
       address: fullAddress,
@@ -1062,7 +1067,7 @@ export function CreateCustomerModal({
                   <DialogDescription className="text-xs text-slate-400">
                     {isEditMode
                       ? 'Atualize os dados, telefones ou endereço do cliente selecionado.'
-                      : 'Cadastre clientes com até 3 telefones, busca automática por CEP e deduplicação inteligente.'}
+                      : 'Cadastre clientes com e-mail para rastreio, até 3 telefones, busca automática por CEP e deduplicação inteligente.'}
                   </DialogDescription>
                 </div>
               </div>
@@ -1135,6 +1140,7 @@ export function CreateCustomerModal({
                     setPhone('')
                     setPhone2('')
                     setPhone3('')
+                    setEmail('')
                     setStreetAndNumber('')
                     setComplement('')
                     setNeighborhood('')
@@ -1148,8 +1154,8 @@ export function CreateCustomerModal({
               </div>
             )}
 
-            {/* Nome, Documento (CPF/CNPJ) e Telefone Principal */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Nome, Documento (CPF/CNPJ), Telefone Principal e E-mail */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="sm:col-span-1">
                 <Label className="text-xs font-semibold text-slate-300">
                   Nome / Empresa <span className="text-[#FF6B35]">*</span>
@@ -1191,6 +1197,19 @@ export function CreateCustomerModal({
                   onChange={handlePhoneChange}
                   className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                   required
+                />
+              </div>
+
+              <div className="sm:col-span-1">
+                <Label className="text-xs font-semibold text-slate-300">
+                  E-mail do Cliente (Opcional)
+                </Label>
+                <Input
+                  type="email"
+                  placeholder="cliente@exemplo.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                 />
               </div>
             </div>
