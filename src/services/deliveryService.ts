@@ -31,6 +31,7 @@ import type {
   AddressAlertStatus,
   AddressAlertOrigin,
   FuelPaymentMethod,
+  RouteKmApprovalRecord,
 } from '@/types/delivery'
 
 export const deliveryService = {
@@ -3650,5 +3651,75 @@ export const deliveryService = {
     })
 
     return { success: true, alert: updatedAlert }
+  },
+
+  /**
+   * Buscar aprovações de KM de rota por empresa ou geral
+   */
+  async getRouteKmApprovals(empresaId?: string): Promise<RouteKmApprovalRecord[]> {
+    try {
+      const filter = empresaId && empresaId !== 'ALL' ? `empresa_id = '${empresaId}'` : ''
+      return await pb.collection<RouteKmApprovalRecord>('route_km_approvals').getFullList({
+        filter,
+        sort: '-approved_at,-created',
+        expand: 'order_id,courier_id,approved_by,empresa_id',
+        requestKey: null,
+      })
+    } catch (err) {
+      console.warn('[deliveryService] Erro ao buscar aprovações de KM:', err)
+      return []
+    }
+  },
+
+  /**
+   * Aprovar ou Rejeitar ajuste de KM com auditoria completa
+   */
+  async saveRouteKmApproval(params: {
+    orderId: string
+    courierId: string
+    empresaId?: string
+    routeBatchKey?: string
+    originalRoadKm: number
+    originalGpsKm?: number
+    approvedKm: number
+    status: 'approved' | 'rejected'
+    justification?: string
+  }): Promise<RouteKmApprovalRecord> {
+    const authUser = pb.authStore.record as any
+
+    // Verificar se já existe aprovação prévia para esta entrega
+    const existing = await pb
+      .collection<RouteKmApprovalRecord>('route_km_approvals')
+      .getList(1, 1, {
+        filter: `order_id = '${params.orderId}'`,
+        requestKey: null,
+      })
+
+    const payload = {
+      order_id: params.orderId,
+      courier_id: params.courierId,
+      empresa_id: params.empresaId || undefined,
+      route_batch_key: params.routeBatchKey || undefined,
+      original_road_km: Number(params.originalRoadKm.toFixed(1)),
+      original_gps_km:
+        params.originalGpsKm !== undefined ? Number(params.originalGpsKm.toFixed(1)) : undefined,
+      approved_km: Number(params.approvedKm.toFixed(1)),
+      status: params.status,
+      justification: params.justification || '',
+      approved_by: authUser?.id || '',
+      approved_at: new Date().toISOString(),
+    }
+
+    if (existing.items.length > 0) {
+      return await pb
+        .collection<RouteKmApprovalRecord>('route_km_approvals')
+        .update(existing.items[0].id, payload, {
+          expand: 'order_id,courier_id,approved_by,empresa_id',
+        })
+    }
+
+    return await pb.collection<RouteKmApprovalRecord>('route_km_approvals').create(payload, {
+      expand: 'order_id,courier_id,approved_by,empresa_id',
+    })
   },
 }

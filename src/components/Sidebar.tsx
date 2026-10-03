@@ -77,6 +77,13 @@ const navItems: NavItem[] = [
     roles: ['admin', 'seller', 'courier'],
   },
   {
+    title: 'Auditoria de KM',
+    href: '/admin?tab=km-audit',
+    icon: Route,
+    roles: ['admin'],
+    badge: 'Novo',
+  },
+  {
     title: 'Desvios & Paradas',
     href: '/admin?tab=deviations',
     icon: MapPin,

@@ -316,7 +316,13 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
     return Math.max(roadDist + rKm, 0.8)
   }
 
-  function computeCourierFuelMetricsOfficial(courier, orders, currentYearMonth, settings) {
+  function computeCourierFuelMetricsOfficial(
+    courier,
+    orders,
+    currentYearMonth,
+    settings,
+    approvalsMap,
+  ) {
     var courierId = courier.id
     var vehicleType = courier.getString('vehicle_type') || 'moto'
     var vParams = getVehicleParams(vehicleType, settings)
@@ -470,6 +476,28 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
           itemFuel = 0
         }
 
+        // Se houver aprovação de KM do admin vigente para esta entrega, substitui o trecho oficial
+        if (approvalsMap && approvalsMap[currentOrder.id] !== undefined) {
+          var approvedVal = approvalsMap[currentOrder.id]
+          // Se for secundária de entrega conjunta deduplicada, prevalece 0
+          if (!(jMeta && jMeta.isJointSecondary)) {
+            itemKm = approvedVal
+            var appLiters = vParams.kml > 0 ? Number((itemKm / vParams.kml).toFixed(2)) : 0
+            itemFuel = Number((appLiters * vParams.price).toFixed(2))
+          }
+        }
+
+        // Se houver aprovação de KM do admin vigente para esta entrega, substitui o trecho oficial
+        if (approvalsMap && approvalsMap[currentOrder.id] !== undefined) {
+          var approvedVal = approvalsMap[currentOrder.id]
+          // Se for secundária de entrega conjunta deduplicada, prevalece 0
+          if (!(jMeta && jMeta.isJointSecondary)) {
+            itemKm = approvedVal
+            var appLiters = vParams.kml > 0 ? Number((itemKm / vParams.kml).toFixed(2)) : 0
+            itemFuel = Number((appLiters * vParams.price).toFixed(2))
+          }
+        }
+
         var orderDateVal =
           currentOrder.getString('route_finished_at') ||
           currentOrder.getString('actual_arrival') ||
@@ -582,6 +610,27 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       )
     } catch (_) {}
 
+    // Carregar aprovações de KM do admin vigentes (status = approved)
+    var approvalsMap = {}
+    try {
+      var allApprovals = $app.findRecordsByFilter(
+        'route_km_approvals',
+        "status = 'approved'",
+        '-created',
+        5000,
+        0,
+      )
+      for (var ap = 0; ap < allApprovals.length; ap++) {
+        var aRec = allApprovals[ap]
+        var aOrderId = aRec.getString('order_id')
+        if (aOrderId && approvalsMap[aOrderId] === undefined) {
+          approvalsMap[aOrderId] = Number(aRec.getFloat('approved_km')) || 0
+        }
+      }
+    } catch (errAp) {
+      console.log('[daily_fuel_balance_check] Aviso ao carregar route_km_approvals:', errAp)
+    }
+
     var processedCount = 0
     var alertsSentCount = 0
 
@@ -622,6 +671,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         allOrders,
         currentYearMonth,
         fuelSettings,
+        approvalsMap,
       )
 
       var currentMonthSpent = metrics.currentMonthSpent
@@ -1411,6 +1461,25 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       )
     } catch (_) {}
 
+    // Carregar aprovações de KM do admin vigentes (status = approved)
+    var approvalsMapCheck = {}
+    try {
+      var allApprovalsCheck = $app.findRecordsByFilter(
+        'route_km_approvals',
+        "status = 'approved'",
+        '-created',
+        5000,
+        0,
+      )
+      for (var apc = 0; apc < allApprovalsCheck.length; apc++) {
+        var aRecC = allApprovalsCheck[apc]
+        var aOrderIdC = aRecC.getString('order_id')
+        if (aOrderIdC && approvalsMapCheck[aOrderIdC] === undefined) {
+          approvalsMapCheck[aOrderIdC] = Number(aRecC.getFloat('approved_km')) || 0
+        }
+      }
+    } catch (_) {}
+
     var processed = 0
     var alertsSent = 0
     var alertDetails = []
@@ -1452,6 +1521,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         allOrders,
         currentYearMonth,
         fuelSettings,
+        approvalsMapCheck,
       )
 
       var currentMonthSpent = metrics.currentMonthSpent

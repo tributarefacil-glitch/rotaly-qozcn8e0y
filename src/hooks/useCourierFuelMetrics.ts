@@ -39,6 +39,9 @@ export interface CourierOrderTelemetryCalculation {
   jointGroupSize?: number
   jointPrimaryTrackingCode?: string
   jointPartnerTrackingCodes?: string[]
+  isApprovedKm?: boolean
+  approvedKm?: number
+  approvalJustification?: string
 }
 
 export interface CourierRouteAuditSummary {
@@ -115,6 +118,10 @@ export function calculateCourierFuelMetrics(params: {
   settings: Partial<AppSettingsRecord> | null
   periodFilter?: 'all' | 'month' | 'week' | 'today'
   carryOverBalance?: number
+  approvalsMap?: Map<
+    string,
+    { approvedKm: number; justification?: string; status: 'approved' | 'rejected' }
+  >
 }): CourierFuelCalculationResult {
   const {
     courier,
@@ -125,6 +132,7 @@ export function calculateCourierFuelMetrics(params: {
     settings,
     periodFilter = 'all',
     carryOverBalance = 0,
+    approvalsMap,
   } = params
 
   if (!courier?.id) {
@@ -587,6 +595,28 @@ export function calculateCourierFuelMetrics(params: {
       }
     }
 
+    // REGRA DE APROVAÇÃO DE KM DO ADMINISTRADOR:
+    // Quando o admin aprova um KM customizado para esta entrega (ex: erro de endereço, chuva, área de risco),
+    // o valor aprovado SUBSTITUI o trecho no cálculo oficial de KM real e de consumo de combustível.
+    // Para entregas secundárias consolidadas de entrega conjunta, o valor permanece zerado.
+    let isApprovedKm = false
+    let approvedKmVal: number | undefined
+    let approvalJustification: string | undefined
+
+    const approval = approvalsMap?.get(order.id)
+    if (approval && approval.status === 'approved') {
+      isApprovedKm = true
+      approvedKmVal = approval.approvedKm
+      approvalJustification = approval.justification
+
+      if (!isJointSecondary) {
+        officialKm = Number(approvedKmVal.toFixed(1))
+        litersSpent =
+          !isBicycle && consumptionKml > 0 ? Number((officialKm / consumptionKml).toFixed(2)) : 0
+        fuelCost = !isBicycle ? Number((litersSpent * pricePerLiter).toFixed(2)) : 0
+      }
+    }
+
     return {
       order,
       officialKm,
@@ -607,6 +637,9 @@ export function calculateCourierFuelMetrics(params: {
       jointGroupSize,
       jointPrimaryTrackingCode,
       jointPartnerTrackingCodes,
+      isApprovedKm,
+      approvedKm: approvedKmVal,
+      approvalJustification,
     }
   })
 
@@ -687,6 +720,10 @@ export function useCourierFuelMetrics(params: {
   settings: Partial<AppSettingsRecord> | null
   periodFilter?: 'all' | 'month' | 'week' | 'today'
   carryOverBalance?: number
+  approvalsMap?: Map<
+    string,
+    { approvedKm: number; justification?: string; status: 'approved' | 'rejected' }
+  >
 }): CourierFuelCalculationResult {
   const {
     courier,
@@ -697,6 +734,7 @@ export function useCourierFuelMetrics(params: {
     settings,
     periodFilter = 'all',
     carryOverBalance,
+    approvalsMap,
   } = params
 
   return useMemo(() => {
@@ -709,6 +747,7 @@ export function useCourierFuelMetrics(params: {
       settings,
       periodFilter,
       carryOverBalance,
+      approvalsMap,
     })
   }, [
     courier,
@@ -719,5 +758,6 @@ export function useCourierFuelMetrics(params: {
     settings,
     periodFilter,
     carryOverBalance,
+    approvalsMap,
   ])
 }

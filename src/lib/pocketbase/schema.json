@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T06:29:12.003Z",
+  "generatedAt": "2026-10-03T12:37:10.372Z",
   "collections": [
     {
       "name": "users",
@@ -2216,6 +2216,110 @@
       "indexes": [
         "CREATE UNIQUE INDEX idx_notification_dedup_key ON notification_dedup (dedup_key)",
         "CREATE INDEX idx_notification_dedup_created ON notification_dedup (created)"
+      ]
+    },
+    {
+      "name": "route_km_approvals",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')))",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')))",
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')))"
+      },
+      "fields": [
+        {
+          "name": "order_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "orders"
+        },
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "route_batch_key",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "original_road_km",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "original_gps_km",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "approved_km",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["approved", "rejected"]
+        },
+        {
+          "name": "justification",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "approved_by",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "approved_at",
+          "type": "date",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_route_km_approvals_order ON route_km_approvals (order_id)",
+        "CREATE INDEX idx_route_km_approvals_courier ON route_km_approvals (courier_id)",
+        "CREATE INDEX idx_route_km_approvals_empresa ON route_km_approvals (empresa_id)",
+        "CREATE INDEX idx_route_km_approvals_batch ON route_km_approvals (route_batch_key)"
       ]
     }
   ]

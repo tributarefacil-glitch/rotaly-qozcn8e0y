@@ -504,3 +504,27 @@ export interface AddressAlertRecord {
     reviewed_by?: UserRecord
   }
 }
+
+export type RouteKmApprovalStatus = 'approved' | 'rejected'
+
+export interface RouteKmApprovalRecord extends RecordModel {
+  order_id: string
+  courier_id: string
+  empresa_id?: string
+  route_batch_key?: string
+  original_road_km: number
+  original_gps_km?: number
+  approved_km: number
+  status: RouteKmApprovalStatus
+  justification?: string
+  approved_by: string
+  approved_at: string
+  created?: string
+  updated?: string
+  expand?: {
+    order_id?: OrderRecord
+    courier_id?: UserRecord
+    approved_by?: UserRecord
+    empresa_id?: EmpresaRecord
+  }
+}
