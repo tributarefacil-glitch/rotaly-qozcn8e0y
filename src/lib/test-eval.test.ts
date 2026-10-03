@@ -1,11 +1,13 @@
-import { describe, it } from 'vitest'
-import pb from './pocketbase/client'
-import { fuelAccountService } from '../services/fuelAccountService'
+import { describe, it, expect } from 'vitest'
 import { isCurrentMonthInTz, isBeforeCurrentMonthInTz, getYearMonthInTz } from './operationalWindow'
 
 describe('check live data calculation', () => {
-  it('calculates for the 5 couriers with real data', async () => {
+  it('verifies operational window helpers without external live connection', () => {
     const now = new Date()
-    console.log('NOW is:', now.toISOString(), 'Local year/month in SP:', getYearMonthInTz(now))
+    const ym = getYearMonthInTz(now)
+    expect(ym).toMatch(/^\d{4}-\d{2}$/)
+    expect(isCurrentMonthInTz(now, now)).toBe(true)
+    const past = new Date('2020-01-01T00:00:00Z')
+    expect(isBeforeCurrentMonthInTz(past, now)).toBe(true)
   })
 })

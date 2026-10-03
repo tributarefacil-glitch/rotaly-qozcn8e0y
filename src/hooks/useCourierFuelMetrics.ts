@@ -243,18 +243,9 @@ export function calculateCourierFuelMetrics(params: {
       return true
     }
 
-    // Cancelamento com tentativa local (ex.: desistência do cliente no local)
-    // Identificado por notes começando por "Cancelamento: [Desistência do Cliente]"
-    // ou tentativa de deslocamento registrada (route_started_at presente / actual_arrival preenchido)
+    // Regra oficial alinhada pelo usuário: "não foi ao local = não conta"
+    // Pedidos cancelados (incluindo desistência do cliente) NÃO entram no km apurado nem no combustível
     if (o.status === 'cancelled') {
-      const isLocalDesistencia =
-        notesLower.includes('cancelamento: [desistência do cliente]') ||
-        notesLower.includes('desistência do cliente') ||
-        notesLower.includes('desistencia do cliente')
-      const hadAttempt = Boolean(o.route_started_at || o.actual_arrival)
-      if (isLocalDesistencia && hadAttempt) {
-        return true
-      }
       return false
     }
 
@@ -434,8 +425,9 @@ export function calculateCourierFuelMetrics(params: {
   // ou atribuímos a cada pedido de modo que a soma do lote corresponda exatamente ao KM real da rota inteira (Base -> Entregas -> Base).
   const isBicycle = category === 'bicicleta'
 
-  // Helper para peso individual da entrega:
-  // per-delivery weight = max(roadDistFromBase(i), 0.8) + returnToBase(i)
+  // Helper para peso individual da entrega no rateio da rota:
+  // Regra oficial: ida proporcional ao trecho (distance_km) + retorno rateado uma vez
+  // Fim do x2: peso não duplica retorno para cada entrega
   const computeOrderWeight = (ord: OrderRecord): number => {
     const baseLat = ord.start_base_lat || -22.7001402
     const baseLng = ord.start_base_lng || -43.2982834
@@ -454,11 +446,9 @@ export function calculateCourierFuelMetrics(params: {
     }
 
     const returnKm =
-      typeof ord.return_trip_km === 'number' && ord.return_trip_km > 0
-        ? ord.return_trip_km
-        : roadDist
+      typeof ord.return_trip_km === 'number' && ord.return_trip_km > 0 ? ord.return_trip_km : 0
 
-    return Math.max(roadDist, 0.8) + returnKm
+    return Math.max(roadDist + returnKm, 0.8)
   }
 
   // Mapa de controle para acumular os valores rateados por lote de rota

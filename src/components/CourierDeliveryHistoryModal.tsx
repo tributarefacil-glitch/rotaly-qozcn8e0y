@@ -352,9 +352,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         statusLabel = '⚠️ Cliente Ausente'
         statusColor = 'bg-orange-500/15 text-orange-400 border-orange-500/30'
       } else if (o.status === 'cancelled') {
-        if (isDesistenciaCliente && (o.route_started_at || o.actual_arrival)) {
-          statusLabel = '⚠️ Desistência do Cliente'
-          statusColor = 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+        if (isDesistenciaCliente) {
+          statusLabel = '⚠️ Desistência do Cliente (Cancelado)'
+          statusColor = 'bg-slate-700/30 text-slate-400 border-slate-700'
         } else if (o.completion_reason === 'cancelado_vendedor') {
           statusLabel = 'Cancelado Loja'
           statusColor = 'bg-slate-700/30 text-slate-400 border-slate-700'

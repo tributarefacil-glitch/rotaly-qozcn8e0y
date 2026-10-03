@@ -76,13 +76,12 @@ export function calculateDeliveryRouteWeight(order: OrderRecord): number {
     roadDist = Math.max(roadDist, order.distance_km)
   }
 
-  let returnKm =
+  // O peso de rateio da entrega na rota é a sua perna viária (+ fração de retorno já rateada se houver)
+  // NUNCA duplicar o retorno em cada parada (fim do x2)
+  const returnKm =
     typeof order.return_trip_km === 'number' && order.return_trip_km > 0 ? order.return_trip_km : 0
-  if (returnKm === 0 && roadDist > 0) {
-    returnKm = roadDist
-  }
 
-  return Math.max(roadDist, 0.8) + returnKm
+  return Math.max(roadDist + returnKm, 0.8)
 }
 
 export interface RealKmCalculationResult {
@@ -532,8 +531,7 @@ export function calculateRealKmForOrder(params: {
   const isCompletedOrAttempted =
     order.status === 'delivered' ||
     order.status === 'client_absent' ||
-    order.status === 'address_error' ||
-    (order.status === 'cancelled' && Boolean(order.route_started_at || order.actual_arrival))
+    order.status === 'address_error'
 
   // Se não houver telemetria GPS suficiente (< 2 pontos válidos)
   if (validPoints.length < 2) {

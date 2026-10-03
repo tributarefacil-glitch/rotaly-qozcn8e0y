@@ -2384,6 +2384,12 @@ export const deliveryService = {
       // A última perna ou rateio do retorno é incorporado para garantir que Σ fuel_cost = total_route_fuel_cost.
       const totalStopsCount = roadResult.stops.length
       const totalRouteFuel = roadResult.estimated_fuel_cost
+      const totalReturnKm = roadResult.return_distance_km || 0
+      const totalOutboundMeters = roadResult.stops.reduce(
+        (sum, s) => sum + (s.step_distance_meters || 800),
+        0,
+      )
+      let allocatedReturnSum = 0
       let allocatedFuelSum = 0
       const isBicycle = this.normalizeVehicleCategory(courier.vehicle_type) === 'bicicleta'
 
@@ -2399,18 +2405,37 @@ export const deliveryService = {
         const etaIso = new Date(Date.now() + cumulativeMins * 60 * 1000).toISOString()
         const stepDistKm = Number(((stop.step_distance_meters || 800) / 1000).toFixed(2))
 
-        // Rateio exato do combustível da rota para cumprir regra "linha = cabeçalho"
+        // Rateio exato do retorno único da rota:
+        // cada parada leva sua perna (distance_km) + fração pro-rata do retorno (return_trip_km)
+        // para que sum(distance_km + return_trip_km) feche rigorosamente em total_route_with_return_km
+        let stopReturnKm = 0
+        if (totalStopsCount === 1) {
+          stopReturnKm = Number(totalReturnKm.toFixed(2))
+          allocatedReturnSum += stopReturnKm
+        } else if (!isLastStop) {
+          const rawShare =
+            totalOutboundMeters > 0
+              ? (totalReturnKm * (stop.step_distance_meters || 800)) / totalOutboundMeters
+              : totalReturnKm / totalStopsCount
+          stopReturnKm = Number(rawShare.toFixed(2))
+          allocatedReturnSum += stopReturnKm
+        } else {
+          stopReturnKm = Number(Math.max(0, totalReturnKm - allocatedReturnSum).toFixed(2))
+        }
+
+        // Rateio exato do combustível da rota para cumprir regra "linha = cabeçalho":
+        // combustível proporcional à perna + retorno rateado, e última parada fecha resíduo
         let legFuelCost: number
         if (isBicycle || totalRouteFuel <= 0) {
           legFuelCost = 0
         } else if (!isLastStop) {
           legFuelCost =
             consumptionKml > 0 && pricePerLiter > 0
-              ? Number(((stepDistKm * pricePerLiter) / consumptionKml).toFixed(2))
+              ? Number((((stepDistKm + stopReturnKm) * pricePerLiter) / consumptionKml).toFixed(2))
               : 0
           allocatedFuelSum += legFuelCost
         } else {
-          // Última parada: absorve o trecho de retorno garantindo que a soma feche exatamente no cabeçalho
+          // Última parada: absorve resíduo garantindo que sum(fuel_cost) == total_route_fuel_cost
           legFuelCost = Number(Math.max(0, totalRouteFuel - allocatedFuelSum).toFixed(2))
         }
 
@@ -2419,7 +2444,7 @@ export const deliveryService = {
         const updatePayload: Partial<OrderRecord> = {
           sequence: calculatedSequence,
           distance_km: stepDistKm > 0 ? stepDistKm : 0.8,
-          return_trip_km: roadResult.return_distance_km,
+          return_trip_km: Number(stopReturnKm.toFixed(2)),
           total_route_with_return_km: roadResult.total_distance_km,
           total_route_fuel_cost: roadResult.estimated_fuel_cost,
           fuel_cost: legFuelCost,
