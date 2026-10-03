@@ -183,10 +183,14 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
               <span>{isBicycle ? 'Km Rodado (Sem Combustível)' : '(-) Gasto Rota Oficial'}</span>
             </div>
             <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm block mt-0.5">
-              {isBicycle ? `${totalOfficialKmNum.toFixed(1)} km` : `R$ ${totalSpentNum.toFixed(2)}`}
+              {isBicycle
+                ? `${totalOfficialKmNum.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`
+                : `R$ ${totalSpentNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </span>
             <span className="text-[9px] text-slate-400 block mt-0.5">
-              {isBicycle ? 'Telemetria GPS apurada' : `${totalOfficialKmNum.toFixed(1)} km`}
+              {isBicycle
+                ? 'Telemetria GPS apurada'
+                : `${totalOfficialKmNum.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`}
             </span>
           </div>
         </div>
@@ -196,7 +200,11 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <span className="text-slate-500 dark:text-slate-400">KM Oficial:</span>
             <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-              {totalOfficialKmNum.toFixed(1)} km
+              {totalOfficialKmNum.toLocaleString('pt-BR', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+              })}{' '}
+              km
             </span>
           </div>
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
@@ -206,7 +214,12 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
                 totalDeviationKmNum > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'
               }`}
             >
-              +{totalDeviationKmNum.toFixed(1)} km
+              +
+              {totalDeviationKmNum.toLocaleString('pt-BR', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+              })}{' '}
+              km
             </span>
           </div>
         </div>
@@ -222,7 +235,17 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
               </span>
             </div>
             <span className="font-mono font-bold shrink-0 ml-1">
-              -{jointSavedKmNum.toFixed(1)} km (-R$ {jointSavedFuelCostNum.toFixed(2)})
+              -
+              {jointSavedKmNum.toLocaleString('pt-BR', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+              })}{' '}
+              km (-R${' '}
+              {jointSavedFuelCostNum.toLocaleString('pt-BR', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
+              )
             </span>
           </div>
         )}
@@ -238,9 +261,24 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
                 </span>
               ) : (
                 <span>
-                  R$ {pricePerLiterNum.toFixed(2)}/L • {consumptionKmlNum.toFixed(1)} km/L ={' '}
+                  R${' '}
+                  {pricePerLiterNum.toLocaleString('pt-BR', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                  /L •{' '}
+                  {consumptionKmlNum.toLocaleString('pt-BR', {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                  })}{' '}
+                  km/L ={' '}
                   <strong className="text-slate-700 dark:text-slate-300 font-mono">
-                    R$ {(pricePerLiterNum / (consumptionKmlNum || 1)).toFixed(4)}/km
+                    R${' '}
+                    {(pricePerLiterNum / (consumptionKmlNum || 1)).toLocaleString('pt-BR', {
+                      minimumFractionDigits: 4,
+                      maximumFractionDigits: 4,
+                    })}
+                    /km
                   </strong>
                 </span>
               )}

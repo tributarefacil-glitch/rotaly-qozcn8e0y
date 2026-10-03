@@ -625,12 +625,13 @@ export function calculateCourierFuelMetrics(params: {
   // REGRA DE OURO DO DONO (CARRY-OVER MENSAL DE CONTA CORRENTE):
   // O saldo dos entregadores sempre é levado para o próximo mês (contínuo).
   // O KM e combustível apurados sempre são calculados dentro do mês fechado.
-  // No filtro de mês ('month'): saldo = carryOverBalance (saldo acumulado até o mês anterior) + adiantamentos do mês - gasto do mês
-  let balance = totalAdvances - totalSpent
-  if (periodFilter === 'month') {
-    balance = carryOverBalance + totalAdvances - totalSpent
+  // O saldo é SEMPRE unificado com a fórmula oficial:
+  // saldo = carryOverBalance (saldo acumulado até o mês anterior) + adiantamentos do mês corrente - gasto do mês corrente
+  // Se o filtro for 'all', não duplica se carryOverBalance já foi somado; mas a fórmula oficial de conta corrente é:
+  let balance = carryOverBalance + totalAdvances - totalSpent
+  if (periodFilter === 'all' && carryOverBalance === 0) {
+    balance = totalAdvances - totalSpent
   }
-
   const calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
   const calculationSourceLabel = 'Trajeto Viário Oficial'
 

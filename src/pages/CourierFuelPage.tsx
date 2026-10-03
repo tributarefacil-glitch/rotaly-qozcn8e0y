@@ -398,7 +398,12 @@ export default function CourierFuelPage() {
               Detalhamento de Km &amp; Telemetria por Entrega ({orderCalculations.length})
             </h3>
             <span className="text-[10px] text-slate-400">
-              Total Real: {totalOfficialKm.toFixed(1)} km
+              Total Real:{' '}
+              {totalOfficialKm.toLocaleString('pt-BR', {
+                minimumFractionDigits: 1,
+                maximumFractionDigits: 1,
+              })}{' '}
+              km
             </span>
           </div>
 
@@ -466,23 +471,40 @@ export default function CourierFuelPage() {
                       {vehicleCategory === 'bicicleta' ? (
                         <>
                           <p className="font-bold text-emerald-400 font-mono text-sm">
-                            {officialKm.toFixed(1)} km
+                            {officialKm.toLocaleString('pt-BR', {
+                              minimumFractionDigits: 1,
+                              maximumFractionDigits: 1,
+                            })}{' '}
+                            km
                           </p>
                           <p className="text-[10px] text-slate-400">Sem combustível</p>
                         </>
                       ) : (
                         <>
                           <p className="font-bold text-[#FF6B35] font-mono text-sm">
-                            - R$ {fuelCost.toFixed(2)}
+                            - R${' '}
+                            {fuelCost.toLocaleString('pt-BR', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
                           </p>
                           <p className="text-[10px] text-slate-300 font-mono">
-                            {officialKm.toFixed(1)} km oficial
+                            {officialKm.toLocaleString('pt-BR', {
+                              minimumFractionDigits: 1,
+                              maximumFractionDigits: 1,
+                            })}{' '}
+                            km oficial
                           </p>
                         </>
                       )}
                       {deviationKm > 0 && (
                         <p className="text-[9px] text-rose-400 font-mono">
-                          +{deviationKm.toFixed(1)} km desvios
+                          +
+                          {deviationKm.toLocaleString('pt-BR', {
+                            minimumFractionDigits: 1,
+                            maximumFractionDigits: 1,
+                          })}{' '}
+                          km desvios
                         </p>
                       )}
                     </div>

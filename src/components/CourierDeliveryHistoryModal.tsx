@@ -461,7 +461,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     })
   }, [historyItems, periodFilter, statusFilter, searchQuery])
 
-  // Totais do período filtrado com CARRY-OVER contínuo
+  // Totais do período filtrado com CARRY-OVER contínuo e agregação de conjuntas
   const metricsSummary = useMemo(() => {
     const now = new Date()
 
@@ -497,6 +497,22 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
 
+    // Agregação de conjuntas RESTRITA AO PERÍODO FILTRADO:
+    // Identificar secundárias do período filtrado
+    const jointSecondaryItems = filteredItems.filter((i) => i.isJointSecondary)
+    const jointConsolidatedCount = jointSecondaryItems.length
+    // Economia de km e combustível obtidas das secundárias do período
+    const jointSavedKm = jointSecondaryItems.reduce((sum, item) => {
+      const planned = Number(item.plannedKm) || 0
+      return sum + planned
+    }, 0)
+    const jointSavedFuelCost = jointSecondaryItems.reduce((sum, item) => {
+      const pKm = Number(item.plannedKm) || 0
+      const kml = fuelParams.consumptionKml || 35
+      const price = fuelParams.pricePerLiter || 6.49
+      return sum + (pKm / kml) * price
+    }, 0)
+
     // Saldo:
     // Se periodFilter === 'month', saldo = carryOverBalance + adiantamentos do mês - gasto do mês
     // Se periodFilter === 'all', saldo = total adiantamentos históricos - total gasto histórico
@@ -515,8 +531,11 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       totalAdiantado: Number(totalAdiantado.toFixed(2)),
       totalDeliveries: filteredItems.length,
       carryOverBalance: Number(carryOverBalance.toFixed(2)),
+      jointConsolidatedCount,
+      jointSavedKm: Number(jointSavedKm.toFixed(1)),
+      jointSavedFuelCost: Number(jointSavedFuelCost.toFixed(2)),
     }
-  }, [allCourierAdvances, periodFilter, filteredItems, carryOverBalance])
+  }, [allCourierAdvances, periodFilter, filteredItems, carryOverBalance, fuelParams])
 
   // Exportar dados em CSV com KM Real e KM de Desvios em colunas separadas
   const handleExportCSV = () => {
@@ -547,9 +566,15 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       `"${item.customerName}"`,
       `"${item.customerAddress.replace(/"/g, '""')}"`,
       `"${item.statusLabel}"`,
-      item.kmRodado.toFixed(1),
-      item.deviationKm.toFixed(1),
-      item.totalGpsKm.toFixed(1),
+      item.kmRodado.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+      item.deviationKm.toLocaleString('pt-BR', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      }),
+      item.totalGpsKm.toLocaleString('pt-BR', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      }),
       item.discardedNoiseKm.toFixed(2),
       item.isRealTelemetry ? '100% Real (GPS)' : 'Estimado (Planejado)',
       item.fuelCost.toFixed(2),
@@ -610,8 +635,16 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                   <span>{courier.vehicle_model || 'Veículo padrão'}</span>
                   <span>•</span>
                   <span className="text-slate-300">
-                    {fuelParams.consumptionKml.toFixed(1)} km/L @ R${' '}
-                    {fuelParams.pricePerLiter.toFixed(2)}/L
+                    {fuelParams.consumptionKml.toLocaleString('pt-BR', {
+                      minimumFractionDigits: 1,
+                      maximumFractionDigits: 1,
+                    })}{' '}
+                    km/L @ R${' '}
+                    {fuelParams.pricePerLiter.toLocaleString('pt-BR', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                    /L
                   </span>
                 </DialogDescription>
               </div>
@@ -696,7 +729,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 <Navigation className="h-4 w-4 text-[#FF6B35]" />
               </div>
               <p className="text-xl sm:text-2xl font-black font-mono text-white mt-1">
-                {metricsSummary.totalKm}{' '}
+                {metricsSummary.totalKm.toLocaleString('pt-BR', {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })}{' '}
                 <span className="text-xs font-normal text-slate-400">km</span>
               </p>
               <span className="text-[10px] text-emerald-400/90 block mt-0.5 font-medium">
@@ -722,8 +758,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
             </div>
           </div>
 
-          {/* ALERTA INFORMATIVO DE ENTREGAS CONJUNTAS CONSOLIDADAS */}
-          {consolidatedMetrics && consolidatedMetrics.jointDeliveriesConsolidatedCount > 0 && (
+          {/* ALERTA INFORMATIVO DE ENTREGAS CONJUNTAS CONSOLIDADAS (SINCRONIZADO COM O PERÍODO SELECIONADO) */}
+          {metricsSummary.jointConsolidatedCount > 0 && (
             <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/40 shrink-0">
@@ -733,7 +769,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                   <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
                     <span>📦 Entregas Conjuntas Detectadas no Mesmo Ponto</span>
                     <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[10px] font-mono">
-                      {consolidatedMetrics.jointDeliveriesConsolidatedCount} pedido(s) agrupado(s)
+                      {metricsSummary.jointConsolidatedCount} pedido(s) agrupado(s)
                     </Badge>
                   </h4>
                   <p className="text-[11px] text-purple-200/80 mt-0.5">
@@ -741,9 +777,13 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                     viagem. O KM oficial e combustível foram cobrados uma só vez pelo grupo,
                     economizando{' '}
                     <strong className="text-white">
-                      {consolidatedMetrics.jointSavedKm.toFixed(1)} km
+                      {metricsSummary.jointSavedKm.toLocaleString('pt-BR', {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      })}{' '}
+                      km
                     </strong>{' '}
-                    (R$ {consolidatedMetrics.jointSavedFuelCost.toFixed(2)} reembolsáveis).
+                    (R$ {metricsSummary.jointSavedFuelCost.toFixed(2)} reembolsáveis).
                   </p>
                 </div>
               </div>
@@ -974,7 +1014,13 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                                 )}
                               </>
                             )}
-                            <span>{item.kmRodado.toFixed(1)} km</span>
+                            <span>
+                              {item.kmRodado.toLocaleString('pt-BR', {
+                                minimumFractionDigits: 1,
+                                maximumFractionDigits: 1,
+                              })}{' '}
+                              km
+                            </span>
                           </div>
                           {item.hasReturnKm && !item.isJointSecondary && (
                             <span className="block text-[9px] text-[#22C55E]">c/ retorno</span>
@@ -1017,7 +1063,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                               className="font-mono text-[11px] text-rose-400 font-bold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 inline-block"
                               title="KM gasto em desvios e paradas fora da rota (não reembolsável)"
                             >
-                              +{item.deviationKm.toFixed(1)} km
+                              +
+                              {item.deviationKm.toLocaleString('pt-BR', {
+                                minimumFractionDigits: 1,
+                                maximumFractionDigits: 1,
+                              })}{' '}
+                              km
                             </span>
                           ) : (
                             <span className="text-slate-500 text-[11px] font-mono">0.0 km</span>
@@ -1197,7 +1248,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                     </div>
                     <div className="text-right">
                       <span className="text-base font-black font-mono text-rose-400 block">
-                        +{selectedItemForDetails.deviationKm.toFixed(1)} km
+                        +
+                        {selectedItemForDetails.deviationKm.toLocaleString('pt-BR', {
+                          minimumFractionDigits: 1,
+                          maximumFractionDigits: 1,
+                        })}{' '}
+                        km
                       </span>
                       <span className="text-[9px] text-slate-400">Descontado da rota</span>
                     </div>
@@ -1221,7 +1277,11 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                     <div className="bg-[#0A1128] p-1.5 rounded">
                       <span className="text-[9px] text-slate-400 block font-sans">Oficial</span>
                       <span className="text-xs font-bold text-white">
-                        {selectedItemForDetails.kmRodado.toFixed(1)} km
+                        {selectedItemForDetails.kmRodado.toLocaleString('pt-BR', {
+                          minimumFractionDigits: 1,
+                          maximumFractionDigits: 1,
+                        })}{' '}
+                        km
                       </span>
                     </div>
                     <div className="bg-[#0A1128] p-1.5 rounded">
@@ -1235,7 +1295,11 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                         Total Rodado
                       </span>
                       <span className="text-xs font-bold text-[#22C55E]">
-                        {selectedItemForDetails.totalGpsKm.toFixed(1)} km
+                        {selectedItemForDetails.totalGpsKm.toLocaleString('pt-BR', {
+                          minimumFractionDigits: 1,
+                          maximumFractionDigits: 1,
+                        })}{' '}
+                        km
                       </span>
                     </div>
                   </div>

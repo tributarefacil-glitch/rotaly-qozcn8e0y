@@ -232,9 +232,12 @@ export class FuelAccountService {
       carryOverBalance: providedCarryOver,
     } = params
 
-    // Se o filtro for 'month', calculamos ou usamos o carryOverBalance acumulado até o mês anterior
+    // REGRA DE OURO ROTALY:
+    // O saldo de conta corrente SEMPRE inclui o carry-over acumulado até o mês anterior.
+    // Saldo = carry-over do mês anterior + adiantados do mês corrente − gasto do mês corrente.
+    // Para entregadores sem rota ou admin/vendedor sem pedidos, saldo = 0 se não houver adiantamentos.
     let carryOverBalance = providedCarryOver ?? 0
-    if (providedCarryOver === undefined && periodFilter === 'month') {
+    if (providedCarryOver === undefined) {
       carryOverBalance = this.calculateCarryOverBalance({
         courierId: courier.id,
         courierVehicleType: courier.vehicle_type,
@@ -337,7 +340,31 @@ export class FuelAccountService {
       carryOverBalance: 0,
     })
 
-    const pastSpentTotal = pastMetrics.vehicleCategory === 'bicicleta' ? 0 : pastMetrics.totalSpent
+    // Se o pedido já possui fuel_cost gravado no banco, usar o total gravado (sem recálculo no client)
+    let pastSpentTotal = 0
+    const hasRecordedFuel = pastOrders.some(
+      (o) => typeof o.fuel_cost === 'number' && o.fuel_cost > 0,
+    )
+    if (hasRecordedFuel) {
+      pastSpentTotal = pastOrders.reduce((sum, o) => {
+        const isEligible =
+          o.status === 'delivered' || o.status === 'address_error' || o.status === 'client_absent'
+        return isEligible ? sum + (Number(o.fuel_cost) || 0) : sum
+      }, 0)
+    } else {
+      const pastMetrics = calculateCourierFuelMetrics({
+        courier: { id: courierId, vehicle_type: courierVehicleType } as UserRecord,
+        advances: pastAdvances,
+        orders: pastOrders,
+        locations: [],
+        offRouteEvents: [],
+        settings,
+        periodFilter: 'all',
+        carryOverBalance: 0,
+      })
+      pastSpentTotal = pastMetrics.vehicleCategory === 'bicicleta' ? 0 : pastMetrics.totalSpent
+    }
+
     return Number((pastAdvancesTotal - pastSpentTotal).toFixed(2))
   }
 
@@ -347,7 +374,7 @@ export class FuelAccountService {
    */
   async getCourierSingleAccount(
     courierId: string,
-    periodFilter: 'all' | 'month' | 'week' = 'all',
+    periodFilter: 'all' | 'month' | 'week' = 'month',
   ): Promise<UnifiedCourierFuelAccount | null> {
     try {
       // 1. Carrega dados do entregador
@@ -434,7 +461,7 @@ export class FuelAccountService {
     ordersPool?: OrderRecord[]
     periodFilter?: 'all' | 'month' | 'week'
   }): Promise<UnifiedCourierFuelAccount[]> {
-    const { companyId, ordersPool, periodFilter = 'all' } = params || {}
+    const { companyId, ordersPool, periodFilter = 'month' } = params || {}
     const targetCompanyId = await this.resolveActiveCompanyId(companyId)
 
     const couriers = await this.getCouriers(targetCompanyId)
