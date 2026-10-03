@@ -3705,15 +3705,39 @@ export const deliveryService = {
         requestKey: null,
       })
 
+    // Resolver empresa_id de forma resiliente:
+    // 1. params.empresaId explícito (se diferente de 'ALL')
+    // 2. Ou consultar a própria order caso empresaId venha vazio/ausente
+    // 3. Ou Matriz como fallback
+    let resolvedEmpresaId = params.empresaId && params.empresaId !== 'ALL' ? params.empresaId : ''
+
+    if (!resolvedEmpresaId && params.orderId) {
+      try {
+        const orderRec = await pb.collection('orders').getOne(params.orderId, {
+          fields: 'empresa_id',
+          requestKey: null,
+        })
+        if (orderRec?.empresa_id) {
+          resolvedEmpresaId = orderRec.empresa_id
+        }
+      } catch {
+        /* fallback silencioso */
+      }
+    }
+
+    if (!resolvedEmpresaId) {
+      resolvedEmpresaId = (await this.getMatrizCompanyId()) || ''
+    }
+
     const payload: any = {
       order_id: params.orderId,
       courier_id: params.courierId,
-      empresa_id: params.empresaId || undefined,
+      empresa_id: resolvedEmpresaId || undefined,
       route_batch_key: params.routeBatchKey || undefined,
-      original_road_km: Number(params.originalRoadKm.toFixed(1)),
+      original_road_km: Number((params.originalRoadKm ?? 0).toFixed(1)),
       original_gps_km:
         params.originalGpsKm !== undefined ? Number(params.originalGpsKm.toFixed(1)) : undefined,
-      approved_km: Number(params.approvedKm.toFixed(1)),
+      approved_km: Number((params.approvedKm ?? 0).toFixed(1)),
       status: params.status,
       justification: params.justification || '',
       approved_by: authUser?.id || '',

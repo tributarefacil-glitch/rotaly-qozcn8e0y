@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T21:40:52.971Z",
+  "generatedAt": "2026-10-03T22:11:22.316Z",
   "collections": [
     {
       "name": "users",
@@ -2289,11 +2289,11 @@
       "name": "route_km_approvals",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')",
-        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')",
-        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')) || (@request.auth.role = 'courier' && courier_id = @request.auth.id))",
-        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')))",
-        "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')))"
+        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '' || empresa_id = null)",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '' || empresa_id = null)",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= @request.body.empresa_id && @collection.membros.ativo ?= true) || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || @request.body.empresa_id = '' || @request.body.empresa_id = null || empresa_id = '' || empresa_id = null)) || (@request.auth.role = 'courier' && (@request.body.courier_id = @request.auth.id || courier_id = @request.auth.id)))",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= @request.body.empresa_id && @collection.membros.ativo ?= true) || empresa_id = '' || empresa_id = null)))",
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '' || empresa_id = null)))"
       },
       "fields": [
         {

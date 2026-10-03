@@ -623,10 +623,14 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
     setIsSavingApproval(true)
     try {
+      const targetCompanyId =
+        activeItem.currentApproval?.empresa_id ||
+        (currentCompanyId && currentCompanyId !== 'ALL' ? currentCompanyId : undefined)
+
       await deliveryService.saveRouteKmApproval({
         orderId: activeItem.orderId,
         courierId: activeItem.courierId,
-        empresaId: currentCompanyId,
+        empresaId: targetCompanyId,
         routeBatchKey: activeItem.batchKey,
         originalRoadKm: activeItem.originalRoadKm,
         originalGpsKm: activeItem.originalGpsKm,
@@ -645,7 +649,12 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       await loadApprovals()
       onDataChange?.()
     } catch (err: any) {
-      toast.error(err?.message || 'Falha ao salvar decisão de aprovação de KM.')
+      const msg =
+        err?.response?.data?.message ||
+        err?.data?.message ||
+        err?.message ||
+        'Falha ao salvar decisão de aprovação de KM.'
+      toast.error(msg)
     } finally {
       setIsSavingApproval(false)
     }
