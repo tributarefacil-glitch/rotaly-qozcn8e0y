@@ -360,6 +360,11 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   })
 
+  // Realtime hook for fuel_advances (adiantamentos e compensações de combustível sincronizados em tempo real)
+  useRealtime<FuelAdvanceRecord>('fuel_advances', () => {
+    loadData()
+  })
+
   // Realtime hook for seller notifications (off-route alerts with audible warning for seller)
   useRealtime<NotificationRecord>('notifications', async (e) => {
     if (

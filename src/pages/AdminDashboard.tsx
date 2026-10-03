@@ -62,6 +62,7 @@ import { SiteContentManager } from '@/components/SiteContentManager'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import { CustomerAddressAuditModal } from '@/components/CustomerAddressAuditModal'
 import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
+import { FuelAdvanceModal } from '@/components/FuelAdvanceModal'
 import { Globe, KeyRound, Lock } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
@@ -377,11 +378,6 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week'>('all')
   const [isNewFuelAdvanceModalOpen, setIsNewFuelAdvanceModalOpen] = useState(false)
   const [advanceCourierId, setAdvanceCourierId] = useState('')
-  const [advanceAmount, setAdvanceAmount] = useState('')
-  const [advanceDate, setAdvanceDate] = useState(new Date().toISOString().split('T')[0])
-  const [advancePaymentMethod, setAdvancePaymentMethod] = useState<FuelPaymentMethod>('pix')
-  const [advanceNotes, setAdvanceNotes] = useState('')
-  const [isCreatingAdvance, setIsCreatingAdvance] = useState(false)
 
   // Off-Route & Deviations State (REQUISITO 2)
   const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
@@ -542,47 +538,6 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     }
   }
 
-  // Create Fuel Advance
-  const handleCreateFuelAdvance = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const amountNum = parseFloat(advanceAmount.replace(',', '.'))
-    if (!advanceCourierId) {
-      toast.error('Selecione o entregador.')
-      return
-    }
-    if (isNaN(amountNum) || amountNum <= 0) {
-      toast.error('Informe um valor de adiantamento válido.')
-      return
-    }
-
-    setIsCreatingAdvance(true)
-    try {
-      await deliveryService.createFuelAdvance({
-        courier_id: advanceCourierId,
-        amount: amountNum,
-        date: advanceDate,
-        payment_method: advancePaymentMethod,
-        notes: advanceNotes.trim(),
-        created_by: pb.authStore.record?.id,
-      })
-
-      const courier = users.find((u) => u.id === advanceCourierId)
-      toast.success(
-        `Adiantamento de R$ ${amountNum.toFixed(2)} cadastrado para ${courier?.name || 'o entregador'}!`,
-      )
-
-      setIsNewFuelAdvanceModalOpen(false)
-      setAdvanceAmount('')
-      setAdvanceNotes('')
-      await Promise.all([loadData(), fetchFuelHistoryOrders(true)])
-    } catch (err) {
-      console.error('Error creating fuel advance:', err)
-      toast.error('Erro ao cadastrar adiantamento de combustível.')
-    } finally {
-      setIsCreatingAdvance(false)
-    }
-  }
-
   // Delete Fuel Advance
   const handleDeleteFuelAdvance = async (id: string) => {
     if (!window.confirm('Tem certeza que deseja excluir este registro de adiantamento?')) return
@@ -649,6 +604,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       const rec = e.record
       setSettings(rec)
       syncDraftFromServer(rec, false)
+    }
+  })
+
+  // Assinar realtime da coleção fuel_advances para refletir adiantamentos/cancelamentos/ajustes instantaneamente
+  useRealtime<FuelAdvanceRecord>('fuel_advances', () => {
+    loadData()
+    if (activeTab === 'fuel' || isCourierHistoryModalOpen) {
+      fetchFuelHistoryOrders(true)
     }
   })
 
@@ -3702,127 +3665,23 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         </div>
       )}
 
-      {/* ================= MODAL: CADASTRO DE ADIANTAMENTO DE COMBUSTÍVEL ================= */}
-      <Dialog open={isNewFuelAdvanceModalOpen} onOpenChange={setIsNewFuelAdvanceModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-white">
-              <Wallet className="h-5 w-5 text-emerald-600" />
-              Lançar Pagamento / Adiantamento de Combustível
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Cadastre o pagamento antecipado realizado ao entregador. Este valor será creditado na
-              conta corrente do entregador.
-            </DialogDescription>
-          </DialogHeader>
-
-          <form onSubmit={handleCreateFuelAdvance} className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Selecione o Entregador *
-              </label>
-              <Select value={advanceCourierId} onValueChange={setAdvanceCourierId} required>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="Selecione o entregador beneficiário" />
-                </SelectTrigger>
-                <SelectContent>
-                  {couriers.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      🛵 {c.name} ({c.vehicle_plate || 'Sem placa'})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Valor Pago (R$) *
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                    R$
-                  </span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    placeholder="0,00"
-                    value={advanceAmount}
-                    onChange={(e) => setAdvanceAmount(e.target.value)}
-                    className="h-9 pl-9 font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Data do Pagamento *
-                </label>
-                <Input
-                  type="date"
-                  value={advanceDate}
-                  onChange={(e) => setAdvanceDate(e.target.value)}
-                  className="h-9 text-xs"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Forma de Pagamento
-              </label>
-              <Select
-                value={advancePaymentMethod}
-                onValueChange={(v: FuelPaymentMethod) => setAdvancePaymentMethod(v)}
-              >
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pix">PIX Instantâneo</SelectItem>
-                  <SelectItem value="dinheiro">Dinheiro em Espécie</SelectItem>
-                  <SelectItem value="transferencia">Transferência / TED</SelectItem>
-                  <SelectItem value="outro">Outro</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Observações / Justificativa
-              </label>
-              <Input
-                placeholder="Ex: Adiantamento semanal de gasolina ou abastecimento extra"
-                value={advanceNotes}
-                onChange={(e) => setAdvanceNotes(e.target.value)}
-                className="h-9 text-xs"
-              />
-            </div>
-
-            <DialogFooter className="pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setIsNewFuelAdvanceModalOpen(false)}
-                className="h-9 text-xs"
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="submit"
-                disabled={isCreatingAdvance}
-                className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-emerald-600/20"
-              >
-                {isCreatingAdvance ? 'Gravando...' : 'Confirmar Adiantamento'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {/* ================= MODAL NOVO: GESTÃO FINANCEIRA DE COMBUSTÍVEL (LANÇAR / CANCELAR / AJUSTAR) ================= */}
+      <FuelAdvanceModal
+        open={isNewFuelAdvanceModalOpen}
+        onOpenChange={setIsNewFuelAdvanceModalOpen}
+        couriers={deduplicatedCouriers}
+        advances={fuelAdvances}
+        orders={activeFuelOrdersPool}
+        settings={settings}
+        locations={locations}
+        offRouteEvents={offRouteEvents}
+        userRole={user?.role}
+        currentUserId={user?.id}
+        initialCourierId={advanceCourierId}
+        onSuccess={async () => {
+          await Promise.all([loadData(), fetchFuelHistoryOrders(true)])
+        }}
+      />
 
       {/* Modal de Cadastro/Edição de Clientes com Geocodificação Google */}
       <CreateCustomerModal

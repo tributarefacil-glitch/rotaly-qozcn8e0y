@@ -29,6 +29,7 @@ import type {
   AddressAlertRecord,
   AddressAlertStatus,
   AddressAlertOrigin,
+  FuelPaymentMethod,
 } from '@/types/delivery'
 
 export const deliveryService = {
