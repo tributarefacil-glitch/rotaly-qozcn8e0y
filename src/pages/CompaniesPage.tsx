@@ -488,7 +488,6 @@ export const CompaniesPage: React.FC = () => {
               role: 'admin',
               status: 'active',
               phone: formData.admin_phone,
-              verified: true,
             },
             created.id,
           )
@@ -729,7 +728,6 @@ export const CompaniesPage: React.FC = () => {
                   vehicle_plate: editNewMemberForm.vehicle_plate,
                 }
               : {}),
-            verified: true,
           },
           editingEmpresa.id,
         )
@@ -1005,7 +1003,6 @@ export const CompaniesPage: React.FC = () => {
                 vehicle_plate: newMemberForm.vehicle_plate,
               }
             : {}),
-          verified: true,
         },
         selectedEmpresaForMembers.id,
       )

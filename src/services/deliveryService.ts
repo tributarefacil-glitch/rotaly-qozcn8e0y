@@ -1487,9 +1487,6 @@ export const deliveryService = {
 
     let createdRecord: UserRecord
     if (data instanceof FormData) {
-      if (!data.has('verified')) {
-        data.append('verified', 'true')
-      }
       // Garantir integridade de password e passwordConfirm
       const rawPassword = data.get('password')
       if (rawPassword && !data.has('passwordConfirm')) {
@@ -1509,7 +1506,6 @@ export const deliveryService = {
         email: data.email.trim().toLowerCase(),
         password: rawPassword,
         passwordConfirm: rawConfirm || rawPassword,
-        verified: (data as any).verified ?? true,
       }
 
       // IMPORTANTE: A coleção users do PocketBase NÃO possui o campo username.
