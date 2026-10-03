@@ -25,6 +25,8 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
+import { Compass, BookOpen, ChevronRight } from 'lucide-react'
+import { CourierRedirectionTutorialModal } from '@/components/CourierRedirectionTutorialModal'
 
 export default function CourierProfilePage() {
   const { user, refreshUser, logout } = useAuth()
@@ -34,6 +36,7 @@ export default function CourierProfilePage() {
   const [isEditingPhone, setIsEditingPhone] = useState(false)
   const [phoneNumber, setPhoneNumber] = useState(user?.phone || '')
   const [isSaving, setIsSaving] = useState(false)
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false)
 
   // Atualizar estado caso user mude
   React.useEffect(() => {
@@ -191,6 +194,46 @@ export default function CourierProfilePage() {
             <User className="h-5 w-5 text-[#60A5FA]" />
             Meu Perfil &amp; Dados Cadastrais
           </h1>
+        </div>
+
+        {/* CARD FIXO: COMO USAR REDIREÇÃO (TUTORIAL ILUSTRADO REVISÁVEL A QUALQUER MOMENTO) */}
+        <div className="rounded-2xl border border-amber-500/40 bg-gradient-to-br from-[#0E1738] to-[#121E46] p-4 shadow-xl relative overflow-hidden group">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
+                <Compass className="h-6 w-6" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-heading text-sm font-bold text-white flex items-center gap-1.5">
+                    Como usar redireção
+                  </h3>
+                  <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30 text-[9px] px-1.5 py-0 font-bold">
+                    Tutorial
+                  </Badge>
+                </div>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  Aprenda como registrar o Ponto A, abrir o GPS até o novo endereço, calcular o km
+                  extra e atualizar o cadastro do cliente.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 pt-3 border-t border-[#1E2B58] flex items-center justify-between gap-2">
+            <span className="text-[11px] text-slate-400 flex items-center gap-1">
+              <BookOpen className="h-3.5 w-3.5 text-[#60A5FA]" /> 4 telas ilustradas
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setIsTutorialOpen(true)}
+              className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs h-8 px-3 rounded-lg shadow-sm flex items-center gap-1 transition"
+            >
+              <span>Ver tutorial ilustrado</span>
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
 
         {/* CARD DE IDENTIDADE DO ENTREGADOR (MOVIDO DA MINHA ROTA PARA PERFIL - REQUISITO 1 & 4) */}
@@ -387,6 +430,9 @@ export default function CourierProfilePage() {
 
       {/* Navegação Inferior Mobile */}
       <CourierBottomNav />
+
+      {/* Modal de Tutorial Ilustrado de Redireção */}
+      <CourierRedirectionTutorialModal open={isTutorialOpen} onOpenChange={setIsTutorialOpen} />
     </div>
   )
 }

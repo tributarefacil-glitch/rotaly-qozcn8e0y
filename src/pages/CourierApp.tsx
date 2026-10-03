@@ -25,6 +25,11 @@ import { CourierBottomNav } from '@/components/CourierBottomNav'
 import { DeliveryConfirmationModal } from '@/components/DeliveryConfirmationModal'
 import { CancelDeliveryModal } from '@/components/CancelDeliveryModal'
 import { RedirectDeliveryModal } from '@/components/RedirectDeliveryModal'
+import {
+  CourierRedirectionTutorialModal,
+  COURIER_REDIRECTION_TUTORIAL_KEY,
+  COURIER_POINT_A_HINT_KEY,
+} from '@/components/CourierRedirectionTutorialModal'
 import { IPhoneGpsGuideModal } from '@/components/IPhoneGpsGuideModal'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
@@ -67,6 +72,7 @@ export default function CourierApp() {
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
   const [selectedOrderForRedirect, setSelectedOrderForRedirect] = useState<OrderRecord | null>(null)
   const [isRedirectModalOpen, setIsRedirectModalOpen] = useState(false)
+  const [isTutorialModalOpen, setIsTutorialModalOpen] = useState(false)
 
   // Status de GPS e rede em tempo real com distinção de motivo
   const [gpsStatus, setGpsStatus] = useState<'active' | 'disabled' | 'offline'>('active')
@@ -208,6 +214,22 @@ export default function CourierApp() {
   useEffect(() => {
     loadCourierOrders({ force: true })
     loadFuelAndAccountData({ force: true })
+
+    // Checar se é a primeira abertura do app do entregador para exibir o tutorial de boas-vindas
+    if (typeof window !== 'undefined' && user?.id) {
+      try {
+        const tutorialSeen = localStorage.getItem(COURIER_REDIRECTION_TUTORIAL_KEY)
+        if (!tutorialSeen) {
+          // Delay sutil para carregar a tela primeiro
+          const timer = setTimeout(() => {
+            setIsTutorialModalOpen(true)
+          }, 800)
+          return () => clearTimeout(timer)
+        }
+      } catch (err) {
+        console.warn('Erro ao verificar tutorial em localStorage:', err)
+      }
+    }
   }, [user?.id])
 
   // REFORÇO DE RECEPÇÃO ECONÔMICO:
@@ -2045,6 +2067,24 @@ export default function CourierApp() {
                     variant="outline"
                     onClick={() => {
                       setSelectedOrderForRedirect(currentActiveDelivery)
+
+                      // Requisito 3: Dica contextual na primeira vez que tocar no botão
+                      if (typeof window !== 'undefined') {
+                        try {
+                          const hintSeen = localStorage.getItem(COURIER_POINT_A_HINT_KEY)
+                          if (!hintSeen) {
+                            localStorage.setItem(COURIER_POINT_A_HINT_KEY, 'true')
+                            toast.info('📍 Gravando Ponto A no local atual', {
+                              description:
+                                'Sua posição GPS está sendo registrada para comprovar sua chegada física antes de ir ao novo endereço.',
+                              duration: 6500,
+                            })
+                          }
+                        } catch (err) {
+                          console.warn('Erro ao acessar localStorage:', err)
+                        }
+                      }
+
                       setIsRedirectModalOpen(true)
                     }}
                     className="w-full h-11 border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 hover:text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition shadow-sm"
@@ -2185,6 +2225,12 @@ export default function CourierApp() {
         open={isCancelModalOpen}
         onOpenChange={setIsCancelModalOpen}
         onCancelled={loadCourierOrders}
+      />
+
+      {/* Tutorial Ilustrado de Onboarding (Primeira Abertura e Redireção) */}
+      <CourierRedirectionTutorialModal
+        open={isTutorialModalOpen}
+        onOpenChange={setIsTutorialModalOpen}
       />
     </div>
   )
