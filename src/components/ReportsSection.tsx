@@ -46,6 +46,7 @@ import {
   Award,
   Crown,
   Medal,
+  Route,
 } from 'lucide-react'
 import {
   OrderRecord,
@@ -881,37 +882,73 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         </div>
       </div>
 
-      {/* CARD RESUMO DE DESVIOS & TELEMETRIA COM LINK EM 1 CLIQUE */}
-      <div className="p-4 rounded-xl border border-amber-300 bg-amber-50/80 text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-lg bg-amber-500 text-white shrink-0">
-            <AlertTriangle className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h4 className="font-heading text-sm font-bold text-amber-950">
-                Auditoria de Desvios de Rota &amp; Paradas (Telemetria)
-              </h4>
-              <Badge
-                variant="outline"
-                className="border-amber-400 bg-amber-100 text-amber-800 text-[10px] font-bold"
-              >
-                Telemetria Ativa
-              </Badge>
+      {/* BANNERS DE AUDITORIA & TELEMETRIA: AUDITORIA DE KM E DESVIOS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* BANNER 1: AUDITORIA DE KM POR ENTREGA & APROVAÇÃO OFICIAL */}
+        <div className="p-4 rounded-xl border border-blue-300 bg-blue-50/80 text-blue-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-[#0052CC] text-white shrink-0">
+              <Route className="h-5 w-5" />
             </div>
-            <p className="font-sans text-xs text-amber-800 mt-0.5">
-              Acesse a auditoria completa de trechos fora de rota (&gt;600m) e rotas parciais de
-              retorno com 1 clique.
-            </p>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="font-heading text-sm font-bold text-blue-950">
+                  Auditoria de KM por Entrega
+                </h4>
+                <Badge
+                  variant="outline"
+                  className="border-blue-400 bg-blue-100 text-[#0052CC] text-[10px] font-bold"
+                >
+                  Oficial
+                </Badge>
+              </div>
+              <p className="font-sans text-xs text-blue-800 mt-0.5">
+                Revise KM viário planejado vs telemetria GPS e aprove ou ajuste valores oficiais por
+                entrega.
+              </p>
+            </div>
           </div>
+          <Link
+            to="/admin?tab=km-audit"
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#0052CC] hover:bg-[#003d99] text-white text-xs font-bold shadow-sm transition whitespace-nowrap self-start sm:self-center"
+          >
+            <span>Abrir Auditoria de KM</span>
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Link>
         </div>
-        <Link
-          to="/admin?tab=deviations"
-          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition whitespace-nowrap self-start sm:self-center"
-        >
-          <span>Abrir Relatório de Desvios</span>
-          <ExternalLink className="h-3.5 w-3.5" />
-        </Link>
+
+        {/* BANNER 2: DESVIOS & PARADAS */}
+        <div className="p-4 rounded-xl border border-amber-300 bg-amber-50/80 text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-amber-500 text-white shrink-0">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="font-heading text-sm font-bold text-amber-950">
+                  Desvios de Rota &amp; Paradas
+                </h4>
+                <Badge
+                  variant="outline"
+                  className="border-amber-400 bg-amber-100 text-amber-800 text-[10px] font-bold"
+                >
+                  Telemetria Ativa
+                </Badge>
+              </div>
+              <p className="font-sans text-xs text-amber-800 mt-0.5">
+                Acesse a auditoria completa de trechos fora de rota (&gt;600m) e rotas parciais de
+                retorno com 1 clique.
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/admin?tab=deviations"
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm transition whitespace-nowrap self-start sm:self-center"
+          >
+            <span>Abrir Relatório de Desvios</span>
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Link>
+        </div>
       </div>
 
       {isLoadingPeriodOrders && (

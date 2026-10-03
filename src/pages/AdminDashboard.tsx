@@ -48,6 +48,7 @@ import {
   ArrowDownRight,
   ArrowUpDown,
   Edit3,
+  Route,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { Sidebar } from '@/components/Sidebar'
@@ -71,6 +72,9 @@ const CustomerAddressAuditModal = lazy(() =>
   import('@/components/CustomerAddressAuditModal').then((m) => ({
     default: m.CustomerAddressAuditModal,
   })),
+)
+const KmAuditReport = lazy(() =>
+  import('@/components/KmAuditReport').then((m) => ({ default: m.KmAuditReport })),
 )
 
 function SectionSkeleton() {
@@ -144,6 +148,7 @@ interface AdminDashboardProps {
     | 'control-tower'
     | 'reports'
     | 'fuel'
+    | 'km-audit'
     | 'deviations'
     | 'settings'
     | 'site-content'
@@ -174,13 +179,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   )
   const [isCourierHistoryModalOpen, setIsCourierHistoryModalOpen] = useState(false)
 
-  // Ler query param ?tab=deviations se existir
+  // Ler query param ?tab=km-audit ou ?tab=deviations se existir
   const queryParams = new URLSearchParams(location.search)
   const tabFromQuery = queryParams.get('tab') as
     | 'overview'
     | 'control-tower'
     | 'reports'
     | 'fuel'
+    | 'km-audit'
     | 'deviations'
     | 'settings'
     | 'site-content'
@@ -194,6 +200,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'control-tower'
     | 'reports'
     | 'fuel'
+    | 'km-audit'
     | 'deviations'
     | 'settings'
     | 'site-content'
@@ -211,6 +218,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         'control-tower',
         'reports',
         'fuel',
+        'km-audit',
         'deviations',
         'settings',
         'site-content',
@@ -1429,6 +1437,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     | 'control-tower'
                     | 'reports'
                     | 'fuel'
+                    | 'km-audit'
                     | 'deviations'
                     | 'settings'
                     | 'site-content'
@@ -1467,6 +1476,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 >
                   <Wallet className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
                   Controle de Combustível
+                </TabsTrigger>
+                <TabsTrigger
+                  value="km-audit"
+                  className="text-xs font-semibold text-slate-700 data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg"
+                >
+                  <Route className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
+                  Auditoria de KM
                 </TabsTrigger>
                 <TabsTrigger
                   value="deviations"
@@ -1921,6 +1937,21 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </div>
                   </CardContent>
                 </Card>
+              </TabsContent>
+
+              {/* TAB: AUDITORIA DE KM POR ENTREGA & APROVAÇÕES DO ADMIN */}
+              <TabsContent value="km-audit" className="space-y-6">
+                <Suspense fallback={<SectionSkeleton />}>
+                  <KmAuditReport
+                    orders={orders}
+                    couriers={couriers}
+                    locations={locations}
+                    offRouteEvents={offRouteEvents}
+                    settings={settings}
+                    currentCompanyId={resolvedCompany?.id || currentCompany?.id}
+                    onDataChange={loadData}
+                  />
+                </Suspense>
               </TabsContent>
 
               {/* TAB: RELATÓRIO DE DESVIOS E PARADAS FORA DE ROTA (REQUISITO 2) */}
