@@ -1014,8 +1014,9 @@ export const deliveryService = {
   async updateCustomer(id: string, data: Partial<CustomerRecord>) {
     const updated = await pb.collection<CustomerRecord>('customers').update(id, data)
 
-    // Se as coordenadas foram alteradas, sincronizar pedidos afetados não entregues/cancelados
-    // e recalcular na hora o trajeto viário oficial de rotas ativas
+    // Se as coordenadas ou endereço foram alterados, sincronizar pedidos afetados
+    // para QUALQUER pedido enfileirado/atribuído não entregue e não cancelado
+    // (status != 'delivered' && status != 'cancelled') e recalcular o trajeto viário oficial da rota
     if (data.lat !== undefined || data.lng !== undefined || data.address !== undefined) {
       try {
         const affectedOrders = await pb.collection<OrderRecord>('orders').getFullList({
@@ -1028,6 +1029,7 @@ export const deliveryService = {
           if (data.lat !== undefined) ordUpdate.end_address_lat = Number(data.lat)
           if (data.lng !== undefined) ordUpdate.end_address_lng = Number(data.lng)
           if (data.address !== undefined) ordUpdate.end_address_text = data.address
+          if (data.name !== undefined) ordUpdate.end_address_name = data.name
           await pb.collection('orders').update(ord.id, ordUpdate)
           if (ord.courier_id) {
             courierIdsToResequence.add(ord.courier_id)
@@ -2060,13 +2062,78 @@ export const deliveryService = {
         const filter = orderIds.map((id) => `id='${id}'`).join(' || ')
         ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
           filter,
+          expand: 'customer_id',
           requestKey: null,
         })
       } else if (courierId) {
         ordersToUpdate = await pb.collection<OrderRecord>('orders').getFullList({
           filter: `courier_id='${courierId}' && (status='assigned' || status='pending' || status='in_transit')`,
+          expand: 'customer_id',
           requestKey: null,
         })
+      }
+
+      // Regra de Validação de KM Viário Oficial na Liberação:
+      // ANTES de aplicar route_released = true, inspecionar todas as ordens do lote.
+      // Se alguma tem distance_km 0 ou nulo, rodar optimizeRouteSequence / resequenceActiveRouteForCourier do lote para preencher.
+      // Se o recálculo falhar ou a parada persistir com 0,0, BLOQUEAR a liberação com mensagem clara citando a parada problemática.
+      const couriersToValidate = Array.from(
+        new Set(
+          [courierId, ...ordersToUpdate.map((o) => o.courier_id)].filter((id): id is string =>
+            Boolean(id),
+          ),
+        ),
+      )
+
+      for (const targetCourier of couriersToValidate) {
+        // Pedidos deste courier no lote a liberar
+        const courierBatchOrders = ordersToUpdate.filter((o) => o.courier_id === targetCourier)
+        const hasZeroKm = courierBatchOrders.some(
+          (o) => !o.distance_km || Number(o.distance_km) <= 0,
+        )
+
+        if (hasZeroKm) {
+          console.log(
+            `[releaseRouteForOrders] Parada com KM viário 0,0 detectada para o entregador ${targetCourier}. Executando recálculo viário oficial antes de liberar...`,
+          )
+          let reseqSuccess = false
+          try {
+            const reseqRes = await this.resequenceActiveRouteForCourier(targetCourier)
+            reseqSuccess = reseqRes.success && reseqRes.sequencedCount > 0
+          } catch (reseqErr) {
+            console.error('[releaseRouteForOrders] Falha no recálculo automático:', reseqErr)
+            reseqSuccess = false
+          }
+
+          // Recarregar os pedidos do lote para verificar se foram preenchidos
+          const reloadedOrders = await pb.collection<OrderRecord>('orders').getFullList({
+            filter: courierBatchOrders.map((o) => `id='${o.id}'`).join(' || '),
+            expand: 'customer_id',
+            requestKey: null,
+          })
+
+          const stillZero = reloadedOrders.find((o) => !o.distance_km || Number(o.distance_km) <= 0)
+          if (stillZero || !reseqSuccess) {
+            const problemOrder =
+              stillZero ||
+              courierBatchOrders.find((o) => !o.distance_km || Number(o.distance_km) <= 0)
+            const cust =
+              (problemOrder?.expand?.customer_id as CustomerRecord | undefined) ||
+              problemOrder?.end_address_name ||
+              'Cliente'
+            const custName = typeof cust === 'string' ? cust : cust?.name || 'Cliente'
+            const code = problemOrder?.tracking_code || problemOrder?.id || 'pedido'
+            throw new Error(
+              `Não foi possível liberar a rota: a parada ${code} (${custName}) está com KM viário 0,0. O recálculo automático falhou. Verifique o endereço antes de liberar.`,
+            )
+          }
+
+          // Atualizar a referência de ordersToUpdate com os valores recalculados
+          ordersToUpdate = ordersToUpdate.map((orig) => {
+            const fresh = reloadedOrders.find((r) => r.id === orig.id)
+            return fresh || orig
+          })
+        }
       }
 
       // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"

@@ -794,9 +794,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         )
       }
       loadData()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error releasing order route:', err)
-      toast.error('Erro ao liberar rota.')
+      toast.error(err?.message || 'Erro ao liberar rota.')
     } finally {
       setReleasingOrderId(null)
     }
@@ -826,9 +826,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         toast.success(`🚀 Todas as ${ids.length} entregas foram liberadas para o entregador!`)
       }
       loadData()
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error releasing all orders for courier:', err)
-      toast.error('Erro ao liberar rota em lote.')
+      toast.error(err?.message || 'Erro ao liberar rota em lote.')
     } finally {
       setIsReleasingAllForCourier(null)
     }

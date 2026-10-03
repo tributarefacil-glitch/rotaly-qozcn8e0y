@@ -2542,11 +2542,26 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         let allocatedReturnSum = 0
         let allocatedFuelSum = 0
 
+        // Se a liberação direta estiver marcada, validar que nenhuma parada está com 0,0 km
+        if (releaseDirectly) {
+          const problemStop = plan.stops.find(
+            (s) => !s.step_distance_meters || s.step_distance_meters <= 0,
+          )
+          if (problemStop) {
+            const cust = problemStop.customer_name || 'Cliente'
+            const code = problemStop.tracking_code || problemStop.id
+            throw new Error(
+              `Não foi possível liberar a rota: a parada ${code} (${cust}) está com KM viário 0,0. O recálculo automático falhou. Verifique o endereço antes de liberar.`,
+            )
+          }
+        }
+
         for (let i = 0; i < plan.stops.length; i++) {
           const stop = plan.stops[i]
           const isLastStop = i === plan.stops.length - 1
           const etaTimestamp = new Date(now + (20 + i * 15) * 60 * 1000).toISOString()
-          const stopDistanceKm = Number((stop.step_distance_meters / 1000).toFixed(2))
+          const rawDistKm = Number((stop.step_distance_meters / 1000).toFixed(2))
+          const stopDistanceKm = rawDistKm > 0 ? rawDistKm : 0.8
 
           let stopReturnKm = 0
           if (totalPlanStops === 1) {
@@ -2644,9 +2659,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
       onRoutesApplied()
       onOpenChange(false)
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error applying route distribution:', err)
-      toast.error('Falha ao salvar atribuição das rotas.')
+      toast.error(err?.message || 'Falha ao salvar atribuição das rotas.')
     } finally {
       setIsApplying(false)
     }
