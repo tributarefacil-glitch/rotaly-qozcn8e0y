@@ -292,14 +292,16 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                         <Badge
                           variant="outline"
                           className={`text-[10px] font-bold uppercase ${
-                            alert.origin === 'varredura_cep'
-                              ? 'border-blue-300 bg-blue-50 text-blue-700'
-                              : 'border-purple-300 bg-purple-50 text-purple-700'
+                            alert.origin === 'pin_entregador'
+                              ? 'border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-600'
+                              : 'border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
                           }`}
                         >
-                          {alert.origin === 'varredura_cep'
-                            ? '🔍 Varredura CEP'
-                            : '📍 Pin Entregador'}
+                          {alert.origin === 'pin_entregador'
+                            ? sug.accuracy_meters
+                              ? `📍 Pin Entregador (~${Math.round(sug.accuracy_meters)}m)`
+                              : '📍 Pin Entregador (GPS)'
+                            : '🔍 Varredura CEP'}
                         </Badge>
                         <Badge
                           className={`text-[10px] font-bold uppercase ${

@@ -3369,6 +3369,24 @@ export const deliveryService = {
   },
 
   /**
+   * Verificar se já existe alerta pendente para determinado cliente (prevenção de duplicidade).
+   */
+  async getPendingAlertForCustomer(customerId: string): Promise<AddressAlertRecord | null> {
+    if (!customerId) return null
+    try {
+      const records = await pb.collection<AddressAlertRecord>('address_alerts').getList(1, 1, {
+        filter: `customer = '${customerId}' && status = 'pendente'`,
+        sort: '-created',
+        requestKey: null,
+      })
+      return records.items[0] || null
+    } catch (err) {
+      console.warn('[deliveryService] Erro ao checar alerta pendente do cliente:', err)
+      return null
+    }
+  },
+
+  /**
    * Criar um alerta de endereço suspeito (ex.: via GPS do entregador).
    */
   async createAddressAlert(data: {

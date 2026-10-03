@@ -81,6 +81,7 @@ export default function CourierApp() {
   const [isLoading, setIsLoading] = useState(true)
   const [isStartingRoute, setIsStartingRoute] = useState(false)
   const [isFinishingRoute, setIsFinishingRoute] = useState(false)
+  const [isSubmittingPin, setIsSubmittingPin] = useState(false)
 
   // Estados opcionais de odômetro e foto do painel (auditoria informativa, nunca bloqueante)
   const [odometroInicialInput, setOdometroInicialInput] = useState<string>('')
@@ -931,6 +932,156 @@ export default function CourierApp() {
     window.open(wazeUrl, '_blank')
   }
 
+  // Ação: "Marcar endereço correto no local (GPS)"
+  // Cria alerta de endereço suspeito (origem 'pin_entregador') para auditoria do vendedor/master
+  const handleMarkCorrectAddress = async (order: OrderRecord) => {
+    const customer = order.expand?.customer_id
+    if (!customer?.id) {
+      toast.error('Dados do cliente não disponíveis para marcação de endereço.')
+      return
+    }
+
+    if (!user?.id) {
+      toast.error('Entregador não autenticado.')
+      return
+    }
+
+    if (isSubmittingPin) return
+
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      toast.error('GPS não suportado neste navegador/aparelho.')
+      return
+    }
+
+    setIsSubmittingPin(true)
+    const toastId = toast.loading('Capturando coordenada precisa do GPS no local...')
+
+    try {
+      // 1. Checagem prévia de duplicidade: já existe alerta pendente para o mesmo cliente?
+      const existingAlert = await deliveryService.getPendingAlertForCustomer(customer.id)
+      if (existingAlert) {
+        toast.dismiss(toastId)
+        toast.info('Este cliente já possui uma marcação pendente de revisão na central.', {
+          description: 'Aguarde o vendedor ou administrador avaliar o endereço.',
+          duration: 5000,
+        })
+        setIsSubmittingPin(false)
+        return
+      }
+
+      // 2. Captura do GPS via navigator.geolocation.getCurrentPosition
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        })
+      })
+
+      const courierLat = position.coords.latitude
+      const courierLng = position.coords.longitude
+      const accuracy = Math.round(position.coords.accuracy || 0)
+
+      // 3. Calcular distance_meters entre o pin cadastrado do cliente e o GPS capturado
+      let distanceMeters: number | undefined
+      if (
+        customer.lat !== undefined &&
+        customer.lat !== null &&
+        customer.lng !== undefined &&
+        customer.lng !== null &&
+        !isNaN(Number(customer.lat)) &&
+        !isNaN(Number(customer.lng)) &&
+        (Number(customer.lat) !== 0 || Number(customer.lng) !== 0)
+      ) {
+        distanceMeters = Math.round(
+          haversineDistanceMeters(
+            Number(customer.lat),
+            Number(customer.lng),
+            courierLat,
+            courierLng,
+          ),
+        )
+      }
+
+      // 4. Montar os payloads de endereço
+      const currentAddressJson = {
+        address: customer.address || '',
+        street: customer.street || '',
+        neighborhood: customer.neighborhood || '',
+        city: customer.city || '',
+        state: customer.state || '',
+        postal_code: customer.postal_code || '',
+        lat: customer.lat ?? null,
+        lng: customer.lng ?? null,
+      }
+
+      const suggestedAddressJson = {
+        address: customer.address || '',
+        street: customer.street || '',
+        neighborhood: customer.neighborhood || '',
+        city: customer.city || '',
+        state: customer.state || '',
+        postal_code: customer.postal_code || '',
+        lat: courierLat,
+        lng: courierLng,
+        accuracy_meters: accuracy,
+      }
+
+      // Empresa do pedido ou do cliente para isolamento multiempresa
+      const companyId = order.empresa_id || customer.empresa_id || undefined
+
+      // 5. Criar o registro em address_alerts
+      await deliveryService.createAddressAlert({
+        company: companyId,
+        customer: customer.id,
+        current_address: currentAddressJson,
+        suggested_address: suggestedAddressJson,
+        origin: 'pin_entregador',
+        status: 'pendente',
+        distance_meters: distanceMeters,
+        marked_by: user.id,
+        marked_at: new Date().toISOString(),
+        notes: `Marcado no local pelo entregador ${user.name || user.email} (precisão GPS: ~${accuracy}m${distanceMeters !== undefined ? `, desvio: ${distanceMeters}m` : ''}).`,
+      })
+
+      toast.dismiss(toastId)
+      toast.success('Marcação enviada para revisão!', {
+        description: `Coordenada gravada (~${accuracy}m de precisão). A central vai conferir o endereço na caixa de Endereços Suspeitos.`,
+        duration: 6000,
+      })
+    } catch (err: any) {
+      toast.dismiss(toastId)
+      console.error('[CourierApp] Erro ao marcar endereço do cliente:', err)
+
+      if (err?.code === 1 /* PERMISSION_DENIED */) {
+        toast.error('Permissão de GPS negada', {
+          description:
+            'Habilite a localização nas configurações do navegador/iPhone para marcar o local.',
+          duration: 6000,
+        })
+        setIsIPhoneGuideOpen(true)
+      } else if (err?.code === 3 /* TIMEOUT */) {
+        toast.error('Tempo esgotado ao buscar GPS', {
+          description:
+            'Sinal fraco ou indisponível no momento. Tente novamente com visão aberta do céu.',
+          duration: 5000,
+        })
+      } else if (err?.code === 2 /* POSITION_UNAVAILABLE */) {
+        toast.error('Posição GPS indisponível', {
+          description: 'Verifique se o serviço de localização está ativado no aparelho.',
+          duration: 5000,
+        })
+      } else {
+        toast.error('Não foi possível registrar o endereço', {
+          description: err?.message || 'Tente novamente em instantes.',
+          duration: 5000,
+        })
+      }
+    } finally {
+      setIsSubmittingPin(false)
+    }
+  }
+
   // Ação "Iniciar Entrega" do cliente atual (marca em andamento se ainda não estiver e abre GPS)
   const handleStartDelivery = async (order: OrderRecord) => {
     try {
@@ -1662,6 +1813,29 @@ export default function CourierApp() {
                       {currentActiveDelivery.notes}
                     </div>
                   )}
+                </div>
+
+                {/* BOTÃO OPERACIONAL: MARCAR ENDEREÇO CORRETO NO LOCAL (GPS) */}
+                <div className="pt-0.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isSubmittingPin}
+                    onClick={() => handleMarkCorrectAddress(currentActiveDelivery)}
+                    className="w-full h-11 border-amber-500/50 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 hover:text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition shadow-sm"
+                  >
+                    {isSubmittingPin ? (
+                      <>
+                        <div className="h-4 w-4 border-2 border-amber-400 border-t-transparent animate-spin rounded-full" />
+                        <span>Capturando GPS no local...</span>
+                      </>
+                    ) : (
+                      <>
+                        <MapPin className="h-4 w-4 text-amber-400 shrink-0" />
+                        <span>Marcar endereço correto no local (GPS)</span>
+                      </>
+                    )}
+                  </Button>
                 </div>
 
                 {/* BOTÕES DE AÇÃO: APENAS DUAS AÇÕES POR CLIENTE */}
