@@ -181,6 +181,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       isJointSecondary: boolean
       statusBadge: string
       hasSignificantDeviation: boolean
+      isRedirected: boolean
+      isRedirectionPending: boolean
       approval?: RouteKmApprovalRecord
       officialAfterApprovalKm: number
     }> = []
@@ -872,22 +874,23 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                               <span className="line-clamp-2">{row.address}</span>
                             </p>
 
-                            {row.isRedirected && (row.order.redirection_new_address || row.approval?.new_address) && (
-  <div className="p-1.5 rounded bg-amber-50 border border-amber-200 text-[10px] text-amber-900 space-y-0.5">
-    <span className="font-bold block flex items-center gap-1">
-      <NavigationIcon className="h-3 w-3 text-amber-700" />
-      Novo Endereço (Ponto B):
-    </span>
-    <span className="line-clamp-2">
-      {row.order.redirection_new_address || row.approval?.new_address}
-    </span>
-    {row.order.customer_address_updated && (
-      <span className="text-[9px] text-emerald-700 font-semibold block">
-        ✓ Cadastro oficial do cliente atualizado
-      </span>
-    )}
-  </div>
-)}
+                            {row.isRedirected &&
+                              (row.order.redirection_new_address || row.approval?.new_address) && (
+                                <div className="p-1.5 rounded bg-amber-50 border border-amber-200 text-[10px] text-amber-900 space-y-0.5">
+                                  <span className="font-bold block flex items-center gap-1">
+                                    <NavigationIcon className="h-3 w-3 text-amber-700" />
+                                    Novo Endereço (Ponto B):
+                                  </span>
+                                  <span className="line-clamp-2">
+                                    {row.order.redirection_new_address || row.approval?.new_address}
+                                  </span>
+                                  {row.order.customer_address_updated && (
+                                    <span className="text-[9px] text-emerald-700 font-semibold block">
+                                      ✓ Cadastro oficial do cliente atualizado
+                                    </span>
+                                  )}
+                                </div>
+                              )}
 
                             <div className="flex items-center gap-2 text-[10px] text-slate-400">
                               <span>🛵 {row.courier?.name || 'Entregador'}</span>
