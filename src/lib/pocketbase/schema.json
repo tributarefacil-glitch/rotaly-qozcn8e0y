@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T02:18:46.614Z",
+  "generatedAt": "2026-10-03T02:38:37.937Z",
   "collections": [
     {
       "name": "users",
@@ -2055,6 +2055,100 @@
         "CREATE INDEX idx_address_alerts_customer ON address_alerts (customer)",
         "CREATE INDEX idx_address_alerts_status ON address_alerts (status)",
         "CREATE INDEX idx_address_alerts_origin ON address_alerts (origin)"
+      ]
+    },
+    {
+      "name": "fuel_balance_alerts",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != \"\" && (@request.auth.role = \"master\" || @request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")",
+        "view": "@request.auth.id != \"\" && (@request.auth.role = \"master\" || @request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")",
+        "create": "@request.auth.id != \"\"",
+        "update": "@request.auth.id != \"\" && (@request.auth.role = \"master\" || @request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")",
+        "delete": "@request.auth.id != \"\" && (@request.auth.role = \"master\" || @request.auth.role = \"admin\" || @request.auth.role = \"superadmin\")"
+      },
+      "fields": [
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "alert_date",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "balance",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "monthly_spent",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "monthly_average",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "suggested_recharge",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "recipient_email",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["sent", "failed"]
+        },
+        {
+          "name": "notes",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_fuel_alerts_courier_date ON fuel_balance_alerts (courier_id, alert_date)",
+        "CREATE INDEX idx_fuel_alerts_empresa ON fuel_balance_alerts (empresa_id)"
       ]
     }
   ]

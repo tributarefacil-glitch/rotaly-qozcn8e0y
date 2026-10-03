@@ -528,6 +528,36 @@ export class FuelAccountService {
       }),
     )
   }
+
+  /**
+   * Aciona manualmente a verificação de saldo de combustível no backend
+   * (mesma lógica executada diariamente pelo cron job daily_fuel_balance_check).
+   */
+  public async triggerFuelBalanceCheck(): Promise<{
+    success: boolean
+    date?: string
+    processed?: number
+    alertsSent?: number
+    details?: Array<Record<string, unknown>>
+    error?: string
+  }> {
+    try {
+      const result = await pb.send<{
+        success: boolean
+        date?: string
+        processed?: number
+        alertsSent?: number
+        details?: Array<Record<string, unknown>>
+        error?: string
+      }>('/backend/v1/fuel-balance/check-now', {
+        method: 'POST',
+      })
+      return result
+    } catch (err) {
+      console.error('[FuelAccountService] Erro ao disparar verificação de saldo:', err)
+      throw err
+    }
+  }
 }
 
 export const fuelAccountService = FuelAccountService.getInstance()

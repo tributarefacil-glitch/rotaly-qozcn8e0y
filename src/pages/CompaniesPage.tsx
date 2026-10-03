@@ -663,10 +663,10 @@ export const CompaniesPage: React.FC = () => {
     if (!editingEmpresa) return
 
     const isMatriz = Boolean(matrizId && editingEmpresa.id === matrizId)
-    if (isMatriz) {
-      toast.error(
-        'A gestão de membros da Matriz é protegida e não pode ser modificada por este modal.',
-      )
+
+    // Se for a Matriz, apenas usuários com papel 'master' podem gerenciar membros
+    if (isMatriz && !isMaster) {
+      toast.error('Apenas o usuário Master pode cadastrar ou gerenciar membros da Matriz.')
       return
     }
 

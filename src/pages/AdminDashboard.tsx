@@ -1524,7 +1524,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2 self-start sm:self-center">
+                  <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
                     <Button
                       variant="outline"
                       size="sm"
@@ -1536,6 +1536,30 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                         className={`h-3.5 w-3.5 text-[#00A3FF] ${isLoadingFuelOrders ? 'animate-spin' : ''}`}
                       />
                       Atualizar Combustível
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          toast.info('Verificando saldos e médias de consumo de combustível...')
+                          const res = await fuelAccountService.triggerFuelBalanceCheck()
+                          if (res.success) {
+                            toast.success(
+                              `Verificação concluída! ${res.alertsSent || 0} alerta(s) de recarga enviado(s) aos administradores.`,
+                            )
+                          } else {
+                            toast.error(`Aviso na verificação: ${res.error || 'Erro desconhecido'}`)
+                          }
+                        } catch (err) {
+                          toast.error('Falha ao acionar verificação de saldo de combustível.')
+                        }
+                      }}
+                      className="h-9 gap-1.5 text-xs text-amber-700 border-amber-200 bg-amber-50/50 hover:bg-amber-100/60 rounded-xl"
+                      title="Dispara a verificação diária de saldo e sugestão de recarga por e-mail"
+                    >
+                      <Bell className="h-3.5 w-3.5 text-amber-600" />
+                      Checar Alertas (80%)
                     </Button>
                     <Button
                       onClick={() => setIsNewFuelAdvanceModalOpen(true)}
