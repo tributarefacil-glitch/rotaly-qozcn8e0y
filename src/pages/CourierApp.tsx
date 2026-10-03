@@ -18,11 +18,13 @@ import {
   AlertTriangle,
   WifiOff,
   Database,
+  Compass,
 } from 'lucide-react'
 import { Header } from '@/components/Header'
 import { CourierBottomNav } from '@/components/CourierBottomNav'
 import { DeliveryConfirmationModal } from '@/components/DeliveryConfirmationModal'
 import { CancelDeliveryModal } from '@/components/CancelDeliveryModal'
+import { RedirectDeliveryModal } from '@/components/RedirectDeliveryModal'
 import { IPhoneGpsGuideModal } from '@/components/IPhoneGpsGuideModal'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
@@ -61,9 +63,10 @@ export default function CourierApp() {
   const [selectedOrderForConfirmation, setSelectedOrderForConfirmation] =
     useState<OrderRecord | null>(null)
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false)
-
   const [selectedOrderForCancel, setSelectedOrderForCancel] = useState<OrderRecord | null>(null)
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
+  const [selectedOrderForRedirect, setSelectedOrderForRedirect] = useState<OrderRecord | null>(null)
+  const [isRedirectModalOpen, setIsRedirectModalOpen] = useState(false)
 
   // Status de GPS e rede em tempo real com distinção de motivo
   const [gpsStatus, setGpsStatus] = useState<'active' | 'disabled' | 'offline'>('active')
@@ -444,7 +447,7 @@ export default function CourierApp() {
 
     const handleOnline = async () => {
       setIsOnline(true)
-      // Ao voltar online, disparar flush idempotente do buffer E ping fresco imediato
+      // Ao voltar online, disparar flush idempotente do buffer E sincronização de ações de redirecionamento
       if (user?.id) {
         setIsFlushingBuffer(true)
         isFlushingBufferRef.current = true
@@ -458,6 +461,54 @@ export default function CourierApp() {
         } finally {
           setIsFlushingBuffer(false)
           isFlushingBufferRef.current = false
+        }
+
+        // Sincronizar ações de redirecionamento pendentes no IndexedDB
+        try {
+          const pendingRedirs = await offlineRouteStorage.getPendingRedirectionActions(user.id)
+          if (pendingRedirs.length > 0) {
+            const syncedIds: string[] = []
+            for (const act of pendingRedirs) {
+              try {
+                if (act.action === 'initiate' && act.pointA) {
+                  await deliveryService.initiateDeliveryRedirection({
+                    orderId: act.orderId,
+                    courierId: act.courierId,
+                    pointALat: act.pointA.lat,
+                    pointALng: act.pointA.lng,
+                    pointAAt: act.pointA.at,
+                    newAddressText: act.newAddress,
+                  })
+                  syncedIds.push(act.id)
+                } else if (act.action === 'confirm' && act.pointB) {
+                  const targetOrder = orders.find((o) => o.id === act.orderId)
+                  if (targetOrder) {
+                    await deliveryService.confirmDeliveryRedirection({
+                      order: targetOrder,
+                      courierId: act.courierId,
+                      pointBLat: act.pointB.lat,
+                      pointBLng: act.pointB.lng,
+                      pointBAt: act.pointB.at,
+                      newAddressText: act.newAddress || '',
+                      updateCustomerAddressOfficial: act.updateCustomerAddress ?? true,
+                      receiverName: act.receiverName,
+                      notes: act.notes,
+                    })
+                    syncedIds.push(act.id)
+                  }
+                }
+              } catch (actErr) {
+                console.warn('[CourierApp] Falha ao sincronizar ação offline:', act.id, actErr)
+              }
+            }
+            if (syncedIds.length > 0) {
+              await offlineRouteStorage.removeRedirectionActions(user.id, syncedIds)
+              loadCourierOrders()
+              toast.success(`Redirecionamento offline sincronizado com sucesso!`)
+            }
+          }
+        } catch (syncErr) {
+          console.warn('[CourierApp] Erro na sincronização de redirecionamento offline:', syncErr)
         }
 
         // Ping imediato de posição fresca (maximumAge: 0)
@@ -1919,9 +1970,43 @@ export default function CourierApp() {
                   </Button>
                 </div>
 
-                {/* BOTÕES DE AÇÃO: APENAS DUAS AÇÕES POR CLIENTE */}
+                {/* AVISO QUANDO REDIRECIONAMENTO JÁ ESTIVER INICIADO */}
+                {currentActiveDelivery.redirection_status === 'initiated' && (
+                  <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs space-y-1">
+                    <div className="flex items-center gap-2 font-bold text-amber-300">
+                      <Compass className="h-4 w-4 shrink-0 text-amber-400" />
+                      <span>Redirecionamento em Andamento</span>
+                    </div>
+                    <p className="text-[11px] text-amber-100/90 leading-relaxed">
+                      Ponto A registrado. Novo destino:{' '}
+                      <strong>
+                        {currentActiveDelivery.redirection_new_address || 'Endereço informado'}
+                      </strong>
+                      . Ao chegar lá, toque em <em>Concluir Entrega Redirecionada</em> para capturar
+                      o Ponto B e o comprovante.
+                    </p>
+                    {currentActiveDelivery.redirection_new_address && (
+                      <div className="pt-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(currentActiveDelivery.redirection_new_address!)}`
+                            window.open(url, '_blank')
+                          }}
+                          className="h-8 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[11px] rounded-lg flex items-center gap-1.5"
+                        >
+                          <Navigation className="h-3.5 w-3.5" />
+                          <span>Abrir navegação para o novo endereço</span>
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* BOTÕES DE AÇÃO: NAVEGAR / REDIRECIONAR / CONCLUIR */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  {/* Iniciar Entrega */}
+                  {/* Iniciar Entrega / Navegar */}
                   <Button
                     type="button"
                     onClick={() => handleStartDelivery(currentActiveDelivery)}
@@ -1938,10 +2023,38 @@ export default function CourierApp() {
                       setSelectedOrderForConfirmation(currentActiveDelivery)
                       setIsConfirmModalOpen(true)
                     }}
-                    className="h-12 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 border border-emerald-400/40"
+                    className={`h-12 text-slate-950 font-black text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 border ${
+                      currentActiveDelivery.redirection_status === 'initiated'
+                        ? 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 border-amber-300'
+                        : 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 border-emerald-400/40'
+                    }`}
                   >
                     <CheckCircle className="h-4 w-4" />
-                    <span>Concluir Entrega</span>
+                    <span>
+                      {currentActiveDelivery.redirection_status === 'initiated'
+                        ? 'Confirmar Entrega Redirecionada'
+                        : 'Concluir Entrega'}
+                    </span>
+                  </Button>
+                </div>
+
+                {/* FLUXO ENTREGA REDIRECIONADA: CLIENTE EM OUTRO ENDEREÇO */}
+                <div className="pt-0.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedOrderForRedirect(currentActiveDelivery)
+                      setIsRedirectModalOpen(true)
+                    }}
+                    className="w-full h-11 border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 hover:text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition shadow-sm"
+                  >
+                    <Compass className="h-4 w-4 text-amber-400 shrink-0" />
+                    <span>
+                      {currentActiveDelivery.redirection_status === 'initiated'
+                        ? 'Alterar Novo Endereço / Ponto A'
+                        : 'Cliente em outro endereço (Gravar Ponto A)'}
+                    </span>
                   </Button>
                 </div>
 
@@ -2050,6 +2163,20 @@ export default function CourierApp() {
         open={isConfirmModalOpen}
         onOpenChange={setIsConfirmModalOpen}
         onConfirmed={loadCourierOrders}
+        courierId={user?.id}
+        locations={locations}
+      />
+
+      {/* Modal de Entrega Redirecionada (Grava Ponto A e pede novo endereço) */}
+      <RedirectDeliveryModal
+        order={selectedOrderForRedirect}
+        courierId={user?.id}
+        open={isRedirectModalOpen}
+        onOpenChange={setIsRedirectModalOpen}
+        onRedirectionStarted={(updatedOrder) => {
+          setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)))
+          loadCourierOrders()
+        }}
       />
 
       {/* Modal de Cancelamento de Entrega com os 4 Motivos Exatos */}

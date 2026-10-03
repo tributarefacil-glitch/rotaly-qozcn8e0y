@@ -120,7 +120,7 @@ export function calculateCourierFuelMetrics(params: {
   carryOverBalance?: number
   approvalsMap?: Map<
     string,
-    { approvedKm: number; justification?: string; status: 'approved' | 'rejected' }
+    { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
   >
 }): CourierFuelCalculationResult {
   const {
@@ -722,7 +722,7 @@ export function useCourierFuelMetrics(params: {
   carryOverBalance?: number
   approvalsMap?: Map<
     string,
-    { approvedKm: number; justification?: string; status: 'approved' | 'rejected' }
+    { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
   >
 }): CourierFuelCalculationResult {
   const {

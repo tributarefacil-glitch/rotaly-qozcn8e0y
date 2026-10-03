@@ -38,6 +38,7 @@ import {
   Info,
   Check,
   RotateCcw,
+  Navigation as NavigationIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { deliveryService } from '@/services/deliveryService'
@@ -78,6 +79,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   const [selectedBatchKey, setSelectedBatchKey] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [filterDeviationOnly, setFilterDeviationOnly] = useState<boolean>(false)
+  const [filterRedirectedOnly, setFilterRedirectedOnly] = useState<boolean>(false)
 
   // Estado de aprovações
   const [approvals, setApprovals] = useState<RouteKmApprovalRecord[]>([])
@@ -195,7 +197,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     // Construir map de aprovações para o motor oficial
     const motorApprovalsMap = new Map<
       string,
-      { approvedKm: number; justification?: string; status: 'approved' | 'rejected' }
+      { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
     >()
     approvals.forEach((appr) => {
       motorApprovalsMap.set(appr.order_id, {
@@ -318,11 +320,25 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         // - Desvio de rota > 500m
         // - Ou parada fora do local > 300m
         // - Ou discrepância entre viário e GPS > 2.0 km
+        // - Ou entrega redirecionada iniciada ou pendente
+        const isRedirected = Boolean(
+          order.is_redirected ||
+          order.redirection_status === 'initiated' ||
+          order.redirection_status === 'completed' ||
+          approval?.approval_type === 'redirection_auto' ||
+          approval?.approval_type === 'redirection_manual',
+        )
+        const isRedirectionPending =
+          order.redirection_status === 'initiated' ||
+          approval?.status === 'pending' ||
+          (isRedirected && !approval)
+
         const diffGpsRoad = Math.abs(calc.totalGpsKm - roadKmOriginal)
         const hasSignificantDeviation =
           maxDevMeters >= 500 ||
           maxStopDistMeters >= 300 ||
-          (diffGpsRoad >= 2.0 && calc.totalGpsKm > 0)
+          (diffGpsRoad >= 2.0 && calc.totalGpsKm > 0) ||
+          isRedirectionPending
 
         rows.push({
           order,
@@ -345,6 +361,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           isJointSecondary: Boolean(calc.isJointSecondary),
           statusBadge: order.status,
           hasSignificantDeviation,
+          isRedirected,
+          isRedirectionPending,
           approval,
           officialAfterApprovalKm,
         })
@@ -383,6 +401,11 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         return false
       }
 
+      // Filtro apenas redirecionados
+      if (filterRedirectedOnly && !r.isRedirected) {
+        return false
+      }
+
       // Filtro de busca textual
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim()
@@ -402,6 +425,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     customDate,
     selectedBatchKey,
     filterDeviationOnly,
+    filterRedirectedOnly,
     searchQuery,
   ])
 
@@ -414,15 +438,20 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     let rejectedItemsCount = 0
     let pendingReviewCount = 0
 
+    let redirectedCount = 0
+
     filteredRows.forEach((r) => {
       roadKmTotal += r.roadKm
       gpsKmTotal += r.gpsKm
       afterApprovalKmTotal += r.officialAfterApprovalKm
 
+      if (r.isRedirected) redirectedCount++
+
       if (r.approval) {
         if (r.approval.status === 'approved') approvedItemsCount++
         else if (r.approval.status === 'rejected') rejectedItemsCount++
-      } else if (r.hasSignificantDeviation) {
+        else if (r.approval.status === 'pending') pendingReviewCount++
+      } else if (r.hasSignificantDeviation || r.isRedirectionPending) {
         pendingReviewCount++
       }
     })
@@ -434,6 +463,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       approvedItemsCount,
       rejectedItemsCount,
       pendingReviewCount,
+      redirectedCount,
       totalCount: filteredRows.length,
     }
   }, [filteredRows])
@@ -597,7 +627,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         <Card className="border-slate-200 border-l-4 border-l-amber-500 bg-white shadow-sm">
           <CardContent className="p-4">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-              Triagem de Desvios
+              Triagem de Desvios &amp; Redireções
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-amber-600">
@@ -606,7 +636,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
               <span className="text-xs text-slate-500 font-semibold">pendentes</span>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Desvios &gt;500m ou paradas fora do local
+              {totals.redirectedCount} redireção(ões) | Desvios &gt;3km ou &gt;500m
             </p>
           </CardContent>
         </Card>
@@ -696,27 +726,49 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             </div>
           </div>
 
-          {/* Toggle para Desvios Relevantes */}
-          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <button
-              type="button"
-              onClick={() => setFilterDeviationOnly(!filterDeviationOnly)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-semibold transition-all ${
-                filterDeviationOnly
-                  ? 'bg-amber-100 border-amber-300 text-amber-900 font-bold shadow-xs'
-                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <AlertTriangle
-                className={`h-3.5 w-3.5 ${filterDeviationOnly ? 'text-amber-600' : 'text-slate-400'}`}
-              />
-              <span>Priorizar Desvios Relevantes (&gt;500m ou paradas)</span>
-              {totals.pendingReviewCount > 0 && (
-                <Badge className="ml-1 bg-amber-500 text-white text-[10px] px-1.5 py-0 h-4">
-                  {totals.pendingReviewCount}
-                </Badge>
-              )}
-            </button>
+          {/* Toggles de Auditoria: Desvios Relevantes e Entregas Redirecionadas */}
+          <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFilterDeviationOnly(!filterDeviationOnly)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-semibold transition-all ${
+                  filterDeviationOnly
+                    ? 'bg-amber-100 border-amber-300 text-amber-900 font-bold shadow-xs'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <AlertTriangle
+                  className={`h-3.5 w-3.5 ${filterDeviationOnly ? 'text-amber-600' : 'text-slate-400'}`}
+                />
+                <span>Priorizar Desvios Relevantes (&gt;500m ou paradas)</span>
+                {totals.pendingReviewCount > 0 && (
+                  <Badge className="ml-1 bg-amber-500 text-white text-[10px] px-1.5 py-0 h-4">
+                    {totals.pendingReviewCount}
+                  </Badge>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilterRedirectedOnly(!filterRedirectedOnly)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-semibold transition-all ${
+                  filterRedirectedOnly
+                    ? 'bg-blue-100 border-blue-300 text-blue-900 font-bold shadow-xs'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <Compass
+                  className={`h-3.5 w-3.5 ${filterRedirectedOnly ? 'text-blue-600' : 'text-slate-400'}`}
+                />
+                <span>Apenas Redirecionadas</span>
+                {totals.redirectedCount > 0 && (
+                  <Badge className="ml-1 bg-[#0052CC] text-white text-[10px] px-1.5 py-0 h-4">
+                    {totals.redirectedCount}
+                  </Badge>
+                )}
+              </button>
+            </div>
 
             <span className="text-slate-400">
               Exibindo <strong>{filteredRows.length}</strong> de {auditRows.length} entregas
@@ -794,6 +846,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                               >
                                 {row.trackingCode}
                               </Badge>
+                              {row.isRedirected && (
+                                <Badge className="bg-amber-500 text-slate-950 font-bold text-[9px] px-1.5 py-0 flex items-center gap-1">
+                                  <Compass className="h-2.5 w-2.5" />
+                                  Endereço Redirecionado
+                                </Badge>
+                              )}
+                              {row.order.redirection_status === 'initiated' && (
+                                <Badge className="bg-rose-500 text-white font-bold text-[9px] px-1.5 py-0">
+                                  Redireção Iniciada (Pendente)
+                                </Badge>
+                              )}
                               {row.isJointDelivery && (
                                 <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 text-[9px] px-1 py-0 font-semibold">
                                   {row.isJointSecondary
@@ -802,10 +865,30 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                 </Badge>
                               )}
                             </div>
+
+                            {/* Endereço Original e Novo Endereço */}
                             <p className="text-[11px] text-slate-500 flex items-start gap-1 leading-relaxed">
                               <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0 mt-0.5" />
                               <span className="line-clamp-2">{row.address}</span>
                             </p>
+
+                            {row.isRedirected && (row.order.redirection_new_address || row.approval?.new_address) && (
+  <div className="p-1.5 rounded bg-amber-50 border border-amber-200 text-[10px] text-amber-900 space-y-0.5">
+    <span className="font-bold block flex items-center gap-1">
+      <NavigationIcon className="h-3 w-3 text-amber-700" />
+      Novo Endereço (Ponto B):
+    </span>
+    <span className="line-clamp-2">
+      {row.order.redirection_new_address || row.approval?.new_address}
+    </span>
+    {row.order.customer_address_updated && (
+      <span className="text-[9px] text-emerald-700 font-semibold block">
+        ✓ Cadastro oficial do cliente atualizado
+      </span>
+    )}
+  </div>
+)}
+
                             <div className="flex items-center gap-2 text-[10px] text-slate-400">
                               <span>🛵 {row.courier?.name || 'Entregador'}</span>
                               <span>•</span>
@@ -867,9 +950,26 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna d: Desvio de Rota */}
+                        {/* Coluna d: Desvio de Rota / KM Extra Redireção */}
                         <td className="py-3 px-3 align-top text-center">
-                          {row.deviationMeters > 0 ? (
+                          {row.isRedirected ? (
+                            <div className="space-y-0.5">
+                              <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
+                                🧭 +
+                                {(
+                                  row.order.redirection_extra_km ??
+                                  row.approval?.extra_km ??
+                                  0
+                                ).toFixed(1)}{' '}
+                                km extra
+                              </Badge>
+                              <span className="text-[9px] text-slate-500 block">
+                                {row.approval?.calculation_method === 'telemetry_gps'
+                                  ? 'Trajetória GPS real'
+                                  : 'Desvio A→B viário'}
+                              </span>
+                            </div>
+                          ) : row.deviationMeters > 0 ? (
                             <div className="space-y-0.5">
                               <Badge
                                 className={`text-[10px] font-bold ${
@@ -912,13 +1012,23 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                         {/* Coluna f: Botão de Aprovação do Administrador */}
                         <td className="py-3 px-4 align-top text-right">
                           <div className="flex flex-col items-end gap-1.5">
-                            {row.approval ? (
+                            {row.approval && row.approval.status !== 'pending' ? (
                               <div className="text-right space-y-1">
                                 {isApproved ? (
-                                  <Badge className="bg-emerald-600 text-white font-bold text-[10px] flex items-center gap-1 ml-auto">
-                                    <CheckCircle2 className="h-3 w-3" />
-                                    Aprovado: {row.approval.approved_km.toFixed(1)} km
-                                  </Badge>
+                                  <div className="flex flex-col items-end gap-0.5">
+                                    <Badge className="bg-emerald-600 text-white font-bold text-[10px] flex items-center gap-1 ml-auto">
+                                      <CheckCircle2 className="h-3 w-3" />
+                                      {row.approval.approval_type === 'redirection_auto'
+                                        ? 'Auto-Aprovado (≤3km)'
+                                        : 'Aprovado'}
+                                      : {row.approval.approved_km.toFixed(1)} km
+                                    </Badge>
+                                    {row.approval.extra_km ? (
+                                      <span className="text-[9px] text-emerald-700 font-mono">
+                                        (+{row.approval.extra_km.toFixed(1)} km extra incluso)
+                                      </span>
+                                    ) : null}
+                                  </div>
                                 ) : (
                                   <Badge className="bg-slate-200 text-slate-700 border-slate-300 font-bold text-[10px] flex items-center gap-1 ml-auto">
                                     <XCircle className="h-3 w-3" />
@@ -947,25 +1057,34 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                 </div>
                               </div>
                             ) : (
-                              <div className="flex items-center justify-end gap-1.5">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleOpenActionModal(row, 'reject')}
-                                  className="h-7 px-2.5 text-[11px] border-slate-200 text-slate-600 hover:bg-slate-100"
-                                  title="Mantém estritamente o trajeto viário oficial"
-                                >
-                                  Rejeitar
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleOpenActionModal(row, 'approve')}
-                                  className="h-7 px-2.5 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1 shadow-xs"
-                                  title="Aprova e substitui o trecho no cálculo oficial de KM e combustível"
-                                >
-                                  <Check className="h-3.5 w-3.5" />
-                                  Aprovar KM
-                                </Button>
+                              <div className="flex flex-col items-end gap-1">
+                                {row.isRedirected && (
+                                  <Badge className="bg-amber-100 text-amber-800 border-amber-300 font-bold text-[9px] mb-0.5">
+                                    {row.order.redirection_status === 'initiated'
+                                      ? '⏳ Redireção Em Andamento'
+                                      : '⚠️ Desvio >3km Requer Revisão'}
+                                  </Badge>
+                                )}
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleOpenActionModal(row, 'reject')}
+                                    className="h-7 px-2.5 text-[11px] border-slate-200 text-slate-600 hover:bg-slate-100"
+                                    title="Mantém estritamente o trajeto viário oficial"
+                                  >
+                                    Rejeitar
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleOpenActionModal(row, 'approve')}
+                                    className="h-7 px-2.5 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1 shadow-xs"
+                                    title="Aprova e substitui o trecho no cálculo oficial de KM e combustível"
+                                  >
+                                    <Check className="h-3.5 w-3.5" />
+                                    Aprovar KM
+                                  </Button>
+                                </div>
                               </div>
                             )}
                           </div>

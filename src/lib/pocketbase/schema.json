@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T13:04:32.464Z",
+  "generatedAt": "2026-10-03T13:24:02.205Z",
   "collections": [
     {
       "name": "users",
@@ -561,6 +561,73 @@
         {
           "name": "foto_odometro_final",
           "type": "file",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["none", "initiated", "completed"]
+        },
+        {
+          "name": "is_redirected",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_point_a_lat",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_point_a_lng",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_point_a_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_point_b_lat",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_point_b_lng",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_point_b_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_new_address",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "redirection_extra_km",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "customer_address_updated",
+          "type": "bool",
           "required": false,
           "system": false
         }
@@ -2224,7 +2291,7 @@
       "apiRules": {
         "list": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')",
         "view": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')",
-        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')))",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')) || (@request.auth.role = 'courier' && courier_id = @request.auth.id))",
         "update": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')))",
         "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '')))"
       },
@@ -2279,7 +2346,7 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["approved", "rejected"]
+          "selectValues": ["approved", "rejected", "pending"]
         },
         {
           "name": "justification",
@@ -2313,6 +2380,55 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "approval_type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["manual_deviation", "redirection_auto", "redirection_manual"]
+        },
+        {
+          "name": "extra_km",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "point_a_lat",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "point_a_lng",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "point_b_lat",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "point_b_lng",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "new_address",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "calculation_method",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

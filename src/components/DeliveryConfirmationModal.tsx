@@ -23,16 +23,23 @@ import {
   Upload,
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
-import type { OrderRecord, CompletionReason, OrderStatus } from '@/types/delivery'
+import { offlineRouteStorage } from '@/services/offlineRouteStorage'
+import { calculateRedirectionExtraKm } from '@/lib/redirectionKmEngine'
+import type { OrderRecord, CompletionReason, OrderStatus, LocationRecord } from '@/types/delivery'
 import { toast } from 'sonner'
 import { compressImageFile, dataUrlToFile } from '@/lib/imageCompression'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Badge } from '@/components/ui/badge'
+import { MapPin, Navigation, Info } from 'lucide-react'
 
 interface DeliveryConfirmationModalProps {
   order: OrderRecord | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirmed: () => void
+  courierId?: string
+  locations?: LocationRecord[]
 }
 
 export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({
@@ -40,6 +47,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   open,
   onOpenChange,
   onConfirmed,
+  courierId,
+  locations = [],
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [reason, setReason] = useState<CompletionReason>('delivered')
@@ -57,9 +66,67 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const [lastPos, setLastPos] = useState<{ x: number; y: number } | null>(null)
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
 
+  // Campos específicos de Entrega Redirecionada
+  const isRedirectionFlow = Boolean(
+    order?.redirection_status === 'initiated' || order?.is_redirected,
+  )
+  const [updateOfficialCustomerAddress, setUpdateOfficialCustomerAddress] = useState(true)
+  const [redirectionPointB, setRedirectionPointB] = useState<{
+    lat: number
+    lng: number
+    at: string
+  } | null>(null)
+  const [calculatedExtraKm, setCalculatedExtraKm] = useState<number | null>(null)
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Capturar Ponto B no momento da confirmação se for entrega redirecionada
+  useEffect(() => {
+    if (open && order && isRedirectionFlow) {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const pB = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              at: new Date(pos.timestamp || Date.now()).toISOString(),
+            }
+            setRedirectionPointB(pB)
+
+            // Pré-calcular KM extra preliminar
+            const pALat =
+              order.redirection_point_a_lat ??
+              order.end_address_lat ??
+              order.expand?.customer_id?.lat ??
+              0
+            const pALng =
+              order.redirection_point_a_lng ??
+              order.end_address_lng ??
+              order.expand?.customer_id?.lng ??
+              0
+            if (pALat && pALng) {
+              const res = calculateRedirectionExtraKm({
+                pointALat: pALat,
+                pointALng: pALng,
+                pointBLat: pB.lat,
+                pointBLng: pB.lng,
+                timestampA: order.redirection_point_a_at,
+                timestampB: pB.at,
+                courierLocations: locations,
+              })
+              setCalculatedExtraKm(res.extraKm)
+            }
+          },
+          (err) => {
+            console.warn('[DeliveryConfirmationModal] Não foi possível ler GPS no Ponto B:', err)
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+        )
+      }
+    }
+  }, [open, order, isRedirectionFlow])
 
   // Initialize or reset form whenever modal opens with customer info
   useEffect(() => {
@@ -74,6 +141,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       setPhotoPreview(null)
       setIsDrawing(false)
       setLastPos(null)
+      setUpdateOfficialCustomerAddress(true)
 
       // Initialize canvas context after render
       setTimeout(() => {
@@ -225,6 +293,142 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
 
     const effectiveReceiverName =
       receiverName.trim() || order.expand?.customer_id?.name || 'Cliente'
+
+    // SE FOR FLUXO DE ENTREGA REDIRECIONADA E STATUS 'DELIVERED':
+    // Usar o método dedicado confirmDeliveryRedirection
+    if (isDelivered && isRedirectionFlow) {
+      setIsSubmitting(true)
+      try {
+        const now = new Date().toISOString()
+        let finalSignature = signatureDataUrl
+        if (!finalSignature && hasSignature && canvasRef.current) {
+          finalSignature = canvasRef.current.toDataURL('image/png')
+        }
+        let signatureFile: File | null = null
+        if (finalSignature && finalSignature.startsWith('data:image')) {
+          signatureFile = await dataUrlToFile(
+            finalSignature,
+            `signature_redir_${order.id || 'sig'}_${Date.now()}.png`,
+          )
+        }
+
+        let finalPhotoFile: File | null = photoFile
+        if (finalPhotoFile && finalPhotoFile.size > 2 * 1024 * 1024) {
+          try {
+            finalPhotoFile = await compressImageFile(finalPhotoFile, {
+              maxSide: 1600,
+              quality: 0.8,
+              mimeType: 'image/jpeg',
+            })
+          } catch {
+            /* intentionally ignored */
+          }
+        }
+
+        // Ponto B: Usar capturado ou posição do cliente
+        const pointBLat =
+          redirectionPointB?.lat ||
+          order.end_address_lat ||
+          order.expand?.customer_id?.lat ||
+          -22.699
+        const pointBLng =
+          redirectionPointB?.lng ||
+          order.end_address_lng ||
+          order.expand?.customer_id?.lng ||
+          -43.296
+        const pointALat =
+          order.redirection_point_a_lat ||
+          order.end_address_lat ||
+          order.expand?.customer_id?.lat ||
+          pointBLat
+        const pointALng =
+          order.redirection_point_a_lng ||
+          order.end_address_lng ||
+          order.expand?.customer_id?.lng ||
+          pointBLng
+
+        // Cálculo do KM Extra
+        const calcRes = calculateRedirectionExtraKm({
+          pointALat,
+          pointALng,
+          pointBLat,
+          pointBLng,
+          timestampA: order.redirection_point_a_at,
+          timestampB: redirectionPointB?.at || now,
+          courierLocations: locations,
+        })
+
+        const newAddressText =
+          order.redirection_new_address || 'Novo endereço informado pelo cliente'
+
+        if (isOnline) {
+          try {
+            await deliveryService.confirmDeliveryRedirection({
+              order,
+              courierId: courierId || order.courier_id,
+              pointBLat,
+              pointBLng,
+              pointBAt: redirectionPointB?.at || now,
+              newAddressText,
+              updateCustomerAddressOfficial: updateOfficialCustomerAddress,
+              proofPhoto: finalPhotoFile,
+              signature: signatureFile,
+              receiverName: effectiveReceiverName,
+              notes,
+              extraKmCalculated: calcRes.extraKm,
+              calculationMethod: calcRes.method,
+            })
+          } catch (serverErr) {
+            console.warn(
+              '[DeliveryConfirmationModal] Falha online, salvando na fila offline:',
+              serverErr,
+            )
+            // Salvar offline
+            await offlineRouteStorage.enqueueRedirectionAction({
+              id: `redir_conf_${order.id}_${Date.now()}`,
+              orderId: order.id,
+              courierId: courierId || order.courier_id,
+              action: 'confirm',
+              pointB: { lat: pointBLat, lng: pointBLng, at: now },
+              newAddress: newAddressText,
+              updateCustomerAddress: updateOfficialCustomerAddress,
+              receiverName: effectiveReceiverName,
+              notes,
+              timestamp: Date.now(),
+            })
+          }
+        } else {
+          // Offline
+          await offlineRouteStorage.enqueueRedirectionAction({
+            id: `redir_conf_${order.id}_${Date.now()}`,
+            orderId: order.id,
+            courierId: courierId || order.courier_id,
+            action: 'confirm',
+            pointB: { lat: pointBLat, lng: pointBLng, at: now },
+            newAddress: newAddressText,
+            updateCustomerAddress: updateOfficialCustomerAddress,
+            receiverName: effectiveReceiverName,
+            notes,
+            timestamp: Date.now(),
+          })
+        }
+
+        toast.success(`Entrega redirecionada confirmada!`, {
+          description: `+${calcRes.extraKm.toFixed(1)} km extra (${calcRes.isAutoApproved ? 'Aprovado automático ≤3km' : 'Pendente de revisão na Central >3km'}).`,
+        })
+
+        onConfirmed()
+        onOpenChange(false)
+        return
+      } catch (err: unknown) {
+        console.error('Error confirming redirected delivery:', err)
+        const errorMsg = getErrorMessage(err)
+        toast.error(errorMsg || 'Erro ao registrar entrega redirecionada.')
+      } finally {
+        setIsSubmitting(false)
+      }
+      return
+    }
 
     setIsSubmitting(true)
     try {
@@ -443,16 +647,70 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         <div className="space-y-4 py-2">
           {/* Resumo da entrega */}
           <div className="rounded-card border border-slate-200 bg-[#F5F5F5] p-3 text-xs">
-            <p className="font-heading font-bold text-[#1a1a1a]">
-              Cliente: {order.expand?.customer_id?.name || 'Cliente'}
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="font-heading font-bold text-[#1a1a1a]">
+                Cliente: {order.expand?.customer_id?.name || 'Cliente'}
+              </p>
+              {isRedirectionFlow && (
+                <Badge className="bg-amber-500/20 text-amber-700 border-amber-300 font-bold text-[10px]">
+                  Endereço Redirecionado
+                </Badge>
+              )}
+            </div>
             <p className="font-sans text-slate-600 mt-0.5">
-              Endereço: {order.expand?.customer_id?.address}
+              Endereço Original: {order.expand?.customer_id?.address || order.end_address_text}
             </p>
+            {isRedirectionFlow && (
+              <div className="mt-2 pt-2 border-t border-slate-200/80">
+                <p className="font-bold text-amber-800 flex items-center gap-1">
+                  <Navigation className="h-3.5 w-3.5 text-amber-600" />
+                  Novo Endereço de Entrega (Ponto B):
+                </p>
+                <p className="text-slate-800 font-medium mt-0.5">
+                  {order.redirection_new_address || 'Endereço alternativo informado'}
+                </p>
+                {calculatedExtraKm !== null && (
+                  <p className="text-[11px] text-[#0052CC] font-bold mt-1">
+                    KM Extra Calculado: +{calculatedExtraKm.toFixed(1)} km{' '}
+                    <span className="font-normal text-slate-600">
+                      (
+                      {calculatedExtraKm <= 3.0
+                        ? 'Aprovação automática no combustível'
+                        : 'Pendente de triagem Central >3km'}
+                      )
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
             <p className="font-heading text-[#0052CC] font-bold mt-1">
               Valor Total: R$ {Number(order.total_price || 0).toFixed(2)}
             </p>
           </div>
+
+          {/* Opção de atualizar cadastro oficial do cliente (apenas se for redirecionamento) */}
+          {isRedirectionFlow && (
+            <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/70 text-xs space-y-1.5">
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id="update-official-address"
+                  checked={updateOfficialCustomerAddress}
+                  onCheckedChange={(checked) => setUpdateOfficialCustomerAddress(Boolean(checked))}
+                  className="mt-0.5"
+                />
+                <label
+                  htmlFor="update-official-address"
+                  className="font-bold text-slate-900 leading-snug cursor-pointer select-none"
+                >
+                  Atualizar o endereço oficial deste cliente?
+                  <span className="block text-[11px] font-normal text-slate-600 mt-0.5">
+                    Se marcado, o cadastro do cliente será atualizado com o novo endereço e
+                    coordenada GPS (Ponto B) para as próximas rotas saírem corretas.
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
 
           {/* Motivos de Finalização (Preservando Finalizada, Erro de Endereço, Cliente Ausente) */}
           <div className="space-y-2">

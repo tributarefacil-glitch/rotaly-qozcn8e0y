@@ -32,6 +32,8 @@ import type {
   AddressAlertOrigin,
   FuelPaymentMethod,
   RouteKmApprovalRecord,
+  RouteKmApprovalStatus,
+  RouteKmApprovalType,
 } from '@/types/delivery'
 
 export const deliveryService = {
@@ -3682,8 +3684,16 @@ export const deliveryService = {
     originalRoadKm: number
     originalGpsKm?: number
     approvedKm: number
-    status: 'approved' | 'rejected'
+    status: 'approved' | 'rejected' | 'pending'
     justification?: string
+    approvalType?: 'manual_deviation' | 'redirection_auto' | 'redirection_manual'
+    extraKm?: number
+    pointALat?: number
+    pointALng?: number
+    pointBLat?: number
+    pointBLng?: number
+    newAddress?: string
+    calculationMethod?: string
   }): Promise<RouteKmApprovalRecord> {
     const authUser = pb.authStore.record as any
 
@@ -3695,7 +3705,7 @@ export const deliveryService = {
         requestKey: null,
       })
 
-    const payload = {
+    const payload: any = {
       order_id: params.orderId,
       courier_id: params.courierId,
       empresa_id: params.empresaId || undefined,
@@ -3708,6 +3718,14 @@ export const deliveryService = {
       justification: params.justification || '',
       approved_by: authUser?.id || '',
       approved_at: new Date().toISOString(),
+      approval_type: params.approvalType || 'manual_deviation',
+      extra_km: params.extraKm !== undefined ? Number(params.extraKm.toFixed(1)) : undefined,
+      point_a_lat: params.pointALat,
+      point_a_lng: params.pointALng,
+      point_b_lat: params.pointBLat,
+      point_b_lng: params.pointBLng,
+      new_address: params.newAddress || undefined,
+      calculation_method: params.calculationMethod || undefined,
     }
 
     if (existing.items.length > 0) {
@@ -3721,5 +3739,203 @@ export const deliveryService = {
     return await pb.collection<RouteKmApprovalRecord>('route_km_approvals').create(payload, {
       expand: 'order_id,courier_id,approved_by,empresa_id',
     })
+  },
+
+  /**
+   * FLUXO ENTREGA REDIRECIONADA:
+   * 1. Iniciar redirecionamento: grava Ponto A (coordenada GPS atual no endereço original do sistema),
+   *    timestamp e marca status 'initiated'.
+   */
+  async initiateDeliveryRedirection(params: {
+    orderId: string
+    courierId: string
+    pointALat: number
+    pointALng: number
+    pointAAt?: string
+    newAddressText?: string
+  }): Promise<OrderRecord> {
+    const at = params.pointAAt || new Date().toISOString()
+    const updatePayload: Partial<OrderRecord> = {
+      redirection_status: 'initiated',
+      is_redirected: true,
+      redirection_point_a_lat: params.pointALat,
+      redirection_point_a_lng: params.pointALng,
+      redirection_point_a_at: at,
+      redirection_new_address: params.newAddressText || '',
+    }
+    return await pb.collection<OrderRecord>('orders').update(params.orderId, updatePayload, {
+      expand: 'customer_id,courier_id,seller_id',
+    })
+  },
+
+  /**
+   * FLUXO ENTREGA REDIRECIONADA:
+   * 2. Confirmar entrega redirecionada: grava Ponto B, calcula KM extra,
+   *    atualiza status do pedido para delivered com flag de redirecionamento,
+   *    cria registro em route_km_approvals (auto-aprovado se extra_km <= 3.0, pendente se > 3.0),
+   *    e opcionalmente atualiza o cadastro oficial do cliente.
+   */
+  async confirmDeliveryRedirection(params: {
+    order: OrderRecord
+    courierId: string
+    pointBLat: number
+    pointBLng: number
+    pointBAt?: string
+    newAddressText: string
+    updateCustomerAddressOfficial: boolean
+    proofPhoto?: File | null
+    signature?: File | null
+    receiverName?: string
+    notes?: string
+    extraKmCalculated?: number
+    calculationMethod?: 'telemetry_gps' | 'haversine_road_factor'
+  }): Promise<{ order: OrderRecord; approval: RouteKmApprovalRecord; extraKm: number }> {
+    const order = params.order
+    const authUser = pb.authStore.record as any
+    const now = params.pointBAt || new Date().toISOString()
+
+    const pointALat =
+      order.redirection_point_a_lat ?? order.end_address_lat ?? order.expand?.customer_id?.lat ?? 0
+    const pointALng =
+      order.redirection_point_a_lng ?? order.end_address_lng ?? order.expand?.customer_id?.lng ?? 0
+    const pointBLat = params.pointBLat
+    const pointBLng = params.pointBLng
+
+    // 1. Calcular KM Extra se não veio pré-calculado
+    let extraKm = params.extraKmCalculated
+    let method = params.calculationMethod || 'haversine_road_factor'
+
+    if (extraKm === undefined || isNaN(extraKm) || extraKm < 0) {
+      if (pointALat && pointALng && pointBLat && pointBLng) {
+        // Fallback: Haversine com fator viário urbano (1.3x)
+        const R = 6371
+        const φ1 = (pointALat * Math.PI) / 180
+        const φ2 = (pointBLat * Math.PI) / 180
+        const Δφ = ((pointBLat - pointALat) * Math.PI) / 180
+        const Δλ = ((pointBLng - pointALng) * Math.PI) / 180
+        const a =
+          Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+          Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        const distDirect = R * c
+        extraKm = Number((distDirect * 1.3).toFixed(1))
+        method = 'haversine_road_factor'
+      } else {
+        extraKm = 0
+      }
+    }
+    extraKm = Number(extraKm.toFixed(1))
+
+    // 2. Determinar status de aprovação: <= 3.0 km = automatic approved; > 3.0 km = pending
+    const isAutoApproved = extraKm <= 3.0
+    const approvalStatus: RouteKmApprovalStatus = isAutoApproved ? 'approved' : 'pending'
+    const approvalType: RouteKmApprovalType = isAutoApproved
+      ? 'redirection_auto'
+      : 'redirection_manual'
+
+    const originalRoadKm = Number(
+      (typeof order.distance_km === 'number' && order.distance_km > 0
+        ? order.distance_km
+        : 0
+      ).toFixed(1),
+    )
+    const approvedKm = isAutoApproved
+      ? Number((originalRoadKm + extraKm).toFixed(1))
+      : originalRoadKm
+
+    // 3. Montar FormData para o pedido (com fotos e assinatura se houver)
+    const formData = new FormData()
+    formData.append('status', 'delivered')
+    formData.append('completion_reason', 'delivered')
+    formData.append('actual_arrival', now)
+    formData.append('redirection_status', 'completed')
+    formData.append('is_redirected', 'true')
+    formData.append('redirection_point_b_lat', String(pointBLat))
+    formData.append('redirection_point_b_lng', String(pointBLng))
+    formData.append('redirection_point_b_at', now)
+    formData.append('redirection_new_address', params.newAddressText || '')
+    formData.append('redirection_extra_km', String(extraKm))
+    formData.append(
+      'customer_address_updated',
+      params.updateCustomerAddressOfficial ? 'true' : 'false',
+    )
+
+    // Observações do pedido
+    const receiver = params.receiverName?.trim() || order.expand?.customer_id?.name || 'Cliente'
+    formData.append('receiver_name', receiver)
+    const redirectNote = `[Entregue — Endereço Redirecionado] Ponto B: ${params.newAddressText || 'Novo endereço informado'}. Desvio: +${extraKm.toFixed(1)} km (${isAutoApproved ? 'Aprovado automático ≤3km' : 'Pendente de revisão Central >3km'})`
+    const finalNotes = order.notes ? `${order.notes} | ${redirectNote}` : redirectNote
+    formData.append('notes', params.notes ? `${finalNotes} - ${params.notes}` : finalNotes)
+
+    if (params.proofPhoto) {
+      formData.append('proof_photo', params.proofPhoto)
+    }
+    if (params.signature) {
+      formData.append('signature', params.signature)
+    }
+
+    const updatedOrder = await pb.collection<OrderRecord>('orders').update(order.id, formData, {
+      expand: 'customer_id,courier_id,seller_id',
+    })
+
+    // 4. Se o usuário solicitou atualizar o cadastro oficial do cliente
+    if (params.updateCustomerAddressOfficial && order.customer_id) {
+      try {
+        await pb.collection('customers').update(order.customer_id, {
+          address: params.newAddressText,
+          lat: pointBLat,
+          lng: pointBLng,
+          notes: `Endereço atualizado via confirmação redirecionada em ${new Date().toLocaleDateString('pt-BR')}`,
+        })
+      } catch (custErr) {
+        console.warn('[deliveryService] Aviso ao atualizar cadastro do cliente:', custErr)
+      }
+    }
+
+    // 5. Criar registro em route_km_approvals
+    let batchKey = 'single_' + order.id
+    if (order.route_started_at && order.route_finished_at) {
+      batchKey = `route_${order.route_started_at}_${order.route_finished_at}`
+    } else if (order.route_started_at) {
+      batchKey = `batch_${Math.floor(new Date(order.route_started_at).getTime() / (15 * 60 * 1000))}`
+    }
+
+    const approval = await this.saveRouteKmApproval({
+      orderId: order.id,
+      courierId: params.courierId,
+      empresaId: order.empresa_id,
+      routeBatchKey: batchKey,
+      originalRoadKm,
+      originalGpsKm: Number((originalRoadKm + extraKm).toFixed(1)),
+      approvedKm,
+      status: approvalStatus,
+      justification: `Redirecionamento informado pelo entregador: ${params.newAddressText || 'novo endereço'} (+${extraKm} km extra). Ponto A: (${pointALat.toFixed(5)}, ${pointALng.toFixed(5)}) → Ponto B: (${pointBLat.toFixed(5)}, ${pointBLng.toFixed(5)}).`,
+      approvalType,
+      extraKm,
+      pointALat,
+      pointALng,
+      pointBLat,
+      pointBLng,
+      newAddress: params.newAddressText,
+      calculationMethod: method,
+    })
+
+    // 6. Criar notificação interna
+    try {
+      await pb.collection('notifications').create({
+        user_id: authUser?.id || undefined,
+        title: isAutoApproved
+          ? `Entrega Redirecionada Aprovada: ${order.tracking_code}`
+          : `Entrega Redirecionada Requer Revisão: ${order.tracking_code}`,
+        message: `Entrega redirecionada com +${extraKm.toFixed(1)} km extra para ${receiver}. ${isAutoApproved ? 'Aprovado automaticamente no cálculo oficial.' : 'Desvio >3km aguardando revisão na Auditoria de KM.'}`,
+        type: isAutoApproved ? 'order' : 'warning',
+        read: false,
+        order_id: order.id,
+      })
+    } catch {
+      /* intentionally ignored */
+    }
+
+    return { order: updatedOrder, approval, extraKm }
   },
 }

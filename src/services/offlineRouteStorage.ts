@@ -29,6 +29,21 @@ export interface CachedRoutePayload {
   source: 'online_cache' | 'offline_snapshot'
 }
 
+export interface OfflineRedirectionAction {
+  id: string
+  orderId: string
+  courierId: string
+  action: 'initiate' | 'confirm'
+  pointA?: { lat: number; lng: number; at: string }
+  pointB?: { lat: number; lng: number; at: string }
+  newAddress?: string
+  updateCustomerAddress?: boolean
+  notes?: string
+  receiverName?: string
+  timestamp: number
+  synced?: boolean
+}
+
 export interface OfflineLocationPoint {
   id: string
   userId: string
@@ -326,6 +341,114 @@ class OfflineRouteStorageService {
   async countTelemetryPoints(userId: string): Promise<number> {
     const points = await this.getTelemetryPoints(userId)
     return points.length
+  }
+
+  // -------------------------------------------------------------
+  // FILA PERSISTENTE DE AÇÕES OFFLINE DE REDIRECIONAMENTO
+  // -------------------------------------------------------------
+
+  async enqueueRedirectionAction(action: OfflineRedirectionAction): Promise<void> {
+    try {
+      const db = await this.getDB()
+      if (db) {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(STORE_DELIVERY_QUEUE, 'readwrite')
+          const store = tx.objectStore(STORE_DELIVERY_QUEUE)
+          const req = store.put(action)
+          req.onsuccess = () => resolve()
+          req.onerror = () => reject(req.error)
+        })
+        return
+      }
+    } catch (err) {
+      console.warn('[OfflineStorage] Falha ao enfileirar redirecionamento no IndexedDB:', err)
+    }
+
+    try {
+      const key = `rotaly_offline_redir_${action.courierId}`
+      const existingRaw = localStorage.getItem(key)
+      const list: OfflineRedirectionAction[] = existingRaw ? JSON.parse(existingRaw) : []
+      list.push(action)
+      localStorage.setItem(key, JSON.stringify(list))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async getPendingRedirectionActions(courierId: string): Promise<OfflineRedirectionAction[]> {
+    if (!courierId) return []
+    let actions: OfflineRedirectionAction[] = []
+    try {
+      const db = await this.getDB()
+      if (db) {
+        actions = await new Promise<OfflineRedirectionAction[]>((resolve) => {
+          const tx = db.transaction(STORE_DELIVERY_QUEUE, 'readonly')
+          const store = tx.objectStore(STORE_DELIVERY_QUEUE)
+          const req = store.getAll()
+          req.onsuccess = () => {
+            const all = (req.result || []) as OfflineRedirectionAction[]
+            const filtered = all.filter((a) => a.courierId === courierId)
+            filtered.sort((a, b) => a.timestamp - b.timestamp)
+            resolve(filtered)
+          }
+          req.onerror = () => resolve([])
+        })
+      }
+    } catch (err) {
+      console.warn('[OfflineStorage] Falha ao buscar ações de redirecionamento no IndexedDB:', err)
+    }
+
+    try {
+      const fbKey = `rotaly_offline_redir_${courierId}`
+      const raw = localStorage.getItem(fbKey)
+      if (raw) {
+        const fbList: OfflineRedirectionAction[] = JSON.parse(raw)
+        if (Array.isArray(fbList) && fbList.length > 0) {
+          const existingIds = new Set(actions.map((a) => a.id))
+          for (const item of fbList) {
+            if (!existingIds.has(item.id)) actions.push(item)
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    actions.sort((a, b) => a.timestamp - b.timestamp)
+    return actions
+  }
+
+  async removeRedirectionActions(courierId: string, idsToRemove: string[]): Promise<void> {
+    if (idsToRemove.length === 0) return
+    const idSet = new Set(idsToRemove)
+    try {
+      const db = await this.getDB()
+      if (db) {
+        await new Promise<void>((resolve) => {
+          const tx = db.transaction(STORE_DELIVERY_QUEUE, 'readwrite')
+          const store = tx.objectStore(STORE_DELIVERY_QUEUE)
+          for (const id of idsToRemove) {
+            store.delete(id)
+          }
+          tx.oncomplete = () => resolve()
+          tx.onerror = () => resolve()
+        })
+      }
+    } catch (err) {
+      console.warn('[OfflineStorage] Falha ao deletar ações de redirecionamento no IndexedDB:', err)
+    }
+
+    try {
+      const fbKey = `rotaly_offline_redir_${courierId}`
+      const raw = localStorage.getItem(fbKey)
+      if (raw) {
+        const fbList: OfflineRedirectionAction[] = JSON.parse(raw)
+        const updated = fbList.filter((a) => !idSet.has(a.id))
+        localStorage.setItem(fbKey, JSON.stringify(updated))
+      }
+    } catch {
+      /* ignore */
+    }
   }
 }
 

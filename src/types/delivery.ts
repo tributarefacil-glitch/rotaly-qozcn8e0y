@@ -250,6 +250,18 @@ export interface OrderRecord extends RecordModel {
   km_odometro?: number
   foto_odometro_inicial?: string
   foto_odometro_final?: string
+  // Campos de Redirecionamento de Entrega
+  redirection_status?: 'none' | 'initiated' | 'completed'
+  is_redirected?: boolean
+  redirection_point_a_lat?: number
+  redirection_point_a_lng?: number
+  redirection_point_a_at?: string
+  redirection_point_b_lat?: number
+  redirection_point_b_lng?: number
+  redirection_point_b_at?: string
+  redirection_new_address?: string
+  redirection_extra_km?: number
+  customer_address_updated?: boolean
   // expanded relations
   expand?: {
     customer_id?: CustomerRecord
@@ -505,7 +517,8 @@ export interface AddressAlertRecord {
   }
 }
 
-export type RouteKmApprovalStatus = 'approved' | 'rejected'
+export type RouteKmApprovalStatus = 'approved' | 'rejected' | 'pending'
+export type RouteKmApprovalType = 'manual_deviation' | 'redirection_auto' | 'redirection_manual'
 
 export interface RouteKmApprovalRecord extends RecordModel {
   order_id: string
@@ -519,6 +532,14 @@ export interface RouteKmApprovalRecord extends RecordModel {
   justification?: string
   approved_by: string
   approved_at: string
+  approval_type?: RouteKmApprovalType
+  extra_km?: number
+  point_a_lat?: number
+  point_a_lng?: number
+  point_b_lat?: number
+  point_b_lng?: number
+  new_address?: string
+  calculation_method?: string
   created?: string
   updated?: string
   expand?: {
