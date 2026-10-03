@@ -78,6 +78,12 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   const [customDate, setCustomDate] = useState<string>('')
   const [selectedBatchKey, setSelectedBatchKey] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState<string>('')
+  // Modo de exibição: 'pending_divergent' (padrão - apenas divergências pendentes),
+  // 'auto_approved' (aprovados automaticamente sem divergência),
+  // 'all' (todas as entregas)
+  const [queueViewMode, setQueueViewMode] = useState<'pending_divergent' | 'auto_approved' | 'all'>(
+    'pending_divergent',
+  )
   const [filterDeviationOnly, setFilterDeviationOnly] = useState<boolean>(false)
   const [filterRedirectedOnly, setFilterRedirectedOnly] = useState<boolean>(false)
 
@@ -183,6 +189,10 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       hasSignificantDeviation: boolean
       isRedirected: boolean
       isRedirectionPending: boolean
+      hasKmDivergence: boolean
+      isDivergent: boolean
+      isAutoApproved: boolean
+      isPendingDecision: boolean
       approval?: RouteKmApprovalRecord
       officialAfterApprovalKm: number
     }> = []
@@ -336,6 +346,38 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           (isRedirected && !approval)
 
         const diffGpsRoad = Math.abs(calc.totalGpsKm - roadKmOriginal)
+
+        // REGRA DE TRIAGEM DE DIVERGÊNCIA SOLICITADA PELO USUÁRIO:
+        // 1. Tolerância para ruído de arredondamento: 0.1 km
+        // 2. Entrega com divergência:
+        //    - Diferença absoluta entre KM Viário e KM GPS > 0.1 km (com telemetria GPS disponível > 0)
+        //    - OU desvio de rota físico registrado (ex: off-route > 500m)
+        //    - OU paradas fora do local (> 300m do cliente)
+        //    - OU redirecionamento de entrega (ex: > 3 km ou pendente de aprovação)
+        // 3. Entrega sem divergência (km viário ≈ km GPS dentro de 0.1 km, sem paradas anormais nem redireções pendentes):
+        //    - Considerada "Aprovada automaticamente" (sem necessidade de clique manual).
+        //    - Se já tiver aprovação manual no banco, respeita o status manual gravado.
+        const hasKmDivergence =
+          calc.totalGpsKm > 0 && Math.abs(calc.totalGpsKm - roadKmOriginal) > 0.1001
+
+        const isDivergent =
+          hasKmDivergence ||
+          maxDevMeters >= 500 ||
+          maxStopDistMeters >= 300 ||
+          isRedirectionPending ||
+          (isRedirected && (order.redirection_extra_km || 0) > 3.0)
+
+        // Se NÃO há divergência e não há aprovação gravada como rejeitada/pendente:
+        // É considerada aprovada automaticamente pelo motor!
+        const isAutoApproved =
+          !isDivergent &&
+          (!approval ||
+            approval.status === 'approved' ||
+            approval.approval_type === 'redirection_auto')
+
+        // Requer decisão do admin: entrega com divergência que ainda não foi deliberada (sem aprovação ou status pendente)
+        const isPendingDecision = isDivergent && (!approval || approval.status === 'pending')
+
         const hasSignificantDeviation =
           maxDevMeters >= 500 ||
           maxStopDistMeters >= 300 ||
@@ -365,6 +407,10 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           hasSignificantDeviation,
           isRedirected,
           isRedirectionPending,
+          hasKmDivergence,
+          isDivergent,
+          isAutoApproved,
+          isPendingDecision,
           approval,
           officialAfterApprovalKm,
         })
@@ -374,6 +420,65 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     // Ordenar decrescente por data/hora da rota
     return rows.sort((a, b) => new Date(b.dateRaw).getTime() - new Date(a.dateRaw).getTime())
   }, [orders, eligibleCouriers, locations, offRouteEvents, settings, approvals, approvalsMap])
+
+  // Resumos globais do escopo (calculados considerando filtros de entregador/data/lote/busca,
+  // mantendo a visão completa da operação independente do toggle de fila)
+  const scopeSummary = useMemo(() => {
+    let roadKmTotal = 0
+    let gpsKmTotal = 0
+    let afterApprovalKmTotal = 0
+    let approvedItemsCount = 0
+    let autoApprovedCount = 0
+    let divergentPendingCount = 0
+    let redirectedCount = 0
+    let totalScopeCount = 0
+
+    auditRows.forEach((r) => {
+      // Aplica apenas filtros dimensionais (entregador, data, lote, busca)
+      if (selectedCourierId !== 'all' && r.order.courier_id !== selectedCourierId) return
+      if (selectedDateFilter === 'custom' && customDate) {
+        const rowIso = new Date(r.dateRaw).toISOString().split('T')[0]
+        if (rowIso !== customDate) return
+      } else if (selectedDateFilter === 'today') {
+        const todayIso = new Date().toISOString().split('T')[0]
+        const rowIso = new Date(r.dateRaw).toISOString().split('T')[0]
+        if (rowIso !== todayIso) return
+      }
+      if (selectedBatchKey !== 'all' && r.batchDisplay !== selectedBatchKey) return
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim()
+        const matchCust = r.customerName.toLowerCase().includes(q)
+        const matchAddr = r.address.toLowerCase().includes(q)
+        const matchTrk = r.trackingCode.toLowerCase().includes(q)
+        const matchCourier = (r.courier?.name || '').toLowerCase().includes(q)
+        if (!matchCust && !matchAddr && !matchTrk && !matchCourier) return
+      }
+
+      totalScopeCount++
+      roadKmTotal += r.roadKm
+      gpsKmTotal += r.gpsKm
+      afterApprovalKmTotal += r.officialAfterApprovalKm
+
+      if (r.isRedirected) redirectedCount++
+      if (r.isAutoApproved) autoApprovedCount++
+      if (r.isPendingDecision) divergentPendingCount++
+
+      if (r.approval && r.approval.status === 'approved') {
+        approvedItemsCount++
+      }
+    })
+
+    return {
+      roadKmTotal: Number(roadKmTotal.toFixed(1)),
+      gpsKmTotal: Number(gpsKmTotal.toFixed(1)),
+      afterApprovalKmTotal: Number(afterApprovalKmTotal.toFixed(1)),
+      approvedItemsCount,
+      autoApprovedCount,
+      divergentPendingCount,
+      redirectedCount,
+      totalScopeCount,
+    }
+  }, [auditRows, selectedCourierId, selectedDateFilter, customDate, selectedBatchKey, searchQuery])
 
   // Filtragem dos registros da tabela
   const filteredRows = useMemo(() => {
@@ -398,7 +503,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         return false
       }
 
-      // Filtro apenas desvios relevantes
+      // FILTRO PRINCIPAL DE FILA / TRIAGEM:
+      // 'pending_divergent': Mostra apenas entregas COM divergência pendentes de decisão do admin (padrão)
+      // 'auto_approved': Mostra apenas entregas sem divergência aprovadas automaticamente (sem botão)
+      // 'all': Mostra todas as entregas do histórico
+      if (queueViewMode === 'pending_divergent') {
+        if (!r.isPendingDecision) return false
+      } else if (queueViewMode === 'auto_approved') {
+        if (!r.isAutoApproved) return false
+      }
+
+      // Filtro apenas desvios relevantes (>500m ou paradas fora do local)
       if (filterDeviationOnly && !r.hasSignificantDeviation) {
         return false
       }
@@ -426,12 +541,13 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     selectedDateFilter,
     customDate,
     selectedBatchKey,
+    queueViewMode,
     filterDeviationOnly,
     filterRedirectedOnly,
     searchQuery,
   ])
 
-  // Totais consolidados para o rodapé (Km Oficial Atual, Km GPS, Total Após Aprovações)
+  // Totais consolidados para o rodapé (Km Oficial Atual, Km GPS, Total Após Aprovações da tabela visível)
   const totals = useMemo(() => {
     let roadKmTotal = 0
     let gpsKmTotal = 0
@@ -453,7 +569,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         if (r.approval.status === 'approved') approvedItemsCount++
         else if (r.approval.status === 'rejected') rejectedItemsCount++
         else if (r.approval.status === 'pending') pendingReviewCount++
-      } else if (r.hasSignificantDeviation || r.isRedirectionPending) {
+      } else if (r.isPendingDecision || r.hasSignificantDeviation || r.isRedirectionPending) {
         pendingReviewCount++
       }
     })
@@ -575,7 +691,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         </div>
       </div>
 
-      {/* CARDS DE RESUMO RÁPIDO DO RELATÓRIO */}
+      {/* CARDS DE RESUMO RÁPIDO DO RELATÓRIO (MANTÉM VISÃO GLOBAL DO ESCOPO SELECIONADO) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="border-slate-200 border-l-4 border-l-[#0052CC] bg-white shadow-sm">
           <CardContent className="p-4">
@@ -584,12 +700,12 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-slate-900 dark:text-white">
-                {totals.roadKmTotal.toFixed(1)}
+                {scopeSummary.roadKmTotal.toFixed(1)}
               </span>
               <span className="text-xs text-slate-500 font-semibold">km</span>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Trajeto viário planejado ({totals.totalCount} entregas)
+              Trajeto planejado ({scopeSummary.totalScopeCount} entregas)
             </p>
           </CardContent>
         </Card>
@@ -601,7 +717,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-purple-700 dark:text-purple-300">
-                {totals.gpsKmTotal.toFixed(1)}
+                {scopeSummary.gpsKmTotal.toFixed(1)}
               </span>
               <span className="text-xs text-slate-500 font-semibold">km</span>
             </div>
@@ -612,16 +728,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         <Card className="border-slate-200 border-l-4 border-l-emerald-500 bg-white shadow-sm">
           <CardContent className="p-4">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-              Total Oficial Após Aprovações
+              Oficial Após Aprovações
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-emerald-600 dark:text-emerald-400">
-                {totals.afterApprovalKmTotal.toFixed(1)}
+                {scopeSummary.afterApprovalKmTotal.toFixed(1)}
               </span>
               <span className="text-xs text-slate-500 font-semibold">km</span>
             </div>
             <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
-              {totals.approvedItemsCount} trecho(s) aprovado(s) com substituição
+              {scopeSummary.autoApprovedCount} auto-aprovadas • {scopeSummary.approvedItemsCount}{' '}
+              deliberadas
             </p>
           </CardContent>
         </Card>
@@ -629,16 +746,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         <Card className="border-slate-200 border-l-4 border-l-amber-500 bg-white shadow-sm">
           <CardContent className="p-4">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-              Triagem de Desvios &amp; Redireções
+              Divergências p/ Decisão
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-amber-600">
-                {totals.pendingReviewCount}
+                {scopeSummary.divergentPendingCount}
               </span>
               <span className="text-xs text-slate-500 font-semibold">pendentes</span>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              {totals.redirectedCount} redireção(ões) | Desvios &gt;3km ou &gt;500m
+              {scopeSummary.redirectedCount} redireções | Viário ≠ GPS
             </p>
           </CardContent>
         </Card>
@@ -728,53 +845,110 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             </div>
           </div>
 
-          {/* Toggles de Auditoria: Desvios Relevantes e Entregas Redirecionadas */}
-          <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+          {/* SELETORES DE FILA / TRIAGEM E AUDITORIA */}
+          <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            {/* Abas da Fila de Decisão */}
+            <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-lg border border-slate-200/80">
+              <button
+                type="button"
+                onClick={() => setQueueViewMode('pending_divergent')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                  queueViewMode === 'pending_divergent'
+                    ? 'bg-white text-amber-900 shadow-xs border border-amber-200'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <AlertTriangle
+                  className={`h-3.5 w-3.5 ${queueViewMode === 'pending_divergent' ? 'text-amber-600' : 'text-slate-400'}`}
+                />
+                <span>Com Divergência (Decisão Admin)</span>
+                {scopeSummary.divergentPendingCount > 0 && (
+                  <Badge className="bg-amber-500 text-white text-[10px] px-1.5 py-0 h-4 font-mono font-bold">
+                    {scopeSummary.divergentPendingCount}
+                  </Badge>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setQueueViewMode('auto_approved')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                  queueViewMode === 'auto_approved'
+                    ? 'bg-white text-emerald-900 shadow-xs border border-emerald-200'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <CheckCircle2
+                  className={`h-3.5 w-3.5 ${queueViewMode === 'auto_approved' ? 'text-emerald-600' : 'text-slate-400'}`}
+                />
+                <span>Aprovados Automaticamente</span>
+                {scopeSummary.autoApprovedCount > 0 && (
+                  <Badge className="bg-emerald-600 text-white text-[10px] px-1.5 py-0 h-4 font-mono font-bold">
+                    {scopeSummary.autoApprovedCount}
+                  </Badge>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setQueueViewMode('all')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
+                  queueViewMode === 'all'
+                    ? 'bg-white text-slate-900 shadow-xs border border-slate-300'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Layers
+                  className={`h-3.5 w-3.5 ${queueViewMode === 'all' ? 'text-[#0052CC]' : 'text-slate-400'}`}
+                />
+                <span>Todas as Entregas</span>
+                <span className="text-[10px] font-mono text-slate-400 font-semibold">
+                  ({scopeSummary.totalScopeCount})
+                </span>
+              </button>
+            </div>
+
+            {/* Toggles complementares */}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setFilterDeviationOnly(!filterDeviationOnly)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-semibold transition-all ${
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-semibold transition-all ${
                   filterDeviationOnly
                     ? 'bg-amber-100 border-amber-300 text-amber-900 font-bold shadow-xs'
                     : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 <AlertTriangle
-                  className={`h-3.5 w-3.5 ${filterDeviationOnly ? 'text-amber-600' : 'text-slate-400'}`}
+                  className={`h-3 w-3 ${filterDeviationOnly ? 'text-amber-600' : 'text-slate-400'}`}
                 />
-                <span>Priorizar Desvios Relevantes (&gt;500m ou paradas)</span>
-                {totals.pendingReviewCount > 0 && (
-                  <Badge className="ml-1 bg-amber-500 text-white text-[10px] px-1.5 py-0 h-4">
-                    {totals.pendingReviewCount}
-                  </Badge>
-                )}
+                <span>Desvios &gt;500m</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setFilterRedirectedOnly(!filterRedirectedOnly)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-semibold transition-all ${
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-semibold transition-all ${
                   filterRedirectedOnly
                     ? 'bg-blue-100 border-blue-300 text-blue-900 font-bold shadow-xs'
                     : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 <Compass
-                  className={`h-3.5 w-3.5 ${filterRedirectedOnly ? 'text-blue-600' : 'text-slate-400'}`}
+                  className={`h-3 w-3 ${filterRedirectedOnly ? 'text-blue-600' : 'text-slate-400'}`}
                 />
-                <span>Apenas Redirecionadas</span>
-                {totals.redirectedCount > 0 && (
-                  <Badge className="ml-1 bg-[#0052CC] text-white text-[10px] px-1.5 py-0 h-4">
-                    {totals.redirectedCount}
+                <span>Redirecionadas</span>
+                {scopeSummary.redirectedCount > 0 && (
+                  <Badge className="ml-0.5 bg-[#0052CC] text-white text-[9px] px-1 py-0 h-3.5">
+                    {scopeSummary.redirectedCount}
                   </Badge>
                 )}
               </button>
-            </div>
 
-            <span className="text-slate-400">
-              Exibindo <strong>{filteredRows.length}</strong> de {auditRows.length} entregas
-            </span>
+              <span className="text-slate-400 text-[11px] ml-1">
+                Exibindo <strong>{filteredRows.length}</strong> de {auditRows.length}
+              </span>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -1015,6 +1189,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                         {/* Coluna f: Botão de Aprovação do Administrador */}
                         <td className="py-3 px-4 align-top text-right">
                           <div className="flex flex-col items-end gap-1.5">
+                            {/* Caso 1: Já deliberado no banco (aprovado ou rejeitado) */}
                             {row.approval && row.approval.status !== 'pending' ? (
                               <div className="text-right space-y-1">
                                 {isApproved ? (
@@ -1059,13 +1234,31 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                   </Button>
                                 </div>
                               </div>
+                            ) : row.isAutoApproved ? (
+                              /* Caso 2: Entrega SEM divergência (km viário ≈ km GPS) - APROVADA AUTOMATICAMENTE SEM BOTÃO */
+                              <div className="text-right space-y-0.5">
+                                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-bold text-[10px] flex items-center gap-1 ml-auto">
+                                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                                  Aprovado Automaticamente
+                                </Badge>
+                                <span className="text-[9px] text-slate-400 block">
+                                  Viário = GPS ({row.roadKm.toFixed(1)} km) • Oficial
+                                </span>
+                              </div>
                             ) : (
+                              /* Caso 3: Entrega COM divergência que precisa de decisão do admin */
                               <div className="flex flex-col items-end gap-1">
                                 {row.isRedirected && (
                                   <Badge className="bg-amber-100 text-amber-800 border-amber-300 font-bold text-[9px] mb-0.5">
                                     {row.order.redirection_status === 'initiated'
                                       ? '⏳ Redireção Em Andamento'
                                       : '⚠️ Desvio >3km Requer Revisão'}
+                                  </Badge>
+                                )}
+                                {row.hasKmDivergence && !row.isRedirected && (
+                                  <Badge className="bg-rose-50 text-rose-700 border-rose-200 font-bold text-[9px] mb-0.5">
+                                    Divergência Viário x GPS (
+                                    {Math.abs(row.gpsKm - row.roadKm).toFixed(1)} km)
                                   </Badge>
                                 )}
                                 <div className="flex items-center justify-end gap-1.5">
