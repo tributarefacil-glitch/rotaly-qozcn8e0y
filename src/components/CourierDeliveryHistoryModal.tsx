@@ -274,6 +274,58 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     useState<CourierDeliveryHistoryItem | null>(null)
   const [fetchedLocations, setFetchedLocations] = useState<LocationRecord[]>([])
   const [isLoadingLocations, setIsLoadingLocations] = useState(false)
+  const [approvalsList, setApprovalsList] = useState<any[]>([])
+  const [activeBaseCoords, setActiveBaseCoords] = useState<{ lat: number; lng: number } | null>(
+    null,
+  )
+
+  // Carregar base ativa dinâmica (coleção base_addresses)
+  React.useEffect(() => {
+    let isMounted = true
+    deliveryService
+      .getActiveBaseCoordinate(courier?.empresa_id)
+      .then((b) => {
+        if (isMounted && b) setActiveBaseCoords({ lat: b.lat, lng: b.lng })
+      })
+      .catch(() => null)
+    return () => {
+      isMounted = false
+    }
+  }, [courier?.empresa_id])
+
+  // Carregar aprovações via deliveryService.getRouteKmApprovals (paridade com KmAuditReport)
+  React.useEffect(() => {
+    if (!isOpen) return
+    let isMounted = true
+    deliveryService
+      .getRouteKmApprovals(courier?.empresa_id)
+      .then((data) => {
+        if (isMounted) setApprovalsList(data || [])
+      })
+      .catch((err) => {
+        console.warn('[CourierDeliveryHistoryModal] Erro ao carregar aprovações de KM:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [isOpen, courier?.empresa_id])
+
+  const approvalsMap = useMemo(() => {
+    const map = new Map<
+      string,
+      { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
+    >()
+    approvalsList.forEach((appr) => {
+      if (appr.order_id) {
+        map.set(appr.order_id, {
+          approvedKm: appr.approved_km,
+          justification: appr.justification,
+          status: appr.status,
+        })
+      }
+    })
+    return map
+  }, [approvalsList])
 
   // Carregar locations do entregador para cobrir a telemetria do período selecionado
   React.useEffect(() => {
@@ -425,6 +477,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   // Executar o motor consolidado de telemetria e combustível (o mesmo motor do useCourierFuelMetrics)
   // Agrupa por lotes de rota, desconta desvios/paradas de rota e rateia proporcionalmente sem duplicações
   // Passamos `orders` diretamente para manter o contexto completo dos pedidos, com filtro periodFilter='all'
+  // e approvalsMap montado a partir de route_km_approvals
   const consolidatedMetrics = useMemo(() => {
     if (!courier) return null
 
@@ -437,6 +490,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       settings: officialSettings || settings,
       periodFilter: 'all',
       carryOverBalance,
+      approvalsMap,
+      activeBaseCoords,
     })
   }, [
     courier,
@@ -447,6 +502,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     officialSettings,
     settings,
     carryOverBalance,
+    approvalsMap,
+    activeBaseCoords,
   ])
 
   // Eventos de desvio e paradas do entregador para exibição na auditoria do modal:
@@ -467,9 +524,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         if (stopSec < 180) {
           return false
         }
-        // Verificar se foi na base padrão (Pilar/Caxias ou start_base)
-        const baseLat = -22.7001402
-        const baseLng = -43.2982834
+        // Verificar se foi na base padrão (Pilar/Caxias ou start_base ativa)
+        const baseLat = activeBaseCoords?.lat ?? -22.7001402
+        const baseLng = activeBaseCoords?.lng ?? -43.2982834
         const distToBase = haversineDistanceMeters(ev.lat, ev.lng, baseLat, baseLng)
         if (distToBase < DEVIATION_THRESHOLD_METERS) {
           return false
@@ -477,7 +534,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       }
       return true
     })
-  }, [offRouteEvents, courier])
+  }, [offRouteEvents, courier, activeBaseCoords])
 
   // Processar itens detalhados de cada entrega utilizando o rateio consolidado do motor
   const historyItems: CourierDeliveryHistoryItem[] = useMemo(() => {
@@ -736,9 +793,36 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       return sum + (pKm / effectiveKml) * effectivePrice
     }, 0)
 
-    // Saldo da conta corrente:
-    // opening_balance + adiantamentos pós-corte + ajustes pós-corte − gasto de combustível pós-corte
-    const saldoContaCorrente = openingBal + totalAdiantado - postCutoffFuelCost
+    // ITEM (5) SALDO FIXO NO MODAL:
+    // As métricas de período (km oficial, combustível, entregas, desvios, economia) respondem ao periodFilter.
+    // O "Saldo da Conta Corrente" passa a ser calculado sobre TODO o histórico pós-corte
+    // (allCourierAdvances com created >= cutoff_date e pedidos com created >= cutoff_date):
+    // abertura + adiantamentos/ajustes pós-corte − gasto de combustível pós-corte, invariante ao filtro.
+    // Mesma fórmula canônica do fuelAccountService.ts.
+    const allPostCutoffAdvances = allCourierAdvances.filter((a) => {
+      if (a.status === 'cancelled') return false
+      const advTs = new Date(a.date || a.created).getTime()
+      if (hasCutoff && advTs < cutoffTime) return false
+      return true
+    })
+    const totalAdvancesAllPostCutoff = allPostCutoffAdvances.reduce(
+      (s, a) => s + (Number(a.amount) || 0),
+      0,
+    )
+
+    // Gasto total de combustível de todas as entregas pós-corte calculadas pelo motor (historyItems é periodFilter='all')
+    const allPostCutoffHistoryOrders = historyItems.filter((i) => {
+      if (!hasCutoff) return true
+      const orderTs = new Date(i.order.created).getTime()
+      return orderTs >= cutoffTime
+    })
+    const totalFuelSpentAllPostCutoff = allPostCutoffHistoryOrders.reduce(
+      (acc, i) => acc + i.fuelCost,
+      0,
+    )
+
+    const saldoContaCorrenteInvariante =
+      openingBal + totalAdvancesAllPostCutoff - totalFuelSpentAllPostCutoff
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
@@ -746,7 +830,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       totalLiters: Number(totalLiters.toFixed(2)),
       totalDeviations,
       totalStops,
-      saldoContaCorrente: Number(saldoContaCorrente.toFixed(2)),
+      saldoContaCorrente: Number(saldoContaCorrenteInvariante.toFixed(2)),
       totalAdiantado: Number(totalAdiantado.toFixed(2)),
       totalDeliveries: filteredItems.length,
       carryOverBalance: Number(openingBal.toFixed(2)),
@@ -759,6 +843,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     periodFilter,
     activeOperationalWindow,
     filteredItems,
+    historyItems,
     carryOverBalance,
     fuelParams,
     courier?.cutoff_date,

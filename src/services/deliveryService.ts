@@ -2008,6 +2008,40 @@ export const deliveryService = {
     }
   },
 
+  // Cache em memória da base ativa para evitar consultas redundantes e garantir paridade instantânea
+  _activeBaseCache: { lat: number; lng: number; name?: string; address?: string } | null = null,
+  _activeBaseCacheTime: number = 0,
+
+  async getActiveBaseCoordinate(empresaId?: string): Promise<{ lat: number; lng: number; name: string; address?: string }> {
+    const now = Date.now()
+    if (this._activeBaseCache && now - this._activeBaseCacheTime < 60_000) {
+      return this._activeBaseCache as { lat: number; lng: number; name: string; address?: string }
+    }
+    try {
+      const bases = await this.getBaseAddresses(empresaId)
+      const active = bases.find((b) => b.is_default) || bases[0]
+      if (active && typeof active.lat === 'number' && typeof active.lng === 'number' && !isNaN(active.lat) && !isNaN(active.lng)) {
+        this._activeBaseCache = {
+          lat: active.lat,
+          lng: active.lng,
+          name: active.name || 'Base Operacional',
+          address: active.address || '',
+        }
+        this._activeBaseCacheTime = now
+        return this._activeBaseCache as { lat: number; lng: number; name: string; address?: string }
+      }
+    } catch (err) {
+      console.warn('[deliveryService] Falha ao carregar base ativa:', err)
+    }
+    // Fallback defensivo: coordenadas conhecidas da base Mais Saudável (apenas se não houver base cadastrada)
+    return {
+      lat: -22.7001402,
+      lng: -43.2982834,
+      name: 'Mais Saudável',
+      address: '',
+    }
+  },
+
   // Base Addresses Management (Cadastro de Base da Empresa / Loja e Endereço Final)
   async getBaseAddresses(empresaId?: string): Promise<BaseAddressRecord[]> {
     const targetCompanyId = empresaId || this.getActiveCompanyId()
@@ -3738,6 +3772,49 @@ export const deliveryService = {
     })
 
     return { success: true, alert: updatedAlert }
+  },
+
+  /**
+   * Buscar registros da trilha de auditoria (read-only)
+   */
+  async getAuditTrail(params?: {
+    page?: number
+    perPage?: number
+    courierId?: string
+    entity?: string
+    filter?: string
+  }): Promise<{ items: AuditTrailRecord[]; totalItems: number; totalPages: number }> {
+    try {
+      const page = params?.page || 1
+      const perPage = params?.perPage || 25
+      const filters: string[] = []
+
+      if (params?.courierId && params.courierId !== 'all') {
+        filters.push(`courier_id = '${params.courierId}'`)
+      }
+      if (params?.entity && params.entity !== 'all') {
+        filters.push(`entity = '${params.entity}'`)
+      }
+      if (params?.filter) {
+        filters.push(params.filter)
+      }
+
+      const res = await pb.collection<AuditTrailRecord>('audit_trail').getList(page, perPage, {
+        filter: filters.length > 0 ? filters.join(' && ') : '',
+        sort: '-created',
+        expand: 'actor_id,courier_id,empresa_id',
+        requestKey: null,
+      })
+
+      return {
+        items: res.items,
+        totalItems: res.totalItems,
+        totalPages: res.totalPages,
+      }
+    } catch (err) {
+      console.warn('[deliveryService] Erro ao carregar audit_trail:', err)
+      return { items: [], totalItems: 0, totalPages: 0 }
+    }
   },
 
   /**

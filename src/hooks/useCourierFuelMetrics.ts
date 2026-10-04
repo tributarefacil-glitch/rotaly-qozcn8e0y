@@ -131,6 +131,7 @@ export function calculateCourierFuelMetrics(params: {
     string,
     { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
   >
+  activeBaseCoords?: { lat: number; lng: number } | null
 }): CourierFuelCalculationResult {
   const {
     courier,
@@ -142,6 +143,7 @@ export function calculateCourierFuelMetrics(params: {
     periodFilter = 'all',
     carryOverBalance = 0,
     approvalsMap,
+    activeBaseCoords,
   } = params
 
   if (!courier?.id) {
@@ -240,6 +242,9 @@ export function calculateCourierFuelMetrics(params: {
   const totalAdvances = periodAdvances + periodAdjustments
 
   // 2. Filtrar telemetria e ocorrências do entregador
+  const baseLatFallback = activeBaseCoords?.lat ?? -22.7001402
+  const baseLngFallback = activeBaseCoords?.lng ?? -43.2982834
+
   const courierLocations = locations.filter((l) => l.user_id === courier.id)
   const courierEvents = offRouteEvents.filter((ev) => {
     if (ev.courier_id !== courier.id) return false
@@ -252,7 +257,7 @@ export function calculateCourierFuelMetrics(params: {
       const stopSec = ev.stop_duration_seconds || 0
       // Parada só é válida se durar ao menos 180s (3 min) e estiver fora da rota
       if (stopSec < 180) return false
-      const distToBase = haversineDistanceMeters(ev.lat, ev.lng, -22.7001402, -43.2982834)
+      const distToBase = haversineDistanceMeters(ev.lat, ev.lng, baseLatFallback, baseLngFallback)
       if (distToBase < DEVIATION_THRESHOLD_METERS) return false
     }
     return true
@@ -476,8 +481,8 @@ export function calculateCourierFuelMetrics(params: {
   // Regra oficial: ida proporcional ao trecho (distance_km) + retorno rateado uma vez
   // Fim do x2: peso não duplica retorno para cada entrega
   const computeOrderWeight = (ord: OrderRecord): number => {
-    const baseLat = ord.start_base_lat || -22.7001402
-    const baseLng = ord.start_base_lng || -43.2982834
+    const baseLat = ord.start_base_lat || baseLatFallback
+    const baseLng = ord.start_base_lng || baseLngFallback
     const custLat = ord.expand?.customer_id?.lat || ord.end_address_lat || 0
     const custLng = ord.expand?.customer_id?.lng || ord.end_address_lng || 0
 
@@ -762,6 +767,7 @@ export function useCourierFuelMetrics(params: {
     string,
     { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
   >
+  activeBaseCoords?: { lat: number; lng: number } | null
 }): CourierFuelCalculationResult {
   const {
     courier,
@@ -773,6 +779,7 @@ export function useCourierFuelMetrics(params: {
     periodFilter = 'all',
     carryOverBalance,
     approvalsMap,
+    activeBaseCoords,
   } = params
 
   return useMemo(() => {
@@ -786,6 +793,7 @@ export function useCourierFuelMetrics(params: {
       periodFilter,
       carryOverBalance,
       approvalsMap,
+      activeBaseCoords,
     })
   }, [
     courier,
@@ -797,5 +805,6 @@ export function useCourierFuelMetrics(params: {
     periodFilter,
     carryOverBalance,
     approvalsMap,
+    activeBaseCoords,
   ])
 }

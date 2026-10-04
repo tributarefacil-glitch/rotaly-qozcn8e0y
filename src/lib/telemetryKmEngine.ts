@@ -34,9 +34,14 @@ export { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS, haversine
  * Retorna a distância rodoviária estimada entre a base de saída e o destino do cliente da entrega.
  * Usa distância Haversine base->cliente x 1.3 (fator mínimo viário) ou a coordenada expandida, com piso de 0.8 km.
  */
-export function getOrderRoadDistanceFromBase(order: OrderRecord): number {
-  const baseLat = order.start_base_lat || -22.7001402
-  const baseLng = order.start_base_lng || -43.2982834
+export function getOrderRoadDistanceFromBase(
+  order: OrderRecord,
+  activeBaseCoords?: { lat: number; lng: number } | null,
+): number {
+  const fallbackLat = activeBaseCoords?.lat ?? -22.7001402
+  const fallbackLng = activeBaseCoords?.lng ?? -43.2982834
+  const baseLat = order.start_base_lat || fallbackLat
+  const baseLng = order.start_base_lng || fallbackLng
   const custLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
   const custLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
 
@@ -56,11 +61,16 @@ export function getOrderRoadDistanceFromBase(order: OrderRecord): number {
  * Retorna o peso de atribuição de uma entrega em uma rota compartilhada:
  * per-delivery weight = max(roadDistFromBase, 0.8) + returnToBase
  */
-export function calculateDeliveryRouteWeight(order: OrderRecord): number {
+export function calculateDeliveryRouteWeight(
+  order: OrderRecord,
+  activeBaseCoords?: { lat: number; lng: number } | null,
+): number {
   // Se a ordem já tem distance_km registrado de forma consistente (ex.: corrigido na base)
   // ou se distance_km representa a distância direta/viária
-  const baseLat = order.start_base_lat || -22.7001402
-  const baseLng = order.start_base_lng || -43.2982834
+  const fallbackLat = activeBaseCoords?.lat ?? -22.7001402
+  const fallbackLng = activeBaseCoords?.lng ?? -43.2982834
+  const baseLat = order.start_base_lat || fallbackLat
+  const baseLng = order.start_base_lng || fallbackLng
   const custLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
   const custLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
 

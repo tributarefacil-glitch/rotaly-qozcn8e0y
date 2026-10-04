@@ -557,3 +557,27 @@ export interface RouteKmApprovalRecord extends RecordModel {
     empresa_id?: EmpresaRecord
   }
 }
+
+export interface AuditTrailRecord {
+  id: string
+  collectionId?: string
+  collectionName?: string
+  created: string
+  updated?: string
+  actor_id?: string
+  actor_email?: string
+  action: 'create' | 'update' | 'cancel' | 'delete' | string
+  entity: string
+  entity_id: string
+  courier_id?: string
+  empresa_id?: string
+  before_data?: Record<string, any>
+  after_data?: Record<string, any>
+  diff?: Record<string, any>
+  ip?: string
+  expand?: {
+    actor_id?: UserRecord
+    courier_id?: UserRecord
+    empresa_id?: EmpresaRecord
+  }
+}

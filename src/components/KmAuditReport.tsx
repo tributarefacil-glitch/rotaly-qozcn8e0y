@@ -52,7 +52,13 @@ import {
 } from '@/types/delivery'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { haversineDistanceMeters } from '@/lib/geo'
-import { formatDateInTz, getOperationalWindow, parseSafeTimestamp } from '@/lib/operationalWindow'
+import {
+  formatDateInTz,
+  getCustomOperationalWindow,
+  getOperationalWindow,
+  isCurrentMonthInTz,
+  parseSafeTimestamp,
+} from '@/lib/operationalWindow'
 
 interface KmAuditReportProps {
   orders: OrderRecord[]
@@ -76,7 +82,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   // Filtros
   const [selectedCourierId, setSelectedCourierId] = useState<string>('all')
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>('week')
-  const [customDate, setCustomDate] = useState<string>('')
+  const [customStartDate, setCustomStartDate] = useState<string>('')
+  const [customEndDate, setCustomEndDate] = useState<string>('')
   const [selectedBatchKey, setSelectedBatchKey] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState<string>('')
   // Modo de exibição: 'pending_divergent' (apenas divergências pendentes),
@@ -443,27 +450,27 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     let redirectedCount = 0
     let totalScopeCount = 0
 
+    const now = new Date()
+    const opWindow = getOperationalWindow(now)
+    let customWindow: { start: number; end: number } | null = null
+    if (selectedDateFilter === 'custom' && customStartDate) {
+      customWindow = getCustomOperationalWindow(customStartDate, customEndDate || customStartDate)
+    }
+
     auditRows.forEach((r) => {
       // Aplica apenas filtros dimensionais (entregador, data, lote, busca)
       if (selectedCourierId !== 'all' && r.order.courier_id !== selectedCourierId) return
       const rowTs = parseSafeTimestamp(r.dateRaw) || new Date(r.dateRaw).getTime()
-      const opWindow = getOperationalWindow(new Date())
 
-      if (selectedDateFilter === 'custom' && customDate) {
-        const rowDateInSp = formatDateInTz(rowTs, {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        })
-        // customDate vem como "YYYY-MM-DD", rowDateInSp vem "DD/MM/YYYY" em pt-BR
-        const [cYear, cMonth, cDay] = customDate.split('-')
-        const expectedDateStr = `${cDay}/${cMonth}/${cYear}`
-        if (rowDateInSp !== expectedDateStr) return
+      if (selectedDateFilter === 'custom' && customWindow) {
+        if (rowTs < customWindow.start || rowTs > customWindow.end) return
       } else if (selectedDateFilter === 'today') {
         if (rowTs < opWindow.start || rowTs > opWindow.end) return
       } else if (selectedDateFilter === 'week') {
         const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-        if (rowTs < sevenDaysAgoStart) return
+        if (rowTs < sevenDaysAgoStart || rowTs > opWindow.end) return
+      } else if (selectedDateFilter === 'month') {
+        if (!isCurrentMonthInTz(rowTs, now)) return
       }
       if (selectedBatchKey !== 'all' && r.batchDisplay !== selectedBatchKey) return
       if (searchQuery.trim()) {
@@ -499,10 +506,25 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       redirectedCount,
       totalScopeCount,
     }
-  }, [auditRows, selectedCourierId, selectedDateFilter, customDate, selectedBatchKey, searchQuery])
+  }, [
+    auditRows,
+    selectedCourierId,
+    selectedDateFilter,
+    customStartDate,
+    customEndDate,
+    selectedBatchKey,
+    searchQuery,
+  ])
 
   // Filtragem dos registros da tabela
   const filteredRows = useMemo(() => {
+    const now = new Date()
+    const opWindow = getOperationalWindow(now)
+    let customWindow: { start: number; end: number } | null = null
+    if (selectedDateFilter === 'custom' && customStartDate) {
+      customWindow = getCustomOperationalWindow(customStartDate, customEndDate || customStartDate)
+    }
+
     return auditRows.filter((r) => {
       // Filtro de entregador
       if (selectedCourierId !== 'all' && r.order.courier_id !== selectedCourierId) {
@@ -511,22 +533,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
       // Filtro de data
       const rowTs = parseSafeTimestamp(r.dateRaw) || new Date(r.dateRaw).getTime()
-      const opWindow = getOperationalWindow(new Date())
 
-      if (selectedDateFilter === 'custom' && customDate) {
-        const rowDateInSp = formatDateInTz(rowTs, {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        })
-        const [cYear, cMonth, cDay] = customDate.split('-')
-        const expectedDateStr = `${cDay}/${cMonth}/${cYear}`
-        if (rowDateInSp !== expectedDateStr) return false
+      if (selectedDateFilter === 'custom' && customWindow) {
+        if (rowTs < customWindow.start || rowTs > customWindow.end) return false
       } else if (selectedDateFilter === 'today') {
         if (rowTs < opWindow.start || rowTs > opWindow.end) return false
       } else if (selectedDateFilter === 'week') {
         const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-        if (rowTs < sevenDaysAgoStart) return false
+        if (rowTs < sevenDaysAgoStart || rowTs > opWindow.end) return false
+      } else if (selectedDateFilter === 'month') {
+        if (!isCurrentMonthInTz(rowTs, now)) return false
       }
 
       // Filtro de lote
@@ -570,7 +586,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     auditRows,
     selectedCourierId,
     selectedDateFilter,
-    customDate,
+    customStartDate,
+    customEndDate,
     selectedBatchKey,
     queueViewMode,
     filterDeviationOnly,
@@ -831,24 +848,36 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                   <SelectValue placeholder="Selecione o período" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="week">🗓️ Últimos 7 dias</SelectItem>
                   <SelectItem value="today">☀️ Hoje</SelectItem>
-                  <SelectItem value="all">📅 Todo o Histórico</SelectItem>
-                  <SelectItem value="custom">🔍 Data Específica</SelectItem>
+                  <SelectItem value="week">🗓️ Últimos 7 dias</SelectItem>
+                  <SelectItem value="month">📅 Este Mês</SelectItem>
+                  <SelectItem value="custom">🔍 Personalizado (De – Até)</SelectItem>
+                  <SelectItem value="all">🌐 Todo o Histórico</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            {/* Campo Data Específica */}
+            {/* Campo Data Específica (Intervalo De - Até) */}
             {selectedDateFilter === 'custom' && (
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-600">Data</Label>
-                <Input
-                  type="date"
-                  value={customDate}
-                  onChange={(e) => setCustomDate(e.target.value)}
-                  className="h-9 text-xs font-mono"
-                />
+              <div className="flex items-center gap-2">
+                <div className="space-y-1 flex-1">
+                  <Label className="text-xs font-semibold text-slate-600">De</Label>
+                  <Input
+                    type="date"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
+                <div className="space-y-1 flex-1">
+                  <Label className="text-xs font-semibold text-slate-600">Até</Label>
+                  <Input
+                    type="date"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
               </div>
             )}
 

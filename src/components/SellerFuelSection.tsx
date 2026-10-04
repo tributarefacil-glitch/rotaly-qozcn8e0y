@@ -105,7 +105,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         filter = `created >= '${monthStart.pbString}' || route_finished_at >= '${monthStart.pbString}' || actual_arrival >= '${monthStart.pbString}'`
       } else if (fuelPeriodFilter === 'week') {
         const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-        const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
+        const startStr = formatPbTimestamp(new Date(sevenDaysAgoStart))
         filter = `created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}'`
       } else {
         filter = ''

@@ -61,6 +61,8 @@ import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import {
   formatPbTimestamp,
   getOperationalWindow,
+  getOperationalMonthStart,
+  isCurrentMonthInTz,
   isNeutralizedSystemError,
   isTimestampInOperationalWindow,
   isTodayOrder,
@@ -141,11 +143,62 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     }
   }, [propCustomers])
 
+  const [approvalsList, setApprovalsList] = useState<any[]>([])
+  const [activeBaseCoords, setActiveBaseCoords] = useState<{ lat: number; lng: number } | null>(
+    null,
+  )
+
+  // Carregar base ativa dinâmica
+  React.useEffect(() => {
+    let isMounted = true
+    deliveryService
+      .getActiveBaseCoordinate()
+      .then((b) => {
+        if (isMounted && b) setActiveBaseCoords({ lat: b.lat, lng: b.lng })
+      })
+      .catch(() => null)
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  // Carregar aprovações via deliveryService.getRouteKmApprovals
+  React.useEffect(() => {
+    let isMounted = true
+    deliveryService
+      .getRouteKmApprovals()
+      .then((data) => {
+        if (isMounted) setApprovalsList(data || [])
+      })
+      .catch((err) => {
+        console.warn('[ReportsSection] Erro ao carregar aprovações de KM:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  const approvalsMap = useMemo(() => {
+    const map = new Map<
+      string,
+      { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
+    >()
+    approvalsList.forEach((appr) => {
+      if (appr.order_id) {
+        map.set(appr.order_id, {
+          approvedKm: appr.approved_km,
+          justification: appr.justification,
+          status: appr.status,
+        })
+      }
+    })
+    return map
+  }, [approvalsList])
+
   // Carregar os pedidos do período diretamente do banco via paginação de ~200
   React.useEffect(() => {
     let isCancelled = false
     const fetchPeriodData = async () => {
-      // Para 'today', se já temos initialOrders filtrados ou podemos buscar a janela operacional
       const now = new Date()
       let filter = ''
 
@@ -157,12 +210,12 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       } else if (period === 'week') {
         const opWindow = getOperationalWindow(now)
         const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-        const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
+        const startStr = formatPbTimestamp(new Date(sevenDaysAgoStart))
         filter = `created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}'`
       } else if (period === 'month') {
-        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-        const startStr = formatPbTimestamp(thirtyDaysAgo)
-        filter = `created >= '${startStr}'`
+        const monthStart = getOperationalMonthStart(now)
+        const startStr = monthStart.pbString
+        filter = `created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}'`
       } else {
         // all: sem filtro de data
         filter = ''
@@ -236,8 +289,8 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         return relevantTs >= sevenDaysAgoStart
       }
       if (period === 'month') {
-        const oneMonthAgo = now.getTime() - 30 * 24 * 60 * 60 * 1000
-        return relevantTs >= oneMonthAgo
+        const dateVal = o.route_finished_at || o.actual_arrival || o.created
+        return isCurrentMonthInTz(dateVal, now)
       }
       return true
     })
@@ -618,7 +671,8 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   // - REGRAS 1 & 2: km/combustível incluem pedidos entregues e falhas no local (client_absent, address_error, desistência no local).
   // - Cancelamento da loja/vendedor fica fora do km do entregador.
   // - Pedidos do mesmo ciclo route_started_at + route_finished_at contam o km/combustível da rota UMA VEZ
-  // - Hierarquia oficial mantida no motor: odômetro > histórico viário de rotas > telemetria GPS
+  // - approvalsMap passado diretamente para paridade total com KmAuditReport
+  // - Base ativa dinâmica integrada
   const fuelAndKmByCourier = useMemo(() => {
     return couriers.map((courier) => {
       // Invocar motor oficial de telemetria e combustível Rotaly
@@ -630,6 +684,8 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         offRouteEvents,
         settings: settings || null,
         periodFilter: 'all', // já está filtrado em filteredOrders
+        approvalsMap,
+        activeBaseCoords,
       })
 
       const isBicycle = courier.vehicle_type === 'bicicleta'
@@ -651,7 +707,15 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         vehiclePlate: courier.vehicle_plate || '—',
       }
     })
-  }, [couriers, filteredOrders, locations, offRouteEvents, settings])
+  }, [
+    couriers,
+    filteredOrders,
+    locations,
+    offRouteEvents,
+    settings,
+    approvalsMap,
+    activeBaseCoords,
+  ])
 
   // MÉTRICA 3: Análise de Tempo (tempo médio, mínimo, máximo, horários de pico)
   const timeAnalysis = useMemo(() => {
