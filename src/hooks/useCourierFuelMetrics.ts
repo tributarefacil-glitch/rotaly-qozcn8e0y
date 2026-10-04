@@ -16,7 +16,12 @@ import {
   haversineDistanceMeters,
 } from '@/lib/telemetryKmEngine'
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
-import { isCurrentMonthInTz, isSameDayInTz, parseSafeTimestamp } from '@/lib/operationalWindow'
+import {
+  getOperationalWindow,
+  isCurrentMonthInTz,
+  isOrderInPeriod,
+  parseSafeTimestamp,
+} from '@/lib/operationalWindow'
 
 export interface CourierOrderTelemetryCalculation {
   order: OrderRecord
@@ -204,14 +209,15 @@ export function calculateCourierFuelMetrics(params: {
     if (periodFilter === 'all') return true
 
     const advRaw = a.date || a.created
+    const opWindow = getOperationalWindow(now)
     if (periodFilter === 'today') {
       const ts = parseSafeTimestamp(advRaw) || Date.now()
-      return isSameDayInTz(ts, now)
+      return ts >= opWindow.start && ts <= opWindow.end
     }
     if (periodFilter === 'week') {
       const ts = parseSafeTimestamp(advRaw) || 0
-      const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
-      return ts >= sevenDaysAgo
+      const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+      return ts >= sevenDaysAgoStart
     }
     if (periodFilter === 'month') {
       return isCurrentMonthInTz(advRaw, now)
@@ -301,14 +307,15 @@ export function calculateCourierFuelMetrics(params: {
     if (periodFilter === 'all') return true
 
     const oDateVal = o.route_finished_at || o.actual_arrival || o.created
+    const opWindow = getOperationalWindow(now)
     if (periodFilter === 'today') {
       const ts = parseSafeTimestamp(oDateVal) || Date.now()
-      return isSameDayInTz(ts, now)
+      return ts >= opWindow.start && ts <= opWindow.end
     }
     if (periodFilter === 'week') {
       const oTs = parseSafeTimestamp(oDateVal) || 0
-      const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
-      return oTs >= sevenDaysAgo
+      const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+      return oTs >= sevenDaysAgoStart
     }
     if (periodFilter === 'month') {
       return isCurrentMonthInTz(oDateVal, now)

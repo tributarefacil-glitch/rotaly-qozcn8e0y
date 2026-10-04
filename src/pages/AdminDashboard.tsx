@@ -1215,24 +1215,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       let filter = ''
       const currentDate = new Date()
 
+      const opWindow = getOperationalWindow(currentDate)
+
       if (fuelPeriodFilter === 'today') {
-        const startOfDay = new Date(
-          currentDate.getFullYear(),
-          currentDate.getMonth(),
-          currentDate.getDate(),
-          0,
-          0,
-          0,
-        )
-        const startStr = formatPbTimestamp(startOfDay)
-        filter = `created >= '${startStr}'`
+        filter = `created >= '${opWindow.startPbString}' && created <= '${opWindow.endPbString}'`
       } else if (fuelPeriodFilter === 'month') {
         const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
         const startStr = formatPbTimestamp(firstDayOfMonth)
         filter = `created >= '${startStr}'`
       } else if (fuelPeriodFilter === 'week') {
-        const sevenDaysAgo = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000)
-        const startStr = formatPbTimestamp(sevenDaysAgo)
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
         filter = `created >= '${startStr}'`
       } else {
         filter = ''
@@ -1304,19 +1297,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     }
     const advDate = new Date(adv.date || adv.created)
     const now = new Date()
+    const opWindow = getOperationalWindow(now)
+    const advTs = advDate.getTime()
     if (fuelPeriodFilter === 'today') {
-      return (
-        advDate.getDate() === now.getDate() &&
-        advDate.getMonth() === now.getMonth() &&
-        advDate.getFullYear() === now.getFullYear()
-      )
+      return advTs >= opWindow.start && advTs <= opWindow.end
     }
     if (fuelPeriodFilter === 'month') {
       return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
     }
     if (fuelPeriodFilter === 'week') {
-      const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      return advDate >= oneWeekAgo
+      const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+      return advTs >= sevenDaysAgoStart
     }
     return true
   })

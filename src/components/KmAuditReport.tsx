@@ -52,6 +52,7 @@ import {
 } from '@/types/delivery'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { formatDateInTz, getOperationalWindow, parseSafeTimestamp } from '@/lib/operationalWindow'
 
 interface KmAuditReportProps {
   orders: OrderRecord[]
@@ -445,17 +446,24 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     auditRows.forEach((r) => {
       // Aplica apenas filtros dimensionais (entregador, data, lote, busca)
       if (selectedCourierId !== 'all' && r.order.courier_id !== selectedCourierId) return
+      const rowTs = parseSafeTimestamp(r.dateRaw) || new Date(r.dateRaw).getTime()
+      const opWindow = getOperationalWindow(new Date())
+
       if (selectedDateFilter === 'custom' && customDate) {
-        const rowIso = new Date(r.dateRaw).toISOString().split('T')[0]
-        if (rowIso !== customDate) return
+        const rowDateInSp = formatDateInTz(rowTs, {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        })
+        // customDate vem como "YYYY-MM-DD", rowDateInSp vem "DD/MM/YYYY" em pt-BR
+        const [cYear, cMonth, cDay] = customDate.split('-')
+        const expectedDateStr = `${cDay}/${cMonth}/${cYear}`
+        if (rowDateInSp !== expectedDateStr) return
       } else if (selectedDateFilter === 'today') {
-        const todayIso = new Date().toISOString().split('T')[0]
-        const rowIso = new Date(r.dateRaw).toISOString().split('T')[0]
-        if (rowIso !== todayIso) return
+        if (rowTs < opWindow.start || rowTs > opWindow.end) return
       } else if (selectedDateFilter === 'week') {
-        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
-        const rowTime = new Date(r.dateRaw).getTime()
-        if (rowTime < sevenDaysAgo) return
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        if (rowTs < sevenDaysAgoStart) return
       }
       if (selectedBatchKey !== 'all' && r.batchDisplay !== selectedBatchKey) return
       if (searchQuery.trim()) {
@@ -502,17 +510,23 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       }
 
       // Filtro de data
+      const rowTs = parseSafeTimestamp(r.dateRaw) || new Date(r.dateRaw).getTime()
+      const opWindow = getOperationalWindow(new Date())
+
       if (selectedDateFilter === 'custom' && customDate) {
-        const rowIso = new Date(r.dateRaw).toISOString().split('T')[0]
-        if (rowIso !== customDate) return false
+        const rowDateInSp = formatDateInTz(rowTs, {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        })
+        const [cYear, cMonth, cDay] = customDate.split('-')
+        const expectedDateStr = `${cDay}/${cMonth}/${cYear}`
+        if (rowDateInSp !== expectedDateStr) return false
       } else if (selectedDateFilter === 'today') {
-        const todayIso = new Date().toISOString().split('T')[0]
-        const rowIso = new Date(r.dateRaw).toISOString().split('T')[0]
-        if (rowIso !== todayIso) return false
+        if (rowTs < opWindow.start || rowTs > opWindow.end) return false
       } else if (selectedDateFilter === 'week') {
-        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
-        const rowTime = new Date(r.dateRaw).getTime()
-        if (rowTime < sevenDaysAgo) return false
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        if (rowTs < sevenDaysAgoStart) return false
       }
 
       // Filtro de lote

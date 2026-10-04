@@ -53,10 +53,11 @@ import { fuelAccountService } from '@/services/fuelAccountService'
 import { DEVIATION_THRESHOLD_METERS, haversineDistanceMeters } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import {
-  isCurrentMonthInTz,
-  isSameDayInTz,
   formatDateInTz,
   formatTimeInTz,
+  getOperationalWindow,
+  isCurrentMonthInTz,
+  isOrderInPeriod,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
 
@@ -164,14 +165,14 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     let endDate: string | undefined
 
     const now = new Date()
+    const opWindow = getOperationalWindow(now)
     if (periodFilter === 'today') {
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
-      startDate = startOfDay.toISOString()
-      endDate = endOfDay.toISOString()
+      startDate = opWindow.startPbString
+      endDate = opWindow.endPbString
     } else if (periodFilter === 'week') {
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      startDate = sevenDaysAgo.toISOString()
+      const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+      startDate = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
+      endDate = opWindow.endPbString
     } else if (periodFilter === 'month') {
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
       startDate = startOfMonth.toISOString()
@@ -474,14 +475,16 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   const filteredItems = useMemo(() => {
     const now = new Date()
 
+    const opWindow = getOperationalWindow(now)
+
     return historyItems.filter((item) => {
-      // Filtro de período (respeitando fuso America/Sao_Paulo)
+      // Filtro de período (respeitando fuso America/Sao_Paulo e janela operacional)
       if (periodFilter === 'today') {
-        const isToday = isSameDayInTz(item.dateObj, now)
-        if (!isToday) return false
+        const ts = item.dateObj.getTime()
+        if (ts < opWindow.start || ts > opWindow.end) return false
       } else if (periodFilter === 'week') {
-        const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
-        if (item.dateObj.getTime() < sevenDaysAgo) return false
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        if (item.dateObj.getTime() < sevenDaysAgoStart) return false
       } else if (periodFilter === 'month') {
         const isCurrentMonth = isCurrentMonthInTz(item.dateObj, now)
         if (!isCurrentMonth) return false
@@ -529,14 +532,15 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
       if (periodFilter === 'all') return true
       const advRaw = a.date || a.created
+      const opWindow = getOperationalWindow(now)
       if (periodFilter === 'today') {
         const advTs = parseSafeTimestamp(advRaw) || Date.now()
-        return isSameDayInTz(advTs, now)
+        return advTs >= opWindow.start && advTs <= opWindow.end
       }
       if (periodFilter === 'week') {
         const ts = parseSafeTimestamp(advRaw) || 0
-        const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
-        return ts >= sevenDaysAgo
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        return ts >= sevenDaysAgoStart
       }
       if (periodFilter === 'month') {
         return isCurrentMonthInTz(advRaw, now)

@@ -154,39 +154,121 @@ export function isSameDayInTz(
  * Se a hora atual for anterior às 05:00 (madrugada), pertence ao ciclo operacional
  * iniciado no dia anterior às 05:00.
  */
-export function getOperationalWindow(referenceDate: Date = new Date()): OperationalWindow {
-  const opDate = new Date(referenceDate)
+/**
+ * Extrai componentes de data e hora civis de uma data estritamente no fuso de São Paulo (America/Sao_Paulo).
+ */
+export function getCivilPartsInTz(dateOrTs?: Date | string | number | null): {
+  year: number
+  month: number
+  day: number
+  hour: number
+  minute: number
+  second: number
+} {
+  const ts = parseSafeTimestamp(dateOrTs || Date.now())
+  const d = new Date(ts > 0 ? ts : Date.now())
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: SAO_PAULO_TZ,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false,
+  })
+  const parts = formatter.formatToParts(d)
+  let year = d.getFullYear()
+  let month = d.getMonth() + 1
+  let day = d.getDate()
+  let hour = d.getHours()
+  let minute = d.getMinutes()
+  let second = d.getSeconds()
 
-  // Madrugada antes das 05h: pertence ao dia operacional iniciado ontem às 05h
-  if (opDate.getHours() < 5) {
-    opDate.setDate(opDate.getDate() - 1)
+  for (const part of parts) {
+    if (part.type === 'year') year = Number(part.value)
+    if (part.type === 'month') month = Number(part.value)
+    if (part.type === 'day') day = Number(part.value)
+    if (part.type === 'hour') {
+      const val = Number(part.value)
+      hour = val === 24 ? 0 : val
+    }
+    if (part.type === 'minute') minute = Number(part.value)
+    if (part.type === 'second') second = Number(part.value)
   }
 
-  const start = new Date(
-    opDate.getFullYear(),
-    opDate.getMonth(),
-    opDate.getDate(),
-    5,
-    0,
-    0,
-    0,
-  ).getTime()
+  return { year, month, day, hour, minute, second }
+}
 
-  const end = new Date(
-    opDate.getFullYear(),
-    opDate.getMonth(),
-    opDate.getDate(),
-    23,
-    59,
-    59,
-    999,
-  ).getTime()
+/**
+ * Retorna a janela operacional oficial Rotaly: 05:00:00 até 23:59:59.999 no fuso de Brasília (America/Sao_Paulo).
+ * Extrai ano/mês/dia/hora civis via Intl.DateTimeFormat com timeZone 'America/Sao_Paulo'.
+ * Se a hora em SP for < 5 (madrugada 00h–04h59), a data operacional é o dia anterior.
+ * start = 05:00:00.000 SP do dia operacional; end = 23:59:59.999 SP do mesmo dia operacional.
+ */
+export function getOperationalWindow(referenceDate: Date = new Date()): OperationalWindow {
+  const parts = getCivilPartsInTz(referenceDate)
+  let { year, month, day } = parts
+  const { hour } = parts
 
-  const dateStr = `${opDate.getFullYear()}-${String(opDate.getMonth() + 1).padStart(2, '0')}-${String(opDate.getDate()).padStart(2, '0')}`
+  // Madrugada antes das 05h em SP: pertence ao ciclo operacional do dia anterior
+  if (hour < 5) {
+    // Subtrair 1 dia civil usando Date em UTC para cálculo de calendário sem desvio
+    const d = new Date(Date.UTC(year, month - 1, day - 1))
+    year = d.getUTCFullYear()
+    month = d.getUTCMonth() + 1
+    day = d.getUTCDate()
+  }
+
+  // Montar strings ISO com o offset do fuso de Brasília (-03:00)
+  const monthStr = String(month).padStart(2, '0')
+  const dayStr = String(day).padStart(2, '0')
+  const dateStr = `${year}-${monthStr}-${dayStr}`
+
+  // 05:00:00.000 SP = 08:00:00.000 UTC
+  // 23:59:59.999 SP = 02:59:59.999 UTC do dia seguinte
+  const start = new Date(`${dateStr}T05:00:00.000-03:00`).getTime()
+  const end = new Date(`${dateStr}T23:59:59.999-03:00`).getTime()
+
   const startPbString = new Date(start).toISOString().replace('T', ' ')
   const endPbString = new Date(end).toISOString().replace('T', ' ')
 
   return { start, end, dateStr, startPbString, endPbString }
+}
+
+/**
+ * Helper unificado para verificar se um timestamp pertence a um período:
+ * - 'today' → dentro da janela operacional de SP (opWindow.start <= ts <= opWindow.end)
+ * - 'week' → >= start da janela operacional de 7 dias operacionais atrás (opWindow.start - 6 dias)
+ * - 'month' → usa isCurrentMonthInTz existente
+ * - 'all' → sempre true
+ */
+export function isOrderInPeriod(
+  dateVal: string | number | Date | null | undefined,
+  periodFilter: 'all' | 'today' | 'week' | 'month',
+  referenceDate: Date = new Date(),
+): boolean {
+  if (periodFilter === 'all') return true
+  const ts = parseSafeTimestamp(dateVal)
+  if (!ts) return false
+
+  const opWindow = getOperationalWindow(referenceDate)
+
+  if (periodFilter === 'today') {
+    return ts >= opWindow.start && ts <= opWindow.end
+  }
+
+  if (periodFilter === 'week') {
+    // 7 dias operacionais: o dia operacional de hoje + os 6 dias operacionais anteriores
+    const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+    return ts >= sevenDaysAgoStart
+  }
+
+  if (periodFilter === 'month') {
+    return isCurrentMonthInTz(ts, referenceDate)
+  }
+
+  return true
 }
 
 /**
