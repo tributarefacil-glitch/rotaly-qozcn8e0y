@@ -133,6 +133,7 @@ export function calculateCourierFuelMetrics(params: {
     { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
   >
   activeBaseCoords?: { lat: number; lng: number } | null
+  isPostCutoffComputation?: boolean
 }): CourierFuelCalculationResult {
   const {
     courier,
@@ -145,6 +146,7 @@ export function calculateCourierFuelMetrics(params: {
     carryOverBalance = 0,
     approvalsMap,
     activeBaseCoords,
+    isPostCutoffComputation = false,
   } = params
 
   if (!courier?.id) {
@@ -744,9 +746,14 @@ export function calculateCourierFuelMetrics(params: {
   // GASTO PÓS-CORTE CANÔNICO PARA O SALDO:
   // O saldo é SEMPRE período-independente: opening_balance + totalPostCutoffAdvances − totalPostCutoffSpent.
   // Gasto pós-corte: pedidos elegíveis com timestamp >= cutoffTime calculados com periodFilter 'all'.
+  // GUARDA ANTI-RECURSÃO INFINITA:
+  // Se isPostCutoffComputation for true, pula este bloco (pois esta execução já é a computação do gasto pós-corte)
+  // e utiliza diretamente o totalSpent já computado acima pelo motor oficial.
   let postCutoffSpent = 0
   if (!isBicycle) {
-    if (!hasCutoff) {
+    if (isPostCutoffComputation) {
+      postCutoffSpent = totalSpent
+    } else if (!hasCutoff) {
       if (periodFilter === 'all') {
         postCutoffSpent = totalSpent
       } else {
@@ -761,6 +768,7 @@ export function calculateCourierFuelMetrics(params: {
           carryOverBalance: openingBalance,
           approvalsMap,
           activeBaseCoords,
+          isPostCutoffComputation: true,
         })
         postCutoffSpent = allMetrics.totalSpent
       }
@@ -783,6 +791,7 @@ export function calculateCourierFuelMetrics(params: {
           carryOverBalance: openingBalance,
           approvalsMap,
           activeBaseCoords,
+          isPostCutoffComputation: true,
         })
         postCutoffSpent = postCutoffMetrics.totalSpent
       }

@@ -300,21 +300,26 @@ export class FuelAccountService {
     // GASTO PÓS-CORTE CANÔNICO PARA O SALDO:
     // Saldo é SEMPRE período-independente: opening_balance + totalPostCutoffAdvances − totalPostCutoffSpent.
     // Pedidos >= cutoffTime calculados com periodFilter 'all'.
+    // calculateCourierFuelMetrics já computa e consolida o saldo e gasto canônico internamente (com isPostCutoffComputation de guarda).
     let postCutoffSpent = 0
     if (!isBicycle) {
       if (!hasCutoff) {
-        // Sem corte: todo o histórico elegível
-        const allTimeMetrics = calculateCourierFuelMetrics({
-          courier,
-          advances: postCutoffAdvances,
-          orders: courierOrders,
-          locations,
-          offRouteEvents,
-          settings,
-          periodFilter: 'all',
-          carryOverBalance: openingBalance,
-        })
-        postCutoffSpent = allTimeMetrics.totalSpent
+        if (periodFilter === 'all') {
+          postCutoffSpent = metrics.totalSpent
+        } else {
+          const allTimeMetrics = calculateCourierFuelMetrics({
+            courier,
+            advances: postCutoffAdvances,
+            orders: courierOrders,
+            locations,
+            offRouteEvents,
+            settings,
+            periodFilter: 'all',
+            carryOverBalance: openingBalance,
+            isPostCutoffComputation: true,
+          })
+          postCutoffSpent = allTimeMetrics.totalSpent
+        }
       } else {
         const postCutoffOrdersList = courierOrders.filter((o) => {
           const orderDateVal = o.route_finished_at || o.actual_arrival || o.created
@@ -332,6 +337,7 @@ export class FuelAccountService {
             settings,
             periodFilter: 'all',
             carryOverBalance: openingBalance,
+            isPostCutoffComputation: true,
           })
           postCutoffSpent = postCutoffMetrics.totalSpent
         }
