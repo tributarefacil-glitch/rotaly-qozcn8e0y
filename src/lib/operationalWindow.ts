@@ -160,6 +160,50 @@ export function isSameDayInTz(
 /**
  * Extrai componentes de data e hora civis de uma data estritamente no fuso de São Paulo (America/Sao_Paulo).
  */
+/**
+ * Extrai a chave de data civil 'YYYY-MM-DD' garantindo que strings date-only ou UTC
+ * à meia-noite (00:00:00.000Z) não sofram recuo de dia no fuso de Brasília.
+ * Para outros valores de data/hora, formata civilmente no fuso America/Sao_Paulo.
+ */
+export function getCivilDateKeyInTz(dateVal?: string | Date | number | null): string {
+  if (!dateVal && dateVal !== 0) return ''
+  if (typeof dateVal === 'string') {
+    const trimmed = dateVal.trim()
+    // Caso 1: string pura date-only "YYYY-MM-DD"
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return trimmed
+    }
+    // Caso 2: ISO começando com "YYYY-MM-DD" e hora zerada (00:00:00 ou 00:00:00.000Z / 00:00:00Z)
+    // Ex: "2026-10-04 00:00:00.000Z", "2026-10-04T00:00:00.000Z", "2026-10-04 00:00:00"
+    const midnightMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})[T\s]00:00:00(\.000)?Z?$/)
+    if (midnightMatch) {
+      return midnightMatch[1]
+    }
+  }
+
+  const parts = getCivilPartsInTz(dateVal)
+  const monthStr = String(parts.month).padStart(2, '0')
+  const dayStr = String(parts.day).padStart(2, '0')
+  return `${parts.year}-${monthStr}-${dayStr}`
+}
+
+/**
+ * Avalia se um adiantamento/ajuste de combustível é PÓS-CORTE civilmente.
+ * Critério canônico: dia civil do adiantamento >= dia civil da data de corte.
+ * Sem data de corte informada/válida, retorna true.
+ */
+export function isAdvancePostCutoff(
+  advanceDateVal?: string | Date | number | null,
+  cutoffDateVal?: string | Date | number | null,
+): boolean {
+  if (!cutoffDateVal) return true
+  const advKey = getCivilDateKeyInTz(advanceDateVal)
+  const cutoffKey = getCivilDateKeyInTz(cutoffDateVal)
+  if (!cutoffKey) return true
+  if (!advKey) return false
+  return advKey >= cutoffKey
+}
+
 export function getCivilPartsInTz(dateOrTs?: Date | string | number | null): {
   year: number
   month: number

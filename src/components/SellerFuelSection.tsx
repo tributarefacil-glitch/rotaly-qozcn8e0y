@@ -82,7 +82,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   )
 
   // Versão de sincronização global para invalidar caches legados e forçar recarga imediata
-  const FUEL_GLOBAL_VERSION = 'v0090_operational_window_sync'
+  const FUEL_GLOBAL_VERSION = 'v0325_period_pool_sync'
 
   const fetchFuelHistoryOrders = useCallback(
     async (forceRefresh = false) => {
@@ -127,24 +127,30 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         setLoadedFuelPeriod(fuelPeriodFilter)
       } catch (err) {
         console.error('Erro ao carregar pedidos de combustível do período no seller:', err)
-        setFuelHistoryOrders((prev) => (prev.length > 0 ? prev : orders))
-        setLoadedFuelPeriod(fuelPeriodFilter)
+        // Nunca silenciar o período ativo caindo em pool truncado do dia
+        setFuelHistoryOrders((prev) => (prev.length > 0 ? prev : []))
+        setLoadedFuelPeriod('')
       } finally {
         setIsLoadingFuelOrders(false)
       }
     },
-    [fuelPeriodFilter, orders],
+    [fuelPeriodFilter],
   )
 
   useEffect(() => {
     fetchFuelHistoryOrders()
   }, [fuelPeriodFilter, fetchFuelHistoryOrders])
 
-  // Pool de pedidos ativo para combustível: histórico se carregado, senão orders do dia
-  const activeFuelOrdersPool =
-    fuelHistoryOrders.length > 0 || loadedFuelPeriod === fuelPeriodFilter
+  // Pool de pedidos ativo para combustível:
+  // Garante que o pool usado cubra SEMPRE a janela do filtro ativo.
+  // Quando o histórico ainda está sendo buscado pela primeira vez, mantemos vazio/aguardamos a busca própria,
+  // nunca caindo no pool orders do SellerDashboard (que só traz pedidos de hoje: created >= windowStart).
+  const isPeriodLoaded = loadedFuelPeriod === fuelPeriodFilter && !isLoadingFuelOrders
+  const activeFuelOrdersPool = isPeriodLoaded
+    ? fuelHistoryOrders
+    : fuelHistoryOrders.length > 0
       ? fuelHistoryOrders
-      : orders
+      : []
 
   // Modal de Histórico Detalhado
   const [selectedCourierForHistory, setSelectedCourierForHistory] = useState<UserRecord | null>(

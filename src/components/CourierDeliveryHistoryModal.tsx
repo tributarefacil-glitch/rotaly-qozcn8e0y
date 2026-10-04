@@ -58,6 +58,7 @@ import {
   getCivilPartsInTz,
   getCustomOperationalWindow,
   getOperationalWindow,
+  isAdvancePostCutoff,
   isCurrentMonthInTz,
   parseSafeTimestamp,
   getOperationalMonthStart,
@@ -420,8 +421,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
     const isAfterCutoff = (a: FuelAdvanceRecord) => {
       if (!hasCutoff) return true
-      const advTs = new Date(a.date || a.created).getTime()
-      return advTs >= cutoffTime
+      return isAdvancePostCutoff(a.date || a.created, cutoffDateStr)
     }
 
     if (externalAdvances && externalAdvances.length > 0) {
@@ -719,8 +719,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     // Ignorar cancelados e movimentações anteriores ao corte (se houver corte)
     const filteredAdvances = allCourierAdvances.filter((a) => {
       if (a.status === 'cancelled') return false
-      const advTs = new Date(a.date || a.created).getTime()
-      if (hasCutoff && advTs < cutoffTime) return false
+      if (hasCutoff && !isAdvancePostCutoff(a.date || a.created, cutoffDateStr)) return false
 
       if (periodFilter === 'all') return true
       const advRaw = a.date || a.created
@@ -801,8 +800,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     // Mesma fórmula canônica do fuelAccountService.ts.
     const allPostCutoffAdvances = allCourierAdvances.filter((a) => {
       if (a.status === 'cancelled') return false
-      const advTs = new Date(a.date || a.created).getTime()
-      if (hasCutoff && advTs < cutoffTime) return false
+      if (hasCutoff && !isAdvancePostCutoff(a.date || a.created, cutoffDateStr)) return false
       return true
     })
     const totalAdvancesAllPostCutoff = allPostCutoffAdvances.reduce(

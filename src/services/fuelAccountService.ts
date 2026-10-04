@@ -15,6 +15,7 @@ import {
 import { deliveryService } from '@/services/deliveryService'
 import { getMatrizCompanyId } from '@/lib/companyResolver'
 import {
+  isAdvancePostCutoff,
   isBeforeCurrentMonthInTz,
   isCurrentMonthInTz,
   parseSafeTimestamp,
@@ -255,8 +256,7 @@ export class FuelAccountService {
     const postCutoffAdvances = courierAdvances.filter((a) => {
       if (a.status === 'cancelled') return false
       if (!hasCutoff) return true
-      const advTs = new Date(a.date || a.created).getTime()
-      return advTs >= cutoffTime
+      return isAdvancePostCutoff(a.date || a.created, cutoffDateStr)
     })
 
     let periodAdvances = 0

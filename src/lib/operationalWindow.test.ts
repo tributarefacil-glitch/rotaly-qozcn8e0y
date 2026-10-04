@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
+  getCivilDateKeyInTz,
   getCivilPartsInTz,
   getOperationalWindow,
   getCustomOperationalWindow,
   getYearMonthInTz,
+  isAdvancePostCutoff,
   isBeforeCurrentMonthInTz,
   isCurrentMonthInTz,
   isOrderInPeriod,
@@ -134,6 +136,24 @@ describe('operationalWindow (fuso America/Sao_Paulo)', () => {
 
     // Entrega de 8 dias atrás (27/09 às 04h BRT = 07h UTC) -> fora
     expect(isOrderInPeriod('2026-09-27 07:00:00.000Z', 'week', refDate)).toBe(false)
+  })
+
+  it('getCivilDateKeyInTz e isAdvancePostCutoff comparam dia civil sem desvio de UTC', () => {
+    // Caso 1: string pura date-only
+    expect(getCivilDateKeyInTz('2026-10-04')).toBe('2026-10-04')
+    // Caso 2: date com hora 00:00:00.000Z não recua para o dia 03 no Brasil
+    expect(getCivilDateKeyInTz('2026-10-04 00:00:00.000Z')).toBe('2026-10-04')
+    expect(getCivilDateKeyInTz('2026-10-04T00:00:00.000Z')).toBe('2026-10-04')
+
+    // Caso 3: cutoff de 2026-10-04 01:00:00.000Z -> em SP é 2026-10-03 (22h de 03/10)
+    // O adiantamento de 2026-10-04 00:00:00.000Z (Guilherme R$ 200) tem dia civil 2026-10-04.
+    // Como 2026-10-04 >= 2026-10-03, é estritamente pós-corte!
+    expect(isAdvancePostCutoff('2026-10-04 00:00:00.000Z', '2026-10-04 01:00:00.000Z')).toBe(true)
+    // Mesmo se cutoff fosse interpretado como 2026-10-04:
+    expect(isAdvancePostCutoff('2026-10-04 00:00:00.000Z', '2026-10-04 00:00:00.000Z')).toBe(true)
+
+    // Adiantamento de 03/10 anterior a cutoff de 04/10
+    expect(isAdvancePostCutoff('2026-10-03 00:00:00.000Z', '2026-10-04 05:00:00.000Z')).toBe(false)
   })
 
   it('getCustomOperationalWindow gera intervalo correto 05:00 a 23:59:59.999 no fuso de Brasília', () => {

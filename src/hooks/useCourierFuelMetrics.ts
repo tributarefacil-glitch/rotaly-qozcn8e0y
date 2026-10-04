@@ -18,6 +18,7 @@ import {
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
 import {
   getOperationalWindow,
+  isAdvancePostCutoff,
   isCurrentMonthInTz,
   isOrderInPeriod,
   parseSafeTimestamp,
@@ -206,8 +207,7 @@ export function calculateCourierFuelMetrics(params: {
 
     // Somente adiantamentos criados a partir da data de corte entram nos adiantamentos pós-corte
     // Adiantamentos anteriores já estão consolidados dentro do opening_balance (se houver corte)
-    const advTs = new Date(a.date || a.created).getTime()
-    if (hasCutoff && advTs < cutoffTime) return false
+    if (hasCutoff && !isAdvancePostCutoff(a.date || a.created, cutoffDateStr)) return false
 
     if (periodFilter === 'all') return true
 
