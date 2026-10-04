@@ -61,7 +61,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   onRefresh,
   isReadOnly = true,
 }) => {
-  const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week'>('all')
+  const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week'>('week')
   const [selectedCourierFilter, setSelectedCourierFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [vehicleCategoryFilter, setVehicleCategoryFilter] = useState<

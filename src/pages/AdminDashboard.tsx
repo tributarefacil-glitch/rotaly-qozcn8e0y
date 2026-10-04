@@ -408,7 +408,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   )
   const [selectedCourierForFuelFilter, setSelectedCourierForFuelFilter] = useState<string>('all')
   const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week' | 'today'>(
-    'month',
+    'week',
   )
   const [isNewFuelAdvanceModalOpen, setIsNewFuelAdvanceModalOpen] = useState(false)
   const [advanceCourierId, setAdvanceCourierId] = useState('')
@@ -1657,6 +1657,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                         </button>
                         <button
                           type="button"
+                          onClick={() => setFuelPeriodFilter('week')}
+                          className={`px-2.5 py-1 rounded-md font-bold transition-all ${
+                            fuelPeriodFilter === 'week'
+                              ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                          }`}
+                        >
+                          🗓️ Últimos 7 dias
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setFuelPeriodFilter('month')}
                           className={`px-2.5 py-1 rounded-md font-bold transition-all ${
                             fuelPeriodFilter === 'month'
@@ -1798,9 +1809,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 >
                                   {fuelPeriodFilter === 'today'
                                     ? 'Período: Hoje'
-                                    : fuelPeriodFilter === 'month'
-                                      ? 'Período: Mês (mês corrente)'
-                                      : 'Período: Total desde o início (saldo acumulado)'}
+                                    : fuelPeriodFilter === 'week'
+                                      ? 'Período: Últimos 7 dias'
+                                      : fuelPeriodFilter === 'month'
+                                        ? 'Período: Mês (mês corrente)'
+                                        : 'Período: Total desde o início (saldo acumulado)'}
                                 </Badge>
                                 {acc.carryOverBalance !== undefined &&
                                   acc.carryOverBalance !== 0 &&
@@ -1821,9 +1834,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                     Saldo da Conta Corrente (
                                     {fuelPeriodFilter === 'today'
                                       ? 'Hoje'
-                                      : fuelPeriodFilter === 'month'
-                                        ? 'Mês Corrente'
-                                        : 'Total Acumulado'}
+                                      : fuelPeriodFilter === 'week'
+                                        ? 'Últimos 7 dias'
+                                        : fuelPeriodFilter === 'month'
+                                          ? 'Mês Corrente'
+                                          : 'Total Acumulado'}
                                     )
                                   </span>
                                   <span
@@ -1965,10 +1980,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             <SelectValue placeholder="Período" />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="week">🗓️ Últimos 7 dias</SelectItem>
                             <SelectItem value="today">☀️ Hoje</SelectItem>
                             <SelectItem value="month">📅 Mês (mês corrente)</SelectItem>
                             <SelectItem value="all">♾️ Total desde o início</SelectItem>
-                            <SelectItem value="week">Últimos 7 dias</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>

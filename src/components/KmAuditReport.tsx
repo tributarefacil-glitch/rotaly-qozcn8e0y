@@ -74,7 +74,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 }) => {
   // Filtros
   const [selectedCourierId, setSelectedCourierId] = useState<string>('all')
-  const [selectedDateFilter, setSelectedDateFilter] = useState<string>('all')
+  const [selectedDateFilter, setSelectedDateFilter] = useState<string>('week')
   const [customDate, setCustomDate] = useState<string>('')
   const [selectedBatchKey, setSelectedBatchKey] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState<string>('')
@@ -452,6 +452,10 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         const todayIso = new Date().toISOString().split('T')[0]
         const rowIso = new Date(r.dateRaw).toISOString().split('T')[0]
         if (rowIso !== todayIso) return
+      } else if (selectedDateFilter === 'week') {
+        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+        const rowTime = new Date(r.dateRaw).getTime()
+        if (rowTime < sevenDaysAgo) return
       }
       if (selectedBatchKey !== 'all' && r.batchDisplay !== selectedBatchKey) return
       if (searchQuery.trim()) {
@@ -505,6 +509,10 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         const todayIso = new Date().toISOString().split('T')[0]
         const rowIso = new Date(r.dateRaw).toISOString().split('T')[0]
         if (rowIso !== todayIso) return false
+      } else if (selectedDateFilter === 'week') {
+        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+        const rowTime = new Date(r.dateRaw).getTime()
+        if (rowTime < sevenDaysAgo) return false
       }
 
       // Filtro de lote
@@ -809,8 +817,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                   <SelectValue placeholder="Selecione o período" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">📅 Todo o Histórico</SelectItem>
+                  <SelectItem value="week">🗓️ Últimos 7 dias</SelectItem>
                   <SelectItem value="today">☀️ Hoje</SelectItem>
+                  <SelectItem value="all">📅 Todo o Histórico</SelectItem>
                   <SelectItem value="custom">🔍 Data Específica</SelectItem>
                 </SelectContent>
               </Select>

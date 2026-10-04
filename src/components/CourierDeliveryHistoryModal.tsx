@@ -111,7 +111,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   offRouteEvents = [],
   locations: externalLocations,
   settings,
-  initialPeriodFilter = 'month',
+  initialPeriodFilter = 'week',
   advances: externalAdvances,
 }) => {
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>(
