@@ -78,11 +78,11 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   const [customDate, setCustomDate] = useState<string>('')
   const [selectedBatchKey, setSelectedBatchKey] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState<string>('')
-  // Modo de exibição: 'pending_divergent' (padrão - apenas divergências pendentes),
+  // Modo de exibição: 'pending_divergent' (apenas divergências pendentes),
   // 'auto_approved' (aprovados automaticamente sem divergência),
-  // 'all' (todas as entregas)
+  // 'all' (padrão - todas as entregas)
   const [queueViewMode, setQueueViewMode] = useState<'pending_divergent' | 'auto_approved' | 'all'>(
-    'pending_divergent',
+    'all',
   )
   const [filterDeviationOnly, setFilterDeviationOnly] = useState<boolean>(false)
   const [filterRedirectedOnly, setFilterRedirectedOnly] = useState<boolean>(false)
@@ -1011,13 +1011,28 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                 {filteredRows.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-12 text-center text-slate-400">
-                      <Route className="h-10 w-10 mx-auto text-slate-300 mb-2" />
-                      <p className="font-semibold text-slate-600">
-                        Nenhuma entrega encontrada para os filtros selecionados.
-                      </p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        Tente ajustar os filtros de entregador, data ou desvios relevantes.
-                      </p>
+                      {queueViewMode === 'pending_divergent' ? (
+                        <>
+                          <CheckCircle2 className="h-10 w-10 mx-auto text-emerald-500 mb-2" />
+                          <p className="font-semibold text-slate-800 dark:text-slate-100">
+                            Nenhuma divergência para decidir — todas auto-aprovadas
+                          </p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 max-w-md mx-auto">
+                            Todas as entregas do período estão com o trajeto viário em conformidade
+                            ou foram previamente aprovadas.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <Route className="h-10 w-10 mx-auto text-slate-300 mb-2" />
+                          <p className="font-semibold text-slate-600">
+                            Nenhuma entrega encontrada para os filtros selecionados.
+                          </p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Tente ajustar os filtros de entregador, data ou desvios relevantes.
+                          </p>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ) : (

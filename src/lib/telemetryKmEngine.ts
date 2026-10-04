@@ -200,6 +200,9 @@ export function getOrderTimeWindow(
       startTimestamp = Math.min(...startedTimes)
     } else if (order.route_released_at) {
       startTimestamp = new Date(order.route_released_at).getTime()
+    } else if (order.created) {
+      // Janela de fallback baseada em order.created com tolerância de 15 minutos
+      startTimestamp = new Date(order.created).getTime() - 15 * 60 * 1000
     }
   }
 
@@ -213,6 +216,9 @@ export function getOrderTimeWindow(
     endTimestamp = new Date(order.route_finished_at).getTime()
   } else if (finishedAtTimes.length > 0) {
     endTimestamp = Math.max(...finishedAtTimes)
+  } else if (order.actual_arrival) {
+    // Janela de fallback baseada em order.actual_arrival com tolerância de 15 minutos
+    endTimestamp = new Date(order.actual_arrival).getTime() + 15 * 60 * 1000
   } else {
     // Se a rota ainda não tem route_finished_at explícito mas tem entregas concluídas
     const allCompleted =
@@ -245,7 +251,10 @@ export function getOrderTimeWindow(
 
   if (!startTimestamp) {
     const createdTime = new Date(order.created || Date.now()).getTime()
-    startTimestamp = Math.min(createdTime, (endTimestamp || Date.now()) - 45 * 60 * 1000)
+    startTimestamp = Math.min(
+      createdTime - 15 * 60 * 1000,
+      (endTimestamp || Date.now()) - 45 * 60 * 1000,
+    )
   }
 
   if (!endTimestamp) {

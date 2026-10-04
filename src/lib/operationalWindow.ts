@@ -137,6 +137,19 @@ export function formatDateInTz(
 }
 
 /**
+ * Retorna se duas datas caem no mesmo dia civil no fuso de São Paulo (America/Sao_Paulo).
+ */
+export function isSameDayInTz(
+  a: Date | string | number | null | undefined,
+  b: Date | string | number | null | undefined = new Date(),
+): boolean {
+  if (!a || !b) return false
+  const dateStrA = formatDateInTz(a, { year: 'numeric', month: '2-digit', day: '2-digit' })
+  const dateStrB = formatDateInTz(b, { year: 'numeric', month: '2-digit', day: '2-digit' })
+  return Boolean(dateStrA && dateStrB && dateStrA === dateStrB)
+}
+
+/**
  * Retorna a janela operacional oficial Rotaly: 05:00:00 até 23:59:59.999.
  * Se a hora atual for anterior às 05:00 (madrugada), pertence ao ciclo operacional
  * iniciado no dia anterior às 05:00.

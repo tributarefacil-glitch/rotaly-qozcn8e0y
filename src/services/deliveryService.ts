@@ -1648,6 +1648,24 @@ export const deliveryService = {
     })
   },
 
+  async getCourierLocations(courierId: string, startDate?: string | Date, endDate?: string | Date) {
+    const filters: string[] = [`user_id = '${courierId}'`]
+    if (startDate) {
+      const startIso = typeof startDate === 'string' ? startDate : startDate.toISOString()
+      filters.push(`created >= '${startIso}'`)
+    }
+    if (endDate) {
+      const endIso = typeof endDate === 'string' ? endDate : endDate.toISOString()
+      filters.push(`created <= '${endIso}'`)
+    }
+
+    return pb.collection<LocationRecord>('locations').getFullList({
+      filter: filters.join(' && '),
+      sort: '+created',
+      requestKey: null,
+    })
+  },
+
   // Cache de último registro conhecido por usuário para deduplicação em memória
   _lastCourierLocationRecordMap: new Map<
     string,

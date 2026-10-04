@@ -52,7 +52,13 @@ import { deliveryService } from '@/services/deliveryService'
 import { fuelAccountService } from '@/services/fuelAccountService'
 import { DEVIATION_THRESHOLD_METERS, haversineDistanceMeters } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
-import { isCurrentMonthInTz, parseSafeTimestamp } from '@/lib/operationalWindow'
+import {
+  isCurrentMonthInTz,
+  isSameDayInTz,
+  formatDateInTz,
+  formatTimeInTz,
+  parseSafeTimestamp,
+} from '@/lib/operationalWindow'
 
 export interface CourierDeliveryHistoryItem {
   order: OrderRecord
@@ -146,26 +152,57 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   const [fetchedLocations, setFetchedLocations] = useState<LocationRecord[]>([])
   const [isLoadingLocations, setIsLoadingLocations] = useState(false)
 
-  // Carregar locations caso não tenham sido passadas externamente
+  // Carregar locations do entregador para cobrir a telemetria do período selecionado
   React.useEffect(() => {
     if (!isOpen || !courier?.id) return
-    if (externalLocations && externalLocations.length > 0) {
-      setFetchedLocations([])
-      return
-    }
 
     let isMounted = true
     setIsLoadingLocations(true)
-    // Buscar locations do entregador com limite suficiente para cobrir o histórico completo
+
+    // Determinar janela de datas conforme o filtro selecionado
+    let startDate: string | undefined
+    let endDate: string | undefined
+
+    const now = new Date()
+    if (periodFilter === 'today') {
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+      startDate = startOfDay.toISOString()
+      endDate = endOfDay.toISOString()
+    } else if (periodFilter === 'week') {
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+      startDate = sevenDaysAgo.toISOString()
+    } else if (periodFilter === 'month') {
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+      startDate = startOfMonth.toISOString()
+    }
+
+    // Buscar locations do entregador do período selecionado
     deliveryService
-      .getLatestLocations(`user_id = '${courier.id}'`)
+      .getCourierLocations(courier.id, startDate, endDate)
       .then((locs) => {
-        if (isMounted) {
+        if (!isMounted) return
+        if (locs && locs.length > 0) {
           setFetchedLocations(locs)
+        } else if (externalLocations && externalLocations.length > 0) {
+          setFetchedLocations(externalLocations)
+        } else {
+          // Fallback para getLatestLocations sem janela restrita
+          deliveryService
+            .getLatestLocations(`user_id = '${courier.id}'`, '-created', 0)
+            .then((fallbackLocs) => {
+              if (isMounted) setFetchedLocations(fallbackLocs)
+            })
+            .catch(() => {
+              if (isMounted) setFetchedLocations([])
+            })
         }
       })
       .catch((err) => {
         console.warn('Erro ao carregar telemetria de GPS para histórico:', err)
+        if (isMounted && externalLocations && externalLocations.length > 0) {
+          setFetchedLocations(externalLocations)
+        }
       })
       .finally(() => {
         if (isMounted) setIsLoadingLocations(false)
@@ -174,10 +211,13 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     return () => {
       isMounted = false
     }
-  }, [isOpen, courier?.id, externalLocations])
+  }, [isOpen, courier?.id, periodFilter, externalLocations])
 
   const allLocations = useMemo(() => {
-    return externalLocations && externalLocations.length > 0 ? externalLocations : fetchedLocations
+    if (fetchedLocations && fetchedLocations.length > 0) {
+      return fetchedLocations
+    }
+    return externalLocations && externalLocations.length > 0 ? externalLocations : []
   }, [externalLocations, fetchedLocations])
 
   // Obter parâmetros de combustível específicos do entregador
@@ -379,14 +419,16 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         statusColor = 'bg-blue-500/15 text-blue-400 border-blue-500/30'
       }
 
-      const dateObj = new Date(o.created || Date.now())
-      const dateStr = dateObj.toLocaleDateString('pt-BR', {
+      const dateRaw = o.route_finished_at || o.actual_arrival || o.created || Date.now()
+      const tsSafe = parseSafeTimestamp(dateRaw) || Date.now()
+      const dateObj = new Date(tsSafe)
+      const dayFormatted = formatDateInTz(tsSafe, {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
       })
+      const timeFormatted = formatTimeInTz(tsSafe, false)
+      const dateStr = `${dayFormatted}, ${timeFormatted}`
 
       return {
         order: o,
@@ -435,10 +477,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     return historyItems.filter((item) => {
       // Filtro de período (respeitando fuso America/Sao_Paulo)
       if (periodFilter === 'today') {
-        const isToday =
-          item.dateObj.getDate() === now.getDate() &&
-          item.dateObj.getMonth() === now.getMonth() &&
-          item.dateObj.getFullYear() === now.getFullYear()
+        const isToday = isSameDayInTz(item.dateObj, now)
         if (!isToday) return false
       } else if (periodFilter === 'week') {
         const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
@@ -491,12 +530,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       if (periodFilter === 'all') return true
       const advRaw = a.date || a.created
       if (periodFilter === 'today') {
-        const advDate = new Date(parseSafeTimestamp(advRaw) || Date.now())
-        return (
-          advDate.getDate() === now.getDate() &&
-          advDate.getMonth() === now.getMonth() &&
-          advDate.getFullYear() === now.getFullYear()
-        )
+        const advTs = parseSafeTimestamp(advRaw) || Date.now()
+        return isSameDayInTz(advTs, now)
       }
       if (periodFilter === 'week') {
         const ts = parseSafeTimestamp(advRaw) || 0

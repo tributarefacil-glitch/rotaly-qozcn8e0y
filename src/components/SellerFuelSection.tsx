@@ -164,7 +164,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         settings,
         locations,
         offRouteEvents,
-        periodFilter: 'month',
+        periodFilter: fuelPeriodFilter,
       })
 
       const fuelAccount: CourierFuelAccount = {
@@ -187,7 +187,15 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         unifiedAccount,
       }
     })
-  }, [couriers, fuelAdvances, activeFuelOrdersPool, locations, offRouteEvents, settings])
+  }, [
+    couriers,
+    fuelAdvances,
+    activeFuelOrdersPool,
+    locations,
+    offRouteEvents,
+    settings,
+    fuelPeriodFilter,
+  ])
 
   // 2. Filtrar os cards dos entregadores por busca e categoria
   const filteredAccounts = useMemo(() => {

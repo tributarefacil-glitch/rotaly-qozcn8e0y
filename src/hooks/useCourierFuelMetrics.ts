@@ -16,7 +16,7 @@ import {
   haversineDistanceMeters,
 } from '@/lib/telemetryKmEngine'
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
-import { isCurrentMonthInTz, parseSafeTimestamp } from '@/lib/operationalWindow'
+import { isCurrentMonthInTz, isSameDayInTz, parseSafeTimestamp } from '@/lib/operationalWindow'
 
 export interface CourierOrderTelemetryCalculation {
   order: OrderRecord
@@ -205,12 +205,8 @@ export function calculateCourierFuelMetrics(params: {
 
     const advRaw = a.date || a.created
     if (periodFilter === 'today') {
-      const advDate = new Date(parseSafeTimestamp(advRaw) || Date.now())
-      return (
-        advDate.getDate() === now.getDate() &&
-        advDate.getMonth() === now.getMonth() &&
-        advDate.getFullYear() === now.getFullYear()
-      )
+      const ts = parseSafeTimestamp(advRaw) || Date.now()
+      return isSameDayInTz(ts, now)
     }
     if (periodFilter === 'week') {
       const ts = parseSafeTimestamp(advRaw) || 0
@@ -306,12 +302,8 @@ export function calculateCourierFuelMetrics(params: {
 
     const oDateVal = o.route_finished_at || o.actual_arrival || o.created
     if (periodFilter === 'today') {
-      const oDate = new Date(parseSafeTimestamp(oDateVal) || Date.now())
-      return (
-        oDate.getDate() === now.getDate() &&
-        oDate.getMonth() === now.getMonth() &&
-        oDate.getFullYear() === now.getFullYear()
-      )
+      const ts = parseSafeTimestamp(oDateVal) || Date.now()
+      return isSameDayInTz(ts, now)
     }
     if (periodFilter === 'week') {
       const oTs = parseSafeTimestamp(oDateVal) || 0

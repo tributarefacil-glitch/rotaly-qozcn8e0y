@@ -158,12 +158,22 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
       <CardContent className="p-4 pt-2 space-y-3 text-xs">
         {/* Rótulo de Período Explícito */}
         <div className="flex items-center justify-between">
-          <Badge
-            variant="outline"
-            className="text-[10px] font-bold border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
-          >
-            {periodLabel ? `Período: ${periodLabel}` : 'Período: Pós-corte'}
-          </Badge>
+          {(Number(metrics?.deliveriesCount) || 0) === 0 &&
+          (Number(metrics?.advanceCount) || 0) === 0 ? (
+            <Badge
+              variant="outline"
+              className="text-[10px] font-medium bg-slate-800 text-slate-300 border-slate-700"
+            >
+              Nenhuma movimentação desde o corte — saldo = abertura
+            </Badge>
+          ) : (
+            <Badge
+              variant="outline"
+              className="text-[10px] font-bold border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+            >
+              {periodLabel ? `Período: ${periodLabel}` : 'Período: Pós-corte'}
+            </Badge>
+          )}
           <span
             className="text-[10px] font-mono text-slate-500 dark:text-slate-400"
             title="Corte fixo de migração de saldo"
