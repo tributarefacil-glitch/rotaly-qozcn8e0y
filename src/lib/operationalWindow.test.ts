@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   getCivilPartsInTz,
   getOperationalWindow,
+  getCustomOperationalWindow,
   getYearMonthInTz,
   isBeforeCurrentMonthInTz,
   isCurrentMonthInTz,
@@ -133,5 +134,21 @@ describe('operationalWindow (fuso America/Sao_Paulo)', () => {
 
     // Entrega de 8 dias atrás (27/09 às 04h BRT = 07h UTC) -> fora
     expect(isOrderInPeriod('2026-09-27 07:00:00.000Z', 'week', refDate)).toBe(false)
+  })
+
+  it('getCustomOperationalWindow gera intervalo correto 05:00 a 23:59:59.999 no fuso de Brasília', () => {
+    const customWin = getCustomOperationalWindow('2026-10-01', '2026-10-05')
+    expect(customWin).not.toBeNull()
+    if (!customWin) return
+
+    // Início: 2026-10-01 05:00:00.000 BRT = 2026-10-01 08:00:00.000 UTC
+    expect(new Date(customWin.start).toISOString()).toBe('2026-10-01T08:00:00.000Z')
+    // Fim: 2026-10-05 23:59:59.999 BRT = 2026-10-06 02:59:59.999 UTC
+    expect(new Date(customWin.end).toISOString()).toBe('2026-10-06T02:59:59.999Z')
+
+    // Data inválida (início > fim)
+    expect(getCustomOperationalWindow('2026-10-05', '2026-10-01')).toBeNull()
+    // Formato incorreto
+    expect(getCustomOperationalWindow('invalid', '2026-10-01')).toBeNull()
   })
 })

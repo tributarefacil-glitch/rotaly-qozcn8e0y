@@ -209,6 +209,39 @@ export function getCivilPartsInTz(dateOrTs?: Date | string | number | null): {
  * Se a hora em SP for < 5 (madrugada 00h–04h59), a data operacional é o dia anterior.
  * start = 05:00:00.000 SP do dia operacional; end = 23:59:59.999 SP do mesmo dia operacional.
  */
+/**
+ * Cria uma janela operacional personalizada no fuso de Brasília (America/Sao_Paulo).
+ * Início: 05:00:00.000 do startDateStr (YYYY-MM-DD)
+ * Fim: 23:59:59.999 do endDateStr (YYYY-MM-DD)
+ */
+export function getCustomOperationalWindow(
+  startDateStr: string,
+  endDateStr: string,
+): OperationalWindow | null {
+  if (!startDateStr || !endDateStr) return null
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+  if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) return null
+
+  // Início às 05:00 SP e término às 23:59:59.999 SP (-03:00)
+  const start = new Date(`${startDateStr}T05:00:00.000-03:00`).getTime()
+  const end = new Date(`${endDateStr}T23:59:59.999-03:00`).getTime()
+
+  if (isNaN(start) || isNaN(end) || start > end) {
+    return null
+  }
+
+  const startPbString = new Date(start).toISOString().replace('T', ' ')
+  const endPbString = new Date(end).toISOString().replace('T', ' ')
+
+  return {
+    start,
+    end,
+    dateStr: `${startDateStr} a ${endDateStr}`,
+    startPbString,
+    endPbString,
+  }
+}
+
 export function getOperationalWindow(referenceDate: Date = new Date()): OperationalWindow {
   const parts = getCivilPartsInTz(referenceDate)
   let { year, month, day } = parts

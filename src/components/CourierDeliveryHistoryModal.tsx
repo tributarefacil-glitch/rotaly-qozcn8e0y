@@ -55,9 +55,10 @@ import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import {
   formatDateInTz,
   formatTimeInTz,
+  getCivilPartsInTz,
+  getCustomOperationalWindow,
   getOperationalWindow,
   isCurrentMonthInTz,
-  isOrderInPeriod,
   parseSafeTimestamp,
   getOperationalMonthStart,
 } from '@/lib/operationalWindow'
@@ -106,7 +107,7 @@ interface CourierDeliveryHistoryModalProps {
   offRouteEvents?: OffRouteEventRecord[]
   locations?: LocationRecord[]
   settings: AppSettingsRecord | null
-  initialPeriodFilter?: 'all' | 'today' | 'week' | 'month'
+  initialPeriodFilter?: 'all' | 'today' | 'week' | 'month' | 'custom'
   advances?: FuelAdvanceRecord[]
 }
 
@@ -122,9 +123,94 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   initialPeriodFilter = 'week',
   advances: externalAdvances,
 }) => {
-  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>(
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>(
     initialPeriodFilter,
   )
+
+  // Datas padrão para o período personalizado: últimos 7 dias civis no fuso de Brasília
+  const defaultCustomDates = useMemo(() => {
+    const now = new Date()
+    const opWindow = getOperationalWindow(now)
+    const sevenDaysAgoTs = opWindow.start - 6 * 24 * 60 * 60 * 1000
+    const startParts = getCivilPartsInTz(sevenDaysAgoTs)
+    const endParts = getCivilPartsInTz(opWindow.end)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return {
+      startDate: `${startParts.year}-${pad(startParts.month)}-${pad(startParts.day)}`,
+      endDate: `${endParts.year}-${pad(endParts.month)}-${pad(endParts.day)}`,
+    }
+  }, [])
+
+  const [customStartDate, setCustomStartDate] = useState<string>('')
+  const [customEndDate, setCustomEndDate] = useState<string>('')
+  const [customDateError, setCustomDateError] = useState<string | null>(null)
+
+  // Janela operacional ativa derivada (seja pré-definida ou customizada)
+  const activeOperationalWindow = useMemo(() => {
+    const now = new Date()
+    const opWindow = getOperationalWindow(now)
+
+    if (periodFilter === 'today') {
+      return {
+        type: 'today' as const,
+        start: opWindow.start,
+        end: opWindow.end,
+        startPbString: opWindow.startPbString,
+        endPbString: opWindow.endPbString,
+        label: 'Hoje',
+      }
+    }
+
+    if (periodFilter === 'week') {
+      const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+      return {
+        type: 'week' as const,
+        start: sevenDaysAgoStart,
+        end: opWindow.end,
+        startPbString: new Date(sevenDaysAgoStart).toISOString().replace('T', ' '),
+        endPbString: opWindow.endPbString,
+        label: 'Últimos 7 dias',
+      }
+    }
+
+    if (periodFilter === 'month') {
+      const monthStart = getOperationalMonthStart(now)
+      return {
+        type: 'month' as const,
+        start: monthStart.timestamp,
+        end: opWindow.end,
+        startPbString: monthStart.pbString,
+        endPbString: opWindow.endPbString,
+        label: 'Este Mês',
+      }
+    }
+
+    if (periodFilter === 'custom') {
+      const startStr = customStartDate || defaultCustomDates.startDate
+      const endStr = customEndDate || defaultCustomDates.endDate
+      const win = getCustomOperationalWindow(startStr, endStr)
+      if (win) {
+        return {
+          type: 'custom' as const,
+          start: win.start,
+          end: win.end,
+          startPbString: win.startPbString,
+          endPbString: win.endPbString,
+          label: `${startStr} a ${endStr}`,
+        }
+      }
+      return null
+    }
+
+    return {
+      type: 'all' as const,
+      start: 0,
+      end: Infinity,
+      startPbString: undefined,
+      endPbString: undefined,
+      label: 'Todo Histórico',
+    }
+  }, [periodFilter, customStartDate, customEndDate, defaultCustomDates])
   const [officialSettings, setOfficialSettings] = useState<AppSettingsRecord | null>(settings)
 
   // Assegurar que settings venha do global_settings oficial, nunca sintetizado/vazio
@@ -145,8 +231,43 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   React.useEffect(() => {
     if (isOpen) {
       setPeriodFilter(initialPeriodFilter)
+      if (!customStartDate) setCustomStartDate(defaultCustomDates.startDate)
+      if (!customEndDate) setCustomEndDate(defaultCustomDates.endDate)
+      setCustomDateError(null)
     }
-  }, [isOpen, initialPeriodFilter])
+  }, [isOpen, initialPeriodFilter, defaultCustomDates, customStartDate, customEndDate])
+
+  // Validação dinâmica das datas personalizadas
+  const validateAndSetDates = (newStart: string, newEnd: string) => {
+    setCustomStartDate(newStart)
+    setCustomEndDate(newEnd)
+
+    if (!newStart || !newEnd) {
+      setCustomDateError('Selecione as datas de início e fim.')
+      return
+    }
+
+    const win = getCustomOperationalWindow(newStart, newEnd)
+    if (!win) {
+      if (newStart > newEnd) {
+        setCustomDateError('Data inicial não pode ser posterior à data final.')
+      } else {
+        setCustomDateError('Intervalo de datas inválido.')
+      }
+      return
+    }
+
+    // Verificar se a data inicial ou final é muito futura
+    const now = new Date()
+    const currentOpWindow = getOperationalWindow(now)
+    // Permite até o fim do dia operacional de hoje ou alguns dias à frente com aviso suave
+    if (win.start > currentOpWindow.end + 24 * 60 * 60 * 1000) {
+      setCustomDateError('A data inicial é futura. Não há entregas previstas neste período.')
+      return
+    }
+
+    setCustomDateError(null)
+  }
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedItemForDetails, setSelectedItemForDetails] =
@@ -165,19 +286,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     let startDate: string | undefined
     let endDate: string | undefined
 
-    const now = new Date()
-    const opWindow = getOperationalWindow(now)
-    if (periodFilter === 'today') {
-      startDate = opWindow.startPbString
-      endDate = opWindow.endPbString
-    } else if (periodFilter === 'week') {
-      const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-      startDate = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
-      endDate = opWindow.endPbString
-    } else if (periodFilter === 'month') {
-      const monthStart = getOperationalMonthStart(now)
-      startDate = monthStart.pbString
-      endDate = opWindow.endPbString
+    if (activeOperationalWindow) {
+      startDate = activeOperationalWindow.startPbString
+      endDate = activeOperationalWindow.endPbString
     }
 
     // Buscar locations do entregador do período selecionado (sem fallback irrestrito que infla o período)
@@ -223,7 +334,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     return () => {
       isMounted = false
     }
-  }, [isOpen, courier?.id, periodFilter, externalLocations])
+  }, [isOpen, courier?.id, activeOperationalWindow, externalLocations])
 
   const allLocations = useMemo(() => {
     if (fetchedLocations && fetchedLocations.length > 0) {
@@ -488,19 +599,29 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   const filteredItems = useMemo(() => {
     const now = new Date()
 
-    const opWindow = getOperationalWindow(now)
-
     return historyItems.filter((item) => {
       // Filtro de período (respeitando fuso America/Sao_Paulo e janela operacional)
+      const ts = item.dateObj.getTime()
       if (periodFilter === 'today') {
-        const ts = item.dateObj.getTime()
-        if (ts < opWindow.start || ts > opWindow.end) return false
+        if (
+          !activeOperationalWindow ||
+          ts < activeOperationalWindow.start ||
+          ts > activeOperationalWindow.end
+        ) {
+          return false
+        }
       } else if (periodFilter === 'week') {
-        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-        if (item.dateObj.getTime() < sevenDaysAgoStart) return false
+        if (!activeOperationalWindow || ts < activeOperationalWindow.start) {
+          return false
+        }
       } else if (periodFilter === 'month') {
         const isCurrentMonth = isCurrentMonthInTz(item.dateObj, now)
         if (!isCurrentMonth) return false
+      } else if (periodFilter === 'custom') {
+        if (!activeOperationalWindow) return false
+        if (ts < activeOperationalWindow.start || ts > activeOperationalWindow.end) {
+          return false
+        }
       }
 
       // Filtro de status
@@ -526,7 +647,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
       return true
     })
-  }, [historyItems, periodFilter, statusFilter, searchQuery])
+  }, [historyItems, periodFilter, activeOperationalWindow, statusFilter, searchQuery])
 
   // Totais do período filtrado com CARRY-OVER contínuo e agregação de conjuntas
   const metricsSummary = useMemo(() => {
@@ -546,18 +667,26 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
       if (periodFilter === 'all') return true
       const advRaw = a.date || a.created
-      const opWindow = getOperationalWindow(now)
+      const parsedAdvTs = parseSafeTimestamp(advRaw) || 0
+
       if (periodFilter === 'today') {
-        const advTs = parseSafeTimestamp(advRaw) || Date.now()
-        return advTs >= opWindow.start && advTs <= opWindow.end
+        if (!activeOperationalWindow) return false
+        return (
+          parsedAdvTs >= activeOperationalWindow.start && parsedAdvTs <= activeOperationalWindow.end
+        )
       }
       if (periodFilter === 'week') {
-        const ts = parseSafeTimestamp(advRaw) || 0
-        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-        return ts >= sevenDaysAgoStart
+        if (!activeOperationalWindow) return false
+        return parsedAdvTs >= activeOperationalWindow.start
       }
       if (periodFilter === 'month') {
         return isCurrentMonthInTz(advRaw, now)
+      }
+      if (periodFilter === 'custom') {
+        if (!activeOperationalWindow) return false
+        return (
+          parsedAdvTs >= activeOperationalWindow.start && parsedAdvTs <= activeOperationalWindow.end
+        )
       }
       return true
     })
@@ -628,6 +757,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   }, [
     allCourierAdvances,
     periodFilter,
+    activeOperationalWindow,
     filteredItems,
     carryOverBalance,
     fuelParams,
@@ -824,7 +954,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 <span className="font-semibold uppercase tracking-wider text-[10px]">
                   {periodFilter === 'today'
                     ? 'KM Oficial do Dia (Auditoria de KM)'
-                    : 'KM Oficial do Período (Auditoria de KM)'}
+                    : periodFilter === 'custom'
+                      ? 'KM Oficial Personalizado (Auditoria de KM)'
+                      : 'KM Oficial do Período (Auditoria de KM)'}
                 </span>
                 <Navigation className="h-4 w-4 text-[#FF6B35]" />
               </div>
@@ -960,7 +1092,15 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
               {/* Filtro Período */}
               <Select
                 value={periodFilter}
-                onValueChange={(v: 'all' | 'today' | 'week' | 'month') => setPeriodFilter(v)}
+                onValueChange={(v: 'all' | 'today' | 'week' | 'month' | 'custom') => {
+                  setPeriodFilter(v)
+                  if (v === 'custom' && (!customStartDate || !customEndDate)) {
+                    validateAndSetDates(
+                      customStartDate || defaultCustomDates.startDate,
+                      customEndDate || defaultCustomDates.endDate,
+                    )
+                  }
+                }}
               >
                 <SelectTrigger className="h-8 w-36 text-xs bg-[#0E1738] border-[#1E2B58] text-white">
                   <Calendar className="h-3.5 w-3.5 mr-1.5 text-[#60A5FA]" />
@@ -971,6 +1111,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                   <SelectItem value="today">Hoje</SelectItem>
                   <SelectItem value="week">Últimos 7 dias</SelectItem>
                   <SelectItem value="month">Este Mês</SelectItem>
+                  <SelectItem value="custom">Personalizado</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -1001,6 +1142,58 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
               />
             </div>
           </div>
+
+          {/* PAINEL DE PERÍODO PERSONALIZADO (DE / ATÉ) */}
+          {periodFilter === 'custom' && (
+            <div className="p-3 rounded-xl bg-[#0A1128] border border-[#1E2B58] space-y-2">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-300">De:</span>
+                  <Input
+                    type="date"
+                    value={customStartDate || defaultCustomDates.startDate}
+                    onChange={(e) =>
+                      validateAndSetDates(
+                        e.target.value,
+                        customEndDate || defaultCustomDates.endDate,
+                      )
+                    }
+                    className="h-8 w-36 text-xs bg-[#0E1738] border-[#1E2B58] text-white rounded-lg focus-visible:ring-1 focus-visible:ring-[#60A5FA]"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-300">Até:</span>
+                  <Input
+                    type="date"
+                    value={customEndDate || defaultCustomDates.endDate}
+                    onChange={(e) =>
+                      validateAndSetDates(
+                        customStartDate || defaultCustomDates.startDate,
+                        e.target.value,
+                      )
+                    }
+                    className="h-8 w-36 text-xs bg-[#0E1738] border-[#1E2B58] text-white rounded-lg focus-visible:ring-1 focus-visible:ring-[#60A5FA]"
+                  />
+                </div>
+
+                <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <Info className="h-3.5 w-3.5 text-[#60A5FA]" />
+                  <span>
+                    Janela operacional oficial: 05:00 do 1º dia às 23:59:59 do último dia (Horário
+                    de Brasília)
+                  </span>
+                </span>
+              </div>
+
+              {customDateError && (
+                <div className="flex items-center gap-1.5 text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2.5 py-1.5 rounded-lg">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span>{customDateError}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* TABELA DETALHADA DE HISTÓRICO DE CADA ENTREGA */}
           <div className="rounded-xl border border-[#1E2B58] bg-[#0E1738] overflow-hidden shadow-sm">
