@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T12:20:16.824Z",
+  "generatedAt": "2026-10-04T12:56:35.532Z",
   "collections": [
     {
       "name": "users",
@@ -262,10 +262,10 @@
       "name": "orders",
       "type": "base",
       "apiRules": {
-        "list": "((@request.query.tracking_code != \"\" && tracking_code = @request.query.tracking_code)) || (@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true)) && (@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'seller' && seller_id = @request.auth.id) || (@request.auth.role = 'courier' && courier_id = @request.auth.id)))",
-        "view": "(tracking_code != \"\") || (@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true)) && (@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'seller' && seller_id = @request.auth.id) || (@request.auth.role = 'courier' && courier_id = @request.auth.id)))",
-        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= @request.body.empresa_id && @collection.membros.ativo ?= true))",
-        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true)) && (@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'seller' && seller_id = @request.auth.id) || (@request.auth.role = 'courier' && courier_id = @request.auth.id))",
+        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'courier' && courier_id = @request.auth.id) || (@request.auth.role = 'seller' && seller_id = @request.auth.id))",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'courier' && courier_id = @request.auth.id) || (@request.auth.role = 'seller' && seller_id = @request.auth.id))",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || @request.auth.role = 'seller')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'seller' && seller_id = @request.auth.id) || (@request.auth.role = 'courier' && courier_id = @request.auth.id))",
         "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true)))"
       },
       "fields": [
@@ -656,10 +656,10 @@
       "name": "locations",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || user_id = @request.auth.id)",
-        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || user_id = @request.auth.id)",
-        "create": "@request.auth.id != '' && (@request.auth.id = @request.body.user_id || @request.auth.role = 'master' || @request.auth.role = 'admin')",
-        "update": "@request.auth.id != '' && (user_id = @request.auth.id || @request.auth.role = 'master' || @request.auth.role = 'admin')",
+        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || @request.auth.id = user_id)",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || @request.auth.id = user_id)",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || user_id = @request.auth.id)",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || user_id = @request.auth.id)",
         "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')"
       },
       "fields": [
@@ -924,10 +924,10 @@
       "name": "fuel_advances",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || courier_id = @request.auth.id || created_by = @request.auth.id || @request.auth.role = 'admin')",
-        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || courier_id = @request.auth.id || created_by = @request.auth.id || @request.auth.role = 'admin')",
-        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || @request.auth.role = 'superadmin')",
-        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || @request.auth.role = 'superadmin')",
+        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'courier' && courier_id = @request.auth.id))",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin' || (@request.auth.role = 'courier' && courier_id = @request.auth.id))",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')",
         "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')"
       },
       "fields": [
@@ -2301,11 +2301,11 @@
       "name": "route_km_approvals",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '' || empresa_id = null)",
-        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '' || empresa_id = null)",
-        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= @request.body.empresa_id && @collection.membros.ativo ?= true) || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || @request.body.empresa_id = '' || @request.body.empresa_id = null || empresa_id = '' || empresa_id = null)) || (@request.auth.role = 'courier' && (@request.body.courier_id = @request.auth.id || courier_id = @request.auth.id)))",
-        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || (@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= @request.body.empresa_id && @collection.membros.ativo ?= true) || empresa_id = '' || empresa_id = null)))",
-        "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || (@request.auth.role = 'admin' && ((@collection.membros.user_id ?= @request.auth.id && @collection.membros.empresa_id ?= empresa_id && @collection.membros.ativo ?= true) || empresa_id = '' || empresa_id = null)))"
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')",
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')"
       },
       "fields": [
         {
@@ -2448,6 +2448,100 @@
         "CREATE INDEX idx_route_km_approvals_courier ON route_km_approvals (courier_id)",
         "CREATE INDEX idx_route_km_approvals_empresa ON route_km_approvals (empresa_id)",
         "CREATE INDEX idx_route_km_approvals_batch ON route_km_approvals (route_batch_key)"
+      ]
+    },
+    {
+      "name": "audit_trail",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')",
+        "view": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')",
+        "create": "@request.auth.id != ''",
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "user_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "collection",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "record_id",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "action",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "field",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "old_value",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "new_value",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "timestamp",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "metadata",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_audit_trail_coll_record ON audit_trail (collection, record_id)",
+        "CREATE INDEX idx_audit_trail_courier ON audit_trail (courier_id)",
+        "CREATE INDEX idx_audit_trail_created ON audit_trail (created DESC)"
       ]
     }
   ]
