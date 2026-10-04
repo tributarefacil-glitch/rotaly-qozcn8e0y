@@ -66,10 +66,14 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
   const jointSavedKmNum = Number(metrics?.jointSavedKm) || 0
   const jointSavedFuelCostNum = Number(metrics?.jointSavedFuelCost) || 0
 
-  // Saldo final oficial: Abertura + Adiantamentos pós-corte + Ajustes pós-corte − Gasto motor
-  const balanceNum = Number(
-    (openingBalanceNum + periodAdvancesNum + periodAdjustmentsNum - totalSpentNum).toFixed(2),
-  )
+  // Saldo canônico oficial do motor de conta corrente: SEMPRE período-independente
+  // Usa o metrics.balance oficial calculado pelo motor
+  const balanceNum =
+    typeof metrics?.balance === 'number'
+      ? metrics.balance
+      : Number(
+          (openingBalanceNum + periodAdvancesNum + periodAdjustmentsNum - totalSpentNum).toFixed(2),
+        )
 
   const pricePerLiterNum = Number(metrics?.pricePerLiter) || 0
   const consumptionKmlNum = Number(metrics?.consumptionKml) || 1

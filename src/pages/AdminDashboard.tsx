@@ -3779,7 +3779,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[#002855] font-mono font-bold">
-                    v0.0.325
+                    v0.0.326
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">
@@ -4376,36 +4376,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         courier={selectedCourierForHistory}
         fuelAccount={
           selectedCourierForHistory
-            ? (() => {
-                const existing = currentFuelAccounts.find(
-                  (a) => a && a.courier && a.courier.id === selectedCourierForHistory.id,
-                )
-                const courierAdv = fuelAdvances.filter(
-                  (a) => a && a.courier_id === selectedCourierForHistory.id,
-                )
-                const totalAdv = courierAdv.reduce((sum, a) => sum + (Number(a?.amount) || 0), 0)
-                if (existing) {
-                  const existingTotalAdv = Number(existing.totalAdvances) || 0
-                  const effectiveAdv = existingTotalAdv > 0 ? existingTotalAdv : totalAdv
-                  const existingTotalSpent = Number(existing.totalSpent) || 0
-                  return {
-                    ...existing,
-                    advances: existing.advances?.length ? existing.advances : courierAdv,
-                    totalAdvances: effectiveAdv,
-                    balance: Number((effectiveAdv - existingTotalSpent).toFixed(2)),
-                  }
-                }
-                return {
-                  courier: selectedCourierForHistory,
-                  totalRouteKm: 0,
-                  totalSpent: 0,
-                  totalAdvances: totalAdv,
-                  balance: totalAdv,
-                  advanceCount: courierAdv.length,
-                  deliveriesCount: 0,
-                  advances: courierAdv,
-                }
-              })()
+            ? currentFuelAccounts.find(
+                (a) => a && a.courier && a.courier.id === selectedCourierForHistory.id,
+              ) || null
             : null
         }
         orders={activeFuelOrdersPool}

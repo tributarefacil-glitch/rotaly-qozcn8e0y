@@ -199,16 +199,30 @@ export function calculateCourierFuelMetrics(params: {
   const openingBalance =
     typeof courier.opening_balance === 'number' ? courier.opening_balance : (carryOverBalance ?? 0)
 
-  // 1. Filtrar adiantamentos do entregador
-  // Regra de Cancelamento/Estorno: adiantamentos com status = 'cancelled' NÃO entram na soma de adiantamentos nem no saldo
-  const courierAdvances = advances.filter((a) => {
+  // 1. Adiantamentos e Ajustes pós-corte ESTRITOS (com data civil no fuso America/Sao_Paulo via isAdvancePostCutoff):
+  // Itens pré-corte (data civil < cutoffDate) NUNCA entram na lista pós-corte nem no saldo, pois já estão
+  // estritamente embutidos no opening_balance.
+  const allPostCutoffAdvances = advances.filter((a) => {
     if (a.courier_id !== courier.id) return false
     if (a.status === 'cancelled') return false
-
-    // Somente adiantamentos criados a partir da data de corte entram nos adiantamentos pós-corte
-    // Adiantamentos anteriores já estão consolidados dentro do opening_balance (se houver corte)
     if (hasCutoff && !isAdvancePostCutoff(a.date || a.created, cutoffDateStr)) return false
+    return true
+  })
 
+  // Totais pós-corte consolidados (período-independentes, para apurar o Saldo canônico):
+  let totalPostCutoffAdvances = 0
+  let totalPostCutoffAdjustments = 0
+  allPostCutoffAdvances.forEach((a) => {
+    const val = Number(a.amount) || 0
+    if (a.entry_type === 'balance_adjustment') {
+      totalPostCutoffAdjustments += val
+    } else {
+      totalPostCutoffAdvances += val
+    }
+  })
+
+  // Parcelas do período selecionado (meramente informativas, para exibir adiantamentos do período):
+  const periodFilteredAdvances = allPostCutoffAdvances.filter((a) => {
     if (periodFilter === 'all') return true
 
     const advRaw = a.date || a.created
@@ -230,7 +244,7 @@ export function calculateCourierFuelMetrics(params: {
 
   let periodAdvances = 0
   let periodAdjustments = 0
-  courierAdvances.forEach((a) => {
+  periodFilteredAdvances.forEach((a) => {
     const val = Number(a.amount) || 0
     if (a.entry_type === 'balance_adjustment') {
       periodAdjustments += val
@@ -239,7 +253,8 @@ export function calculateCourierFuelMetrics(params: {
     }
   })
 
-  const totalAdvances = periodAdvances + periodAdjustments
+  // totalAdvances do objeto reflete os movimentos pós-corte totais consolidados
+  const totalAdvances = totalPostCutoffAdvances + totalPostCutoffAdjustments
 
   // 2. Filtrar telemetria e ocorrências do entregador
   const baseLatFallback = activeBaseCoords?.lat ?? -22.7001402
@@ -726,9 +741,64 @@ export function calculateCourierFuelMetrics(params: {
     totalSpent = Number(orderCalculations.reduce((acc, c) => acc + c.fuelCost, 0).toFixed(2))
   }
 
-  // FÓRMULA ÚNICA DO SALDO:
-  // Saldo = opening_balance (fixo) + adiantamentos do período (pós-corte) + ajustes do período − gasto oficial do motor
-  const balance = Number((openingBalance + totalAdvances - totalSpent).toFixed(2))
+  // GASTO PÓS-CORTE CANÔNICO PARA O SALDO:
+  // O saldo é SEMPRE período-independente: opening_balance + totalPostCutoffAdvances − totalPostCutoffSpent.
+  // Gasto pós-corte: pedidos elegíveis com timestamp >= cutoffTime calculados com periodFilter 'all'.
+  let postCutoffSpent = 0
+  if (!isBicycle) {
+    if (!hasCutoff) {
+      if (periodFilter === 'all') {
+        postCutoffSpent = totalSpent
+      } else {
+        const allMetrics = calculateCourierFuelMetrics({
+          courier,
+          advances: allPostCutoffAdvances,
+          orders: allCourierOrders,
+          locations,
+          offRouteEvents,
+          settings,
+          periodFilter: 'all',
+          carryOverBalance: openingBalance,
+          approvalsMap,
+          activeBaseCoords,
+        })
+        postCutoffSpent = allMetrics.totalSpent
+      }
+    } else {
+      const postCutoffOrders = allCourierOrders.filter((o) => {
+        const orderDateVal = o.route_finished_at || o.actual_arrival || o.created
+        const orderTs = new Date(orderDateVal).getTime()
+        return orderTs >= cutoffTime
+      })
+
+      if (postCutoffOrders.length > 0) {
+        const postCutoffMetrics = calculateCourierFuelMetrics({
+          courier,
+          advances: allPostCutoffAdvances,
+          orders: postCutoffOrders,
+          locations,
+          offRouteEvents,
+          settings,
+          periodFilter: 'all',
+          carryOverBalance: openingBalance,
+          approvalsMap,
+          activeBaseCoords,
+        })
+        postCutoffSpent = postCutoffMetrics.totalSpent
+      }
+    }
+  }
+
+  // FÓRMULA ÚNICA E INVARIANTE DO SALDO:
+  // Saldo = opening_balance (fixo) + adiantamentos pós-corte + ajustes pós-corte − gasto pós-corte
+  const balance = Number(
+    (
+      openingBalance +
+      totalPostCutoffAdvances +
+      totalPostCutoffAdjustments -
+      postCutoffSpent
+    ).toFixed(2),
+  )
   const calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
   const calculationSourceLabel = 'Trajeto Viário Oficial'
 
@@ -738,9 +808,9 @@ export function calculateCourierFuelMetrics(params: {
     totalRouteKm: Number(totalOfficialKm.toFixed(1)),
     totalSpent: Number(totalSpent.toFixed(2)),
     balance: Number(balance.toFixed(2)),
-    advanceCount: courierAdvances.length,
+    advanceCount: allPostCutoffAdvances.length,
     deliveriesCount: eligibleOrders.length,
-    advances: courierAdvances,
+    advances: allPostCutoffAdvances,
     openingBalance: Number(openingBalance.toFixed(2)),
     cutoffDate: cutoffDateStr,
     periodAdvances: Number(periodAdvances.toFixed(2)),
@@ -757,7 +827,7 @@ export function calculateCourierFuelMetrics(params: {
     totalDeviationKm: Number(totalDeviationKm.toFixed(1)),
     totalOdometerKm: Number(totalOdometerKm.toFixed(1)),
     totalLiters: Number(totalLiters.toFixed(2)),
-    advanceCount: courierAdvances.length,
+    advanceCount: allPostCutoffAdvances.length,
     deliveriesCount: eligibleOrders.length,
     pricePerLiter,
     consumptionKml,
