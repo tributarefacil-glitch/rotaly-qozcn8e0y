@@ -339,9 +339,12 @@ export function calculateCourierFuelMetrics(params: {
   // Regra B: Deduplicação por rota: dentro de um mesmo entregador, pedidos que compartilham a mesma rota
   // (mesmo route_started_at + route_finished_at, ou mesmo start_base + janela de tempo)
   // devem ter o km/combustível da rota contado UMA VEZ só, não por pedido.
+  // Truncar ao minuto e tolerância para evitar que pequenas dessincronizações de segundos separem lotes
   const getRouteBatchKey = (o: OrderRecord): string => {
     if (o.route_started_at && o.route_finished_at) {
-      return `route_${o.route_started_at}_${o.route_finished_at}`
+      const startMin = Math.floor(new Date(o.route_started_at).getTime() / 60000)
+      const finishMin = Math.floor(new Date(o.route_finished_at).getTime() / 60000)
+      return `route_m_${startMin}_${finishMin}`
     }
     if (o.route_started_at) {
       const oTime = new Date(o.route_started_at).getTime()
@@ -358,7 +361,31 @@ export function calculateCourierFuelMetrics(params: {
   eligibleOrders.forEach((o) => {
     let assignedKey: string | null = null
     if (o.route_started_at && o.route_finished_at) {
-      assignedKey = `route_${o.route_started_at}_${o.route_finished_at}`
+      const oStartMs = new Date(o.route_started_at).getTime()
+      const oFinishMs = new Date(o.route_finished_at).getTime()
+
+      // Verificar se já existe um lote cujos timestamps estejam dentro de 2 minutos de tolerância
+      for (const existingKey of routeBatches.keys()) {
+        if (existingKey.startsWith('route_m_')) {
+          const parts = existingKey.replace('route_m_', '').split('_')
+          if (parts.length === 2) {
+            const exStartMs = Number(parts[0]) * 60000
+            const exFinishMs = Number(parts[1]) * 60000
+            if (
+              Math.abs(oStartMs - exStartMs) <= 2 * 60 * 1000 &&
+              Math.abs(oFinishMs - exFinishMs) <= 2 * 60 * 1000
+            ) {
+              assignedKey = existingKey
+              break
+            }
+          }
+        }
+      }
+      if (!assignedKey) {
+        const startMin = Math.floor(oStartMs / 60000)
+        const finishMin = Math.floor(oFinishMs / 60000)
+        assignedKey = `route_m_${startMin}_${finishMin}`
+      }
     } else if (o.route_started_at) {
       const oTime = new Date(o.route_started_at).getTime()
       for (const existingKey of routeBatches.keys()) {

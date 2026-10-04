@@ -4088,9 +4088,12 @@ export const deliveryService = {
     }
 
     // 5. Criar registro em route_km_approvals
+    // Arredondar timestamps ao minuto para evitar que pedidos da mesma rota com segundos divergentes se separem
     let batchKey = 'single_' + order.id
     if (order.route_started_at && order.route_finished_at) {
-      batchKey = `route_${order.route_started_at}_${order.route_finished_at}`
+      const startMin = Math.floor(new Date(order.route_started_at).getTime() / 60000)
+      const finishMin = Math.floor(new Date(order.route_finished_at).getTime() / 60000)
+      batchKey = `route_m_${startMin}_${finishMin}`
     } else if (order.route_started_at) {
       batchKey = `batch_${Math.floor(new Date(order.route_started_at).getTime() / (15 * 60 * 1000))}`
     }

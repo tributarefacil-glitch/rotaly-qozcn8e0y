@@ -270,11 +270,13 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         const dateObj = new Date(dateRaw)
         const dateStr = dateObj.toLocaleDateString('pt-BR')
 
-        // Identificação de lote
+        // Identificação de lote com arredondamento ao minuto
         let bKey = 'single_' + order.id
         let batchDisplay = 'Avulso'
         if (order.route_started_at && order.route_finished_at) {
-          bKey = `route_${order.route_started_at}_${order.route_finished_at}`
+          const startMin = Math.floor(new Date(order.route_started_at).getTime() / 60000)
+          const finishMin = Math.floor(new Date(order.route_finished_at).getTime() / 60000)
+          bKey = `route_m_${startMin}_${finishMin}`
           batchDisplay = `Rota ${new Date(order.route_started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
         } else if (order.route_started_at) {
           bKey = `batch_${Math.floor(new Date(order.route_started_at).getTime() / (15 * 60 * 1000))}`

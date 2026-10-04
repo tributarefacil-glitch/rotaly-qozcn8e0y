@@ -60,6 +60,7 @@ import { deliveryService } from '@/services/deliveryService'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import {
   formatPbTimestamp,
+  getCivilPartsInTz,
   getOperationalWindow,
   getOperationalMonthStart,
   isCurrentMonthInTz,
@@ -350,21 +351,22 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       let totalMins = 0
       let timeCount = 0
       courierOrders.forEach((o) => {
-        if (o.estimated_duration_minutes) {
+        if (o.estimated_duration_minutes && o.estimated_duration_minutes > 0) {
           totalMins += o.estimated_duration_minutes
           timeCount++
         } else if (o.created && o.actual_arrival) {
           const diffMs = new Date(o.actual_arrival).getTime() - new Date(o.created).getTime()
-          const diffMins = Math.max(10, Math.min(180, Math.round(diffMs / 60000)))
-          totalMins += diffMins
-          timeCount++
+          if (diffMs > 0) {
+            const diffMins = Math.max(1, Math.min(300, Math.round(diffMs / 60000)))
+            totalMins += diffMins
+            timeCount++
+          }
         }
       })
-      const avgTimeMinutes = timeCount > 0 ? Math.round(totalMins / timeCount) : 28
+      const avgTimeMinutes: number | null = timeCount > 0 ? Math.round(totalMins / timeCount) : null
 
-      // Simulated rating based on success rate (from 4.5 to 5.0)
-      const baseRating = 4.2 + (successRate / 100) * 0.8
-      const rating = Math.min(5.0, Math.max(3.8, parseFloat(baseRating.toFixed(1))))
+      // Sem rating simulado: se não houver avaliação real gravada no banco, rating é nulo
+      const rating: number | null = null
 
       return {
         courier,
@@ -730,17 +732,21 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     filteredOrders.forEach((o) => {
       // Estimated or actual duration
       let dur = o.estimated_duration_minutes
-      if (!dur && o.created && o.actual_arrival) {
+      if ((dur === undefined || dur === null || dur <= 0) && o.created && o.actual_arrival) {
         const diff = new Date(o.actual_arrival).getTime() - new Date(o.created).getTime()
-        dur = Math.round(diff / 60000)
+        if (diff > 0) {
+          dur = Math.round(diff / 60000)
+        }
       }
       if (dur && dur > 0 && dur < 300) {
         times.push(dur)
       }
 
-      // Hour of delivery
-      if (o.created) {
-        const hour = new Date(o.created).getHours()
+      // Hour of delivery no fuso de Brasília (America/Sao_Paulo)
+      const orderDate = o.route_started_at || o.created
+      if (orderDate) {
+        const civilParts = getCivilPartsInTz(orderDate)
+        const hour = civilParts.hour
         if (hourlyCounts[hour] !== undefined) {
           hourlyCounts[hour]++
         } else {
@@ -750,12 +756,12 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
     })
 
     const avgTime =
-      times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : 32
-    const minTime = times.length > 0 ? Math.min(...times) : 12
-    const maxTime = times.length > 0 ? Math.max(...times) : 65
+      times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null
+    const minTime = times.length > 0 ? Math.min(...times) : null
+    const maxTime = times.length > 0 ? Math.max(...times) : null
 
-    // Find peak hour
-    let peakHour = 14
+    // Find peak hour (apenas se houver pedidos contabilizados nas horas)
+    let peakHour: number | null = null
     let maxHourCount = 0
     Object.entries(hourlyCounts).forEach(([h, cnt]) => {
       if (cnt > maxHourCount) {
@@ -768,7 +774,8 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       avgTime,
       minTime,
       maxTime,
-      peakHour: `${peakHour}:00 - ${peakHour + 1}:00`,
+      peakHour:
+        peakHour !== null && maxHourCount > 0 ? `${peakHour}:00 - ${peakHour + 1}:00` : null,
       hourlyCounts,
     }
   }, [filteredOrders])
@@ -791,14 +798,15 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
       totalDeliveries += item.deliveredCount
     })
 
-    const costPerKm = totalKm > 0 ? totalCost / totalKm : 0.19
-    const avgCostPerDelivery = totalDeliveries > 0 ? totalCost / totalDeliveries : 0
+    const costPerKm = totalKm > 0 ? totalCost / totalKm : null
+    const avgCostPerDelivery = totalDeliveries > 0 ? totalCost / totalDeliveries : null
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
-      costPerKm: Number(costPerKm.toFixed(2)),
+      costPerKm: costPerKm !== null ? Number(costPerKm.toFixed(2)) : null,
       totalCost: Number(totalCost.toFixed(2)),
-      avgCostPerDelivery: Number(avgCostPerDelivery.toFixed(2)),
+      avgCostPerDelivery:
+        avgCostPerDelivery !== null ? Number(avgCostPerDelivery.toFixed(2)) : null,
       activeRouteOrdersCount: totalDeliveries,
     }
   }, [fuelAndKmByCourier])
@@ -1196,22 +1204,26 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-lg bg-gray-50 border">
                 <span className="text-gray-500 block">Tempo Médio:</span>
-                <span className="text-xl font-bold text-blue-600">{timeAnalysis.avgTime} min</span>
+                <span className="text-xl font-bold text-blue-600">
+                  {timeAnalysis.avgTime !== null ? `${timeAnalysis.avgTime} min` : '—'}
+                </span>
               </div>
               <div className="p-3 rounded-lg bg-gray-50 border">
                 <span className="text-gray-500 block">Horário de Pico:</span>
-                <span className="text-sm font-bold text-indigo-700">{timeAnalysis.peakHour}</span>
+                <span className="text-sm font-bold text-indigo-700">
+                  {timeAnalysis.peakHour ?? 'Sem dados'}
+                </span>
               </div>
               <div className="p-3 rounded-lg bg-gray-50 border">
                 <span className="text-gray-500 block">Tempo Mínimo:</span>
                 <span className="text-base font-bold text-emerald-600">
-                  {timeAnalysis.minTime} min
+                  {timeAnalysis.minTime !== null ? `${timeAnalysis.minTime} min` : '—'}
                 </span>
               </div>
               <div className="p-3 rounded-lg bg-gray-50 border">
                 <span className="text-gray-500 block">Tempo Máximo:</span>
                 <span className="text-base font-bold text-amber-600">
-                  {timeAnalysis.maxTime} min
+                  {timeAnalysis.maxTime !== null ? `${timeAnalysis.maxTime} min` : '—'}
                 </span>
               </div>
             </div>
@@ -1258,7 +1270,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
               <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-100">
                 <span className="text-gray-500 block">Custo Médio / Entrega:</span>
                 <span className="text-xl font-bold text-emerald-700">
-                  R$ {costAnalysis.avgCostPerDelivery.toFixed(2)}
+                  {costAnalysis.avgCostPerDelivery !== null
+                    ? `R$ ${costAnalysis.avgCostPerDelivery.toFixed(2)}`
+                    : '—'}
                 </span>
               </div>
               <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-100">
@@ -1274,7 +1288,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
               <div className="p-3 rounded-lg bg-gray-50 border">
                 <span className="text-gray-500 block">Custo por Km Rodado:</span>
                 <span className="text-base font-bold text-gray-800">
-                  R$ {costAnalysis.costPerKm.toFixed(2)}/km
+                  {costAnalysis.costPerKm !== null
+                    ? `R$ ${costAnalysis.costPerKm.toFixed(2)}/km`
+                    : '—'}
                 </span>
               </div>
             </div>
@@ -2114,7 +2130,7 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
                       <td className="py-3 px-4 font-mono text-gray-700">
                         {order.estimated_duration_minutes
                           ? `${order.estimated_duration_minutes} min`
-                          : '~25 min'}
+                          : '—'}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
                         R$ {cost.toFixed(2)}
