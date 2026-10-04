@@ -76,6 +76,9 @@ const CustomerAddressAuditModal = lazy(() =>
 const KmAuditReport = lazy(() =>
   import('@/components/KmAuditReport').then((m) => ({ default: m.KmAuditReport })),
 )
+const AuditTrailSection = lazy(() =>
+  import('@/components/AuditTrailSection').then((m) => ({ default: m.AuditTrailSection })),
+)
 
 function SectionSkeleton() {
   return (
@@ -91,7 +94,7 @@ function SectionSkeleton() {
 }
 import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
 import { FuelAdvanceModal } from '@/components/FuelAdvanceModal'
-import { Globe, KeyRound, Lock } from 'lucide-react'
+import { Globe, KeyRound, Lock, ShieldAlert } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { useAuth } from '@/contexts/AuthContext'
@@ -154,6 +157,7 @@ interface AdminDashboardProps {
     | 'fuel'
     | 'km-audit'
     | 'deviations'
+    | 'audit-trail'
     | 'settings'
     | 'site-content'
     | 'couriers'
@@ -192,6 +196,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'fuel'
     | 'km-audit'
     | 'deviations'
+    | 'audit-trail'
     | 'settings'
     | 'site-content'
     | 'couriers'
@@ -206,6 +211,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'fuel'
     | 'km-audit'
     | 'deviations'
+    | 'audit-trail'
     | 'settings'
     | 'site-content'
     | 'couriers'
@@ -224,6 +230,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         'fuel',
         'km-audit',
         'deviations',
+        'audit-trail',
         'settings',
         'site-content',
         'couriers',
@@ -1455,6 +1462,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     | 'fuel'
                     | 'km-audit'
                     | 'deviations'
+                    | 'audit-trail'
                     | 'settings'
                     | 'site-content'
                     | 'couriers'
@@ -1506,6 +1514,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 >
                   <AlertTriangle className="h-3.5 w-3.5 mr-1.5 text-amber-500" />
                   Desvios &amp; Paradas ({offRouteEvents.length})
+                </TabsTrigger>
+                <TabsTrigger
+                  value="audit-trail"
+                  className="text-xs font-semibold text-slate-700 data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg"
+                >
+                  <ShieldAlert className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
+                  Trilha de Auditoria
                 </TabsTrigger>
                 <TabsTrigger
                   value="settings"
@@ -2068,6 +2083,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     settings={settings}
                     currentCompanyId={resolvedCompany?.id || currentCompany?.id}
                     onDataChange={loadData}
+                  />
+                </Suspense>
+              </TabsContent>
+
+              {/* TAB: TRILHA DE AUDITORIA GERAL (AUDIT TRAIL READ-ONLY) */}
+              <TabsContent value="audit-trail" className="space-y-6">
+                <Suspense fallback={<SectionSkeleton />}>
+                  <AuditTrailSection
+                    couriers={couriers}
+                    currentCompanyId={resolvedCompany?.id || currentCompany?.id}
                   />
                 </Suspense>
               </TabsContent>
@@ -3754,7 +3779,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[#002855] font-mono font-bold">
-                    v0.0.317
+                    v0.0.322
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">

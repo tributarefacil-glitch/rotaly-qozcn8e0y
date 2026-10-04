@@ -34,6 +34,7 @@ import type {
   RouteKmApprovalRecord,
   RouteKmApprovalStatus,
   RouteKmApprovalType,
+  AuditTrailRecord,
 } from '@/types/delivery'
 
 export const deliveryService = {
@@ -2009,10 +2010,12 @@ export const deliveryService = {
   },
 
   // Cache em memória da base ativa para evitar consultas redundantes e garantir paridade instantânea
-  _activeBaseCache: { lat: number; lng: number; name?: string; address?: string } | null = null,
-  _activeBaseCacheTime: number = 0,
+  _activeBaseCache: null as { lat: number; lng: number; name?: string; address?: string } | null,
+  _activeBaseCacheTime: 0,
 
-  async getActiveBaseCoordinate(empresaId?: string): Promise<{ lat: number; lng: number; name: string; address?: string }> {
+  async getActiveBaseCoordinate(
+    empresaId?: string,
+  ): Promise<{ lat: number; lng: number; name: string; address?: string }> {
     const now = Date.now()
     if (this._activeBaseCache && now - this._activeBaseCacheTime < 60_000) {
       return this._activeBaseCache as { lat: number; lng: number; name: string; address?: string }
@@ -2020,7 +2023,13 @@ export const deliveryService = {
     try {
       const bases = await this.getBaseAddresses(empresaId)
       const active = bases.find((b) => b.is_default) || bases[0]
-      if (active && typeof active.lat === 'number' && typeof active.lng === 'number' && !isNaN(active.lat) && !isNaN(active.lng)) {
+      if (
+        active &&
+        typeof active.lat === 'number' &&
+        typeof active.lng === 'number' &&
+        !isNaN(active.lat) &&
+        !isNaN(active.lng)
+      ) {
         this._activeBaseCache = {
           lat: active.lat,
           lng: active.lng,

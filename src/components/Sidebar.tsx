@@ -16,6 +16,7 @@ import {
   Globe,
   AlertTriangle,
   Route,
+  ShieldAlert,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
@@ -90,6 +91,13 @@ const navItems: NavItem[] = [
     icon: MapPin,
     roles: ['admin'],
     badge: 'Alertas',
+  },
+  {
+    title: 'Trilha de Auditoria',
+    href: '/admin?tab=audit-trail',
+    icon: ShieldAlert,
+    roles: ['admin'],
+    badge: 'Segurança',
   },
   {
     title: 'Relatórios & KPIs',
