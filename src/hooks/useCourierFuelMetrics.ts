@@ -302,12 +302,6 @@ export function calculateCourierFuelMetrics(params: {
   const allCourierOrders = orders.filter(isCourierEligibleOrder)
 
   const eligibleOrders = allCourierOrders.filter((o) => {
-    // REGRA DE OURO DA DATA DE CORTE:
-    // Contando SOMENTE pedidos com created >= cutoff_date.
-    // Nenhum pedido anterior à data de corte é recalculado com o motor novo.
-    const orderCreatedTs = new Date(o.created).getTime()
-    if (orderCreatedTs < cutoffTime) return false
-
     if (periodFilter === 'all') return true
 
     const oDateVal = o.route_finished_at || o.actual_arrival || o.created

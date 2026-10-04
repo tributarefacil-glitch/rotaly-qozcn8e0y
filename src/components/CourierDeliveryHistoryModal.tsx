@@ -197,13 +197,21 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     return deliveryService.getVehicleFuelParams(effectiveSettings, courier?.vehicle_type)
   }, [officialSettings, settings, courier])
 
-  // Lista consolidada de adiantamentos do entregador
+  // Lista consolidada de adiantamentos do entregador (excluindo os anteriores ao cutoff_date)
   const allCourierAdvances = useMemo(() => {
+    const cutoffDateStr = courier?.cutoff_date || '2026-10-04 16:00:00.000Z'
+    const cutoffTime = new Date(cutoffDateStr).getTime()
+
+    const isAfterCutoff = (a: FuelAdvanceRecord) => {
+      const advTs = new Date(a.date || a.created).getTime()
+      return advTs >= cutoffTime
+    }
+
     if (externalAdvances && externalAdvances.length > 0) {
-      return externalAdvances.filter((a) => a.courier_id === courier?.id)
+      return externalAdvances.filter((a) => a.courier_id === courier?.id && isAfterCutoff(a))
     }
     if (fuelAccount?.advances && fuelAccount.advances.length > 0) {
-      return fuelAccount.advances.filter((a) => a.courier_id === courier?.id)
+      return fuelAccount.advances.filter((a) => a.courier_id === courier?.id && isAfterCutoff(a))
     }
     if (fuelAccount && fuelAccount.totalAdvances > 0 && courier?.id) {
       return [
@@ -220,11 +228,14 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       ]
     }
     return []
-  }, [externalAdvances, fuelAccount, courier?.id])
+  }, [externalAdvances, fuelAccount, courier?.id, courier?.cutoff_date])
 
-  // Calcular o carryOverBalance acumulado até o mês anterior
+  // Saldo de abertura congelado: usar courier.opening_balance quando existir sem recalcular carry-over
   const carryOverBalance = useMemo(() => {
     if (!courier?.id) return 0
+    if (typeof courier.opening_balance === 'number') {
+      return courier.opening_balance
+    }
     if (fuelAccount?.carryOverBalance !== undefined) {
       return fuelAccount.carryOverBalance
     }
@@ -238,6 +249,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   }, [
     courier?.id,
     courier?.vehicle_type,
+    courier?.opening_balance,
     fuelAccount?.carryOverBalance,
     allCourierAdvances,
     orders,
@@ -464,11 +476,18 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   // Totais do período filtrado com CARRY-OVER contínuo e agregação de conjuntas
   const metricsSummary = useMemo(() => {
     const now = new Date()
+    const cutoffDateStr = courier?.cutoff_date || '2026-10-04 16:00:00.000Z'
+    const cutoffTime = new Date(cutoffDateStr).getTime()
+    const openingBal =
+      typeof courier?.opening_balance === 'number' ? courier.opening_balance : carryOverBalance
 
-    // Filtrar adiantamentos de acordo com o periodFilter (fuso America/Sao_Paulo)
-    // Ignorar cancelados
+    // Filtrar adiantamentos pós-corte de acordo com o periodFilter (fuso America/Sao_Paulo)
+    // Ignorar cancelados e movimentações anteriores ao corte
     const filteredAdvances = allCourierAdvances.filter((a) => {
       if (a.status === 'cancelled') return false
+      const advTs = new Date(a.date || a.created).getTime()
+      if (advTs < cutoffTime) return false
+
       if (periodFilter === 'all') return true
       const advRaw = a.date || a.created
       if (periodFilter === 'today') {
@@ -480,9 +499,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         )
       }
       if (periodFilter === 'week') {
-        const advTs = parseSafeTimestamp(advRaw) || 0
+        const ts = parseSafeTimestamp(advRaw) || 0
         const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
-        return advTs >= sevenDaysAgo
+        return ts >= sevenDaysAgo
       }
       if (periodFilter === 'month') {
         return isCurrentMonthInTz(advRaw, now)
@@ -498,6 +517,13 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     const totalLiters = filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
+
+    // Gasto de combustível pós-corte: apenas entregas com created >= cutoff_date
+    const postCutoffItems = filteredItems.filter((i) => {
+      const orderTs = new Date(i.order.created).getTime()
+      return orderTs >= cutoffTime
+    })
+    const postCutoffFuelCost = postCutoffItems.reduce((acc, i) => acc + i.fuelCost, 0)
 
     // Agregação de conjuntas RESTRITA AO PERÍODO FILTRADO:
     // Identificar secundárias do período filtrado
@@ -515,13 +541,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       return sum + (pKm / kml) * price
     }, 0)
 
-    // Saldo:
-    // Se periodFilter === 'month', saldo = carryOverBalance + adiantamentos do mês - gasto do mês
-    // Se periodFilter === 'all', saldo = total adiantamentos históricos - total gasto histórico
-    let saldoContaCorrente = totalAdiantado - totalFuelCost
-    if (periodFilter === 'month') {
-      saldoContaCorrente = carryOverBalance + totalAdiantado - totalFuelCost
-    }
+    // Saldo da conta corrente:
+    // opening_balance + adiantamentos pós-corte + ajustes pós-corte − gasto de combustível pós-corte
+    const saldoContaCorrente = openingBal + totalAdiantado - postCutoffFuelCost
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
@@ -532,12 +554,20 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       saldoContaCorrente: Number(saldoContaCorrente.toFixed(2)),
       totalAdiantado: Number(totalAdiantado.toFixed(2)),
       totalDeliveries: filteredItems.length,
-      carryOverBalance: Number(carryOverBalance.toFixed(2)),
+      carryOverBalance: Number(openingBal.toFixed(2)),
       jointConsolidatedCount,
       jointSavedKm: Number(jointSavedKm.toFixed(1)),
       jointSavedFuelCost: Number(jointSavedFuelCost.toFixed(2)),
     }
-  }, [allCourierAdvances, periodFilter, filteredItems, carryOverBalance, fuelParams])
+  }, [
+    allCourierAdvances,
+    periodFilter,
+    filteredItems,
+    carryOverBalance,
+    fuelParams,
+    courier?.cutoff_date,
+    courier?.opening_balance,
+  ])
 
   // Exportar dados em CSV com KM Real e KM de Desvios em colunas separadas
   const handleExportCSV = () => {
