@@ -510,8 +510,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     }, 0)
     const jointSavedFuelCost = jointSecondaryItems.reduce((sum, item) => {
       const pKm = Number(item.plannedKm) || 0
-      const kml = fuelParams.consumptionKml || 35
-      const price = fuelParams.pricePerLiter || 6.49
+      const kml = fuelParams.consumptionKml || 40.0
+      const price = fuelParams.pricePerLiter || 6.09
       return sum + (pKm / kml) * price
     }, 0)
 
@@ -726,7 +726,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
               <div className="absolute top-0 left-0 right-0 h-1 bg-[#FF6B35]" />
               <div className="flex items-center justify-between text-slate-400 text-xs">
                 <span className="font-semibold uppercase tracking-wider text-[10px]">
-                  KM Real Oficial
+                  {periodFilter === 'today'
+                    ? 'KM Oficial do Dia (Auditoria de KM)'
+                    : 'KM Oficial do Período (Auditoria de KM)'}
                 </span>
                 <Navigation className="h-4 w-4 text-[#FF6B35]" />
               </div>
@@ -738,7 +740,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 <span className="text-xs font-normal text-slate-400">km</span>
               </p>
               <span className="text-[10px] text-emerald-400/90 block mt-0.5 font-medium">
-                Descontados desvios e paradas fora da rota
+                Base viária planejada das paradas visitadas (descontados desvios e conjuntas)
               </span>
             </div>
 

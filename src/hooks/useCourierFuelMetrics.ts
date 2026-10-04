@@ -163,8 +163,16 @@ export function calculateCourierFuelMetrics(params: {
     }
   }
 
-  const fuelParams = deliveryService.getVehicleFuelParams(settings, courier.vehicle_type)
-  const { pricePerLiter, consumptionKml, category } = fuelParams
+  const defaultFuelParams = deliveryService.getVehicleFuelParams(settings, courier.vehicle_type)
+  // Prioridade consumo: consumo da moto cadastrada no entregador (consumption_kml) -> app_settings -> fallback 40 km/L
+  // Preço: override de preço do entregador se houver -> app_settings -> fallback R$ 6,09
+  const courierConsumption =
+    typeof courier.consumption_kml === 'number' && courier.consumption_kml > 0
+      ? courier.consumption_kml
+      : defaultFuelParams.consumptionKml
+  const pricePerLiter = defaultFuelParams.pricePerLiter
+  const consumptionKml = courierConsumption
+  const category = defaultFuelParams.category
 
   const now = new Date()
 

@@ -349,34 +349,43 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
         // REGRA DE TRIAGEM DE DIVERGÊNCIA SOLICITADA PELO USUÁRIO:
         // 1. Tolerância para ruído de arredondamento: 0.1 km
-        // 2. Entrega com divergência:
-        //    - Diferença absoluta entre KM Viário e KM GPS > 0.1 km (com telemetria GPS disponível > 0)
+        // 2. Entrega conjunta secundária (isJointSecondary):
+        //    - Viagem já inclusa na 1ª entrega (viário 0,0 por deduplicação).
+        //    - Auto-aprovada automaticamente, fora da fila de divergência/decisão do admin.
+        // 3. Entrega com divergência:
+        //    - Diferença absoluta entre KM Viário e KM GPS > 0.1 km (com telemetria GPS disponível > 0), EXCETO entrega conjunta secundária
         //    - OU desvio de rota físico registrado (ex: off-route > 500m)
         //    - OU paradas fora do local (> 300m do cliente)
         //    - OU redirecionamento de entrega (ex: > 3 km ou pendente de aprovação)
-        // 3. Entrega sem divergência (km viário ≈ km GPS dentro de 0.1 km, sem paradas anormais nem redireções pendentes):
+        // 4. Entrega sem divergência:
         //    - Considerada "Aprovada automaticamente" (sem necessidade de clique manual).
         //    - Se já tiver aprovação manual no banco, respeita o status manual gravado.
+        const isJointSecondary = Boolean(calc.isJointSecondary)
         const hasKmDivergence =
-          calc.totalGpsKm > 0 && Math.abs(calc.totalGpsKm - roadKmOriginal) > 0.1001
+          !isJointSecondary &&
+          calc.totalGpsKm > 0 &&
+          Math.abs(calc.totalGpsKm - roadKmOriginal) > 0.1001
 
         const isDivergent =
-          hasKmDivergence ||
-          maxDevMeters >= 500 ||
-          maxStopDistMeters >= 300 ||
-          isRedirectionPending ||
-          (isRedirected && (order.redirection_extra_km || 0) > 3.0)
+          !isJointSecondary &&
+          (hasKmDivergence ||
+            maxDevMeters >= 500 ||
+            maxStopDistMeters >= 300 ||
+            isRedirectionPending ||
+            (isRedirected && (order.redirection_extra_km || 0) > 3.0))
 
         // Se NÃO há divergência e não há aprovação gravada como rejeitada/pendente:
         // É considerada aprovada automaticamente pelo motor!
         const isAutoApproved =
-          !isDivergent &&
-          (!approval ||
-            approval.status === 'approved' ||
-            approval.approval_type === 'redirection_auto')
+          isJointSecondary ||
+          (!isDivergent &&
+            (!approval ||
+              approval.status === 'approved' ||
+              approval.approval_type === 'redirection_auto'))
 
         // Requer decisão do admin: entrega com divergência que ainda não foi deliberada (sem aprovação ou status pendente)
-        const isPendingDecision = isDivergent && (!approval || approval.status === 'pending')
+        const isPendingDecision =
+          !isJointSecondary && isDivergent && (!approval || approval.status === 'pending')
 
         const hasSignificantDeviation =
           maxDevMeters >= 500 ||
@@ -1243,8 +1252,19 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                   </Button>
                                 </div>
                               </div>
+                            ) : row.isJointSecondary ? (
+                              /* Caso 2a: 2ª entrega conjunta - AUTO-APROVADA AUTOMATICAMENTE (viagem já inclusa na 1ª entrega) */
+                              <div className="text-right space-y-0.5">
+                                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-bold text-[10px] flex items-center gap-1 ml-auto">
+                                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                                  Aprovado Automaticamente (entrega conjunta, viagem já inclusa)
+                                </Badge>
+                                <span className="text-[9px] text-indigo-600 block">
+                                  Rateio 0,0 km • Deslocamento já contabilizado no 1º pedido
+                                </span>
+                              </div>
                             ) : row.isAutoApproved ? (
-                              /* Caso 2: Entrega SEM divergência (km viário ≈ km GPS) - APROVADA AUTOMATICAMENTE SEM BOTÃO */
+                              /* Caso 2b: Entrega SEM divergência (km viário ≈ km GPS) - APROVADA AUTOMATICAMENTE SEM BOTÃO */
                               <div className="text-right space-y-0.5">
                                 <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-bold text-[10px] flex items-center gap-1 ml-auto">
                                   <CheckCircle2 className="h-3 w-3 text-emerald-600" />

@@ -50,7 +50,7 @@ export default function CourierFuelPage() {
   const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [periodFilter, setPeriodFilter] = useState<'all' | 'month' | 'week'>('all')
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'month' | 'week' | 'today'>('month')
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
 
   const loadFinancialData = async () => {
@@ -277,27 +277,33 @@ export default function CourierFuelPage() {
         <div className="flex items-center justify-between">
           <Tabs
             value={periodFilter}
-            onValueChange={(v) => setPeriodFilter(v as 'all' | 'month' | 'week')}
+            onValueChange={(v) => setPeriodFilter(v as 'all' | 'month' | 'week' | 'today')}
             className="w-full"
           >
-            <TabsList className="grid grid-cols-3 bg-[#0A1128] border border-[#1E2B58] h-10 p-1 rounded-xl font-heading">
+            <TabsList className="grid grid-cols-4 bg-[#0A1128] border border-[#1E2B58] h-10 p-1 rounded-xl font-heading">
               <TabsTrigger
-                value="all"
+                value="today"
                 className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-lg font-bold"
               >
-                Todo o Período
+                ☀️ Hoje
               </TabsTrigger>
               <TabsTrigger
                 value="month"
                 className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-lg font-bold"
               >
-                Este Mês
+                📅 Mês
+              </TabsTrigger>
+              <TabsTrigger
+                value="all"
+                className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-lg font-bold"
+              >
+                ♾️ Total
               </TabsTrigger>
               <TabsTrigger
                 value="week"
                 className="text-xs text-slate-300 data-[state=active]:bg-[#0052CC] data-[state=active]:text-white rounded-lg font-bold"
               >
-                Últimos 7 dias
+                7 dias
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -305,10 +311,17 @@ export default function CourierFuelPage() {
 
         {/* COMPONENTE COMPARTILHADO: CARD DE CONTA CORRENTE (IDENTICO AO ADMIN) */}
         <CourierFuelSummaryCard
-          metrics={currentMonthMetrics}
+          metrics={periodFilter === 'month' ? currentMonthMetrics : metrics}
           courier={user}
+          periodLabel={
+            periodFilter === 'today'
+              ? 'Hoje'
+              : periodFilter === 'month'
+                ? 'Mês (mês corrente)'
+                : 'Total desde o início (saldo acumulado)'
+          }
           onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
-          subtitle="Valores do mês corrente 100% sincronizados com a contabilidade do gestor"
+          subtitle="Valores 100% sincronizados com o motor oficial da contabilidade do gestor"
         />
 
         {/* BOTÃO RÁPIDO PARA ABRIR O HISTÓRICO COMPLETO */}

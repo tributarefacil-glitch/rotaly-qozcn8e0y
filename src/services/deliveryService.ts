@@ -1877,11 +1877,11 @@ export const deliveryService = {
       }
     }
 
-    // Default moto
+    // Default moto: prioridade consumo da moto cadastrada -> app_settings -> 40.0 km/L; preço: override -> app_settings -> R$ 6,09
     return {
       category: 'moto',
-      pricePerLiter: settings?.moto_fuel_price || baseFallbackPrice,
-      consumptionKml: settings?.moto_consumption_kml || settings?.fuel_consumption_kml || 35.0,
+      pricePerLiter: settings?.moto_fuel_price || settings?.fuel_price_per_liter || 6.09,
+      consumptionKml: settings?.moto_consumption_kml || settings?.fuel_consumption_kml || 40.0,
     }
   },
 

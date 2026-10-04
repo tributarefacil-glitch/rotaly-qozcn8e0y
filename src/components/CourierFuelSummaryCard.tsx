@@ -24,6 +24,7 @@ interface CourierFuelSummaryCardProps {
   onOpenHistoryModal: () => void
   title?: string
   subtitle?: string
+  periodLabel?: string
   showPricingExplanation?: boolean
   className?: string
 }
@@ -34,6 +35,7 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
   onOpenHistoryModal,
   title = 'Saldo da Conta Corrente',
   subtitle,
+  periodLabel,
   showPricingExplanation = true,
   className = '',
 }) => {
@@ -114,11 +116,29 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
       </CardHeader>
 
       <CardContent className="p-4 pt-2 space-y-3 text-xs">
+        {/* Rótulo de Período Explícito */}
+        <div className="flex items-center justify-between">
+          <Badge
+            variant="outline"
+            className="text-[10px] font-bold border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+          >
+            {periodLabel ? `Período: ${periodLabel}` : 'Período: Mês (mês corrente)'}
+          </Badge>
+          {metrics?.carryOverBalance !== undefined && metrics.carryOverBalance !== 0 && (
+            <span
+              className="text-[10px] font-mono text-slate-500 dark:text-slate-400"
+              title="Saldo acumulado trazido do mês anterior"
+            >
+              Carry-over: R$ {metrics.carryOverBalance.toFixed(2)}
+            </span>
+          )}
+        </div>
+
         {/* Saldo Principal */}
         <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
           <div>
             <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 block">
-              {title}
+              {title} {periodLabel ? `(${periodLabel})` : ''}
             </span>
             <span
               className={`text-xl sm:text-2xl font-black font-mono ${

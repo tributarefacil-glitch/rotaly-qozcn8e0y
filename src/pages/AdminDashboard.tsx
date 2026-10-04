@@ -407,7 +407,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     new Map(),
   )
   const [selectedCourierForFuelFilter, setSelectedCourierForFuelFilter] = useState<string>('all')
-  const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week'>('all')
+  const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week' | 'today'>(
+    'month',
+  )
   const [isNewFuelAdvanceModalOpen, setIsNewFuelAdvanceModalOpen] = useState(false)
   const [advanceCourierId, setAdvanceCourierId] = useState('')
 
@@ -1213,7 +1215,18 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       let filter = ''
       const currentDate = new Date()
 
-      if (fuelPeriodFilter === 'month') {
+      if (fuelPeriodFilter === 'today') {
+        const startOfDay = new Date(
+          currentDate.getFullYear(),
+          currentDate.getMonth(),
+          currentDate.getDate(),
+          0,
+          0,
+          0,
+        )
+        const startStr = formatPbTimestamp(startOfDay)
+        filter = `created >= '${startStr}'`
+      } else if (fuelPeriodFilter === 'month') {
         const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
         const startStr = formatPbTimestamp(firstDayOfMonth)
         filter = `created >= '${startStr}'`
@@ -1261,13 +1274,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       : orders
 
   // Recalcular fuelAccounts com o motor único calculateCourierFuelMetrics via fuelAccountService / deliveryService
-  // REGRA CONTRATUAL DO ROTALY:
-  // Os cards da Conta Corrente dos Entregadores mostram SEMPRE a visão do MÊS CORRENTE:
-  // - Saldo = carry-over (saldo acumulado até o mês anterior) + adiantamentos do mês corrente − gasto do mês corrente
-  // - Km rodado = SOMENTE do mês corrente (zera no dia 1)
-  // - Total Adiantado = SOMENTE do mês corrente
-  // - Gasto Rota Oficial = SOMENTE do mês corrente
-  // Meses anteriores ficam acessíveis exclusivamente no Histórico detalhado / Histórico Viário.
+  // Com alternador rápido de período (Hoje, Mês, Total desde o início) e rótulos explícitos
   const currentFuelAccounts = useMemo(() => {
     return couriers.map((courier) => {
       return fuelAccountService.calculateAccountForCourier({
@@ -1277,23 +1284,37 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         settings,
         locations,
         offRouteEvents,
-        periodFilter: 'month',
+        periodFilter: fuelPeriodFilter,
       })
     })
-  }, [couriers, fuelAdvances, activeFuelOrdersPool, settings, locations, offRouteEvents])
+  }, [
+    couriers,
+    fuelAdvances,
+    activeFuelOrdersPool,
+    settings,
+    locations,
+    offRouteEvents,
+    fuelPeriodFilter,
+  ])
 
   // Filtered Fuel Advances by Courier & Period (REQUISITO 5)
   const filteredFuelAdvances = fuelAdvances.filter((adv) => {
     if (selectedCourierForFuelFilter !== 'all' && adv.courier_id !== selectedCourierForFuelFilter) {
       return false
     }
+    const advDate = new Date(adv.date || adv.created)
+    const now = new Date()
+    if (fuelPeriodFilter === 'today') {
+      return (
+        advDate.getDate() === now.getDate() &&
+        advDate.getMonth() === now.getMonth() &&
+        advDate.getFullYear() === now.getFullYear()
+      )
+    }
     if (fuelPeriodFilter === 'month') {
-      const advDate = new Date(adv.date)
-      const now = new Date()
       return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
     }
     if (fuelPeriodFilter === 'week') {
-      const advDate = new Date(adv.date)
       const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
       return advDate >= oneWeekAgo
     }
@@ -1615,11 +1636,50 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
                 {/* CARDS DE CONTA CORRENTE DOS ENTREGADORES */}
                 <div className="space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                      <CreditCard className="h-4 w-4 text-emerald-500" />
-                      Conta Corrente dos Entregadores (Saldo em Tempo Real)
-                    </h4>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                        <CreditCard className="h-4 w-4 text-emerald-500" />
+                        Conta Corrente dos Entregadores
+                      </h4>
+                      {/* ALTERNÂNCIA RÁPIDA DE PERÍODO NO TOPO DAS CONTAS CORRENTES */}
+                      <div className="inline-flex items-center p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setFuelPeriodFilter('today')}
+                          className={`px-2.5 py-1 rounded-md font-bold transition-all ${
+                            fuelPeriodFilter === 'today'
+                              ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                          }`}
+                        >
+                          ☀️ Hoje
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFuelPeriodFilter('month')}
+                          className={`px-2.5 py-1 rounded-md font-bold transition-all ${
+                            fuelPeriodFilter === 'month'
+                              ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                          }`}
+                        >
+                          📅 Mês (mês corrente)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFuelPeriodFilter('all')}
+                          className={`px-2.5 py-1 rounded-md font-bold transition-all ${
+                            fuelPeriodFilter === 'all'
+                              ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-xs'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                          }`}
+                        >
+                          ♾️ Total desde o início (saldo acumulado)
+                        </button>
+                      </div>
+                    </div>
+
                     <p className="text-xs text-slate-400">
                       💡 Clique em qualquer card para abrir o{' '}
                       <strong className="text-blue-500">
@@ -1715,11 +1775,41 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                             </CardHeader>
 
                             <CardContent className="p-4 pt-2 space-y-3 text-xs">
+                              {/* Rótulo de Período Explícito */}
+                              <div className="flex items-center justify-between">
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] font-bold border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                >
+                                  {fuelPeriodFilter === 'today'
+                                    ? 'Período: Hoje'
+                                    : fuelPeriodFilter === 'month'
+                                      ? 'Período: Mês (mês corrente)'
+                                      : 'Período: Total desde o início (saldo acumulado)'}
+                                </Badge>
+                                {acc.carryOverBalance !== undefined &&
+                                  acc.carryOverBalance !== 0 &&
+                                  fuelPeriodFilter === 'month' && (
+                                    <span
+                                      className="text-[10px] font-mono text-slate-500"
+                                      title="Saldo acumulado trazido do mês anterior"
+                                    >
+                                      Carry-over: R$ {acc.carryOverBalance.toFixed(2)}
+                                    </span>
+                                  )}
+                              </div>
+
                               {/* Saldo Principal */}
                               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border flex items-center justify-between">
                                 <div>
                                   <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                                    Saldo da Conta Corrente
+                                    Saldo da Conta Corrente (
+                                    {fuelPeriodFilter === 'today'
+                                      ? 'Hoje'
+                                      : fuelPeriodFilter === 'month'
+                                        ? 'Mês Corrente'
+                                        : 'Total Acumulado'}
+                                    )
                                   </span>
                                   <span
                                     className={`text-xl font-black font-mono ${
@@ -1852,14 +1942,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                         {/* Filter by Period */}
                         <Select
                           value={fuelPeriodFilter}
-                          onValueChange={(v: 'all' | 'month' | 'week') => setFuelPeriodFilter(v)}
+                          onValueChange={(v: 'all' | 'month' | 'week' | 'today') =>
+                            setFuelPeriodFilter(v)
+                          }
                         >
-                          <SelectTrigger className="h-8 w-32 text-xs">
+                          <SelectTrigger className="h-8 w-44 text-xs">
                             <SelectValue placeholder="Período" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="all">Todo Histórico</SelectItem>
-                            <SelectItem value="month">Este Mês</SelectItem>
+                            <SelectItem value="today">☀️ Hoje</SelectItem>
+                            <SelectItem value="month">📅 Mês (mês corrente)</SelectItem>
+                            <SelectItem value="all">♾️ Total desde o início</SelectItem>
                             <SelectItem value="week">Últimos 7 dias</SelectItem>
                           </SelectContent>
                         </Select>
