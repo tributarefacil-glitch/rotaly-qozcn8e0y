@@ -82,9 +82,13 @@ export function isCurrentMonthInTz(
   referenceDate: Date = new Date(),
 ): boolean {
   if (!dateOrStrOrTs) return false
-  const target = getYearMonthInTz(dateOrStrOrTs)
-  const ref = getYearMonthInTz(referenceDate)
-  return target.year === ref.year && target.month === ref.month
+  const ts = parseSafeTimestamp(dateOrStrOrTs)
+  if (ts <= 0) return false
+  const monthStart = getOperationalMonthStart(referenceDate)
+  // Próximo início operacional de mês (dia 1 às 05:00 do mês seguinte)
+  const nextMonthDate = new Date(monthStart.timestamp + 32 * 24 * 60 * 60 * 1000)
+  const nextMonthStart = getOperationalMonthStart(nextMonthDate)
+  return ts >= monthStart.timestamp && ts < nextMonthStart.timestamp
 }
 
 /**
@@ -95,11 +99,10 @@ export function isBeforeCurrentMonthInTz(
   referenceDate: Date = new Date(),
 ): boolean {
   if (!dateOrStrOrTs) return false
-  const target = getYearMonthInTz(dateOrStrOrTs)
-  const ref = getYearMonthInTz(referenceDate)
-  if (target.year < ref.year) return true
-  if (target.year === ref.year && target.month < ref.month) return true
-  return false
+  const ts = parseSafeTimestamp(dateOrStrOrTs)
+  if (ts <= 0) return false
+  const monthStart = getOperationalMonthStart(referenceDate)
+  return ts < monthStart.timestamp
 }
 
 export function formatTimeInTz(
@@ -234,6 +237,37 @@ export function getOperationalWindow(referenceDate: Date = new Date()): Operatio
   const endPbString = new Date(end).toISOString().replace('T', ' ')
 
   return { start, end, dateStr, startPbString, endPbString }
+}
+
+/**
+ * Retorna o início oficial do mês no fuso de Brasília (America/Sao_Paulo):
+ * Início = 05:00:00.000 do dia 1 do mês operacional em São Paulo.
+ * (A janela operacional vai das 05h às 23h59; a madrugada antes das 05h do dia 1 pertence ao mês anterior).
+ */
+export function getOperationalMonthStart(referenceDate: Date = new Date()): {
+  timestamp: number
+  isoString: string
+  pbString: string
+} {
+  const parts = getCivilPartsInTz(referenceDate)
+  let { year, month, day } = parts
+  const { hour } = parts
+
+  // Madrugada antes das 05h do dia 1 pertence ao mês anterior
+  if (day === 1 && hour < 5) {
+    const prev = new Date(Date.UTC(year, month - 2, 1))
+    year = prev.getUTCFullYear()
+    month = prev.getUTCMonth() + 1
+  }
+
+  const monthStr = String(month).padStart(2, '0')
+  const startIsoSP = `${year}-${monthStr}-01T05:00:00.000-03:00`
+  const d = new Date(startIsoSP)
+  const timestamp = d.getTime()
+  const isoString = d.toISOString()
+  const pbString = isoString.replace('T', ' ')
+
+  return { timestamp, isoString, pbString }
 }
 
 /**

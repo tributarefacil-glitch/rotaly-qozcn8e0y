@@ -59,6 +59,7 @@ import {
   isCurrentMonthInTz,
   isOrderInPeriod,
   parseSafeTimestamp,
+  getOperationalMonthStart,
 } from '@/lib/operationalWindow'
 
 export interface CourierDeliveryHistoryItem {
@@ -174,11 +175,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       startDate = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
       endDate = opWindow.endPbString
     } else if (periodFilter === 'month') {
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
-      startDate = startOfMonth.toISOString()
+      const monthStart = getOperationalMonthStart(now)
+      startDate = monthStart.pbString
+      endDate = opWindow.endPbString
     }
 
-    // Buscar locations do entregador do período selecionado
+    // Buscar locations do entregador do período selecionado (sem fallback irrestrito que infla o período)
     deliveryService
       .getCourierLocations(courier.id, startDate, endDate)
       .then((locs) => {
@@ -186,23 +188,32 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         if (locs && locs.length > 0) {
           setFetchedLocations(locs)
         } else if (externalLocations && externalLocations.length > 0) {
-          setFetchedLocations(externalLocations)
+          // Filtrar externalLocations para a janela do período se houver datas limites
+          const startTs = startDate ? new Date(startDate).getTime() : 0
+          const endTs = endDate ? new Date(endDate).getTime() : Infinity
+          const filteredExt = externalLocations.filter((l) => {
+            const lTs = new Date(l.created).getTime()
+            return lTs >= startTs && lTs <= endTs
+          })
+          setFetchedLocations(filteredExt)
         } else {
-          // Fallback para getLatestLocations sem janela restrita
-          deliveryService
-            .getLatestLocations(`user_id = '${courier.id}'`, '-created', 0)
-            .then((fallbackLocs) => {
-              if (isMounted) setFetchedLocations(fallbackLocs)
-            })
-            .catch(() => {
-              if (isMounted) setFetchedLocations([])
-            })
+          setFetchedLocations([])
         }
       })
       .catch((err) => {
         console.warn('Erro ao carregar telemetria de GPS para histórico:', err)
-        if (isMounted && externalLocations && externalLocations.length > 0) {
-          setFetchedLocations(externalLocations)
+        if (isMounted) {
+          if (externalLocations && externalLocations.length > 0) {
+            const startTs = startDate ? new Date(startDate).getTime() : 0
+            const endTs = endDate ? new Date(endDate).getTime() : Infinity
+            const filteredExt = externalLocations.filter((l) => {
+              const lTs = new Date(l.created).getTime()
+              return lTs >= startTs && lTs <= endTs
+            })
+            setFetchedLocations(filteredExt)
+          } else {
+            setFetchedLocations([])
+          }
         }
       })
       .finally(() => {
@@ -238,12 +249,14 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     return deliveryService.getVehicleFuelParams(effectiveSettings, courier?.vehicle_type)
   }, [officialSettings, settings, courier])
 
-  // Lista consolidada de adiantamentos do entregador (excluindo os anteriores ao cutoff_date)
+  // Lista consolidada de adiantamentos do entregador (se houver cutoff_date, excluir os anteriores ao corte)
   const allCourierAdvances = useMemo(() => {
-    const cutoffDateStr = courier?.cutoff_date || '2026-10-04 16:00:00.000Z'
-    const cutoffTime = new Date(cutoffDateStr).getTime()
+    const cutoffDateStr = courier?.cutoff_date || undefined
+    const cutoffTime = cutoffDateStr ? new Date(cutoffDateStr).getTime() : 0
+    const hasCutoff = Boolean(cutoffDateStr && !isNaN(cutoffTime) && cutoffTime > 0)
 
     const isAfterCutoff = (a: FuelAdvanceRecord) => {
+      if (!hasCutoff) return true
       const advTs = new Date(a.date || a.created).getTime()
       return advTs >= cutoffTime
     }
@@ -518,17 +531,18 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   // Totais do período filtrado com CARRY-OVER contínuo e agregação de conjuntas
   const metricsSummary = useMemo(() => {
     const now = new Date()
-    const cutoffDateStr = courier?.cutoff_date || '2026-10-04 16:00:00.000Z'
-    const cutoffTime = new Date(cutoffDateStr).getTime()
+    const cutoffDateStr = courier?.cutoff_date || undefined
+    const cutoffTime = cutoffDateStr ? new Date(cutoffDateStr).getTime() : 0
+    const hasCutoff = Boolean(cutoffDateStr && !isNaN(cutoffTime) && cutoffTime > 0)
     const openingBal =
       typeof courier?.opening_balance === 'number' ? courier.opening_balance : carryOverBalance
 
     // Filtrar adiantamentos pós-corte de acordo com o periodFilter (fuso America/Sao_Paulo)
-    // Ignorar cancelados e movimentações anteriores ao corte
+    // Ignorar cancelados e movimentações anteriores ao corte (se houver corte)
     const filteredAdvances = allCourierAdvances.filter((a) => {
       if (a.status === 'cancelled') return false
       const advTs = new Date(a.date || a.created).getTime()
-      if (advTs < cutoffTime) return false
+      if (hasCutoff && advTs < cutoffTime) return false
 
       if (periodFilter === 'all') return true
       const advRaw = a.date || a.created
@@ -557,8 +571,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
 
-    // Gasto de combustível pós-corte: apenas entregas com created >= cutoff_date
+    // Gasto de combustível pós-corte: apenas entregas com created >= cutoff_date (se houver corte)
     const postCutoffItems = filteredItems.filter((i) => {
+      if (!hasCutoff) return true
       const orderTs = new Date(i.order.created).getTime()
       return orderTs >= cutoffTime
     })
@@ -569,15 +584,27 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     const jointSecondaryItems = filteredItems.filter((i) => i.isJointSecondary)
     const jointConsolidatedCount = jointSecondaryItems.length
     // Economia de km e combustível obtidas das secundárias do período
+    // Usar parâmetros reais: moto cadastrada -> app_settings -> 40 km/L e preço via app_settings
+    const defaultParams = deliveryService.getVehicleFuelParams(
+      officialSettings || settings,
+      courier?.vehicle_type,
+    )
+    const effectiveKml =
+      typeof courier?.consumption_kml === 'number' && courier.consumption_kml > 0
+        ? courier.consumption_kml
+        : fuelParams.consumptionKml || defaultParams.consumptionKml || 40.0
+    const effectivePrice =
+      typeof courier?.fuel_price === 'number' && courier.fuel_price > 0
+        ? courier.fuel_price
+        : fuelParams.pricePerLiter || defaultParams.pricePerLiter || 6.09
+
     const jointSavedKm = jointSecondaryItems.reduce((sum, item) => {
       const planned = Number(item.plannedKm) || 0
       return sum + planned
     }, 0)
     const jointSavedFuelCost = jointSecondaryItems.reduce((sum, item) => {
       const pKm = Number(item.plannedKm) || 0
-      const kml = fuelParams.consumptionKml || 40.0
-      const price = fuelParams.pricePerLiter || 6.09
-      return sum + (pKm / kml) * price
+      return sum + (pKm / effectiveKml) * effectivePrice
     }, 0)
 
     // Saldo da conta corrente:
@@ -881,7 +908,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 </div>
               </div>
               <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/40 text-xs font-bold font-mono px-2.5 py-1">
-                100% Real
+                {filteredItems.length > 0 &&
+                filteredItems.filter((i) => i.isRealTelemetry).length === filteredItems.length
+                  ? '100% Real'
+                  : `${filteredItems.filter((i) => i.isRealTelemetry).length}/${filteredItems.length} Real`}
               </Badge>
             </div>
 

@@ -189,11 +189,12 @@ export function calculateCourierFuelMetrics(params: {
   const now = new Date()
 
   // CONTA CORRENTE COM SALDO CONGELADO E DATA DE CORTE:
-  // cutoff_date oficial (ex: 2026-10-04 16:00:00Z) e opening_balance
-  const cutoffDateStr = courier.cutoff_date || '2026-10-04 16:00:00.000Z'
-  const cutoffTime = new Date(cutoffDateStr).getTime()
+  // Se não houver cutoff_date gravado, não aplicar corte nenhum (saldo = abertura + todo movimento)
+  const cutoffDateStr = courier.cutoff_date || undefined
+  const cutoffTime = cutoffDateStr ? new Date(cutoffDateStr).getTime() : 0
+  const hasCutoff = Boolean(cutoffDateStr && !isNaN(cutoffTime) && cutoffTime > 0)
   const openingBalance =
-    typeof courier.opening_balance === 'number' ? courier.opening_balance : carryOverBalance
+    typeof courier.opening_balance === 'number' ? courier.opening_balance : (carryOverBalance ?? 0)
 
   // 1. Filtrar adiantamentos do entregador
   // Regra de Cancelamento/Estorno: adiantamentos com status = 'cancelled' NÃO entram na soma de adiantamentos nem no saldo
@@ -201,10 +202,10 @@ export function calculateCourierFuelMetrics(params: {
     if (a.courier_id !== courier.id) return false
     if (a.status === 'cancelled') return false
 
-    // Somente adiantamentos criados a partir da data de corte entram nos adiantamentos do período
-    // Adiantamentos anteriores já estão consolidados dentro do opening_balance
+    // Somente adiantamentos criados a partir da data de corte entram nos adiantamentos pós-corte
+    // Adiantamentos anteriores já estão consolidados dentro do opening_balance (se houver corte)
     const advTs = new Date(a.date || a.created).getTime()
-    if (advTs < cutoffTime) return false
+    if (hasCutoff && advTs < cutoffTime) return false
 
     if (periodFilter === 'all') return true
 

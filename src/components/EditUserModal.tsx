@@ -104,7 +104,7 @@ export function EditUserModal({
           setCutoffDate('')
         }
       } else {
-        setCutoffDate('2026-10-04T13:00')
+        setCutoffDate('')
       }
       setNewPassword('')
       setConfirmPassword('')

@@ -74,20 +74,20 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
   const pricePerLiterNum = Number(metrics?.pricePerLiter) || 0
   const consumptionKmlNum = Number(metrics?.consumptionKml) || 1
 
-  // Formatador da Data de Corte (DD/MM às 13h)
+  // Formatador da Data de Corte (mostrar a data real do corte ou null se não houver)
   const cutoffDateRaw = activeCourier?.cutoff_date || metrics?.cutoffDate
   const formattedCutoffDate = React.useMemo(() => {
-    if (!cutoffDateRaw) return '04/10 às 13h'
+    if (!cutoffDateRaw) return null
     try {
       const d = new Date(cutoffDateRaw)
-      if (isNaN(d.getTime())) return '04/10 às 13h'
+      if (isNaN(d.getTime())) return null
       const day = String(d.getDate()).padStart(2, '0')
       const month = String(d.getMonth() + 1).padStart(2, '0')
       const hours = String(d.getHours()).padStart(2, '0')
       const mins = String(d.getMinutes()).padStart(2, '0')
       return `${day}/${month} às ${hours}:${mins}`
     } catch {
-      return '04/10 às 13h'
+      return null
     }
   }, [cutoffDateRaw])
 
@@ -164,22 +164,30 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
               variant="outline"
               className="text-[10px] font-medium bg-slate-800 text-slate-300 border-slate-700"
             >
-              Nenhuma movimentação desde o corte — saldo = abertura
+              {formattedCutoffDate
+                ? 'Nenhuma movimentação desde o corte — saldo = abertura'
+                : 'Nenhuma movimentação no período'}
             </Badge>
           ) : (
             <Badge
               variant="outline"
               className="text-[10px] font-bold border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
             >
-              {periodLabel ? `Período: ${periodLabel}` : 'Período: Pós-corte'}
+              {periodLabel
+                ? `Período: ${periodLabel}`
+                : formattedCutoffDate
+                  ? 'Período: Pós-corte'
+                  : 'Período: Geral'}
             </Badge>
           )}
-          <span
-            className="text-[10px] font-mono text-slate-500 dark:text-slate-400"
-            title="Corte fixo de migração de saldo"
-          >
-            Corte: {formattedCutoffDate}
-          </span>
+          {formattedCutoffDate && (
+            <span
+              className="text-[10px] font-mono text-slate-500 dark:text-slate-400"
+              title="Corte de saldo"
+            >
+              Corte: {formattedCutoffDate}
+            </span>
+          )}
         </div>
 
         {/* Saldo Principal */}
@@ -236,16 +244,18 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
         <div className="p-2.5 rounded-lg bg-slate-50/80 dark:bg-slate-900/50 border border-slate-200/70 dark:border-slate-800 space-y-1.5 text-[11px]">
           <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 pb-1 border-b border-slate-200/50 dark:border-slate-800 flex justify-between items-center">
             <span>Composição do Saldo</span>
-            <span className="font-mono text-[9px] lowercase font-normal">
-              corte em {formattedCutoffDate}
-            </span>
+            {formattedCutoffDate && (
+              <span className="font-mono text-[9px] lowercase font-normal">
+                corte em {formattedCutoffDate}
+              </span>
+            )}
           </div>
 
           {/* 1. Saldo de Abertura */}
           <div className="flex items-center justify-between text-slate-700 dark:text-slate-300">
             <span className="flex items-center gap-1 font-medium">
               <Wallet className="h-3 w-3 text-slate-500" />
-              Saldo de Abertura ({formattedCutoffDate})
+              Saldo de Abertura{formattedCutoffDate ? ` (${formattedCutoffDate})` : ''}
             </span>
             <span className="font-mono font-bold">R$ {openingBalanceNum.toFixed(2)}</span>
           </div>

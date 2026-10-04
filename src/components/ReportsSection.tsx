@@ -155,9 +155,10 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         const endStr = opWindow.endPbString
         filter = `(created >= '${startStr}' && created <= '${endStr}') || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
       } else if (period === 'week') {
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-        const startStr = formatPbTimestamp(sevenDaysAgo)
-        filter = `created >= '${startStr}'`
+        const opWindow = getOperationalWindow(now)
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
+        filter = `created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}'`
       } else if (period === 'month') {
         const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
         const startStr = formatPbTimestamp(thirtyDaysAgo)
@@ -231,8 +232,8 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
         0
 
       if (period === 'week') {
-        const oneWeekAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
-        return relevantTs >= oneWeekAgo
+        const sevenDaysAgoStart = currentWindow.start - 6 * 24 * 60 * 60 * 1000
+        return relevantTs >= sevenDaysAgoStart
       }
       if (period === 'month') {
         const oneMonthAgo = now.getTime() - 30 * 24 * 60 * 60 * 1000

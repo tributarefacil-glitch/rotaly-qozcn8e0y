@@ -25,7 +25,12 @@ import type {
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
 import { fuelAccountService } from '@/services/fuelAccountService'
-import { formatPbTimestamp } from '@/lib/operationalWindow'
+import {
+  formatPbTimestamp,
+  getOperationalWindow,
+  getOperationalMonthStart,
+  isCurrentMonthInTz,
+} from '@/lib/operationalWindow'
 import { CourierFuelSummaryCard } from '@/components/CourierFuelSummaryCard'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
@@ -77,7 +82,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   )
 
   // Versão de sincronização global para invalidar caches legados e forçar recarga imediata
-  const FUEL_GLOBAL_VERSION = 'v0089_unified_carryover'
+  const FUEL_GLOBAL_VERSION = 'v0090_operational_window_sync'
 
   const fetchFuelHistoryOrders = useCallback(
     async (forceRefresh = false) => {
@@ -93,15 +98,15 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
 
       let filter = ''
       const currentDate = new Date()
+      const opWindow = getOperationalWindow(currentDate)
 
       if (fuelPeriodFilter === 'month') {
-        const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
-        const startStr = formatPbTimestamp(firstDayOfMonth)
-        filter = `created >= '${startStr}'`
+        const monthStart = getOperationalMonthStart(currentDate)
+        filter = `created >= '${monthStart.pbString}' || route_finished_at >= '${monthStart.pbString}' || actual_arrival >= '${monthStart.pbString}'`
       } else if (fuelPeriodFilter === 'week') {
-        const sevenDaysAgo = new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000)
-        const startStr = formatPbTimestamp(sevenDaysAgo)
-        filter = `created >= '${startStr}'`
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
+        filter = `created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}'`
       } else {
         filter = ''
       }
@@ -222,11 +227,14 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   }, [calculatedAccounts, selectedCourierFilter, vehicleCategoryFilter, searchQuery])
 
   // 3. Totais consolidados da frota do vendedor
+  // O Saldo da Frota = soma dos saldos individuais de cada entregador
+  // (abertura + movimentos pós-corte − gasto pós-corte), batendo com a soma dos cards individuais
   const fleetTotals = useMemo(() => {
     let totalAdvances = 0
     let totalSpent = 0
     let totalOfficialKm = 0
     let totalDeviationKm = 0
+    let totalFleetBalance = 0
     let positiveCount = 0
     let negativeCount = 0
     let bicycleCount = 0
@@ -236,6 +244,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
       totalSpent += metrics.totalSpent
       totalOfficialKm += metrics.totalOfficialKm
       totalDeviationKm += metrics.totalDeviationKm
+      totalFleetBalance += metrics.balance
 
       if (metrics.balance >= 0) positiveCount++
       else negativeCount++
@@ -244,7 +253,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
       if (cat === 'bicicleta') bicycleCount++
     })
 
-    const netBalance = totalAdvances - totalSpent
+    const netBalance = Number(totalFleetBalance.toFixed(2))
 
     return {
       totalAdvances,
@@ -272,14 +281,15 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
 
       const advDate = new Date(adv.date || adv.created || Date.now())
       const now = new Date()
+      const opWindow = getOperationalWindow(now)
 
       if (fuelPeriodFilter === 'month') {
-        return advDate.getMonth() === now.getMonth() && advDate.getFullYear() === now.getFullYear()
+        return isCurrentMonthInTz(advDate, now)
       }
 
       if (fuelPeriodFilter === 'week') {
-        const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-        return advDate >= oneWeekAgo
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        return advDate.getTime() >= sevenDaysAgoStart
       }
 
       return true

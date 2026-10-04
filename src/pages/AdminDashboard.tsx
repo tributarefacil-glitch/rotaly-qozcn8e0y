@@ -99,7 +99,11 @@ import { useCompany } from '@/contexts/CompanyContext'
 import { deliveryService } from '@/services/deliveryService'
 import { fuelAccountService } from '@/services/fuelAccountService'
 import { getMyCompany, type ResolvedCompany } from '@/lib/companyResolver'
-import { getOperationalWindow, formatPbTimestamp } from '@/lib/operationalWindow'
+import {
+  getOperationalWindow,
+  formatPbTimestamp,
+  getOperationalMonthStart,
+} from '@/lib/operationalWindow'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
@@ -1198,7 +1202,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const isFuelViewActive = activeTab === 'fuel' || isCourierHistoryModalOpen
 
   // Versão de sincronização global para invalidar caches legados e forçar recarga imediata
-  const FUEL_GLOBAL_VERSION = 'v0088_recalc_global'
+  const FUEL_GLOBAL_VERSION = 'v0090_operational_window_sync'
 
   const fetchFuelHistoryOrders = useCallback(
     async (forceRefresh = false) => {
@@ -1218,15 +1222,15 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       const opWindow = getOperationalWindow(currentDate)
 
       if (fuelPeriodFilter === 'today') {
-        filter = `created >= '${opWindow.startPbString}' && created <= '${opWindow.endPbString}'`
+        // Pool amplo para cobrir route_finished_at, actual_arrival e created
+        filter = `created >= '${opWindow.startPbString}' || route_finished_at >= '${opWindow.startPbString}' || actual_arrival >= '${opWindow.startPbString}'`
       } else if (fuelPeriodFilter === 'month') {
-        const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
-        const startStr = formatPbTimestamp(firstDayOfMonth)
-        filter = `created >= '${startStr}'`
+        const monthStart = getOperationalMonthStart(currentDate)
+        filter = `created >= '${monthStart.pbString}' || route_finished_at >= '${monthStart.pbString}' || actual_arrival >= '${monthStart.pbString}'`
       } else if (fuelPeriodFilter === 'week') {
         const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
         const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
-        filter = `created >= '${startStr}'`
+        filter = `created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}'`
       } else {
         filter = ''
       }
