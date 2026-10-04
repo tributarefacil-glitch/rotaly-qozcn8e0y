@@ -31,6 +31,11 @@ export interface UnifiedCourierFuelAccount {
   advances: FuelAdvanceRecord[]
   calculationSource?: 'odometro' | 'historico_viario' | 'gps'
   metrics?: CourierFuelCalculationResult
+  openingBalance?: number
+  cutoffDate?: string
+  periodAdvances?: number
+  periodAdjustments?: number
+  periodSpent?: number
   carryOverBalance?: number
 }
 export class FuelAccountService {
@@ -234,33 +239,52 @@ export class FuelAccountService {
       locations = [],
       offRouteEvents = [],
       periodFilter = 'all',
-      carryOverBalance: providedCarryOver,
     } = params
 
-    // REGRA DE OURO ROTALY:
-    // O saldo de conta corrente SEMPRE inclui o carry-over acumulado até o mês anterior.
-    // Saldo = carry-over do mês anterior + adiantados do mês corrente − gasto do mês corrente.
-    // Para entregadores sem rota ou admin/vendedor sem pedidos, saldo = 0 se não houver adiantamentos.
-    let carryOverBalance = providedCarryOver ?? 0
-    if (providedCarryOver === undefined) {
-      carryOverBalance = this.calculateCarryOverBalance({
-        courierId: courier.id,
-        courierVehicleType: courier.vehicle_type,
-        advances,
-        orders,
-        settings,
-      })
-    }
+    // DATA DE CORTE E SALDO DE ABERTURA OFICIAIS (CONGELADOS)
+    const cutoffDateStr = courier.cutoff_date || '2026-10-04 16:00:00.000Z'
+    const cutoffTime = new Date(cutoffDateStr).getTime()
+    const openingBalance = typeof courier.opening_balance === 'number' ? courier.opening_balance : 0
 
+    // Filtra adiantamentos específicos deste entregador
+    const courierAdvances = advances.filter((a) => a && a.courier_id === courier.id)
+
+    // Adiantamentos e Ajustes pós-corte (created >= cutoffDate)
+    const postCutoffAdvances = courierAdvances.filter((a) => {
+      if (a.status === 'cancelled') return false
+      const advTs = new Date(a.date || a.created).getTime()
+      return advTs >= cutoffTime
+    })
+
+    let periodAdvances = 0
+    let periodAdjustments = 0
+
+    postCutoffAdvances.forEach((a) => {
+      const amount = Number(a.amount) || 0
+      if (a.entry_type === 'balance_adjustment') {
+        periodAdjustments += amount
+      } else {
+        periodAdvances += amount
+      }
+    })
+
+    // Pedidos oficiais elegíveis pós-corte (SOMENTE pedidos com created >= cutoff_date)
+    const postCutoffOrders = orders.filter((o) => {
+      if (o.courier_id !== courier.id) return false
+      const orderTs = new Date(o.created).getTime()
+      return orderTs >= cutoffTime
+    })
+
+    // Gasto oficial do motor com os pedidos pós-corte
     const metrics = calculateCourierFuelMetrics({
       courier,
-      advances,
-      orders,
+      advances: postCutoffAdvances,
+      orders: postCutoffOrders,
       locations,
       offRouteEvents,
       settings,
       periodFilter,
-      carryOverBalance,
+      carryOverBalance: openingBalance,
     })
 
     const isBicycle =
@@ -269,23 +293,30 @@ export class FuelAccountService {
       courier.vehicle_type === 'bicycle'
 
     const totalSpent = isBicycle ? 0 : metrics.totalSpent
-    const balance = metrics.balance
 
-    // Filtra adiantamentos específicos deste entregador
-    const courierAdvances = advances.filter((a) => a && a.courier_id === courier.id)
+    // FÓRMULA ÚNICA DO SALDO:
+    // Saldo = opening_balance (fixo) + adiantamentos pós-corte + ajustes pós-corte − gasto oficial pós-corte
+    const finalBalance = Number(
+      (openingBalance + periodAdvances + periodAdjustments - totalSpent).toFixed(2),
+    )
 
     return {
       courier,
-      totalAdvances: metrics.totalAdvances,
+      totalAdvances: Number((periodAdvances + periodAdjustments).toFixed(2)),
       totalRouteKm: metrics.totalOfficialKm,
       totalSpent,
-      balance,
-      advanceCount: metrics.advanceCount,
-      deliveriesCount: metrics.deliveriesCount,
+      balance: finalBalance,
+      advanceCount: postCutoffAdvances.length,
+      deliveriesCount: postCutoffOrders.length,
       advances: courierAdvances,
       calculationSource: metrics.calculationSource,
       metrics,
-      carryOverBalance,
+      openingBalance,
+      cutoffDate: cutoffDateStr,
+      periodAdvances: Number(periodAdvances.toFixed(2)),
+      periodAdjustments: Number(periodAdjustments.toFixed(2)),
+      periodSpent: totalSpent,
+      carryOverBalance: openingBalance,
     }
   }
 

@@ -39,19 +39,59 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
   showPricingExplanation = true,
   className = '',
 }) => {
-  const balanceNum = Number(metrics?.balance) || 0
-  const totalAdvancesNum = Number(metrics?.totalAdvances) || 0
+  const activeCourier = courier || metrics?.courier
+  const courierName = String(activeCourier?.name || 'Entregador')
+
+  const openingBalanceNum =
+    typeof activeCourier?.opening_balance === 'number'
+      ? activeCourier.opening_balance
+      : typeof metrics?.openingBalance === 'number'
+        ? metrics.openingBalance
+        : typeof metrics?.carryOverBalance === 'number'
+          ? metrics.carryOverBalance
+          : 0
+
+  const periodAdvancesNum =
+    typeof metrics?.periodAdvances === 'number'
+      ? metrics.periodAdvances
+      : typeof metrics?.totalAdvances === 'number'
+        ? metrics.totalAdvances
+        : 0
+
+  const periodAdjustmentsNum =
+    typeof metrics?.periodAdjustments === 'number' ? metrics.periodAdjustments : 0
   const totalSpentNum = Number(metrics?.totalSpent) || 0
   const totalOfficialKmNum = Number(metrics?.totalOfficialKm) || 0
   const totalDeviationKmNum = Number(metrics?.totalDeviationKm) || 0
   const jointSavedKmNum = Number(metrics?.jointSavedKm) || 0
   const jointSavedFuelCostNum = Number(metrics?.jointSavedFuelCost) || 0
+
+  // Saldo final oficial: Abertura + Adiantamentos pós-corte + Ajustes pós-corte − Gasto motor
+  const balanceNum = Number(
+    (openingBalanceNum + periodAdvancesNum + periodAdjustmentsNum - totalSpentNum).toFixed(2),
+  )
+
   const pricePerLiterNum = Number(metrics?.pricePerLiter) || 0
   const consumptionKmlNum = Number(metrics?.consumptionKml) || 1
 
+  // Formatador da Data de Corte (DD/MM às 13h)
+  const cutoffDateRaw = activeCourier?.cutoff_date || metrics?.cutoffDate
+  const formattedCutoffDate = React.useMemo(() => {
+    if (!cutoffDateRaw) return '04/10 às 13h'
+    try {
+      const d = new Date(cutoffDateRaw)
+      if (isNaN(d.getTime())) return '04/10 às 13h'
+      const day = String(d.getDate()).padStart(2, '0')
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const hours = String(d.getHours()).padStart(2, '0')
+      const mins = String(d.getMinutes()).padStart(2, '0')
+      return `${day}/${month} às ${hours}:${mins}`
+    } catch {
+      return '04/10 às 13h'
+    }
+  }, [cutoffDateRaw])
+
   const isPositive = balanceNum >= 0
-  const activeCourier = courier || metrics?.courier
-  const courierName = String(activeCourier?.name || 'Entregador')
   const isBicycle =
     metrics?.vehicleCategory === 'bicicleta' ||
     deliveryService.normalizeVehicleCategory(activeCourier?.vehicle_type) === 'bicicleta'
@@ -122,16 +162,14 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
             variant="outline"
             className="text-[10px] font-bold border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
           >
-            {periodLabel ? `Período: ${periodLabel}` : 'Período: Mês (mês corrente)'}
+            {periodLabel ? `Período: ${periodLabel}` : 'Período: Pós-corte'}
           </Badge>
-          {metrics?.carryOverBalance !== undefined && metrics.carryOverBalance !== 0 && (
-            <span
-              className="text-[10px] font-mono text-slate-500 dark:text-slate-400"
-              title="Saldo acumulado trazido do mês anterior"
-            >
-              Carry-over: R$ {metrics.carryOverBalance.toFixed(2)}
-            </span>
-          )}
+          <span
+            className="text-[10px] font-mono text-slate-500 dark:text-slate-400"
+            title="Corte fixo de migração de saldo"
+          >
+            Corte: {formattedCutoffDate}
+          </span>
         </div>
 
         {/* Saldo Principal */}
@@ -176,41 +214,78 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           </div>
           <div className="text-right shrink-0">
             <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-medium">
-              {Number(metrics?.advanceCount) || 0} adiantamento(s)
+              {Number(metrics?.advanceCount) || 0} adiantamento(s) pós-corte
             </span>
             <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-medium">
-              {Number(metrics?.deliveriesCount) || 0} entregas
+              {Number(metrics?.deliveriesCount) || 0} entrega(s) pós-corte
             </span>
           </div>
         </div>
 
-        {/* Detalhamento: Recebido vs Gasto */}
-        <div className="grid grid-cols-2 gap-2 text-[11px]">
-          <div className="p-2.5 rounded-lg bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40">
-            <div className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-medium">
-              <ArrowDownLeft className="h-3.5 w-3.5" />
-              <span>(+) Total Adiantado</span>
-            </div>
-            <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono text-sm block mt-0.5">
-              R$ {totalAdvancesNum.toFixed(2)}
+        {/* Composição Oficial Linha a Linha */}
+        <div className="p-2.5 rounded-lg bg-slate-50/80 dark:bg-slate-900/50 border border-slate-200/70 dark:border-slate-800 space-y-1.5 text-[11px]">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 pb-1 border-b border-slate-200/50 dark:border-slate-800 flex justify-between items-center">
+            <span>Composição do Saldo</span>
+            <span className="font-mono text-[9px] lowercase font-normal">
+              corte em {formattedCutoffDate}
             </span>
-            <span className="text-[9px] text-slate-400 block mt-0.5">Créditos antecipados</span>
           </div>
 
-          <div className="p-2.5 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
-            <div className="flex items-center gap-1 text-amber-700 dark:text-amber-400 font-medium">
-              <ArrowUpRight className="h-3.5 w-3.5 text-[#FF6B35]" />
-              <span>{isBicycle ? 'Km Rodado (Sem Combustível)' : '(-) Gasto Rota Oficial'}</span>
-            </div>
-            <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm block mt-0.5">
-              {isBicycle
-                ? `${totalOfficialKmNum.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`
-                : `R$ ${totalSpentNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          {/* 1. Saldo de Abertura */}
+          <div className="flex items-center justify-between text-slate-700 dark:text-slate-300">
+            <span className="flex items-center gap-1 font-medium">
+              <Wallet className="h-3 w-3 text-slate-500" />
+              Saldo de Abertura ({formattedCutoffDate})
             </span>
-            <span className="text-[9px] text-slate-400 block mt-0.5">
-              {isBicycle
-                ? 'Telemetria GPS apurada'
-                : `${totalOfficialKmNum.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km`}
+            <span className="font-mono font-bold">R$ {openingBalanceNum.toFixed(2)}</span>
+          </div>
+
+          {/* 2. + Adiantamentos do Período */}
+          <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400">
+            <span className="flex items-center gap-1 font-medium">
+              <ArrowDownLeft className="h-3 w-3 text-emerald-500" />+ Adiantamentos do Período
+            </span>
+            <span className="font-mono font-bold">R$ {periodAdvancesNum.toFixed(2)}</span>
+          </div>
+
+          {/* 3. ± Ajustes Lançados */}
+          {periodAdjustmentsNum !== 0 && (
+            <div
+              className={`flex items-center justify-between ${
+                periodAdjustmentsNum >= 0
+                  ? 'text-emerald-700 dark:text-emerald-400'
+                  : 'text-rose-700 dark:text-rose-400'
+              }`}
+            >
+              <span className="flex items-center gap-1 font-medium">
+                <Info className="h-3 w-3" />± Ajustes Lançados
+              </span>
+              <span className="font-mono font-bold">
+                {periodAdjustmentsNum >= 0 ? '+' : ''} R$ {periodAdjustmentsNum.toFixed(2)}
+              </span>
+            </div>
+          )}
+
+          {/* 4. − Combustível Consumido */}
+          <div className="flex items-center justify-between text-amber-700 dark:text-amber-400">
+            <span className="flex items-center gap-1 font-medium">
+              <ArrowUpRight className="h-3 w-3 text-amber-500" />− Combustível Consumido (Motor
+              Oficial)
+            </span>
+            <span className="font-mono font-bold">− R$ {totalSpentNum.toFixed(2)}</span>
+          </div>
+
+          {/* 5. = Saldo Final */}
+          <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/70 dark:border-slate-800 text-slate-900 dark:text-white font-bold">
+            <span className="flex items-center gap-1 uppercase text-[10px]">= Saldo Final</span>
+            <span
+              className={`font-mono text-sm ${
+                isPositive
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-rose-600 dark:text-rose-400'
+              }`}
+            >
+              R$ {balanceNum.toFixed(2)}
             </span>
           </div>
         </div>

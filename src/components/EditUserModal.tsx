@@ -60,6 +60,10 @@ export function EditUserModal({
   const [vehicleModel, setVehicleModel] = useState('')
   const [vehiclePlate, setVehiclePlate] = useState('')
 
+  // Conta Corrente: Saldo de Abertura e Data de Corte
+  const [openingBalance, setOpeningBalance] = useState<string>('0')
+  const [cutoffDate, setCutoffDate] = useState<string>('')
+
   // Senha e confirmação
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -82,6 +86,26 @@ export function EditUserModal({
       setVehicleType(user.vehicle_type || 'moto')
       setVehicleModel(user.vehicle_model || '')
       setVehiclePlate(user.vehicle_plate || '')
+      setOpeningBalance(
+        typeof user.opening_balance === 'number' ? String(user.opening_balance) : '0',
+      )
+      // Formata cutoff_date para YYYY-MM-DDTHH:mm se existir
+      if (user.cutoff_date) {
+        try {
+          const d = new Date(user.cutoff_date)
+          if (!isNaN(d.getTime())) {
+            const pad = (n: number) => String(n).padStart(2, '0')
+            const localIso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+            setCutoffDate(localIso)
+          } else {
+            setCutoffDate('')
+          }
+        } catch {
+          setCutoffDate('')
+        }
+      } else {
+        setCutoffDate('2026-10-04T13:00')
+      }
       setNewPassword('')
       setConfirmPassword('')
       setShowPassword(false)
@@ -150,6 +174,8 @@ export function EditUserModal({
         vehicle_type?: string
         vehicle_model?: string
         vehicle_plate?: string
+        opening_balance?: number
+        cutoff_date?: string
       } = {}
 
       const hasNameChanged = trimmedName !== (user.name || '')
@@ -173,6 +199,20 @@ export function EditUserModal({
         }
         if (vehiclePlate.trim().toUpperCase() !== (user.vehicle_plate || '')) {
           payload.vehicle_plate = vehiclePlate.trim().toUpperCase()
+        }
+
+        const parsedOpeningBalance = Number(parseFloat(openingBalance.replace(',', '.')))
+        const validOpeningBalance = isNaN(parsedOpeningBalance) ? 0 : parsedOpeningBalance
+        if (validOpeningBalance !== (user.opening_balance ?? 0)) {
+          payload.opening_balance = validOpeningBalance
+        }
+
+        if (cutoffDate) {
+          const isoCutoff = new Date(cutoffDate).toISOString()
+          const currentCutoffIso = user.cutoff_date ? new Date(user.cutoff_date).toISOString() : ''
+          if (isoCutoff !== currentCutoffIso) {
+            payload.cutoff_date = isoCutoff
+          }
         }
       }
 
@@ -419,6 +459,44 @@ export function EditUserModal({
                       className="h-8 text-xs bg-[#0E1738] border-[#1E2B58] text-white placeholder:text-slate-500 uppercase font-mono"
                     />
                   </div>
+                </div>
+
+                {/* Conta Corrente de Combustível: Saldo de Abertura & Data de Corte */}
+                <div className="pt-2 border-t border-[#1E2B58]/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                      ⛽ Conta Corrente: Saldo de Abertura &amp; Corte
+                    </span>
+                    <span className="text-[9px] text-slate-400">Congelamento de saldo oficial</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-slate-300">Saldo de Abertura (R$)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={openingBalance}
+                        onChange={(e) => setOpeningBalance(e.target.value)}
+                        className="h-8 text-xs bg-[#0E1738] border-[#1E2B58] text-white font-mono placeholder:text-slate-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-slate-300">Data e Hora de Corte</Label>
+                      <Input
+                        type="datetime-local"
+                        value={cutoffDate}
+                        onChange={(e) => setCutoffDate(e.target.value)}
+                        className="h-8 text-xs bg-[#0E1738] border-[#1E2B58] text-white font-mono placeholder:text-slate-500"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    O saldo de abertura congela os lançamentos e pedidos anteriores ao corte. O
+                    motor oficial calcula apenas pedidos a partir desta data.
+                  </p>
                 </div>
               </div>
             )}

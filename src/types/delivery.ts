@@ -125,6 +125,10 @@ export interface UserRecord extends RecordModel {
   vehicle_plate?: string
   documents?: string[]
   selfie?: string
+  opening_balance?: number
+  cutoff_date?: string
+  consumption_kml?: number
+  fuel_price?: number
 }
 
 export interface CustomerRecord extends RecordModel {
@@ -376,11 +380,15 @@ export interface CourierFuelAccount {
   totalAdvances: number
   totalRouteKm: number
   totalSpent: number
-  balance: number // totalAdvances - totalSpent
+  balance: number
   advanceCount: number
   deliveriesCount: number
   advances?: FuelAdvanceRecord[]
   calculationSource?: 'odometro' | 'gps' | 'road' | 'historico_viario' | 'viario'
+  openingBalance?: number
+  cutoffDate?: string
+  periodAdvances?: number
+  periodAdjustments?: number
   carryOverBalance?: number
 }
 

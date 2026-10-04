@@ -96,6 +96,10 @@ export interface CourierFuelCalculationResult {
   jointDeliveriesOrdersCount: number
   jointSavedKm: number
   jointSavedFuelCost: number
+  openingBalance?: number
+  cutoffDate?: string
+  periodAdvances?: number
+  periodAdjustments?: number
   carryOverBalance?: number
 }
 
@@ -170,19 +174,33 @@ export function calculateCourierFuelMetrics(params: {
     typeof courier.consumption_kml === 'number' && courier.consumption_kml > 0
       ? courier.consumption_kml
       : defaultFuelParams.consumptionKml
-  const pricePerLiter = defaultFuelParams.pricePerLiter
+  const pricePerLiter =
+    typeof courier.fuel_price === 'number' && courier.fuel_price > 0
+      ? courier.fuel_price
+      : defaultFuelParams.pricePerLiter
   const consumptionKml = courierConsumption
   const category = defaultFuelParams.category
 
   const now = new Date()
 
-  // 1. Filtrar adiantamentos do entregador (com filtro de período opcional)
-  // Regra contratual do Rotaly:
-  // No início de cada mês, "Total Adiantado" no card = SOMENTE adiantamentos do mês corrente no fuso America/Sao_Paulo.
+  // CONTA CORRENTE COM SALDO CONGELADO E DATA DE CORTE:
+  // cutoff_date oficial (ex: 2026-10-04 16:00:00Z) e opening_balance
+  const cutoffDateStr = courier.cutoff_date || '2026-10-04 16:00:00.000Z'
+  const cutoffTime = new Date(cutoffDateStr).getTime()
+  const openingBalance =
+    typeof courier.opening_balance === 'number' ? courier.opening_balance : carryOverBalance
+
+  // 1. Filtrar adiantamentos do entregador
   // Regra de Cancelamento/Estorno: adiantamentos com status = 'cancelled' NÃO entram na soma de adiantamentos nem no saldo
   const courierAdvances = advances.filter((a) => {
     if (a.courier_id !== courier.id) return false
     if (a.status === 'cancelled') return false
+
+    // Somente adiantamentos criados a partir da data de corte entram nos adiantamentos do período
+    // Adiantamentos anteriores já estão consolidados dentro do opening_balance
+    const advTs = new Date(a.date || a.created).getTime()
+    if (advTs < cutoffTime) return false
+
     if (periodFilter === 'all') return true
 
     const advRaw = a.date || a.created
@@ -195,9 +213,9 @@ export function calculateCourierFuelMetrics(params: {
       )
     }
     if (periodFilter === 'week') {
-      const advTs = parseSafeTimestamp(advRaw) || 0
+      const ts = parseSafeTimestamp(advRaw) || 0
       const sevenDaysAgo = now.getTime() - 7 * 24 * 60 * 60 * 1000
-      return advTs >= sevenDaysAgo
+      return ts >= sevenDaysAgo
     }
     if (periodFilter === 'month') {
       return isCurrentMonthInTz(advRaw, now)
@@ -205,7 +223,18 @@ export function calculateCourierFuelMetrics(params: {
     return true
   })
 
-  const totalAdvances = courierAdvances.reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
+  let periodAdvances = 0
+  let periodAdjustments = 0
+  courierAdvances.forEach((a) => {
+    const val = Number(a.amount) || 0
+    if (a.entry_type === 'balance_adjustment') {
+      periodAdjustments += val
+    } else {
+      periodAdvances += val
+    }
+  })
+
+  const totalAdvances = periodAdvances + periodAdjustments
 
   // 2. Filtrar telemetria e ocorrências do entregador
   const courierLocations = locations.filter((l) => l.user_id === courier.id)
@@ -273,6 +302,12 @@ export function calculateCourierFuelMetrics(params: {
   const allCourierOrders = orders.filter(isCourierEligibleOrder)
 
   const eligibleOrders = allCourierOrders.filter((o) => {
+    // REGRA DE OURO DA DATA DE CORTE:
+    // Contando SOMENTE pedidos com created >= cutoff_date.
+    // Nenhum pedido anterior à data de corte é recalculado com o motor novo.
+    const orderCreatedTs = new Date(o.created).getTime()
+    if (orderCreatedTs < cutoffTime) return false
+
     if (periodFilter === 'all') return true
 
     const oDateVal = o.route_finished_at || o.actual_arrival || o.created
@@ -665,16 +700,9 @@ export function calculateCourierFuelMetrics(params: {
     totalSpent = Number(orderCalculations.reduce((acc, c) => acc + c.fuelCost, 0).toFixed(2))
   }
 
-  // REGRA DE OURO DO DONO (CARRY-OVER MENSAL DE CONTA CORRENTE):
-  // O saldo dos entregadores sempre é levado para o próximo mês (contínuo).
-  // O KM e combustível apurados sempre são calculados dentro do mês fechado.
-  // O saldo é SEMPRE unificado com a fórmula oficial:
-  // saldo = carryOverBalance (saldo acumulado até o mês anterior) + adiantamentos do mês corrente - gasto do mês corrente
-  // Se o filtro for 'all', não duplica se carryOverBalance já foi somado; mas a fórmula oficial de conta corrente é:
-  let balance = carryOverBalance + totalAdvances - totalSpent
-  if (periodFilter === 'all' && carryOverBalance === 0) {
-    balance = totalAdvances - totalSpent
-  }
+  // FÓRMULA ÚNICA DO SALDO:
+  // Saldo = opening_balance (fixo) + adiantamentos do período (pós-corte) + ajustes do período − gasto oficial do motor
+  const balance = Number((openingBalance + totalAdvances - totalSpent).toFixed(2))
   const calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
   const calculationSourceLabel = 'Trajeto Viário Oficial'
 
@@ -687,7 +715,11 @@ export function calculateCourierFuelMetrics(params: {
     advanceCount: courierAdvances.length,
     deliveriesCount: eligibleOrders.length,
     advances: courierAdvances,
-    carryOverBalance: Number(carryOverBalance.toFixed(2)),
+    openingBalance: Number(openingBalance.toFixed(2)),
+    cutoffDate: cutoffDateStr,
+    periodAdvances: Number(periodAdvances.toFixed(2)),
+    periodAdjustments: Number(periodAdjustments.toFixed(2)),
+    carryOverBalance: Number(openingBalance.toFixed(2)),
   }
 
   return {
@@ -712,7 +744,11 @@ export function calculateCourierFuelMetrics(params: {
     jointDeliveriesOrdersCount,
     jointSavedKm: Number(jointSavedKm.toFixed(1)),
     jointSavedFuelCost: Number(jointSavedFuelCost.toFixed(2)),
-    carryOverBalance: Number(carryOverBalance.toFixed(2)),
+    openingBalance: Number(openingBalance.toFixed(2)),
+    cutoffDate: cutoffDateStr,
+    periodAdvances: Number(periodAdvances.toFixed(2)),
+    periodAdjustments: Number(periodAdjustments.toFixed(2)),
+    carryOverBalance: Number(openingBalance.toFixed(2)),
   }
 }
 

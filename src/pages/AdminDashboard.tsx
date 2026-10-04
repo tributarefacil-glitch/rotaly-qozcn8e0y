@@ -1762,18 +1762,33 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                     </p>
                                   </div>
                                 </div>
-                                <Badge
-                                  className={`text-[10px] font-bold ${
-                                    isPositive
-                                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300'
-                                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300'
-                                  }`}
-                                >
-                                  {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
-                                </Badge>
+                                <div className="flex items-center gap-1.5">
+                                  <Badge
+                                    className={`text-[10px] font-bold ${
+                                      isPositive
+                                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-300'
+                                        : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300'
+                                    }`}
+                                  >
+                                    {isPositive ? 'Crédito Disponível' : 'Saldo Devedor / A Repor'}
+                                  </Badge>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    title="Editar entregador, saldo de abertura e data de corte"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setSelectedUserForEdit(acc.courier)
+                                      setIsEditUserModalOpen(true)
+                                    }}
+                                    className="h-6 w-6 p-0 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md"
+                                  >
+                                    <Edit3 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
                               </div>
                             </CardHeader>
-
                             <CardContent className="p-4 pt-2 space-y-3 text-xs">
                               {/* Rótulo de Período Explícito */}
                               <div className="flex items-center justify-between">
