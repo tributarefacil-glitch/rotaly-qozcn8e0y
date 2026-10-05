@@ -18,8 +18,27 @@ onRecordUpdate((e) => {
     try {
       const auditCol = e.app.findCollectionByNameOrId('audit_trail')
       const auditRec = new Record(auditCol)
-      if (authUserId && authUserId !== 'system') {
-        auditRec.set('user_id', authUserId)
+      let resolvedUserId = ''
+      let actorName = 'Sistema'
+      let actorEmail = 'sistema@rotaly.com'
+      let actorRole = 'system'
+      let isSystem = true
+
+      if (e.auth && e.auth.id) {
+        try {
+          const authUser = e.app.findRecordById('users', e.auth.id)
+          if (authUser) {
+            resolvedUserId = authUser.id
+            actorName = authUser.getString('name') || authUser.getString('email') || 'Usuário'
+            actorEmail = authUser.getString('email') || ''
+            actorRole = authUser.getString('role') || 'admin'
+            isSystem = false
+          }
+        } catch (_) {}
+      }
+
+      if (resolvedUserId) {
+        auditRec.set('user_id', resolvedUserId)
       }
       auditRec.set('collection', 'users')
       auditRec.set('record_id', recordId)
@@ -31,7 +50,10 @@ onRecordUpdate((e) => {
       auditRec.set('timestamp', new Date().toISOString())
       auditRec.set('metadata', {
         target_user_name: e.record.getString('name'),
-        system_trigger: authUserId === 'system',
+        actor_name: actorName,
+        actor_email: actorEmail,
+        actor_role: actorRole,
+        system_trigger: isSystem,
       })
       e.app.save(auditRec)
     } catch (err) {
@@ -44,8 +66,27 @@ onRecordUpdate((e) => {
     try {
       const auditCol = e.app.findCollectionByNameOrId('audit_trail')
       const auditRec = new Record(auditCol)
-      if (authUserId && authUserId !== 'system') {
-        auditRec.set('user_id', authUserId)
+      let resolvedUserId = ''
+      let actorName = 'Sistema'
+      let actorEmail = 'sistema@rotaly.com'
+      let actorRole = 'system'
+      let isSystem = true
+
+      if (e.auth && e.auth.id) {
+        try {
+          const authUser = e.app.findRecordById('users', e.auth.id)
+          if (authUser) {
+            resolvedUserId = authUser.id
+            actorName = authUser.getString('name') || authUser.getString('email') || 'Usuário'
+            actorEmail = authUser.getString('email') || ''
+            actorRole = authUser.getString('role') || 'admin'
+            isSystem = false
+          }
+        } catch (_) {}
+      }
+
+      if (resolvedUserId) {
+        auditRec.set('user_id', resolvedUserId)
       }
       auditRec.set('collection', 'users')
       auditRec.set('record_id', recordId)
@@ -57,7 +98,10 @@ onRecordUpdate((e) => {
       auditRec.set('timestamp', new Date().toISOString())
       auditRec.set('metadata', {
         target_user_name: e.record.getString('name'),
-        system_trigger: authUserId === 'system',
+        actor_name: actorName,
+        actor_email: actorEmail,
+        actor_role: actorRole,
+        system_trigger: isSystem,
       })
       e.app.save(auditRec)
     } catch (err) {
@@ -79,7 +123,28 @@ onRecordCreate((e) => {
   try {
     const auditCol = e.app.findCollectionByNameOrId('audit_trail')
     const auditRec = new Record(auditCol)
-    auditRec.set('user_id', authUserId)
+    let resolvedUserId = ''
+    let actorName = 'Sistema'
+    let actorEmail = 'sistema@rotaly.com'
+    let actorRole = 'system'
+    let isSystem = true
+
+    if (e.auth && e.auth.id) {
+      try {
+        const authUser = e.app.findRecordById('users', e.auth.id)
+        if (authUser) {
+          resolvedUserId = authUser.id
+          actorName = authUser.getString('name') || authUser.getString('email') || 'Usuário'
+          actorEmail = authUser.getString('email') || ''
+          actorRole = authUser.getString('role') || 'admin'
+          isSystem = false
+        }
+      } catch (_) {}
+    }
+
+    if (resolvedUserId) {
+      auditRec.set('user_id', resolvedUserId)
+    }
     auditRec.set('collection', 'route_km_approvals')
     auditRec.set('record_id', e.record.id)
     auditRec.set('courier_id', courierId)
@@ -94,6 +159,10 @@ onRecordCreate((e) => {
       original_road_km: originalRoad,
       approved_km: approvedKm,
       status: status,
+      actor_name: actorName,
+      actor_email: actorEmail,
+      actor_role: actorRole,
+      system_trigger: isSystem,
     })
     e.app.save(auditRec)
   } catch (err) {
@@ -117,7 +186,28 @@ onRecordUpdate((e) => {
   try {
     const auditCol = e.app.findCollectionByNameOrId('audit_trail')
     const auditRec = new Record(auditCol)
-    auditRec.set('user_id', authUserId)
+    let resolvedUserId = ''
+    let actorName = 'Sistema'
+    let actorEmail = 'sistema@rotaly.com'
+    let actorRole = 'system'
+    let isSystem = true
+
+    if (e.auth && e.auth.id) {
+      try {
+        const authUser = e.app.findRecordById('users', e.auth.id)
+        if (authUser) {
+          resolvedUserId = authUser.id
+          actorName = authUser.getString('name') || authUser.getString('email') || 'Usuário'
+          actorEmail = authUser.getString('email') || ''
+          actorRole = authUser.getString('role') || 'admin'
+          isSystem = false
+        }
+      } catch (_) {}
+    }
+
+    if (resolvedUserId) {
+      auditRec.set('user_id', resolvedUserId)
+    }
     auditRec.set('collection', 'route_km_approvals')
     auditRec.set('record_id', e.record.id)
     auditRec.set('courier_id', courierId)
@@ -129,6 +219,10 @@ onRecordUpdate((e) => {
     auditRec.set('metadata', {
       order_id: e.record.getString('order_id'),
       justification: e.record.getString('justification'),
+      actor_name: actorName,
+      actor_email: actorEmail,
+      actor_role: actorRole,
+      system_trigger: isSystem,
     })
     e.app.save(auditRec)
   } catch (err) {
@@ -152,7 +246,28 @@ onRecordUpdate((e) => {
     try {
       const auditCol = e.app.findCollectionByNameOrId('audit_trail')
       const auditRec = new Record(auditCol)
-      auditRec.set('user_id', authUserId)
+      let resolvedUserId = ''
+      let actorName = 'Sistema'
+      let actorEmail = 'sistema@rotaly.com'
+      let actorRole = 'system'
+      let isSystem = true
+
+      if (e.auth && e.auth.id) {
+        try {
+          const authUser = e.app.findRecordById('users', e.auth.id)
+          if (authUser) {
+            resolvedUserId = authUser.id
+            actorName = authUser.getString('name') || authUser.getString('email') || 'Usuário'
+            actorEmail = authUser.getString('email') || ''
+            actorRole = authUser.getString('role') || 'admin'
+            isSystem = false
+          }
+        } catch (_) {}
+      }
+
+      if (resolvedUserId) {
+        auditRec.set('user_id', resolvedUserId)
+      }
       auditRec.set('collection', 'fuel_advances')
       auditRec.set('record_id', e.record.id)
       auditRec.set('courier_id', courierId)
@@ -165,6 +280,10 @@ onRecordUpdate((e) => {
         amount: e.record.get('amount'),
         cancellation_reason: e.record.getString('cancellation_reason'),
         cancelled_by: e.record.getString('cancelled_by'),
+        actor_name: actorName,
+        actor_email: actorEmail,
+        actor_role: actorRole,
+        system_trigger: isSystem,
       })
       e.app.save(auditRec)
     } catch (err) {

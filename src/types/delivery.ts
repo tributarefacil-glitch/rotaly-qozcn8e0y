@@ -565,6 +565,7 @@ export interface AuditTrailRecord {
   created: string
   updated?: string
   actor_id?: string
+  actor_name?: string
   actor_email?: string
   action: 'create' | 'update' | 'cancel' | 'delete' | string
   entity: string
@@ -574,6 +575,7 @@ export interface AuditTrailRecord {
   before_data?: Record<string, any>
   after_data?: Record<string, any>
   diff?: Record<string, any>
+  metadata?: Record<string, any>
   ip?: string
   expand?: {
     actor_id?: UserRecord

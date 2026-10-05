@@ -522,8 +522,14 @@ export const AuditTrailSection: React.FC<AuditTrailSectionProps> = ({
                     const ts = parseSafeTimestamp(row.created) || new Date(row.created).getTime()
                     const dateStr = formatDateInTz(ts)
                     const timeStr = formatTimeInTz(ts)
-                    const actorName =
-                      row.expand?.actor_id?.name || row.actor_email || 'Sistema / Cron'
+                    const isSystemActor =
+                      !row.actor_id ||
+                      row.actor_name === 'Sistema' ||
+                      row.metadata?.system_trigger === true ||
+                      row.metadata?.actor_role === 'system'
+                    const actorName = isSystemActor
+                      ? 'Sistema'
+                      : row.expand?.actor_id?.name || row.actor_name || row.actor_email || 'Usuário'
                     const courierName = row.expand?.courier_id?.name || '-'
 
                     return (
@@ -542,9 +548,20 @@ export const AuditTrailSection: React.FC<AuditTrailSectionProps> = ({
 
                         {/* Responsável */}
                         <td className="py-3 px-3 align-top">
-                          <div className="space-y-0.5">
-                            <span className="font-semibold text-slate-900 block">{actorName}</span>
-                            {row.actor_email && row.actor_email !== actorName && (
+                          <div className="space-y-1">
+                            {isSystemActor ? (
+                              <Badge
+                                variant="outline"
+                                className="bg-slate-100 text-slate-700 border-slate-300 font-bold text-[10px] px-2 py-0.5 gap-1 inline-flex items-center"
+                              >
+                                ⚙️ Sistema
+                              </Badge>
+                            ) : (
+                              <span className="font-semibold text-slate-900 block">
+                                {actorName}
+                              </span>
+                            )}
+                            {!isSystemActor && row.actor_email && row.actor_email !== actorName && (
                               <span className="text-[10px] text-slate-400 block font-mono">
                                 {row.actor_email}
                               </span>

@@ -52,6 +52,41 @@ onRecordCreate((e) => {
           `courier_id='${courierId}'. ` +
           `O servidor FORCOU o pedido para nascer rigorosamente 'pending' e fora de qualquer rota!`,
       )
+
+      try {
+        const auditCol = e.app.findCollectionByNameOrId('audit_trail')
+        if (auditCol) {
+          const auditRec = new Record(auditCol)
+          let resolvedUserId = ''
+          if (e.auth && e.auth.id) {
+            try {
+              const authUser = e.app.findRecordById('users', e.auth.id)
+              if (authUser) resolvedUserId = authUser.id
+            } catch (_) {}
+          }
+          if (resolvedUserId) {
+            auditRec.set('user_id', resolvedUserId)
+          }
+          if (courierId) auditRec.set('courier_id', courierId)
+          auditRec.set('collection', 'orders')
+          auditRec.set('record_id', order.id || 'NEW_RECORD')
+          auditRec.set('action', 'guard_force_pending')
+          auditRec.set('field', 'status')
+          auditRec.set('old_value', incomingStatus || 'abnormal_active')
+          auditRec.set('new_value', 'pending')
+          auditRec.set('timestamp', new Date().toISOString())
+          auditRec.set('metadata', {
+            reason: 'Blindagem estrutural: pedido forçado para pending na criação',
+            tracking_code: trackingCode,
+            actor_name: 'Sistema',
+            actor_role: 'system',
+            system_trigger: true,
+          })
+          e.app.save(auditRec)
+        }
+      } catch (auditErr) {
+        console.log('[AUDITORIA_ROTEAMENTO_BLINDADO] Erro ao gravar audit_trail:', auditErr)
+      }
     }
 
     // Forçar regras blindadas no banco de dados (lado servidor)

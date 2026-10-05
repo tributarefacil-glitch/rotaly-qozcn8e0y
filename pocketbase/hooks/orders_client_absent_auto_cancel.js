@@ -56,7 +56,7 @@ cronAdd('hourly_client_absent_auto_cancel', '0 * * * *', () => {
         if (auditCol) {
           try {
             const auditRec = new Record(auditCol)
-            auditRec.set('user_id', 'system')
+            // user_id vazio para sistema
             auditRec.set('collection', 'orders')
             auditRec.set('record_id', order.id)
             auditRec.set('action', 'cancel')
@@ -68,6 +68,10 @@ cronAdd('hourly_client_absent_auto_cancel', '0 * * * *', () => {
               reason: 'Cancelamento automático após 24h de cliente ausente sem reatribuição',
               tracking_code: trackingCode,
               order_id: order.id,
+              actor_name: 'Sistema',
+              actor_email: 'sistema@rotaly.com',
+              actor_role: 'system',
+              system_trigger: true,
             })
             $app.save(auditRec)
           } catch (auditErr) {

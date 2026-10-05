@@ -155,8 +155,16 @@ onRecordCreateRequest((e) => {
             const auditCol = e.app.findCollectionByNameOrId('audit_trail')
             if (auditCol) {
               const auditRec = new Record(auditCol)
-              const authUserId = e.auth && e.auth.id ? e.auth.id : 'system'
-              auditRec.set('user_id', authUserId)
+              let resolvedUserId = ''
+              if (e.auth && e.auth.id) {
+                try {
+                  const authUser = e.app.findRecordById('users', e.auth.id)
+                  if (authUser) resolvedUserId = authUser.id
+                } catch (_) {}
+              }
+              if (resolvedUserId) {
+                auditRec.set('user_id', resolvedUserId)
+              }
               const courierId = order.getString('courier_id')
               if (courierId) auditRec.set('courier_id', courierId)
 
@@ -172,6 +180,9 @@ onRecordCreateRequest((e) => {
                 customer_id: customerId,
                 customer_name: custName,
                 tracking_code: order.getString('tracking_code'),
+                actor_name: 'Sistema',
+                actor_role: 'system',
+                system_trigger: true,
               })
               e.app.save(auditRec)
             }
@@ -335,8 +346,16 @@ onRecordUpdateRequest((e) => {
             const auditCol = e.app.findCollectionByNameOrId('audit_trail')
             if (auditCol) {
               const auditRec = new Record(auditCol)
-              const authUserId = e.auth && e.auth.id ? e.auth.id : 'system'
-              auditRec.set('user_id', authUserId)
+              let resolvedUserId = ''
+              if (e.auth && e.auth.id) {
+                try {
+                  const authUser = e.app.findRecordById('users', e.auth.id)
+                  if (authUser) resolvedUserId = authUser.id
+                } catch (_) {}
+              }
+              if (resolvedUserId) {
+                auditRec.set('user_id', resolvedUserId)
+              }
               const courierId = order.getString('courier_id')
               if (courierId) auditRec.set('courier_id', courierId)
 
@@ -352,6 +371,9 @@ onRecordUpdateRequest((e) => {
                 customer_id: customerId,
                 customer_name: custName,
                 tracking_code: order.getString('tracking_code'),
+                actor_name: 'Sistema',
+                actor_role: 'system',
+                system_trigger: true,
               })
               e.app.save(auditRec)
             }

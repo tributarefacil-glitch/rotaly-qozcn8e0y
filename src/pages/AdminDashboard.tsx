@@ -1837,19 +1837,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   )}
                               </div>
 
-                              {/* Saldo Principal */}
+                              {/* Saldo Principal Canônico (Período-Independente) */}
                               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border flex items-center justify-between">
                                 <div>
                                   <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                                    Saldo da Conta Corrente (
-                                    {fuelPeriodFilter === 'today'
-                                      ? 'Hoje'
-                                      : fuelPeriodFilter === 'week'
-                                        ? 'Últimos 7 dias'
-                                        : fuelPeriodFilter === 'month'
-                                          ? 'Mês Corrente'
-                                          : 'Total Acumulado'}
-                                    )
+                                    Saldo da Conta Corrente
                                   </span>
                                   <span
                                     className={`text-xl font-black font-mono ${
@@ -1866,7 +1858,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                     {Number(acc?.advanceCount) || 0} adiantamento(s)
                                   </span>
                                   <span className="text-[10px] text-slate-400 block">
-                                    {Number(acc?.deliveriesCount) || 0} entregas
+                                    {Number(acc?.deliveriesCount) || 0} entregas no período
                                   </span>
                                 </div>
                               </div>
@@ -1880,13 +1872,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   <span className="font-bold text-emerald-800 dark:text-emerald-300 font-mono text-sm">
                                     R$ {totalAdvancesNum.toFixed(2)}
                                   </span>
+                                  <span className="text-[9px] text-slate-400 block mt-0.5">
+                                    {Number(acc?.advanceCount) || 0} pós-corte
+                                  </span>
                                 </div>
 
                                 <div className="p-2 rounded-lg bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40">
                                   <span className="text-amber-700 dark:text-amber-400 block font-medium">
                                     {isBicycle
                                       ? 'Km Rodado (Sem Combustível)'
-                                      : '(-) Gasto Rota Oficial'}
+                                      : '(-) Gasto no Período'}
                                   </span>
                                   <span className="font-bold text-amber-800 dark:text-amber-300 font-mono text-sm">
                                     {isBicycle
@@ -1896,7 +1891,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   <span className="text-[9px] text-slate-400 block mt-0.5">
                                     {isBicycle
                                       ? 'Telemetria apurada'
-                                      : `${totalRouteKmNum.toFixed(1)} km`}
+                                      : `${totalRouteKmNum.toFixed(1)} km • ${Number(acc?.deliveriesCount) || 0} entregas`}
                                   </span>
                                 </div>
                               </div>
@@ -3779,7 +3774,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[#002855] font-mono font-bold">
-                    v0.0.328
+                    v0.0.331
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">

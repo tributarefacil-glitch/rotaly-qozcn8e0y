@@ -1077,13 +1077,16 @@ export default function PublicTrackingPage() {
             </div>
           </div>
 
-          <Button
-            type="button"
-            onClick={() => setIsSupportModalOpen(false)}
-            className="w-full text-xs font-bold rounded-xl h-10 bg-slate-900 hover:bg-slate-800 text-white"
-          >
-            Fechar
-          </Button>
+          <div className="flex items-center justify-between pt-1">
+            <span className="font-mono text-[10px] text-slate-400">Rotaly v0.0.331</span>
+            <Button
+              type="button"
+              onClick={() => setIsSupportModalOpen(false)}
+              className="text-xs font-bold rounded-xl h-9 px-4 bg-slate-900 hover:bg-slate-800 text-white"
+            >
+              Fechar
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

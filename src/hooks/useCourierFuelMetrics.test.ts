@@ -28,10 +28,10 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
     email: 'vinicios@loghype.com',
     role: 'courier',
     vehicle_type: 'moto',
-    opening_balance: 82.03,
+    opening_balance: 67.62,
     cutoff_date: cutoffStr,
     created: '2026-09-11 00:56:38.292Z',
-    updated: '2026-10-04 01:18:43.421Z',
+    updated: '2026-10-05 02:37:00.000Z',
   } as unknown as UserRecord
 
   const mockLuis = {
@@ -242,7 +242,7 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
     }
   })
 
-  it('deve calcular o saldo de Vinicios em R$ 82,03 sem adiantamentos pós-corte', () => {
+  it('deve calcular o saldo de Vinicios em R$ 67,62 sem adiantamentos pós-corte', () => {
     const res = calculateCourierFuelMetrics({
       courier: mockVinicios,
       advances: [],
@@ -252,7 +252,7 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
       settings: mockSettings,
       periodFilter: 'all',
     })
-    expect(res.balance).toBe(82.03)
+    expect(res.balance).toBe(67.62)
     expect(res.advanceCount).toBe(0)
     expect(res.totalAdvances).toBe(0)
 
@@ -263,7 +263,7 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
       settings: mockSettings,
       periodFilter: 'week',
     })
-    expect(acc.balance).toBe(82.03)
+    expect(acc.balance).toBe(67.62)
   })
 
   it('deve calcular os saldos dos demais entregadores (Luis R$ 102,54, Diogo R$ 66,71, Edson R$ 0,00, Marcos R$ 0,00)', () => {
