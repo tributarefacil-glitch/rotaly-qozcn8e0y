@@ -934,13 +934,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
     }
 
+    const fallbackBase = baseAddresses[0]
     return {
-      id: 'default-base',
+      id: fallbackBase?.id || 'default-base',
       type: 'base' as const,
-      name: 'Mais Saudavel',
-      address: 'Rua da Prosperidade, 13 - Pilar, Duque de Caxias - RJ, 25230-085',
-      lat: -22.7001402,
-      lng: -43.2982834,
+      name: fallbackBase?.name || 'Mais Saudavel',
+      address:
+        fallbackBase?.address ||
+        'Rua da Prosperidade, 13 - Pilar, Duque de Caxias - RJ, 25230-085, Brasil',
+      lat: typeof fallbackBase?.lat === 'number' ? fallbackBase.lat : -22.6990563,
+      lng: typeof fallbackBase?.lng === 'number' ? fallbackBase.lng : -43.296723,
       isDefault: true,
     }
   }, [resolveLocationEntity, selectedStartBaseId, baseAddresses])
@@ -1427,12 +1430,18 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     }
 
     // 1. Determine Start Base and End Base coordinates (suporta tanto BaseAddressRecord quanto CustomerRecord)
+    const activeDefaultBase = baseAddresses.find((b) => b.is_default) || baseAddresses[0]
+    const fallbackBaseLat =
+      typeof activeDefaultBase?.lat === 'number' ? activeDefaultBase.lat : -22.6990563
+    const fallbackBaseLng =
+      typeof activeDefaultBase?.lng === 'number' ? activeDefaultBase.lng : -43.296723
+
     const startEntity = resolvedStartEntity
     const startBase = {
       name: startEntity.name,
       address: startEntity.address,
-      lat: startEntity.lat || -22.7001402,
-      lng: startEntity.lng || -43.2982834,
+      lat: typeof startEntity.lat === 'number' ? startEntity.lat : fallbackBaseLat,
+      lng: typeof startEntity.lng === 'number' ? startEntity.lng : fallbackBaseLng,
     }
 
     // Blindagem de distância excessiva entre a base padrão de partida e as entregas selecionadas

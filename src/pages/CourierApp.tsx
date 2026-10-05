@@ -97,7 +97,7 @@ export default function CourierApp() {
   const [isFinishingRoute, setIsFinishingRoute] = useState(false)
   const [isSubmittingPin, setIsSubmittingPin] = useState(false)
 
-  // Estados opcionais de odômetro e foto do painel (auditoria informativa, nunca bloqueante)
+  // Campos de odômetro legados mantidos apenas como estados neutros em memória (aposentados da UI)
   const [odometroInicialInput, setOdometroInicialInput] = useState<string>('')
   const [odometroFinalInput, setOdometroFinalInput] = useState<string>('')
   const [fotoOdometroInicial, setFotoOdometroInicial] = useState<File | null>(null)
@@ -1674,53 +1674,16 @@ export default function CourierApp() {
               </p>
             </div>
 
-            {/* Campos de Odômetro Final e Foto (Opcional - Nunca bloqueia) */}
-            <div className="p-3 rounded-xl bg-[#0A1128] border border-[#1E2B58] space-y-2.5 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-300 flex items-center gap-1.5">
-                  <span>🏍️</span> Odômetro Final da Moto (Opcional)
-                </span>
-                <Badge variant="outline" className="text-[9px] border-slate-700 text-slate-400">
-                  Auditoria
-                </Badge>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] text-slate-400 block mb-1">
-                    KM Final do Painel
-                  </label>
-                  <Input
-                    type="number"
-                    step="0.1"
-                    placeholder="Ex: 12543.8"
-                    value={odometroFinalInput}
-                    onChange={(e) => setOdometroFinalInput(e.target.value)}
-                    className="h-9 bg-[#070D1E] border-[#1E2B58] text-white text-xs font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-400 block mb-1">
-                    Foto do Painel (Opcional)
-                  </label>
-                  <label className="flex items-center justify-center h-9 px-3 rounded-lg border border-dashed border-[#1E2B58] bg-[#070D1E] hover:border-emerald-500/50 cursor-pointer text-slate-300 text-xs gap-1.5 truncate">
-                    <Camera className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                    <span className="truncate">
-                      {fotoOdometroFinal ? fotoOdometroFinal.name : 'Tirar Foto'}
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          setFotoOdometroFinal(e.target.files[0])
-                        }
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
+            {/* Informação da rota concluída com KM viário oficial */}
+            <div className="p-3.5 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 text-xs text-emerald-200 space-y-1">
+              <span className="font-bold flex items-center gap-1.5 text-emerald-300">
+                <CheckCircle className="h-4 w-4 text-emerald-400" />
+                Todas as paradas foram concluídas!
+              </span>
+              <p className="text-[11px] text-slate-300">
+                Retorne à base para concluir o ciclo viário oficial. O encerramento ocorre
+                automaticamente por proximidade (geofence) ou tocando no botão abaixo.
+              </p>
             </div>
 
             {/* Botões de Ação: Navegar até a base & Finalizar Rota Inteira (Fallback manual) */}
@@ -1772,60 +1735,15 @@ export default function CourierApp() {
         {/* ============================================================== */}
         {!isLoading && activeDeliveries.length > 0 && !isRouteStarted && (
           <div className="space-y-3">
-            {/* Odômetro Inicial e Foto (Opcional - Nunca bloqueia o aceite da rota) */}
-            <div className="p-3.5 rounded-2xl border border-[#1E2B58] bg-[#0E1738] space-y-2.5 text-xs shadow-md">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-white flex items-center gap-1.5 font-heading">
-                  <span>🏍️</span> Odômetro Inicial da Moto (Opcional)
-                </span>
-                <Badge
-                  variant="outline"
-                  className="text-[9px] border-emerald-500/40 text-emerald-400 bg-emerald-950/20"
-                >
-                  Prioridade 1
-                </Badge>
-              </div>
+            {/* Informações da rota planejada oficial */}
+            <div className="p-3.5 rounded-2xl border border-[#1E2B58] bg-[#0E1738] space-y-1.5 text-xs shadow-md">
+              <span className="font-bold text-white flex items-center gap-1.5 font-heading">
+                <span>🛣️</span> Trajeto Viário Oficial Planejado
+              </span>
               <p className="text-[11px] text-slate-400">
-                Se desejar, anote o odômetro e fotografe o painel da moto antes de sair da base. Não
-                bloqueia o início da rota.
+                O trajeto viário oficial das paradas é apurado pelo otimizador de rota. Toque em
+                &quot;Aceitar Rota&quot; para iniciar as entregas.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] text-slate-400 block mb-1">
-                    KM Inicial do Painel
-                  </label>
-                  <Input
-                    type="number"
-                    step="0.1"
-                    placeholder="Ex: 12500.0"
-                    value={odometroInicialInput}
-                    onChange={(e) => setOdometroInicialInput(e.target.value)}
-                    className="h-9 bg-[#070D1E] border-[#1E2B58] text-white text-xs font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-400 block mb-1">
-                    Foto do Painel (Opcional)
-                  </label>
-                  <label className="flex items-center justify-center h-9 px-3 rounded-lg border border-dashed border-[#1E2B58] bg-[#070D1E] hover:border-emerald-500/50 cursor-pointer text-slate-300 text-xs gap-1.5 truncate">
-                    <Camera className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                    <span className="truncate">
-                      {fotoOdometroInicial ? fotoOdometroInicial.name : 'Tirar Foto'}
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          setFotoOdometroInicial(e.target.files[0])
-                        }
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
             </div>
 
             {/* Botão Principal Aceitar Rota */}
@@ -2172,7 +2090,7 @@ export default function CourierApp() {
       </main>
 
       {/* Link de ajuda no rodapé para o entregador resolver GPS sozinho a qualquer momento */}
-      <div className="max-w-xl mx-auto w-full px-4 pt-1 pb-2 flex items-center justify-center">
+      <div className="max-w-xl mx-auto w-full px-4 pt-1 pb-2 flex flex-col items-center justify-center gap-1">
         <button
           type="button"
           onClick={() => setIsIPhoneGuideOpen(true)}
@@ -2181,6 +2099,7 @@ export default function CourierApp() {
           <HelpCircle className="h-3.5 w-3.5" />
           <span>Problemas com GPS no iPhone? Veja como liberar</span>
         </button>
+        <span className="font-mono text-[10px] text-slate-500">v0.0.328</span>
       </div>
 
       {/* Navegação Inferior Mobile Mantida Intacta */}

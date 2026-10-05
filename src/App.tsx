@@ -347,12 +347,16 @@ function ProtectedRoute({
     return <>{children}</>
   }
 
-  // Papel Master tem passe livre completo em rotas admin e de empresas
+  // Papel Master tem passe livre completo em rotas admin, master e de empresas
   if (role === 'master') {
-    return <RouteErrorBoundary routeName={routeName}>{children}</RouteErrorBoundary>
+    return (
+      <RouteErrorBoundary routeName={routeName}>
+        <Suspense fallback={<PageSuspenseFallback />}>{children}</Suspense>
+      </RouteErrorBoundary>
+    )
   }
 
-  // BLINDAGEM ESTRITA: perfis não-admin (seller ou courier) NUNCA podem renderizar em /admin ou qualquer sub-rota admin
+  // BLINDAGEM ESTRITA: perfis não-admin e não-master (seller ou courier) NUNCA podem renderizar em /admin ou qualquer sub-rota admin
   if (
     role !== 'admin' &&
     (location.pathname === '/admin' || location.pathname.startsWith('/admin/'))
@@ -588,7 +592,10 @@ const App = () => (
               <Route
                 path="/admin"
                 element={
-                  <ProtectedRoute allowedRoles={['admin']} routeName="Painel do Administrador">
+                  <ProtectedRoute
+                    allowedRoles={['admin', 'master']}
+                    routeName="Painel do Administrador"
+                  >
                     <Suspense fallback={<PageSuspenseFallback />}>
                       <AdminDashboard defaultTab="overview" />
                     </Suspense>
@@ -598,7 +605,10 @@ const App = () => (
               <Route
                 path="/admin/users"
                 element={
-                  <ProtectedRoute allowedRoles={['admin']} routeName="Gestão de Usuários (Admin)">
+                  <ProtectedRoute
+                    allowedRoles={['admin', 'master']}
+                    routeName="Gestão de Usuários (Admin)"
+                  >
                     <Suspense fallback={<PageSuspenseFallback />}>
                       <AdminDashboard defaultTab="couriers" />
                     </Suspense>
@@ -608,7 +618,7 @@ const App = () => (
               <Route
                 path="/users"
                 element={
-                  <ProtectedRoute allowedRoles={['admin']} routeName="Gestão de Usuários">
+                  <ProtectedRoute allowedRoles={['admin', 'master']} routeName="Gestão de Usuários">
                     <Suspense fallback={<PageSuspenseFallback />}>
                       <AdminDashboard defaultTab="couriers" />
                     </Suspense>

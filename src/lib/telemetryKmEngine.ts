@@ -554,17 +554,13 @@ export function calculateRealKmForOrder(params: {
 
   // Se não houver telemetria GPS suficiente (< 2 pontos válidos)
   if (validPoints.length < 2) {
-    // Aplicar hierarquia: Odômetro > Histórico Viário > Planejado
-    // Regra dura: NÃO INVENTAR NÚMEROS. Se não houver dados, o valor é 0
+    // Regra oficial do Rotaly: trajeto viário planejado é a única fonte oficial.
+    // Odômetro foi aposentado como fonte de cálculo.
     let officialKmFallback = 0
     let source: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
     let hasData = false
 
-    if (odometerDifference && odometerDifference > 0) {
-      officialKmFallback = odometerDifference
-      source = 'odometro'
-      hasData = true
-    } else if (routeTotalRoadKm > 0) {
+    if (routeTotalRoadKm > 0) {
       officialKmFallback = routeTotalRoadKm
       source = 'historico_viario'
       hasData = true
@@ -579,7 +575,7 @@ export function calculateRealKmForOrder(params: {
       deviationKm: 0,
       totalGpsKm: officialKmFallback,
       discardedNoiseKm,
-      isRealTelemetry: source === 'odometro',
+      isRealTelemetry: false,
       gpsPointsCount: validPoints.length,
       filteredNoisePointsCount: noiseCount,
       offRouteCount: offRouteEventsList.length,
@@ -587,10 +583,10 @@ export function calculateRealKmForOrder(params: {
       plannedKm: Number(plannedTotalKm.toFixed(1)),
       hasReturnKm,
       calculationSource: source,
-      odometerKm: odometerDifference || undefined,
+      odometerKm: undefined,
       auditNotes: hasData
-        ? `Cálculo via ${source === 'odometro' ? 'Odômetro da Moto' : 'Trajeto Viário das Paradas'}.`
-        : 'Sem telemetria GPS nem odômetro ou trajeto viário gravado.',
+        ? 'Cálculo via Trajeto Viário Oficial das Paradas.'
+        : 'Sem trajeto viário gravado.',
     }
   }
 
@@ -711,6 +707,6 @@ export function calculateRealKmForOrder(params: {
     samplingCurvatureFactor: curvatureFactor,
     calculationSource,
     odometerKm: odometerDifference || undefined,
-    auditNotes: `Fonte: Trajeto Viário das Paradas. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
+    auditNotes: `Fonte: Trajeto Viário Oficial das Paradas. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
   }
 }

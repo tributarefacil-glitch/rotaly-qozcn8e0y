@@ -667,6 +667,22 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     if (cust && cust.lat && cust.lng) {
       setSelectedCoords({ lat: cust.lat, lng: cust.lng })
       setHasLocationPinned(true)
+      setIsPinManuallyAdjusted(true)
+      isSelectedFromAutocompleteRef.current = true
+    }
+
+    if (cust) {
+      const custAddr = cust.address || cust.street || ''
+      setAddressSearchQuery(custAddr)
+      setStreetAndNumber(cust.street || custAddr)
+      setNeighborhood(cust.neighborhood || '')
+      setCity(cust.city || '')
+      setPostalCode(cust.postal_code || '')
+      setComplement(cust.complement || '')
+      if (cust.name) setNewCustName(cust.name)
+      if (cust.phone) setNewCustPhone(cust.phone)
+      if (cust.phone2) setNewCustPhone2(cust.phone2)
+      if (cust.phone3) setNewCustPhone3(cust.phone3)
     }
 
     if (id) {
@@ -1187,6 +1203,25 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         }
       }
 
+      // Validação e preenchimento autoritativo do destino do cliente (end_address_*)
+      // Garante que o pedido nunca nasça vazio nem com endereço/coordenadas da base
+      const selectedCustomerRecord = localCustomers.find((c) => c.id === finalCustomerId)
+      const targetAddressText =
+        selectedCustomerRecord?.address ||
+        selectedCustomerRecord?.street ||
+        getFullFormattedAddress() ||
+        streetAndNumber.trim() ||
+        ''
+      const targetCustomerName = selectedCustomerRecord?.name || newCustName.trim() || 'Cliente'
+      const targetLat =
+        typeof selectedCoords.lat === 'number' && !isNaN(selectedCoords.lat)
+          ? selectedCoords.lat
+          : selectedCustomerRecord?.lat
+      const targetLng =
+        typeof selectedCoords.lng === 'number' && !isNaN(selectedCoords.lng)
+          ? selectedCoords.lng
+          : selectedCustomerRecord?.lng
+
       // Retry silencioso de criação de pedido: até 3 tentativas gerando novo tracking_code
       // com backoff curto (~200ms) para neutralizar eventuais colisões de concorrência.
       const MAX_ORDER_ATTEMPTS = 3
@@ -1209,6 +1244,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             route_started: false,
             route_started_at: undefined,
             ...baseDataForOrder,
+            end_address_name: targetCustomerName,
+            end_address_text: targetAddressText,
+            end_address_lat: targetLat,
+            end_address_lng: targetLng,
             priority,
             items: validItems,
             total_price: totalPrice,
