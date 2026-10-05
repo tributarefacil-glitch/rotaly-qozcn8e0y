@@ -14,26 +14,32 @@ onRecordUpdate((e) => {
 
   // Se não for admin ou master, bloqueia alteração nos campos sensíveis
   if (!isPrivileged) {
-    const origOpeningBalance = original.get('opening_balance')
-    const newOpeningBalance = e.record.get('opening_balance')
-    if (origOpeningBalance !== newOpeningBalance && newOpeningBalance !== undefined) {
-      throw new BadRequestError(
-        'Apenas administradores podem alterar o saldo de abertura (opening_balance).',
-      )
-    }
+    // Se a alteração é disparada internamente pelo sistema (migrations/jobs sem requisição HTTP/authRecord),
+    // permite a alteração de sistema. Bloqueia apenas requisições de clientes não autenticados como admin/master.
+    if (authRecord) {
+      const origOpeningBalance = original.get('opening_balance')
+      const newOpeningBalance = e.record.get('opening_balance')
+      if (origOpeningBalance !== newOpeningBalance && newOpeningBalance !== undefined) {
+        throw new BadRequestError(
+          'Apenas administradores podem alterar o saldo de abertura (opening_balance).',
+        )
+      }
 
-    const origCutoffDate = original.getString('cutoff_date')
-    const newCutoffDate = e.record.getString('cutoff_date')
-    if (origCutoffDate !== newCutoffDate && newCutoffDate !== undefined && newCutoffDate !== '') {
-      throw new BadRequestError(
-        'Apenas administradores podem alterar a data de corte (cutoff_date).',
-      )
-    }
+      const origCutoffDate = original.getString('cutoff_date')
+      const newCutoffDate = e.record.getString('cutoff_date')
+      if (origCutoffDate !== newCutoffDate && newCutoffDate !== undefined && newCutoffDate !== '') {
+        throw new BadRequestError(
+          'Apenas administradores podem alterar a data de corte (cutoff_date).',
+        )
+      }
 
-    const origRole = original.getString('role')
-    const newRole = e.record.getString('role')
-    if (origRole !== newRole && newRole !== '') {
-      throw new BadRequestError('Apenas administradores podem alterar o perfil (role) de usuários.')
+      const origRole = original.getString('role')
+      const newRole = e.record.getString('role')
+      if (origRole !== newRole && newRole !== '') {
+        throw new BadRequestError(
+          'Apenas administradores podem alterar o perfil (role) de usuários.',
+        )
+      }
     }
   }
 

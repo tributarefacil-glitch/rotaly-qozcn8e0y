@@ -18,7 +18,9 @@ onRecordUpdate((e) => {
     try {
       const auditCol = e.app.findCollectionByNameOrId('audit_trail')
       const auditRec = new Record(auditCol)
-      auditRec.set('user_id', authUserId)
+      if (authUserId && authUserId !== 'system') {
+        auditRec.set('user_id', authUserId)
+      }
       auditRec.set('collection', 'users')
       auditRec.set('record_id', recordId)
       auditRec.set('courier_id', recordId)
@@ -27,20 +29,24 @@ onRecordUpdate((e) => {
       auditRec.set('old_value', String(origOpening))
       auditRec.set('new_value', String(newOpening))
       auditRec.set('timestamp', new Date().toISOString())
-      auditRec.set('metadata', { target_user_name: e.record.getString('name') })
+      auditRec.set('metadata', {
+        target_user_name: e.record.getString('name'),
+        system_trigger: authUserId === 'system',
+      })
       e.app.save(auditRec)
     } catch (err) {
       console.warn('[audit_trail] Erro ao gravar users.opening_balance:', err)
     }
   }
-
   const origCutoff = original.getString('cutoff_date')
   const newCutoff = e.record.getString('cutoff_date')
   if (origCutoff !== newCutoff && newCutoff !== undefined) {
     try {
       const auditCol = e.app.findCollectionByNameOrId('audit_trail')
       const auditRec = new Record(auditCol)
-      auditRec.set('user_id', authUserId)
+      if (authUserId && authUserId !== 'system') {
+        auditRec.set('user_id', authUserId)
+      }
       auditRec.set('collection', 'users')
       auditRec.set('record_id', recordId)
       auditRec.set('courier_id', recordId)
@@ -49,13 +55,15 @@ onRecordUpdate((e) => {
       auditRec.set('old_value', String(origCutoff))
       auditRec.set('new_value', String(newCutoff))
       auditRec.set('timestamp', new Date().toISOString())
-      auditRec.set('metadata', { target_user_name: e.record.getString('name') })
+      auditRec.set('metadata', {
+        target_user_name: e.record.getString('name'),
+        system_trigger: authUserId === 'system',
+      })
       e.app.save(auditRec)
     } catch (err) {
       console.warn('[audit_trail] Erro ao gravar users.cutoff_date:', err)
     }
   }
-
   return e.next()
 }, 'users')
 
