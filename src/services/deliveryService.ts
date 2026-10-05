@@ -3727,20 +3727,72 @@ export const deliveryService = {
     if (suggested.city) customerUpdate.city = String(suggested.city)
     if (suggested.state) customerUpdate.state = String(suggested.state)
     if (suggested.postal_code) customerUpdate.postal_code = String(suggested.postal_code)
-    if (suggested.lat !== undefined && suggested.lat !== null && !isNaN(Number(suggested.lat))) {
-      customerUpdate.lat = Number(suggested.lat)
-    }
-    if (suggested.lng !== undefined && suggested.lng !== null && !isNaN(Number(suggested.lng))) {
-      customerUpdate.lng = Number(suggested.lng)
+
+    // REGRA DE OURO ANTI-CEP:
+    // Se a origem for 'varredura_cep', NUNCA mover o pin do cliente para coordenadas de CEP / centro-de-rua!
+    // O pin do cadastro atual é soberano e fica 100% INTACTO.
+    // Apenas alertas de 'pin_entregador' (GPS marcado no local) atualizam lat/lng.
+    const isVarreduraCep = alert.origin === 'varredura_cep'
+    if (!isVarreduraCep) {
+      if (suggested.lat !== undefined && suggested.lat !== null && !isNaN(Number(suggested.lat))) {
+        customerUpdate.lat = Number(suggested.lat)
+      }
+      if (suggested.lng !== undefined && suggested.lng !== null && !isNaN(Number(suggested.lng))) {
+        customerUpdate.lng = Number(suggested.lng)
+      }
     }
 
     // Adiciona nota no cadastro do cliente registrando a aprovação
     const prevNotes = (alert.expand?.customer as CustomerRecord)?.notes || ''
-    const approvalAuditNote = `[ALERTA APROVADO ${new Date().toLocaleDateString('pt-BR')}]: Endereço corrigido via alerta #${alertId} (${alert.origin}).`
+    const approvalAuditNote = isVarreduraCep
+      ? `[ALERTA ANTI-CEP APROVADO ${new Date().toLocaleDateString('pt-BR')}]: CEP/Bairro corrigido para coincidir com o pin real do cliente (alerta #${alertId}). Pin mantido intacto.`
+      : `[ALERTA GPS APROVADO ${new Date().toLocaleDateString('pt-BR')}]: Pin calibrado via GPS entregador (alerta #${alertId}).`
     customerUpdate.notes = prevNotes ? `${prevNotes} | ${approvalAuditNote}` : approvalAuditNote
 
     // 1. Atualizar cliente - dispara automaticamente sincronização de pedidos e resequenciamento viário de rotas!
     await this.updateCustomer(customerId, customerUpdate)
+
+    // 1.1 Registrar na trilha de auditoria (audit_trail) com autor Sistema se automático ou com dados do usuário
+    try {
+      const isSystem = !authUser?.id
+      const auditPayload: any = {
+        collection: 'customers',
+        record_id: customerId,
+        action: 'anti_cep_correction',
+        field: isVarreduraCep ? 'postal_code_and_neighborhood' : 'coordinates',
+        old_value: JSON.stringify({
+          postal_code: (alert.current_address as any)?.postal_code || '',
+          neighborhood: (alert.current_address as any)?.neighborhood || '',
+          lat: (alert.current_address as any)?.lat,
+          lng: (alert.current_address as any)?.lng,
+        }),
+        new_value: JSON.stringify({
+          postal_code: customerUpdate.postal_code,
+          neighborhood: customerUpdate.neighborhood,
+          lat: !isVarreduraCep ? customerUpdate.lat : (alert.current_address as any)?.lat,
+          lng: !isVarreduraCep ? customerUpdate.lng : (alert.current_address as any)?.lng,
+        }),
+        timestamp: new Date().toISOString(),
+        metadata: {
+          alert_id: alertId,
+          origin: alert.origin,
+          actor_name: isSystem ? 'Sistema' : authUser?.name || authUser?.email || 'Usuário',
+          actor_email: isSystem ? 'sistema@rotaly.com' : authUser?.email || '',
+          actor_role: isSystem ? 'system' : authUser?.role || 'admin',
+          system_trigger: isSystem,
+          kept_pin_intact: isVarreduraCep,
+        },
+      }
+      if (authUser?.id) {
+        auditPayload.user_id = authUser.id
+      }
+      await pb.collection('audit_trail').create(auditPayload)
+    } catch (auditErr) {
+      console.warn(
+        '[deliveryService] Aviso ao registrar aprovação de alerta em audit_trail:',
+        auditErr,
+      )
+    }
 
     // 2. Atualizar o alerta para aprovado
     const updatedAlert = await pb.collection<AddressAlertRecord>('address_alerts').update(alertId, {

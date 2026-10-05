@@ -317,8 +317,19 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                       </div>
                     </div>
 
-                    {/* Destaque da Distância da Divergência */}
-                    {distMeters > 0 && (
+                    {/* Destaque da Distância da Divergência ou Alerta de Correção de CEP */}
+                    {alert.origin === 'varredura_cep' ? (
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 text-blue-950 dark:text-blue-200 text-xs font-semibold">
+                        <CheckCircle2 className="h-4 w-4 text-blue-600 shrink-0" />
+                        <span>
+                          CEP digitado provavelmente incorreto —{' '}
+                          <strong className="text-blue-700 dark:text-blue-300 font-bold">
+                            corrigir CEP/bairro no cadastro
+                          </strong>{' '}
+                          mantendo o pin intacto no local real.
+                        </span>
+                      </div>
+                    ) : distMeters > 0 ? (
                       <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-100/60 dark:bg-amber-950/40 border border-amber-300/80 text-amber-950 dark:text-amber-200 text-xs font-semibold">
                         <Navigation className="h-4 w-4 text-amber-600 shrink-0" />
                         <span>
@@ -326,10 +337,10 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                           <strong className="text-rose-600 font-bold">
                             {distMeters >= 1000 ? `${distKm} km` : `${distMeters} metros`}
                           </strong>{' '}
-                          de distância entre o pin atual e o ponto indicado.
+                          de distância entre o pin do cadastro e a posição GPS do entregador.
                         </span>
                       </div>
-                    )}
+                    ) : null}
 
                     {/* Comparação: Endereço Cadastrado vs Correção Sugerida */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
@@ -359,8 +370,17 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                             </p>
                           )}
                           {cur.lat && cur.lng && (
-                            <p className="font-mono text-[10px] text-slate-500">
-                              Pin: {Number(cur.lat).toFixed(4)}, {Number(cur.lng).toFixed(4)}
+                            <p className="font-mono text-[10px] text-slate-500 flex items-center gap-1">
+                              <MapPin className="h-3 w-3 text-slate-500 shrink-0" />
+                              <span>
+                                Pin atual: {Number(cur.lat).toFixed(4)},{' '}
+                                {Number(cur.lng).toFixed(4)}
+                              </span>
+                              {alert.origin === 'varredura_cep' && (
+                                <span className="text-[9px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-1 py-0.2 rounded font-sans font-bold">
+                                  Soberano
+                                </span>
+                              )}
                             </p>
                           )}
                         </div>
@@ -370,7 +390,11 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                       <div className="p-2.5 rounded-lg border border-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/30 text-slate-800 dark:text-slate-200">
                         <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider mb-1">
                           <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                          <span>Correção Sugerida</span>
+                          <span>
+                            {alert.origin === 'varredura_cep'
+                              ? 'Correção Cadastral Sugerida'
+                              : 'Correção de Pin (GPS Entregador)'}
+                          </span>
                         </div>
                         <p className="font-semibold text-emerald-950 dark:text-emerald-100 leading-snug">
                           {sug.address ||
@@ -382,26 +406,37 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                         <div className="mt-1.5 text-[11px] text-slate-600 dark:text-slate-400 space-y-0.5">
                           {sug.neighborhood && (
                             <p>
-                              Bairro: <strong>{sug.neighborhood}</strong>
+                              Bairro sugerido: <strong>{sug.neighborhood}</strong>
                             </p>
                           )}
                           {sug.postal_code && (
                             <p>
-                              CEP: <strong>{sug.postal_code}</strong>
+                              CEP sugerido: <strong>{sug.postal_code}</strong>
                             </p>
                           )}
-                          {sug.lat && sug.lng && (
-                            <p className="font-mono text-[10px] text-slate-500">
-                              Pin: {Number(sug.lat).toFixed(4)}, {Number(sug.lng).toFixed(4)}
-                              {sug.accuracy_meters
-                                ? ` (precisão ~${Math.round(sug.accuracy_meters)}m)`
-                                : ''}
+                          {alert.origin === 'varredura_cep' ? (
+                            <p className="text-[10px] text-emerald-800 dark:text-emerald-300 font-semibold flex items-center gap-1">
+                              <MapPin className="h-3 w-3 text-emerald-600 shrink-0" />
+                              <span>
+                                Pin do cliente mantido intacto (
+                                {Number(cur.lat || sug.lat).toFixed(4)},{' '}
+                                {Number(cur.lng || sug.lng).toFixed(4)})
+                              </span>
                             </p>
+                          ) : (
+                            sug.lat &&
+                            sug.lng && (
+                              <p className="font-mono text-[10px] text-slate-500">
+                                Pin: {Number(sug.lat).toFixed(4)}, {Number(sug.lng).toFixed(4)}
+                                {sug.accuracy_meters
+                                  ? ` (precisão ~${Math.round(sug.accuracy_meters)}m)`
+                                  : ''}
+                              </p>
+                            )
                           )}
                         </div>
                       </div>
                     </div>
-
                     {/* Motivo / Notas */}
                     {alert.notes && (
                       <p className="text-[11px] text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 p-2 rounded-lg italic">
@@ -409,19 +444,28 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                       </p>
                     )}
                   </div>
-
                   {/* Ações: Aprovar / Reprovar / Link Google Maps */}
                   <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-1.5">
-                      {sug.lat && sug.lng && (
+                      {(alert.origin === 'varredura_cep'
+                        ? cur.lat && cur.lng
+                        : sug.lat && sug.lng) && (
                         <a
-                          href={`https://www.google.com/maps?q=${sug.lat},${sug.lng}`}
+                          href={`https://www.google.com/maps?q=${
+                            alert.origin === 'varredura_cep'
+                              ? `${cur.lat},${cur.lng}`
+                              : `${sug.lat},${sug.lng}`
+                          }`}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 text-[11px] text-[#0052CC] hover:underline font-semibold"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          <span>Abrir no Maps</span>
+                          <span>
+                            {alert.origin === 'varredura_cep'
+                              ? 'Abrir Pin do Cliente no Maps'
+                              : 'Abrir no Maps'}
+                          </span>
                         </a>
                       )}
                     </div>
@@ -448,18 +492,24 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                           className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-xs"
                         >
                           <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                          Aprovar &amp; Recalcular
+                          {alert.origin === 'varredura_cep'
+                            ? 'Aprovar Correção de CEP'
+                            : 'Aprovar Novo Pin GPS'}
                         </Button>
                       </div>
                     ) : (
                       <div className="text-[11px] text-slate-500 font-medium">
-                        {alert.status === 'aprovado' ? '✓ Correção aplicada' : '✗ Alerta reprovado'}
+                        {alert.status === 'aprovado'
+                          ? alert.origin === 'varredura_cep'
+                            ? '✓ CEP/Bairro corrigido (pin preservado)'
+                            : '✓ Novo Pin aplicado'
+                          : '✗ Alerta reprovado'}
                         {alert.reviewed_at && (
                           <span> em {new Date(alert.reviewed_at).toLocaleDateString('pt-BR')}</span>
                         )}
                       </div>
                     )}
-                  </div>
+                  </div>{' '}
                 </div>
               )
             })}
