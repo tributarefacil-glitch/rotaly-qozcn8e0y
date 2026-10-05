@@ -17,7 +17,7 @@
 // NOTA IMPORTANTE JSVM POCKETBASE: As funções e lógicas devem ficar INLINE dentro de cada callback
 // para compatibilidade com o pool JSVM multi-thread do PocketBase.
 
-onRecordCreate((e) => {
+onRecordCreateRequest((e) => {
   const order = e.record
   const endLat = order.get('end_address_lat')
   const endLng = order.get('end_address_lng')
@@ -155,8 +155,8 @@ onRecordCreate((e) => {
             const auditCol = e.app.findCollectionByNameOrId('audit_trail')
             if (auditCol) {
               const auditRec = new Record(auditCol)
-              const authUserId = e.auth ? e.auth.id : ''
-              if (authUserId) auditRec.set('user_id', authUserId)
+              const authUserId = e.auth && e.auth.id ? e.auth.id : 'system'
+              auditRec.set('user_id', authUserId)
               const courierId = order.getString('courier_id')
               if (courierId) auditRec.set('courier_id', courierId)
 
@@ -179,9 +179,18 @@ onRecordCreate((e) => {
             console.warn('[prevent_base_dest] Erro ao gravar audit_trail:', auditErr)
           }
         } else {
-          throw new BadRequestError(
-            `O destino do pedido coincide com a base da empresa (${matchedBase.getString('name') || 'Base'}) e o cliente cadastrado não possui coordenadas de endereço válidas distintas da base. Por favor, atualize o endereço do cliente antes de criar ou salvar a entrega.`,
-          )
+          // Se for uma mutação de pedido já concluído/cancelado ou sem auth (migração / rotina de sistema),
+          // não bloquear com BadRequestError para permitir saneamento de outros campos.
+          const orderStatus = order.getString('status')
+          if (!e.auth || orderStatus === 'delivered' || orderStatus === 'cancelled') {
+            console.warn(
+              `[prevent_base_dest] Pedido histórico ${order.getString('tracking_code') || order.id} mantido (cliente sem coords novas, status=${orderStatus}).`,
+            )
+          } else {
+            throw new BadRequestError(
+              `O destino do pedido coincide com a base da empresa (${matchedBase.getString('name') || 'Base'}) e o cliente cadastrado não possui coordenadas de endereço válidas distintas da base. Por favor, atualize o endereço do cliente antes de criar ou salvar a entrega.`,
+            )
+          }
         }
       }
     }
@@ -190,7 +199,7 @@ onRecordCreate((e) => {
   e.next()
 }, 'orders')
 
-onRecordUpdate((e) => {
+onRecordUpdateRequest((e) => {
   const order = e.record
   const endLat = order.get('end_address_lat')
   const endLng = order.get('end_address_lng')
@@ -326,8 +335,8 @@ onRecordUpdate((e) => {
             const auditCol = e.app.findCollectionByNameOrId('audit_trail')
             if (auditCol) {
               const auditRec = new Record(auditCol)
-              const authUserId = e.auth ? e.auth.id : ''
-              if (authUserId) auditRec.set('user_id', authUserId)
+              const authUserId = e.auth && e.auth.id ? e.auth.id : 'system'
+              auditRec.set('user_id', authUserId)
               const courierId = order.getString('courier_id')
               if (courierId) auditRec.set('courier_id', courierId)
 

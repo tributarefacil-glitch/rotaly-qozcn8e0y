@@ -9,7 +9,7 @@ onRecordUpdate((e) => {
   const original = e.record.original()
   if (!original) return e.next()
 
-  const authUserId = e.auth ? e.auth.id : ''
+  const authUserId = e.auth && e.auth.id ? e.auth.id : 'system'
   const recordId = e.record.id
 
   const origOpening = original.get('opening_balance')
@@ -61,7 +61,7 @@ onRecordUpdate((e) => {
 
 // 2. route_km_approvals: create / update
 onRecordCreate((e) => {
-  const authUserId = e.auth ? e.auth.id : ''
+  const authUserId = e.auth && e.auth.id ? e.auth.id : 'system'
   const courierId = e.record.getString('courier_id')
   const orderId = e.record.getString('order_id')
   const approvedKm = e.record.get('approved_km')
@@ -99,7 +99,7 @@ onRecordUpdate((e) => {
   const original = e.record.original()
   if (!original) return e.next()
 
-  const authUserId = e.auth ? e.auth.id : ''
+  const authUserId = e.auth && e.auth.id ? e.auth.id : 'system'
   const courierId = e.record.getString('courier_id')
   const origStatus = original.getString('status')
   const newStatus = e.record.getString('status')
@@ -139,7 +139,7 @@ onRecordUpdate((e) => {
   const newStatus = e.record.getString('status')
 
   if (origStatus !== 'cancelled' && newStatus === 'cancelled') {
-    const authUserId = e.auth ? e.auth.id : ''
+    const authUserId = e.auth && e.auth.id ? e.auth.id : 'system'
     const courierId = e.record.getString('courier_id')
     try {
       const auditCol = e.app.findCollectionByNameOrId('audit_trail')
