@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { reverseGeocodeCoordinates } from '@/lib/googleMaps'
 import {
   MapPin,
   CheckCircle,
@@ -1099,7 +1100,7 @@ export default function CourierApp() {
 
       // 3. Calcular distance_meters entre o pin cadastrado do cliente e o GPS capturado
       let distanceMeters: number | undefined
-      if (
+      const hasCustomerCoords =
         customer.lat !== undefined &&
         customer.lat !== null &&
         customer.lng !== undefined &&
@@ -1107,7 +1108,8 @@ export default function CourierApp() {
         !isNaN(Number(customer.lat)) &&
         !isNaN(Number(customer.lng)) &&
         (Number(customer.lat) !== 0 || Number(customer.lng) !== 0)
-      ) {
+
+      if (hasCustomerCoords) {
         distanceMeters = Math.round(
           haversineDistanceMeters(
             Number(customer.lat),
@@ -1118,7 +1120,67 @@ export default function CourierApp() {
         )
       }
 
-      // 4. Montar os payloads de endereço
+      // SALVAGUARDA ANTI-FALSO-POSITIVO:
+      // Se a distância entre o pin do cadastro e o GPS for menor que a precisão da leitura (accuracy)
+      // OU menor que 50m, o pin atual já é confiável — NÃO criar card em address_alerts.
+      if (distanceMeters !== undefined && (distanceMeters < accuracy || distanceMeters < 50)) {
+        toast.dismiss(toastId)
+        toast.info('Pin já está correto dentro da margem de GPS, nada a corrigir.', {
+          description: `Desvio de ${distanceMeters}m (precisão da leitura: ~${accuracy}m). O pin atual do cliente já é confiável.`,
+          duration: 5000,
+        })
+        setIsSubmittingPin(false)
+        return
+      }
+
+      // 4. Executar reverseGeocodeCoordinates sobre a coordenada marcada pelo entregador
+      // Obtém o endereço completo real do ponto GPS (street, number, neighborhood, city, state, postalCode)
+      let geocodedAddress: any = null
+      try {
+        geocodedAddress = await reverseGeocodeCoordinates(courierLat, courierLng, {
+          timeoutMs: 7000,
+          toleranceMeters: 25,
+        })
+      } catch (geoErr) {
+        console.warn('[CourierApp] Falha na geocodificação reversa do ponto GPS:', geoErr)
+      }
+
+      // Extrair número atual do cadastro do cliente caso o reverso não traga número (fallback)
+      const currentNumberMatch = (customer.address || '').match(
+        /(?:,\s*|\s+nº\s*|\s+n°\s*|\s+num\s*|\s+N\s*)(\d+[\w\s\-/]*?)(?=\s*[,-]|\s*$)/i,
+      )
+      const fallbackNumber =
+        (currentNumberMatch && currentNumberMatch[1]?.trim()) || (customer as any).number || ''
+
+      const resolvedStreet =
+        geocodedAddress?.street ||
+        geocodedAddress?.streetAndNumber?.split(',')[0]?.trim() ||
+        customer.street ||
+        ''
+      const resolvedNumber = geocodedAddress?.number || fallbackNumber
+      const resolvedNeighborhood = geocodedAddress?.neighborhood || customer.neighborhood || ''
+      const resolvedCity = geocodedAddress?.city || customer.city || ''
+      const resolvedState = geocodedAddress?.state || customer.state || ''
+      const resolvedPostalCode = geocodedAddress?.postalCode || customer.postal_code || ''
+
+      // Montar string de endereço formatado completo para suggested_address.address
+      let resolvedAddressString = ''
+      if (resolvedStreet) {
+        resolvedAddressString = resolvedStreet
+        if (resolvedNumber) resolvedAddressString += `, ${resolvedNumber}`
+        if (resolvedNeighborhood) resolvedAddressString += ` - ${resolvedNeighborhood}`
+        if (resolvedCity) {
+          resolvedAddressString += `, ${resolvedCity}`
+          if (resolvedState) resolvedAddressString += ` - ${resolvedState}`
+        }
+        if (resolvedPostalCode) resolvedAddressString += `, ${resolvedPostalCode}`
+      } else if (geocodedAddress?.formattedAddress) {
+        resolvedAddressString = geocodedAddress.formattedAddress
+      } else {
+        resolvedAddressString = customer.address || ''
+      }
+
+      // 5. Montar os payloads de endereço
       const currentAddressJson = {
         address: customer.address || '',
         street: customer.street || '',
@@ -1131,21 +1193,23 @@ export default function CourierApp() {
       }
 
       const suggestedAddressJson = {
-        address: customer.address || '',
-        street: customer.street || '',
-        neighborhood: customer.neighborhood || '',
-        city: customer.city || '',
-        state: customer.state || '',
-        postal_code: customer.postal_code || '',
+        address: resolvedAddressString,
+        street: resolvedStreet,
+        number: resolvedNumber,
+        neighborhood: resolvedNeighborhood,
+        city: resolvedCity,
+        state: resolvedState,
+        postal_code: resolvedPostalCode,
         lat: courierLat,
         lng: courierLng,
         accuracy_meters: accuracy,
+        source: geocodedAddress?.source || 'gps_reverse',
       }
 
       // Empresa do pedido ou do cliente para isolamento multiempresa
       const companyId = order.empresa_id || customer.empresa_id || undefined
 
-      // 5. Criar o registro em address_alerts
+      // 6. Criar o registro em address_alerts
       await deliveryService.createAddressAlert({
         company: companyId,
         customer: customer.id,
@@ -1153,12 +1217,12 @@ export default function CourierApp() {
         suggested_address: suggestedAddressJson,
         origin: 'pin_entregador',
         distance_meters: distanceMeters,
-        notes: `Marcado no local pelo entregador ${user.name || user.email} (precisão GPS: ~${accuracy}m${distanceMeters !== undefined ? `, desvio: ${distanceMeters}m` : ''}).`,
+        notes: `Marcado no local pelo entregador ${user.name || user.email} (precisão GPS: ~${accuracy}m${distanceMeters !== undefined ? `, desvio: ${distanceMeters}m` : ''}). Endereço obtido via GPS reverso: ${resolvedAddressString}`,
       })
 
       toast.dismiss(toastId)
       toast.success('Marcação enviada para revisão!', {
-        description: `Coordenada gravada (~${accuracy}m de precisão). A central vai conferir o endereço na caixa de Endereços Suspeitos.`,
+        description: `Endereço e pin capturados no local (~${accuracy}m de precisão). Enviado para a caixa de Endereços Suspeitos.`,
         duration: 6000,
       })
     } catch (err: any) {

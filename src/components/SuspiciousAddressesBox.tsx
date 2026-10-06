@@ -330,15 +330,35 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                         </span>
                       </div>
                     ) : distMeters > 0 ? (
-                      <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-100/60 dark:bg-amber-950/40 border border-amber-300/80 text-amber-950 dark:text-amber-200 text-xs font-semibold">
-                        <Navigation className="h-4 w-4 text-amber-600 shrink-0" />
-                        <span>
-                          Divergência detectada:{' '}
-                          <strong className="text-rose-600 font-bold">
-                            {distMeters >= 1000 ? `${distKm} km` : `${distMeters} metros`}
-                          </strong>{' '}
-                          de distância entre o pin do cadastro e a posição GPS do entregador.
-                        </span>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-100/60 dark:bg-amber-950/40 border border-amber-300/80 text-amber-950 dark:text-amber-200 text-xs font-semibold">
+                          <Navigation className="h-4 w-4 text-amber-600 shrink-0" />
+                          <span>
+                            Divergência detectada:{' '}
+                            <strong className="text-rose-600 font-bold">
+                              {distMeters >= 1000 ? `${distKm} km` : `${distMeters} metros`}
+                            </strong>{' '}
+                            de distância entre o pin do cadastro e a posição GPS do entregador.
+                          </span>
+                        </div>
+
+                        {/* Aviso prescritivo quando o desvio for menor que a precisão do GPS capturado */}
+                        {sug.accuracy_meters !== undefined &&
+                          sug.accuracy_meters !== null &&
+                          Number(distMeters) < Number(sug.accuracy_meters) && (
+                            <div className="flex items-center gap-2 p-2 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-300 text-rose-900 dark:text-rose-200 text-xs font-medium">
+                              <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                              <span>
+                                <strong>Desvio dentro da margem de erro do GPS</strong> — aprovar
+                                pode piorar o pin.
+                                <span className="block text-[11px] text-rose-700/80 dark:text-rose-300/80 mt-0.5">
+                                  Desvio ({distMeters}m) &lt; Precisão da leitura GPS (~
+                                  {Math.round(sug.accuracy_meters)}m). Recomenda-se reprovar ou
+                                  solicitar nova marcação com céu aberto.
+                                </span>
+                              </span>
+                            </div>
+                          )}
                       </div>
                     ) : null}
 

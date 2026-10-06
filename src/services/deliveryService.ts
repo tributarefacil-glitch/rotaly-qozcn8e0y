@@ -3720,7 +3720,15 @@ export const deliveryService = {
     const customerId = alert.customer
 
     // Preparar dados para o cadastro do cliente
+    const currentCust = alert.expand?.customer as CustomerRecord | undefined
     const customerUpdate: Partial<CustomerRecord> = {}
+
+    // REGRA DE OURO ANTI-CEP vs PIN_ENTREGADOR:
+    // (1) Se varredura_cep: NUNCA mover o pin do cliente; apenas atualiza dados de CEP/bairro
+    // (2) Se pin_entregador: grava TANTO lat/lng QUANTO o endereço completo sugerido
+    //     (street, neighborhood, city, state, postal_code, address) obtido do GPS
+    const isVarreduraCep = alert.origin === 'varredura_cep'
+
     if (suggested.address) customerUpdate.address = String(suggested.address)
     if (suggested.street) customerUpdate.street = String(suggested.street)
     if (suggested.neighborhood) customerUpdate.neighborhood = String(suggested.neighborhood)
@@ -3728,11 +3736,6 @@ export const deliveryService = {
     if (suggested.state) customerUpdate.state = String(suggested.state)
     if (suggested.postal_code) customerUpdate.postal_code = String(suggested.postal_code)
 
-    // REGRA DE OURO ANTI-CEP:
-    // Se a origem for 'varredura_cep', NUNCA mover o pin do cliente para coordenadas de CEP / centro-de-rua!
-    // O pin do cadastro atual é soberano e fica 100% INTACTO.
-    // Apenas alertas de 'pin_entregador' (GPS marcado no local) atualizam lat/lng.
-    const isVarreduraCep = alert.origin === 'varredura_cep'
     if (!isVarreduraCep) {
       if (suggested.lat !== undefined && suggested.lat !== null && !isNaN(Number(suggested.lat))) {
         customerUpdate.lat = Number(suggested.lat)
@@ -3743,35 +3746,50 @@ export const deliveryService = {
     }
 
     // Adiciona nota no cadastro do cliente registrando a aprovação
-    const prevNotes = (alert.expand?.customer as CustomerRecord)?.notes || ''
+    const prevNotes = currentCust?.notes || ''
     const approvalAuditNote = isVarreduraCep
       ? `[ALERTA ANTI-CEP APROVADO ${new Date().toLocaleDateString('pt-BR')}]: CEP/Bairro corrigido para coincidir com o pin real do cliente (alerta #${alertId}). Pin mantido intacto.`
-      : `[ALERTA GPS APROVADO ${new Date().toLocaleDateString('pt-BR')}]: Pin calibrado via GPS entregador (alerta #${alertId}).`
+      : `[ALERTA GPS APROVADO ${new Date().toLocaleDateString('pt-BR')}]: Pin calibrado e endereço completo atualizado via GPS entregador (alerta #${alertId}).`
     customerUpdate.notes = prevNotes ? `${prevNotes} | ${approvalAuditNote}` : approvalAuditNote
 
     // 1. Atualizar cliente - dispara automaticamente sincronização de pedidos e resequenciamento viário de rotas!
     await this.updateCustomer(customerId, customerUpdate)
 
     // 1.1 Registrar na trilha de auditoria (audit_trail) com autor Sistema se automático ou com dados do usuário
+    // Regra estrita do projeto: user_id vazio, actor_name 'Sistema' quando automático, relation NUNCA recebe a string 'system'
     try {
       const isSystem = !authUser?.id
+      const currentAddrObj = (alert.current_address || {}) as Record<string, any>
+
+      const oldValueAudit = {
+        address: currentAddrObj.address || currentCust?.address || '',
+        street: currentAddrObj.street || currentCust?.street || '',
+        neighborhood: currentAddrObj.neighborhood || currentCust?.neighborhood || '',
+        city: currentAddrObj.city || currentCust?.city || '',
+        state: currentAddrObj.state || currentCust?.state || '',
+        postal_code: currentAddrObj.postal_code || currentCust?.postal_code || '',
+        lat: currentAddrObj.lat ?? currentCust?.lat,
+        lng: currentAddrObj.lng ?? currentCust?.lng,
+      }
+
+      const newValueAudit = {
+        address: customerUpdate.address || oldValueAudit.address,
+        street: customerUpdate.street || oldValueAudit.street,
+        neighborhood: customerUpdate.neighborhood || oldValueAudit.neighborhood,
+        city: customerUpdate.city || oldValueAudit.city,
+        state: customerUpdate.state || oldValueAudit.state,
+        postal_code: customerUpdate.postal_code || oldValueAudit.postal_code,
+        lat: !isVarreduraCep ? customerUpdate.lat : oldValueAudit.lat,
+        lng: !isVarreduraCep ? customerUpdate.lng : oldValueAudit.lng,
+      }
+
       const auditPayload: any = {
         collection: 'customers',
         record_id: customerId,
-        action: 'anti_cep_correction',
-        field: isVarreduraCep ? 'postal_code_and_neighborhood' : 'coordinates',
-        old_value: JSON.stringify({
-          postal_code: (alert.current_address as any)?.postal_code || '',
-          neighborhood: (alert.current_address as any)?.neighborhood || '',
-          lat: (alert.current_address as any)?.lat,
-          lng: (alert.current_address as any)?.lng,
-        }),
-        new_value: JSON.stringify({
-          postal_code: customerUpdate.postal_code,
-          neighborhood: customerUpdate.neighborhood,
-          lat: !isVarreduraCep ? customerUpdate.lat : (alert.current_address as any)?.lat,
-          lng: !isVarreduraCep ? customerUpdate.lng : (alert.current_address as any)?.lng,
-        }),
+        action: isVarreduraCep ? 'anti_cep_correction' : 'pin_entregador_approval',
+        field: isVarreduraCep ? 'postal_code_and_neighborhood' : 'address_and_coordinates',
+        old_value: JSON.stringify(oldValueAudit),
+        new_value: JSON.stringify(newValueAudit),
         timestamp: new Date().toISOString(),
         metadata: {
           alert_id: alertId,
@@ -3781,6 +3799,10 @@ export const deliveryService = {
           actor_role: isSystem ? 'system' : authUser?.role || 'admin',
           system_trigger: isSystem,
           kept_pin_intact: isVarreduraCep,
+          distance_meters: alert.distance_meters,
+          accuracy_meters: (suggested as any)?.accuracy_meters,
+          suggested_source:
+            (suggested as any)?.source || (isVarreduraCep ? 'cep_sweep' : 'gps_reverse'),
         },
       }
       if (authUser?.id) {
