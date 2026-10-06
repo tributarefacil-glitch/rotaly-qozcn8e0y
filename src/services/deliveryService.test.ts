@@ -40,4 +40,107 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
     reseqSpy.mockRestore()
     getFullListSpy.mockRestore()
   })
+
+  describe('NOVA REGRA: pin_entregador (applyAddressCorrectionAutomatic)', () => {
+    it('aplica correção automática no cadastro do cliente, preservando número se o reverso não trouxer, e grava audit_trail com autor = entregador', async () => {
+      const pbModule = await import('@/lib/pocketbase/client')
+      const pb = pbModule.default
+
+      const mockUpdatedCustomer = {
+        id: 'cust_auto_456',
+        name: 'Cliente Auto Teste',
+        address: 'Rua das Flores, 120 - Centro, Curitiba - PR, 80000-000',
+        street: 'Rua das Flores',
+        neighborhood: 'Centro',
+        city: 'Curitiba',
+        state: 'PR',
+        postal_code: '80000-000',
+        lat: -25.4284,
+        lng: -49.2733,
+        notes:
+          'Nota anterior | [CORREÇÃO AUTOMÁTICA PIN ENTREGADOR 10/10/2026]: Pin e endereço calibrados...',
+      }
+
+      const updateCustomerSpy = vi
+        .spyOn(deliveryService, 'updateCustomer')
+        .mockResolvedValueOnce(mockUpdatedCustomer as any)
+
+      let auditCreatedPayload: any = null
+      const createAuditSpy = vi
+        .spyOn(pb.collection('audit_trail'), 'create')
+        .mockImplementationOnce(async (payload: any) => {
+          auditCreatedPayload = payload
+          return { id: 'audit_123', ...payload } as any
+        })
+
+      const res = await deliveryService.applyAddressCorrectionAutomatic({
+        customerId: 'cust_auto_456',
+        currentCustomer: {
+          id: 'cust_auto_456',
+          address: 'Rua Antiga, 120',
+          street: 'Rua Antiga',
+          neighborhood: 'Bairro Velho',
+          city: 'Curitiba',
+          state: 'PR',
+          postal_code: '80000-111',
+          lat: -25.429,
+          lng: -49.274,
+          notes: 'Nota anterior',
+        },
+        courierUser: {
+          id: 'courier_user_789',
+          name: 'Guilherme Entregador',
+          email: 'guilherme@exemplo.com',
+        },
+        suggestedAddress: {
+          address: 'Rua das Flores, 120 - Centro, Curitiba - PR, 80000-000',
+          street: 'Rua das Flores',
+          number: '120',
+          neighborhood: 'Centro',
+          city: 'Curitiba',
+          state: 'PR',
+          postal_code: '80000-000',
+          lat: -25.4284,
+          lng: -49.2733,
+          accuracy_meters: 12,
+          source: 'gps_reverse',
+        },
+        distanceMeters: 120, // <= 500m
+      })
+
+      expect(res.success).toBe(true)
+      expect(res.customer.id).toBe('cust_auto_456')
+
+      // Verificar chamada updateCustomer
+      expect(updateCustomerSpy).toHaveBeenCalledTimes(1)
+      const passedUpdate = updateCustomerSpy.mock.calls[0][1]
+      expect(passedUpdate.address).toBe('Rua das Flores, 120 - Centro, Curitiba - PR, 80000-000')
+      expect(passedUpdate.lat).toBe(-25.4284)
+      expect(passedUpdate.lng).toBe(-49.2733)
+      expect(passedUpdate.notes).toContain('[CORREÇÃO AUTOMÁTICA PIN ENTREGADOR')
+
+      // Verificar audit_trail conforme regras rígidas do projeto:
+      // user_id = real courier id, actor_name = courier name, motivo = 'correção automática de pin pelo entregador'
+      expect(createAuditSpy).toHaveBeenCalledTimes(1)
+      expect(auditCreatedPayload.collection).toBe('customers')
+      expect(auditCreatedPayload.record_id).toBe('cust_auto_456')
+      expect(auditCreatedPayload.user_id).toBe('courier_user_789')
+      expect(auditCreatedPayload.courier_id).toBe('courier_user_789')
+      expect(auditCreatedPayload.action).toBe('pin_entregador_auto')
+      expect(auditCreatedPayload.metadata.reason).toBe('correção automática de pin pelo entregador')
+      expect(auditCreatedPayload.metadata.actor_name).toBe('Guilherme Entregador')
+      expect(auditCreatedPayload.metadata.distance_meters).toBe(120)
+      expect(auditCreatedPayload.metadata.auto_applied).toBe(true)
+
+      const oldValueObj = JSON.parse(auditCreatedPayload.old_value)
+      const newValueObj = JSON.parse(auditCreatedPayload.new_value)
+      expect(oldValueObj.lat).toBe(-25.429)
+      expect(newValueObj.lat).toBe(-25.4284)
+      expect(oldValueObj.address).toBe('Rua Antiga, 120')
+      expect(newValueObj.address).toBe('Rua das Flores, 120 - Centro, Curitiba - PR, 80000-000')
+
+      updateCustomerSpy.mockRestore()
+      createAuditSpy.mockRestore()
+    })
+  })
 })

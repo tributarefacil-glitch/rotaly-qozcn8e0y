@@ -1049,7 +1049,17 @@ export default function CourierApp() {
   }
 
   // Ação: "Marcar endereço correto no local (GPS)"
-  // Cria alerta de endereço suspeito (origem 'pin_entregador') para auditoria do vendedor/master
+  // NOVA REGRA pin_entregador:
+  // (1) Ao marcar o endereço, o entregador SEMPRE corrige o pin do cliente, independente de distância.
+  // (2) Se o desvio for de ATÉ 500m (<= 500m): aplicar a correção AUTOMATICAMENTE no cadastro — pin novo +
+  //     endereço completo via reverseGeocodeCoordinates (preservando número se o reverso não retornar),
+  //     sem criar card e sem aprovação; toast de confirmação ("Endereço do cliente atualizado"); registrar
+  //     na audit_trail com autor = entregador, motivo "correção automática de pin pelo entregador", antes/depois.
+  // (3) Se o desvio for ACIMA de 500m (> 500m): manter fluxo com card pendente em address_alerts para aprovação,
+  //     com endereço completo do GPS no card e aviso de precisão.
+  // (4) Remoção da tranca anti-falso-positivo antiga (bloqueio <50m).
+  // (5) Recálculo de km e combustível segue automático pelo hook customers_recalc_orders_km.
+  // (6) NÃO alterar saldos.
   const handleMarkCorrectAddress = async (order: OrderRecord) => {
     const customer = order.expand?.customer_id
     if (!customer?.id) {
@@ -1073,19 +1083,7 @@ export default function CourierApp() {
     const toastId = toast.loading('Capturando coordenada precisa do GPS no local...')
 
     try {
-      // 1. Checagem prévia de duplicidade: já existe alerta pendente para o mesmo cliente?
-      const existingAlert = await deliveryService.getPendingAlertForCustomer(customer.id)
-      if (existingAlert) {
-        toast.dismiss(toastId)
-        toast.info('Este cliente já possui uma marcação pendente de revisão na central.', {
-          description: 'Aguarde o vendedor ou administrador avaliar o endereço.',
-          duration: 5000,
-        })
-        setIsSubmittingPin(false)
-        return
-      }
-
-      // 2. Captura do GPS via navigator.geolocation.getCurrentPosition
+      // 1. Captura do GPS via navigator.geolocation.getCurrentPosition
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
@@ -1098,7 +1096,7 @@ export default function CourierApp() {
       const courierLng = position.coords.longitude
       const accuracy = Math.round(position.coords.accuracy || 0)
 
-      // 3. Calcular distance_meters entre o pin cadastrado do cliente e o GPS capturado
+      // 2. Calcular distance_meters entre o pin cadastrado do cliente e o GPS capturado
       let distanceMeters: number | undefined
       const hasCustomerCoords =
         customer.lat !== undefined &&
@@ -1120,20 +1118,7 @@ export default function CourierApp() {
         )
       }
 
-      // SALVAGUARDA ANTI-FALSO-POSITIVO:
-      // Se a distância entre o pin do cadastro e o GPS for menor que a precisão da leitura (accuracy)
-      // OU menor que 50m, o pin atual já é confiável — NÃO criar card em address_alerts.
-      if (distanceMeters !== undefined && (distanceMeters < accuracy || distanceMeters < 50)) {
-        toast.dismiss(toastId)
-        toast.info('Pin já está correto dentro da margem de GPS, nada a corrigir.', {
-          description: `Desvio de ${distanceMeters}m (precisão da leitura: ~${accuracy}m). O pin atual do cliente já é confiável.`,
-          duration: 5000,
-        })
-        setIsSubmittingPin(false)
-        return
-      }
-
-      // 4. Executar reverseGeocodeCoordinates sobre a coordenada marcada pelo entregador
+      // 3. Executar reverseGeocodeCoordinates sobre a coordenada marcada pelo entregador
       // Obtém o endereço completo real do ponto GPS (street, number, neighborhood, city, state, postalCode)
       let geocodedAddress: any = null
       try {
@@ -1180,19 +1165,7 @@ export default function CourierApp() {
         resolvedAddressString = customer.address || ''
       }
 
-      // 5. Montar os payloads de endereço
-      const currentAddressJson = {
-        address: customer.address || '',
-        street: customer.street || '',
-        neighborhood: customer.neighborhood || '',
-        city: customer.city || '',
-        state: customer.state || '',
-        postal_code: customer.postal_code || '',
-        lat: customer.lat ?? null,
-        lng: customer.lng ?? null,
-      }
-
-      const suggestedAddressJson = {
+      const suggestedAddressPayload = {
         address: resolvedAddressString,
         street: resolvedStreet,
         number: resolvedNumber,
@@ -1206,25 +1179,78 @@ export default function CourierApp() {
         source: geocodedAddress?.source || 'gps_reverse',
       }
 
-      // Empresa do pedido ou do cliente para isolamento multiempresa
-      const companyId = order.empresa_id || customer.empresa_id || undefined
+      // DECISÃO PELA NOVA REGRA:
+      // Se distanceMeters for indefinido (cliente sem coordenadas) ou <= 500m:
+      // Correção AUTOMÁTICA no cadastro (sem criar card e sem aprovação).
+      // Se distanceMeters > 500m:
+      // Cria card pendente em address_alerts para aprovação do vendedor/admin.
+      const isAutoCorrection = distanceMeters === undefined || distanceMeters <= 500
 
-      // 6. Criar o registro em address_alerts
-      await deliveryService.createAddressAlert({
-        company: companyId,
-        customer: customer.id,
-        current_address: currentAddressJson,
-        suggested_address: suggestedAddressJson,
-        origin: 'pin_entregador',
-        distance_meters: distanceMeters,
-        notes: `Marcado no local pelo entregador ${user.name || user.email} (precisão GPS: ~${accuracy}m${distanceMeters !== undefined ? `, desvio: ${distanceMeters}m` : ''}). Endereço obtido via GPS reverso: ${resolvedAddressString}`,
-      })
+      if (isAutoCorrection) {
+        // Fluxo (2): Correção automática no cadastro
+        await deliveryService.applyAddressCorrectionAutomatic({
+          customerId: customer.id,
+          currentCustomer: customer,
+          courierUser: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+          },
+          suggestedAddress: suggestedAddressPayload,
+          distanceMeters,
+        })
 
-      toast.dismiss(toastId)
-      toast.success('Marcação enviada para revisão!', {
-        description: `Endereço e pin capturados no local (~${accuracy}m de precisão). Enviado para a caixa de Endereços Suspeitos.`,
-        duration: 6000,
-      })
+        toast.dismiss(toastId)
+        toast.success('Endereço do cliente atualizado', {
+          description: `Pin e endereço corrigidos automaticamente no cadastro (desvio: ${distanceMeters !== undefined ? `${distanceMeters}m` : 'novo pin'}, precisão: ~${accuracy}m).`,
+          duration: 5000,
+        })
+
+        // Recarregar pedidos para refletir coordenadas e endereço atualizados
+        await loadCourierOrders({ force: true })
+      } else {
+        // Fluxo (3): Desvio > 500m — Card pendente em address_alerts para aprovação
+        // Checagem prévia de duplicidade de card pendente
+        const existingAlert = await deliveryService.getPendingAlertForCustomer(customer.id)
+        if (existingAlert) {
+          toast.dismiss(toastId)
+          toast.info('Este cliente já possui uma marcação pendente de revisão na central.', {
+            description: 'Aguarde o vendedor ou administrador avaliar o endereço.',
+            duration: 5000,
+          })
+          setIsSubmittingPin(false)
+          return
+        }
+
+        const currentAddressJson = {
+          address: customer.address || '',
+          street: customer.street || '',
+          neighborhood: customer.neighborhood || '',
+          city: customer.city || '',
+          state: customer.state || '',
+          postal_code: customer.postal_code || '',
+          lat: customer.lat ?? null,
+          lng: customer.lng ?? null,
+        }
+
+        const companyId = order.empresa_id || customer.empresa_id || undefined
+
+        await deliveryService.createAddressAlert({
+          company: companyId,
+          customer: customer.id,
+          current_address: currentAddressJson,
+          suggested_address: suggestedAddressPayload,
+          origin: 'pin_entregador',
+          distance_meters: distanceMeters,
+          notes: `Marcado no local pelo entregador ${user.name || user.email} com desvio de ${distanceMeters}m (>500m, requer aprovação da central). Precisão GPS: ~${accuracy}m. Endereço obtido via GPS reverso: ${resolvedAddressString}`,
+        })
+
+        toast.dismiss(toastId)
+        toast.success('Marcação enviada para revisão!', {
+          description: `Desvio de ${distanceMeters}m (>500m). Enviado para a caixa de Endereços Suspeitos para aprovação da central.`,
+          duration: 6000,
+        })
+      }
     } catch (err: any) {
       toast.dismiss(toastId)
       console.error('[CourierApp] Erro ao marcar endereço do cliente:', err)

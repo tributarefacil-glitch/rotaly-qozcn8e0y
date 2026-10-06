@@ -3830,6 +3830,126 @@ export const deliveryService = {
   },
 
   /**
+   * Correção AUTOMÁTICA de pin e endereço pelo entregador (desvio <= 500m):
+   * 1. Atualiza diretamente o cadastro do cliente com novo pin (lat/lng) + endereço completo geocodificado
+   *    (preservando o número original se o reverso não trouxer número).
+   * 2. O updateCustomer(customerId, customerUpdate) atualiza pedidos não finalizados e dispara o hook
+   *    customers_recalc_orders_km no backend para recalcular km e combustível sem intervenção manual.
+   * 3. Registra na trilha de auditoria (audit_trail) com autor = entregador (user_id real e actor_name do entregador),
+   *    motivo "correção automática de pin pelo entregador" e valores antes/depois.
+   * 4. NÃO cria card em address_alerts e não requer aprovação de vendedor/admin.
+   */
+  async applyAddressCorrectionAutomatic(params: {
+    customerId: string
+    currentCustomer: Partial<CustomerRecord>
+    courierUser: { id: string; name?: string; email?: string }
+    suggestedAddress: {
+      address: string
+      street?: string
+      number?: string
+      neighborhood?: string
+      city?: string
+      state?: string
+      postal_code?: string
+      lat: number
+      lng: number
+      accuracy_meters?: number
+      source?: string
+    }
+    distanceMeters?: number
+  }): Promise<{ success: boolean; customer: CustomerRecord }> {
+    const { customerId, currentCustomer, courierUser, suggestedAddress, distanceMeters } = params
+
+    const customerUpdate: Partial<CustomerRecord> = {}
+    if (suggestedAddress.address) customerUpdate.address = suggestedAddress.address
+    if (suggestedAddress.street) customerUpdate.street = suggestedAddress.street
+    if (suggestedAddress.neighborhood) customerUpdate.neighborhood = suggestedAddress.neighborhood
+    if (suggestedAddress.city) customerUpdate.city = suggestedAddress.city
+    if (suggestedAddress.state) customerUpdate.state = suggestedAddress.state
+    if (suggestedAddress.postal_code) customerUpdate.postal_code = suggestedAddress.postal_code
+    if (
+      suggestedAddress.lat !== undefined &&
+      suggestedAddress.lat !== null &&
+      !isNaN(Number(suggestedAddress.lat))
+    ) {
+      customerUpdate.lat = Number(suggestedAddress.lat)
+    }
+    if (
+      suggestedAddress.lng !== undefined &&
+      suggestedAddress.lng !== null &&
+      !isNaN(Number(suggestedAddress.lng))
+    ) {
+      customerUpdate.lng = Number(suggestedAddress.lng)
+    }
+
+    const prevNotes = currentCustomer?.notes || ''
+    const autoNote = `[CORREÇÃO AUTOMÁTICA PIN ENTREGADOR ${new Date().toLocaleDateString('pt-BR')}]: Pin e endereço calibrados no local pelo entregador ${courierUser.name || courierUser.email} (desvio: ${distanceMeters !== undefined ? `${distanceMeters}m` : 'desconhecido'}, precisão: ~${suggestedAddress.accuracy_meters || 0}m).`
+    customerUpdate.notes = prevNotes ? `${prevNotes} | ${autoNote}` : autoNote
+
+    // 1. Atualizar cliente - dispara sincronização de pedidos e hook de km
+    const updatedCustomer = await this.updateCustomer(customerId, customerUpdate)
+
+    // 2. Registrar na trilha de auditoria (audit_trail)
+    // Regra do projeto: autor = entregador (user_id real do entregador, actor_name do entregador),
+    // motivo 'correção automática de pin pelo entregador', valores antes/depois
+    try {
+      const oldValueAudit = {
+        address: currentCustomer?.address || '',
+        street: currentCustomer?.street || '',
+        neighborhood: currentCustomer?.neighborhood || '',
+        city: currentCustomer?.city || '',
+        state: currentCustomer?.state || '',
+        postal_code: currentCustomer?.postal_code || '',
+        lat: currentCustomer?.lat ?? null,
+        lng: currentCustomer?.lng ?? null,
+      }
+
+      const newValueAudit = {
+        address: customerUpdate.address || oldValueAudit.address,
+        street: customerUpdate.street || oldValueAudit.street,
+        neighborhood: customerUpdate.neighborhood || oldValueAudit.neighborhood,
+        city: customerUpdate.city || oldValueAudit.city,
+        state: customerUpdate.state || oldValueAudit.state,
+        postal_code: customerUpdate.postal_code || oldValueAudit.postal_code,
+        lat: customerUpdate.lat ?? oldValueAudit.lat,
+        lng: customerUpdate.lng ?? oldValueAudit.lng,
+      }
+
+      const auditPayload: any = {
+        collection: 'customers',
+        record_id: customerId,
+        courier_id: courierUser.id,
+        user_id: courierUser.id,
+        action: 'pin_entregador_auto',
+        field: 'address_and_coordinates',
+        old_value: JSON.stringify(oldValueAudit),
+        new_value: JSON.stringify(newValueAudit),
+        timestamp: new Date().toISOString(),
+        metadata: {
+          reason: 'correção automática de pin pelo entregador',
+          actor_name: courierUser.name || courierUser.email || 'Entregador',
+          actor_email: courierUser.email || '',
+          actor_role: 'courier',
+          system_trigger: false,
+          distance_meters: distanceMeters,
+          accuracy_meters: suggestedAddress.accuracy_meters,
+          suggested_source: suggestedAddress.source || 'gps_reverse',
+          auto_applied: true,
+        },
+      }
+
+      await pb.collection('audit_trail').create(auditPayload)
+    } catch (auditErr) {
+      console.warn(
+        '[deliveryService] Erro ao registrar correção automática de pin em audit_trail:',
+        auditErr,
+      )
+    }
+
+    return { success: true, customer: updatedCustomer }
+  },
+
+  /**
    * Reprovar um alerta de endereço suspeito:
    * Marca status = 'reprovado', com reviewed_by e reviewed_at. O cliente sai da fila pendente.
    */
