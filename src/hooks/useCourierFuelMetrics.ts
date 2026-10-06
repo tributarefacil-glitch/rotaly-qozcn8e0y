@@ -530,14 +530,21 @@ export function calculateCourierFuelMetrics(params: {
     const custLat = ord.expand?.customer_id?.lat || ord.end_address_lat || 0
     const custLng = ord.expand?.customer_id?.lng || ord.end_address_lng || 0
 
+    const hasCustomerCoords =
+      typeof ord.expand?.customer_id?.lat === 'number' &&
+      typeof ord.expand?.customer_id?.lng === 'number' &&
+      ord.expand.customer_id.lat !== 0 &&
+      ord.expand.customer_id.lng !== 0
+
     let roadDist = 0.8
     if (custLat !== 0 && custLng !== 0) {
       const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
       roadDist = Math.max(directMeters / 1000, 0.8)
     }
 
-    // Se distance_km da ordem for válido e maior (já computado no asfalto), utiliza
-    if (typeof ord.distance_km === 'number' && ord.distance_km > 0) {
+    // Se o cliente tem coordenadas vigentes no expand, o viário calculado sobre o pin vigente tem soberania.
+    // Math.max com ord.distance_km fica apenas como fallback quando não há coordenadas vigentes no cliente.
+    if (!hasCustomerCoords && typeof ord.distance_km === 'number' && ord.distance_km > 0) {
       roadDist = Math.max(roadDist, ord.distance_km)
     }
 

@@ -4188,4 +4188,111 @@ export const deliveryService = {
 
     return { order: updatedOrder, approval, extraKm }
   },
+
+  /**
+   * Validação preventiva assíncrona não-bloqueante de coerência entre CEP e Pin do cliente:
+   * Se haversineDistanceMeters(pin do cliente, centróide do CEP/bairro via lookupViaCep + geocodeAddressUnified) > 500,
+   * cria address_alert via deliveryService.createAddressAlert com origin 'varredura_cep', status 'pendente',
+   * current_address (snapshot do pin/endereço), suggested_address (dados do CEP com lat/lng idênticos ao pin original,
+   * keep_pin true — pin é soberano, conforme migração 0118).
+   * Sem mover pin, sem bloquear criação.
+   */
+  async checkCustomerCepDivergencePreventive(params: {
+    customerId: string
+    customerPin: { lat: number; lng: number }
+    postalCode?: string
+    currentAddressText?: string
+    neighborhood?: string
+    city?: string
+    state?: string
+    companyId?: string
+  }): Promise<void> {
+    try {
+      const {
+        customerId,
+        customerPin,
+        postalCode,
+        currentAddressText,
+        neighborhood,
+        city,
+        state,
+        companyId,
+      } = params
+      if (!customerId || !customerPin || !customerPin.lat || !customerPin.lng) return
+
+      const cleanCep = (postalCode || '').replace(/\D/g, '')
+      if (cleanCep.length !== 8) return
+
+      // Evita duplicar alertas pendentes para o mesmo cliente
+      const pendingAlert = await this.getPendingAlertForCustomer(customerId)
+      if (pendingAlert) return
+
+      // 1. Obter dados do CEP via lookupViaCep
+      const { lookupViaCep, geocodeAddressUnified } = await import('../lib/googleMaps')
+      const cepData = await lookupViaCep(cleanCep)
+      if (!cepData) return
+
+      // 2. Geocodificar centróide do CEP/bairro
+      const queryAddress = [
+        cepData.street || '',
+        cepData.neighborhood || neighborhood || '',
+        cepData.city || city || '',
+        cepData.state || state || '',
+        cleanCep,
+      ]
+        .filter(Boolean)
+        .join(', ')
+
+      const centroidResult = await geocodeAddressUnified(queryAddress, customerPin)
+      if (
+        !centroidResult ||
+        typeof centroidResult.lat !== 'number' ||
+        typeof centroidResult.lng !== 'number'
+      ) {
+        return
+      }
+
+      // 3. Comparar haversineDistanceMeters(pin do cliente, centróide)
+      const { haversineDistanceMeters } = await import('../lib/geo')
+      const distMeters = haversineDistanceMeters(
+        customerPin.lat,
+        customerPin.lng,
+        centroidResult.lat,
+        centroidResult.lng,
+      )
+
+      if (distMeters > 500) {
+        // Pin diverge do centróide do CEP em mais de 500m.
+        // Criar address_alert mantendo o pin vigente soberano (keep_pin: true, lat/lng do pin original)
+        await this.createAddressAlert({
+          customer: customerId,
+          company: companyId,
+          origin: 'varredura_cep',
+          distance_meters: Math.round(distMeters),
+          notes: `Divergência preventiva detectada: pin a ${Math.round(distMeters)}m do centróide do CEP ${cleanCep} (${cepData.neighborhood || 'bairro não informado'}). Pin é soberano e foi mantido intacto.`,
+          current_address: {
+            address: currentAddressText || '',
+            postal_code: cleanCep,
+            neighborhood: neighborhood || '',
+            lat: customerPin.lat,
+            lng: customerPin.lng,
+          },
+          suggested_address: {
+            address: cepData.formattedAddress || queryAddress,
+            street: cepData.street || '',
+            neighborhood: cepData.neighborhood || neighborhood || '',
+            city: cepData.city || city || '',
+            state: cepData.state || state || '',
+            postal_code: cepData.postalCode || cleanCep,
+            // PIN É SOBERANO (migração 0118): lat/lng idênticos ao pin original
+            lat: customerPin.lat,
+            lng: customerPin.lng,
+            keep_pin: true,
+          },
+        })
+      }
+    } catch (err) {
+      console.warn('[deliveryService] Falha silenciosa na validação preventiva de CEP:', err)
+    }
+  },
 }

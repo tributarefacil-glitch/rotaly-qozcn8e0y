@@ -74,6 +74,12 @@ export function calculateDeliveryRouteWeight(
   const custLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
   const custLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
 
+  const hasCustomerCoords =
+    typeof order.expand?.customer_id?.lat === 'number' &&
+    typeof order.expand?.customer_id?.lng === 'number' &&
+    order.expand.customer_id.lat !== 0 &&
+    order.expand.customer_id.lng !== 0
+
   let roadDist = 0.8
   if (custLat !== 0 && custLng !== 0) {
     const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
@@ -81,8 +87,9 @@ export function calculateDeliveryRouteWeight(
     roadDist = Math.max(directKm, 0.8)
   }
 
-  // Se distance_km foi informado e é maior que roadDist, respeitamos a distância viária real salva
-  if (typeof order.distance_km === 'number' && order.distance_km > 0) {
+  // Se o cliente tem coordenadas vigentes no expand, o viário calculado sobre o pin vigente tem soberania.
+  // Math.max com order.distance_km fica apenas como fallback quando não há coordenadas vigentes no cliente.
+  if (!hasCustomerCoords && typeof order.distance_km === 'number' && order.distance_km > 0) {
     roadDist = Math.max(roadDist, order.distance_km)
   }
 

@@ -1275,6 +1275,36 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         throw lastCreateError || new Error('Falha ao criar registro de pedido após tentativas.')
       }
 
+      // Validação preventiva assíncrona não-bloqueante de coerência entre CEP e Pin do cliente:
+      // se haversineDistanceMeters(pin do cliente, centróide do CEP/bairro via lookupViaCep + geocodeAddressUnified) > 500,
+      // cria address_alert via deliveryService.createAddressAlert com origin 'varredura_cep', status 'pendente',
+      // current_address (snapshot do pin/endereço), suggested_address (dados do CEP com lat/lng idênticos ao pin original,
+      // keep_pin true — pin é soberano, conforme migração 0118). Sem mover pin, sem bloquear criação.
+      if (finalCustomerId && targetLat && targetLng) {
+        const clientPostalCode =
+          selectedCustomerRecord?.postal_code ||
+          postalCode.trim() ||
+          selectedCustomerRecord?.address?.match(/\b\d{5}-?\d{3}\b/)?.[0] ||
+          targetAddressText.match(/\b\d{5}-?\d{3}\b/)?.[0] ||
+          ''
+        if (clientPostalCode) {
+          deliveryService
+            .checkCustomerCepDivergencePreventive({
+              customerId: finalCustomerId,
+              customerPin: { lat: targetLat, lng: targetLng },
+              postalCode: clientPostalCode,
+              currentAddressText: targetAddressText,
+              neighborhood: selectedCustomerRecord?.neighborhood || neighborhood.trim() || '',
+              city: selectedCustomerRecord?.city || city.trim() || '',
+              state: selectedCustomerRecord?.state || '',
+              companyId: (user as any)?.empresa_id || undefined,
+            })
+            .catch((preventiveErr) => {
+              console.warn('Erro não-bloqueante na validação preventiva de CEP:', preventiveErr)
+            })
+        }
+      }
+
       // Trigger automatic in-app notification
       try {
         await deliveryService.createNotification({
