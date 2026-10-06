@@ -13,7 +13,7 @@ import Index from './pages/Index'
 import RegisterPage from './pages/RegisterPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import PendingApprovalPage from './pages/PendingApprovalPage'
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useState, useEffect } from 'react'
 import CourierFuelPage from './pages/CourierFuelPage'
 import CourierHistoryPage from './pages/CourierHistoryPage'
 import CourierProfilePage from './pages/CourierProfilePage'
@@ -311,9 +311,62 @@ function ProtectedRoute({
 }) {
   const { user, role, isLoading, isAuthenticated } = useAuth()
   const location = useLocation()
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false)
 
-  // Se ainda estiver carregando a sessão/perfil, exibe tela de loading elegante
+  // Timeout defensivo de 8s para o loading de sessão: nunca prender o usuário eternamente
+  useEffect(() => {
+    if (!isLoading) {
+      setLoadingTimedOut(false)
+      return
+    }
+    const timer = setTimeout(() => {
+      setLoadingTimedOut(true)
+    }, 8000)
+    return () => clearTimeout(timer)
+  }, [isLoading])
+
+  // Se ainda estiver carregando a sessão/perfil, exibe tela de loading com fallback
   if (isLoading) {
+    if (loadingTimedOut) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-white text-[#002855] p-6">
+          <div className="flex flex-col items-center gap-4 max-w-sm text-center">
+            <div className="h-10 w-10 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
+              <ShieldAlert className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="font-heading text-sm font-bold text-[#002855]">
+                Tempo limite ao carregar sessão
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                A validação do perfil demorou mais que o esperado. Tente recarregar ou entrar
+                novamente.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => window.location.reload()}
+                className="text-xs"
+              >
+                Recarregar página
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  window.location.href = '/login'
+                }}
+                className="text-xs bg-[#00A3FF] text-white hover:bg-[#008CE0]"
+              >
+                Ir para Login
+              </Button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div className="flex min-h-screen items-center justify-center bg-white text-[#002855]">
         <div className="flex flex-col items-center gap-3">

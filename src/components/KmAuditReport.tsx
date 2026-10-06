@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -55,6 +55,7 @@ import { haversineDistanceMeters } from '@/lib/geo'
 import {
   formatDateInTz,
   getCustomOperationalWindow,
+  getOperationalMonthStart,
   getOperationalWindow,
   isCurrentMonthInTz,
   parseSafeTimestamp,
@@ -62,6 +63,7 @@ import {
 
 interface KmAuditReportProps {
   orders: OrderRecord[]
+  fuelHistoryOrders?: OrderRecord[]
   couriers: UserRecord[]
   locations: LocationRecord[]
   offRouteEvents: OffRouteEventRecord[]
@@ -72,6 +74,7 @@ interface KmAuditReportProps {
 
 export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   orders,
+  fuelHistoryOrders = [],
   couriers,
   locations,
   offRouteEvents,
@@ -79,6 +82,10 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   currentCompanyId,
   onDataChange,
 }) => {
+  // Pedidos carregados sob demanda para auditoria multi-dia
+  const [fetchedOrders, setFetchedOrders] = useState<OrderRecord[]>([])
+  const [isLoadingPeriodOrders, setIsLoadingPeriodOrders] = useState<boolean>(false)
+
   // Filtros
   const [selectedCourierId, setSelectedCourierId] = useState<string>('all')
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>('week')
@@ -118,12 +125,90 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   const [justificationInput, setJustificationInput] = useState<string>('')
   const [isSavingApproval, setIsSavingApproval] = useState<boolean>(false)
 
-  // Carregar aprovações do banco
+  // Carregar pedidos sob demanda quando o filtro for multi-dia (week, month, custom, all)
+  const fetchPeriodOrders = useCallback(async () => {
+    // Se o filtro for 'today', orders (de hoje) já atende perfeitamente
+    if (selectedDateFilter === 'today') {
+      return
+    }
+
+    // Se custom sem data definida, não buscar ainda
+    if (selectedDateFilter === 'custom' && !customStartDate) {
+      return
+    }
+
+    setIsLoadingPeriodOrders(true)
+    try {
+      let filterStr = ''
+      const now = new Date()
+      const opWindow = getOperationalWindow(now)
+
+      if (selectedDateFilter === 'week') {
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        const isoStart = new Date(sevenDaysAgoStart)
+          .toISOString()
+          .replace('T', ' ')
+          .substring(0, 19)
+        filterStr = `created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}'`
+      } else if (selectedDateFilter === 'month') {
+        const monthStartObj = getOperationalMonthStart(now)
+        const isoStart = new Date(monthStartObj.timestamp)
+          .toISOString()
+          .replace('T', ' ')
+          .substring(0, 19)
+        filterStr = `created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}'`
+      } else if (selectedDateFilter === 'custom') {
+        const custWin = getCustomOperationalWindow(
+          customStartDate,
+          customEndDate || customStartDate,
+        )
+        const isoStart = new Date(custWin.start).toISOString().replace('T', ' ').substring(0, 19)
+        const isoEnd = new Date(custWin.end).toISOString().replace('T', ' ').substring(0, 19)
+        filterStr = `(created >= '${isoStart}' && created <= '${isoEnd}') || (route_started_at >= '${isoStart}' && route_started_at <= '${isoEnd}') || (route_finished_at >= '${isoStart}' && route_finished_at <= '${isoEnd}')`
+      }
+
+      const res = await deliveryService.getOrdersInBatches(
+        filterStr,
+        '-created',
+        'customer_id,courier_id,seller_id',
+        200,
+        currentCompanyId && currentCompanyId !== 'ALL' ? currentCompanyId : undefined,
+      )
+      setFetchedOrders(res)
+    } catch (err) {
+      console.warn('Erro ao carregar pedidos sob demanda para Auditoria de KM:', err)
+    } finally {
+      setIsLoadingPeriodOrders(false)
+    }
+  }, [selectedDateFilter, customStartDate, customEndDate, currentCompanyId])
+
+  useEffect(() => {
+    fetchPeriodOrders()
+  }, [fetchPeriodOrders])
+
+  // Pool de pedidos consolidado: une orders (hoje), fuelHistoryOrders e fetchedOrders (sob demanda)
+  const allOrdersPool = useMemo(() => {
+    const map = new Map<string, OrderRecord>()
+    // Prioridade decrescente: fetchedOrders > fuelHistoryOrders > orders
+    orders.forEach((o) => {
+      if (o && o.id) map.set(o.id, o)
+    })
+    fuelHistoryOrders.forEach((o) => {
+      if (o && o.id) map.set(o.id, o)
+    })
+    fetchedOrders.forEach((o) => {
+      if (o && o.id) map.set(o.id, o)
+    })
+    return Array.from(map.values())
+  }, [orders, fuelHistoryOrders, fetchedOrders])
+
+  // Carregar aprovações do banco e recarregar dados do período
   const loadApprovals = async () => {
     setIsLoadingApprovals(true)
     try {
       const data = await deliveryService.getRouteKmApprovals(currentCompanyId)
       setApprovals(data)
+      await fetchPeriodOrders()
     } catch (err) {
       console.warn('Erro ao carregar aprovações de KM:', err)
     } finally {
@@ -157,7 +242,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   // Lotes disponíveis para filtro
   const availableBatches = useMemo(() => {
     const setBatches = new Set<string>()
-    orders.forEach((o) => {
+    allOrdersPool.forEach((o) => {
       if (selectedCourierId !== 'all' && o.courier_id !== selectedCourierId) return
       let bKey = 'Avulso'
       if (o.route_started_at && o.route_finished_at) {
@@ -168,7 +253,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       setBatches.add(bKey)
     })
     return Array.from(setBatches)
-  }, [orders, selectedCourierId])
+  }, [allOrdersPool, selectedCourierId])
 
   // Processamento linha por linha: cada pedido elegível gera uma linha do relatório de auditoria
   // com rateio viário oficial, KM GPS da telemetria, desvios e aprovação do admin
@@ -205,9 +290,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       officialAfterApprovalKm: number
     }> = []
 
-    // Agrupa pedidos por entregador
+    // Agrupa pedidos por entregador a partir do pool completo (allOrdersPool)
     const ordersByCourier = new Map<string, OrderRecord[]>()
-    orders.forEach((ord) => {
+    allOrdersPool.forEach((ord) => {
       if (!ord.courier_id) return
       const list = ordersByCourier.get(ord.courier_id) || []
       list.push(ord)
@@ -438,7 +523,15 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
     // Ordenar decrescente por data/hora da rota
     return rows.sort((a, b) => new Date(b.dateRaw).getTime() - new Date(a.dateRaw).getTime())
-  }, [orders, eligibleCouriers, locations, offRouteEvents, settings, approvals, approvalsMap])
+  }, [
+    allOrdersPool,
+    eligibleCouriers,
+    locations,
+    offRouteEvents,
+    settings,
+    approvals,
+    approvalsMap,
+  ])
 
   // Resumos globais do escopo (calculados considerando filtros de entregador/data/lote/busca,
   // mantendo a visão completa da operação independente do toggle de fila)
@@ -451,6 +544,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     let divergentPendingCount = 0
     let redirectedCount = 0
     let totalScopeCount = 0
+    let unreadableDateCount = 0
 
     const now = new Date()
     const opWindow = getOperationalWindow(now)
@@ -462,7 +556,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     auditRows.forEach((r) => {
       // Aplica apenas filtros dimensionais (entregador, data, lote, busca)
       if (selectedCourierId !== 'all' && r.order.courier_id !== selectedCourierId) return
-      const rowTs = parseSafeTimestamp(r.dateRaw) || new Date(r.dateRaw).getTime()
+
+      // Blindagem de data: se o timestamp for 0/NaN/não-positivo, registrar como ilegível e excluir
+      const parsed = parseSafeTimestamp(r.dateRaw)
+      const fallbackTs = r.dateRaw ? new Date(r.dateRaw).getTime() : 0
+      const rowTs =
+        parsed > 0 ? parsed : Number.isFinite(fallbackTs) && fallbackTs > 0 ? fallbackTs : 0
+
+      if (!rowTs || rowTs <= 0) {
+        unreadableDateCount++
+        return
+      }
 
       if (selectedDateFilter === 'custom' && customWindow) {
         if (rowTs < customWindow.start || rowTs > customWindow.end) return
@@ -507,6 +611,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       divergentPendingCount,
       redirectedCount,
       totalScopeCount,
+      unreadableDateCount,
     }
   }, [
     auditRows,
@@ -533,8 +638,15 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         return false
       }
 
-      // Filtro de data
-      const rowTs = parseSafeTimestamp(r.dateRaw) || new Date(r.dateRaw).getTime()
+      // Blindagem de data: se o timestamp for 0/NaN/não-positivo, excluir da janela
+      const parsed = parseSafeTimestamp(r.dateRaw)
+      const fallbackTs = r.dateRaw ? new Date(r.dateRaw).getTime() : 0
+      const rowTs =
+        parsed > 0 ? parsed : Number.isFinite(fallbackTs) && fallbackTs > 0 ? fallbackTs : 0
+
+      if (!rowTs || rowTs <= 0) {
+        return false
+      }
 
       if (selectedDateFilter === 'custom' && customWindow) {
         if (rowTs < customWindow.start || rowTs > customWindow.end) return false
@@ -739,16 +851,43 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             variant="outline"
             size="sm"
             onClick={loadApprovals}
-            disabled={isLoadingApprovals}
+            disabled={isLoadingApprovals || isLoadingPeriodOrders}
             className="h-9 gap-1.5 text-xs text-slate-700 border-slate-200 bg-white hover:bg-slate-50 rounded-xl"
           >
             <RefreshCw
-              className={`h-3.5 w-3.5 text-[#00A3FF] ${isLoadingApprovals ? 'animate-spin' : ''}`}
+              className={`h-3.5 w-3.5 text-[#00A3FF] ${isLoadingApprovals || isLoadingPeriodOrders ? 'animate-spin' : ''}`}
             />
             Atualizar Dados
           </Button>
         </div>
       </div>
+
+      {/* AVISO DE ENTREGAS COM DATA ILEGÍVEL OU FORA DE FORMATO */}
+      {scopeSummary.unreadableDateCount > 0 && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs text-amber-800">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>Atenção:</strong> {scopeSummary.unreadableDateCount} entrega(s) com data
+              ilegível aguardando correção foram desconsideradas das janelas de auditoria.
+            </span>
+          </div>
+          <Badge
+            variant="outline"
+            className="border-amber-300 bg-amber-100 text-amber-900 font-mono text-[10px]"
+          >
+            {scopeSummary.unreadableDateCount} excluída(s)
+          </Badge>
+        </div>
+      )}
+
+      {/* BANNER INDICADOR DE CARREGAMENTO SOB DEMANDA */}
+      {isLoadingPeriodOrders && (
+        <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-2 text-xs text-blue-700 animate-pulse">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span>Sincronizando entregas históricas do período selecionado sob demanda...</span>
+        </div>
+      )}
 
       {/* CARDS DE RESUMO RÁPIDO DO RELATÓRIO (MANTÉM VISÃO GLOBAL DO ESCOPO SELECIONADO) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

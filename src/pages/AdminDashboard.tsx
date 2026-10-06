@@ -171,7 +171,20 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const navigate = useNavigate()
   const [resolvedCompany, setResolvedCompany] = useState<ResolvedCompany | null>(null)
   const [isLoadingCompanyGate, setIsLoadingCompanyGate] = useState(true)
+  const [companyGateTimedOut, setCompanyGateTimedOut] = useState(false)
   const [resolvedCompanySource, setResolvedCompanySource] = useState<string>('')
+
+  // Timeout defensivo de 8s para o portão da empresa: nunca travar a tela se a resolução atrasar
+  useEffect(() => {
+    if (!isLoadingCompanyGate) {
+      setCompanyGateTimedOut(false)
+      return
+    }
+    const timer = setTimeout(() => {
+      setCompanyGateTimedOut(true)
+    }, 8000)
+    return () => clearTimeout(timer)
+  }, [isLoadingCompanyGate])
   const [isDiagExpanded, setIsDiagExpanded] = useState(false)
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
@@ -1358,11 +1371,41 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
             <RefreshCw className="h-10 w-10 text-[#00A3FF] animate-spin" />
             <ShieldCheck className="h-5 w-5 text-[#002855] absolute -bottom-1 -right-1" />
           </div>
-          <div className="text-center space-y-1">
+          <div className="text-center space-y-1 max-w-sm">
             <p className="text-sm font-semibold text-[#002855]">Carregando dados da empresa...</p>
             <p className="text-xs text-slate-500">
               Sincronizando filial ativa e vínculos operacionais
             </p>
+            {companyGateTimedOut && (
+              <div className="pt-3 space-y-2">
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 font-medium">
+                  A sincronização da empresa demorou mais que o esperado.
+                </p>
+                <div className="flex justify-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setIsLoadingCompanyGate(false)
+                    }}
+                    className="text-xs"
+                  >
+                    Prosseguir mesmo assim
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setIsLoadingCompanyGate(true)
+                      setCompanyGateTimedOut(false)
+                      loadData()
+                    }}
+                    className="text-xs bg-[#00A3FF] text-white hover:bg-[#008CE0]"
+                  >
+                    Tentar novamente
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -2072,6 +2115,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <Suspense fallback={<SectionSkeleton />}>
                   <KmAuditReport
                     orders={orders}
+                    fuelHistoryOrders={fuelHistoryOrders}
                     couriers={couriers}
                     locations={locations}
                     offRouteEvents={offRouteEvents}
