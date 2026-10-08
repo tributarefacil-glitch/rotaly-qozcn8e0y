@@ -2189,7 +2189,7 @@ export default function CourierApp() {
           <HelpCircle className="h-3.5 w-3.5" />
           <span>Problemas com GPS no iPhone? Veja como liberar</span>
         </button>
-        <span className="font-mono text-[10px] text-slate-500">v0.0.331</span>
+        <span className="font-mono text-[10px] text-slate-500">v0.0.336</span>
       </div>
 
       {/* Navegação Inferior Mobile Mantida Intacta */}

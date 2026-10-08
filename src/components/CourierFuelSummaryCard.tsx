@@ -369,6 +369,41 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           </div>
         )}
 
+        {/* FRENTE 2: Sugestão de Recarga baseada na Média dos Últimos 30 Dias */}
+        {!isBicycle && account?.dailyAverage30d !== undefined && account.dailyAverage30d > 0 && (
+          <div className="p-2.5 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 space-y-1.5 text-[11px]">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 dark:text-blue-300 flex items-center gap-1">
+                <Fuel className="h-3 w-3 text-[#0052CC]" />
+                Sugestão de Recarga (Restante do Mês)
+              </span>
+              <Badge
+                variant="outline"
+                className="text-[9px] px-1.5 py-0 font-bold border-blue-300 bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300"
+              >
+                {account.remainingIntervalLabel || 'Mês Civil'}
+              </Badge>
+            </div>
+
+            <div className="flex items-baseline justify-between pt-0.5">
+              <div>
+                <span className="text-[10px] text-slate-500 block">
+                  Média 30d: <strong>R$ {account.dailyAverage30d.toFixed(2)}/dia</strong> •
+                  Projeção: R$ {(account.projectionRemainingMonth || 0).toFixed(2)}
+                </span>
+              </div>
+              <span className="font-mono text-base font-black text-blue-700 dark:text-blue-400">
+                R$ {(account.suggestedRecharge || 0).toFixed(2)}
+              </span>
+            </div>
+
+            <p className="text-[9px] text-slate-500 leading-tight">
+              Média diária × {account.remainingDays || 0} dias restantes − saldo atual (R${' '}
+              {balanceNum.toFixed(2)}). Nunca ultrapassa o necessário até o fim do mês civil.
+            </p>
+          </div>
+        )}
+
         {/* Resumo da Regra de Preço / Consumo */}
         {showPricingExplanation && (
           <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-200/60 dark:border-slate-800 text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-2">

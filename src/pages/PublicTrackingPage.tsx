@@ -1078,7 +1078,7 @@ export default function PublicTrackingPage() {
           </div>
 
           <div className="flex items-center justify-between pt-1">
-            <span className="font-mono text-[10px] text-slate-400">Rotaly v0.0.331</span>
+            <span className="font-mono text-[10px] text-slate-400">Rotaly v0.0.336</span>
             <Button
               type="button"
               onClick={() => setIsSupportModalOpen(false)}

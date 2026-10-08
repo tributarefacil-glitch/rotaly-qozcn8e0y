@@ -1658,11 +1658,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       size="sm"
                       onClick={async () => {
                         try {
-                          toast.info('Verificando saldos e médias de consumo de combustível...')
+                          toast.info('Verificando saldos e médias de 30 dias de combustível...')
                           const res = await fuelAccountService.triggerFuelBalanceCheck()
                           if (res.success) {
                             toast.success(
-                              `Verificação concluída! ${res.alertsSent || 0} alerta(s) de recarga enviado(s) aos administradores.`,
+                              `Verificação concluída! ${res.alertsSent || 0} alerta(s) de recarga enviado(s) aos administradores (gatilho: 80% do saldo disponibilizado ou saldo negativo).`,
                             )
                           } else {
                             toast.error(`Aviso na verificação: ${res.error || 'Erro desconhecido'}`)
@@ -1672,10 +1672,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                         }
                       }}
                       className="h-9 gap-1.5 text-xs text-amber-700 border-amber-200 bg-amber-50/50 hover:bg-amber-100/60 rounded-xl"
-                      title="Dispara a verificação diária de saldo e sugestão de recarga por e-mail"
+                      title="Dispara a verificação de saldo (gatilho: gasto atingiu 80% do saldo disponibilizado) e sugestão de recarga proporcional aos dias restantes do mês civil"
                     >
                       <Bell className="h-3.5 w-3.5 text-amber-600" />
-                      Checar Alertas (80%)
+                      Checar Alertas (80% do Saldo)
                     </Button>
                     <Button
                       onClick={() => setIsNewFuelAdvanceModalOpen(true)}
@@ -1938,6 +1938,37 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   </span>
                                 </div>
                               </div>
+
+                              {/* FRENTE 2: SUGESTÃO DE RECARGA NO CARD DO ADMIN */}
+                              {!isBicycle &&
+                                acc.dailyAverage30d !== undefined &&
+                                acc.dailyAverage30d > 0 && (
+                                  <div className="p-2.5 rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 space-y-1 text-[11px]">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 dark:text-blue-300 flex items-center gap-1">
+                                        <Fuel className="h-3 w-3 text-[#0052CC]" />
+                                        Sugestão de Recarga (Restante do Mês)
+                                      </span>
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[9px] px-1.5 py-0 font-bold border-blue-300 bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-300"
+                                      >
+                                        {acc.remainingIntervalLabel || 'Mês Civil'}
+                                      </Badge>
+                                    </div>
+                                    <div className="flex items-baseline justify-between pt-0.5">
+                                      <span className="text-[10px] text-slate-500">
+                                        Média 30d:{' '}
+                                        <strong>R$ {acc.dailyAverage30d.toFixed(2)}/dia</strong> •
+                                        Projeção: R${' '}
+                                        {(acc.projectionRemainingMonth || 0).toFixed(2)}
+                                      </span>
+                                      <span className="font-mono text-sm font-black text-blue-700 dark:text-blue-400">
+                                        R$ {(acc.suggestedRecharge || 0).toFixed(2)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
 
                               {/* KM Oficial vs KM Desvios com Badge da Fonte Real (Odômetro / Rota Viária / GPS) */}
                               <div className="flex items-center justify-between pt-0.5 text-[10px]">
@@ -3818,7 +3849,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[#002855] font-mono font-bold">
-                    v0.0.331
+                    v0.0.336
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">

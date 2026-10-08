@@ -38,6 +38,15 @@ export interface UnifiedCourierFuelAccount {
   periodAdjustments?: number
   periodSpent?: number
   carryOverBalance?: number
+  // Frente 2 & 3: Sugestão de Recarga e Métricas de 30 dias
+  dailyAverage30d?: number
+  spent30d?: number
+  remainingDays?: number
+  remainingIntervalLabel?: string
+  projectionRemainingMonth?: number
+  suggestedRecharge?: number
+  availableBalance?: number
+  reachedAlertThreshold?: boolean
 }
 export class FuelAccountService {
   private static instance: FuelAccountService
@@ -380,6 +389,97 @@ export class FuelAccountService {
           : metrics.deliveriesCount
     }
 
+    // FRENTE 2 & 3: Média dos últimos 30 dias, projeção até fim do mês civil e sugestão de recarga
+    let dailyAverage30d = 0
+    let spent30d = 0
+    let remainingDays = 0
+    let remainingIntervalLabel = ''
+    let projectionRemainingMonth = 0
+    let suggestedRecharge = 0
+    const availableBalance = Number((openingBalance + totalPostCutoffAdvances).toFixed(2))
+
+    if (!isBicycle) {
+      const now = new Date()
+      const window30dStartTs = now.getTime() - 30 * 24 * 3600000
+
+      // Pedidos dos últimos 30 dias corridos
+      const orders30d = courierOrders.filter((o) => {
+        const orderDateVal = o.route_finished_at || o.actual_arrival || o.created
+        const orderTs = new Date(orderDateVal).getTime()
+        return orderTs >= window30dStartTs
+      })
+
+      if (orders30d.length > 0) {
+        const metrics30d = calculateCourierFuelMetrics({
+          courier,
+          advances: postCutoffAdvances,
+          orders: orders30d,
+          locations,
+          offRouteEvents,
+          settings,
+          periodFilter: 'all',
+          carryOverBalance: openingBalance,
+          isPostCutoffComputation: true,
+        })
+        spent30d = metrics30d.totalSpent
+      }
+
+      dailyAverage30d = Number((spent30d / 30).toFixed(2))
+
+      // Calendário operacional civil (America/Sao_Paulo)
+      // Se hora < 5 da manhã, dia operacional é o dia anterior
+      const spTimeParts = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        hour12: false,
+      }).formatToParts(now)
+
+      const partMap: Record<string, number> = {}
+      spTimeParts.forEach((p) => {
+        if (p.type !== 'literal') partMap[p.type] = Number(p.value)
+      })
+
+      let spDay = partMap.day || now.getDate()
+      const spMonth = partMap.month || now.getMonth() + 1
+      const spYear = partMap.year || now.getFullYear()
+      const spHour = partMap.hour !== undefined ? partMap.hour : now.getHours()
+
+      if (spHour < 5) {
+        const prevDay = new Date(now.getTime() - 24 * 3600000)
+        const prevParts = new Intl.DateTimeFormat('pt-BR', {
+          timeZone: 'America/Sao_Paulo',
+          day: 'numeric',
+        }).formatToParts(prevDay)
+        const prevDayPart = prevParts.find((p) => p.type === 'day')
+        if (prevDayPart) spDay = Number(prevDayPart.value)
+      }
+
+      const lastDayOfMonth = new Date(spYear, spMonth, 0).getDate()
+      remainingDays = Math.max(0, lastDayOfMonth - spDay)
+      const nextDayNum = Math.min(spDay + 1, lastDayOfMonth)
+      const nextDayStr = `${String(nextDayNum).padStart(2, '0')}/${String(spMonth).padStart(2, '0')}`
+      const lastDayStr = `${String(lastDayOfMonth).padStart(2, '0')}/${String(spMonth).padStart(2, '0')}`
+      remainingIntervalLabel = `${nextDayStr} a ${lastDayStr} • ${remainingDays} dia${remainingDays === 1 ? '' : 's'}`
+
+      projectionRemainingMonth = Number((dailyAverage30d * remainingDays).toFixed(2))
+      suggestedRecharge = Math.max(0, Number((projectionRemainingMonth - finalBalance).toFixed(2)))
+    }
+
+    // Gatilho do alerta: gasto >= 80% do saldo disponibilizado (saldo <= 20% do disponibilizado) ou saldo < 0
+    let reachedAlertThreshold = false
+    if (finalBalance < 0) {
+      reachedAlertThreshold = true
+    } else if (availableBalance > 0) {
+      if (postCutoffSpent >= availableBalance * 0.8 || finalBalance <= availableBalance * 0.2) {
+        reachedAlertThreshold = true
+      }
+    } else if (postCutoffSpent > 0) {
+      reachedAlertThreshold = true
+    }
+
     return {
       courier,
       totalAdvances: Number((totalPostCutoffAdvances + totalPostCutoffAdjustments).toFixed(2)),
@@ -397,6 +497,14 @@ export class FuelAccountService {
       periodAdjustments,
       periodSpent,
       carryOverBalance: openingBalance,
+      dailyAverage30d,
+      spent30d,
+      remainingDays,
+      remainingIntervalLabel,
+      projectionRemainingMonth,
+      suggestedRecharge,
+      availableBalance,
+      reachedAlertThreshold,
     }
   }
 
