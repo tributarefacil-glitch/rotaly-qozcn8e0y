@@ -642,6 +642,22 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
 
   // REQUISITO 2: PERMISSÕES DO VENDEDOR/ADMIN sobre entregas
   // 1. Cancelar entrega (Regra 2: não foi ao local = não conta; recalcula a rota na hora sem a parada)
+  // Listener de falha de resequenciamento para alertar a Central (vendedor/admin)
+  useEffect(() => {
+    const handleResequenceFailure = (evt: any) => {
+      const detail = evt?.detail
+      const courierName = couriers.find((c) => c.id === detail?.courierId)?.name || 'Entregador'
+      toast.error(
+        `⚠️ Resequenciamento de ${courierName}: instabilidade temporária na rede viária. Ordem segura preservada.`,
+        { duration: 6000 },
+      )
+    }
+    window.addEventListener('rotaly_resequence_failed', handleResequenceFailure)
+    return () => {
+      window.removeEventListener('rotaly_resequence_failed', handleResequenceFailure)
+    }
+  }, [couriers])
+
   const handleCancelOrder = async (orderId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     if (!window.confirm('Tem certeza que deseja cancelar esta entrega?')) return

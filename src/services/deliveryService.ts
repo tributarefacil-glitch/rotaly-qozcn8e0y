@@ -1038,9 +1038,15 @@ export const deliveryService = {
         }
         for (const courierId of courierIdsToResequence) {
           try {
-            await this.resequenceActiveRouteForCourier(courierId)
+            const res = await this.resequenceActiveRouteForCourier(courierId)
+            if (!res.success) {
+              console.warn(
+                '[updateCustomer] Resequenciamento retornou insucesso para courier:',
+                courierId,
+              )
+            }
           } catch (reseqErr) {
-            console.warn(
+            console.error(
               '[updateCustomer] Erro ao resequenciar rota de courier:',
               courierId,
               reseqErr,
@@ -2052,6 +2058,26 @@ export const deliveryService = {
   },
 
   // Base Addresses Management (Cadastro de Base da Empresa / Loja e Endereço Final)
+  /**
+   * Dispara alerta na Central (admin/toast) e registra falha de resequenciamento
+   */
+  notifyResequenceFailure(detail: { courierId?: string; courierName?: string; error?: string }) {
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('rotaly_resequence_failed', {
+            detail: {
+              ...detail,
+              timestamp: new Date().toISOString(),
+            },
+          }),
+        )
+      } catch {
+        /* ignore */
+      }
+    }
+  },
+
   async getBaseAddresses(empresaId?: string): Promise<BaseAddressRecord[]> {
     const targetCompanyId = empresaId || this.getActiveCompanyId()
     try {
@@ -2410,6 +2436,7 @@ export const deliveryService = {
   async resequenceActiveRouteForCourier(
     courierId: string,
     settings?: Partial<AppSettingsRecord> | null,
+    isRetry = false,
   ): Promise<{ success: boolean; sequencedCount: number; totalDistanceKm: number }> {
     try {
       const { optimizeRouteSequence, sequenceStopsWithDeterministicTsp } =
@@ -2419,11 +2446,24 @@ export const deliveryService = {
       const courier = await pb.collection<UserRecord>('users').getOne(courierId)
 
       // 2. Obter pedidos ativos desse entregador (nunca mexe no TRK-2026-622)
-      const courierOrders = await pb.collection<OrderRecord>('orders').getFullList({
+      const rawCourierOrders = await pb.collection<OrderRecord>('orders').getFullList({
         filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished!=true && tracking_code!='TRK-2026-622'`,
         sort: 'sequence,created',
         expand: 'customer_id',
         requestKey: null,
+      })
+
+      // Desempate determinístico rigoroso por created para eliminar qualquer sequência duplicada pré-existente
+      const courierOrders = [...rawCourierOrders].sort((a, b) => {
+        const seqA =
+          a.sequence !== null && a.sequence !== undefined && a.sequence > 0 ? a.sequence : Infinity
+        const seqB =
+          b.sequence !== null && b.sequence !== undefined && b.sequence > 0 ? b.sequence : Infinity
+        if (seqA !== seqB) return seqA - seqB
+        const timeA = new Date(a.created || 0).getTime()
+        const timeB = new Date(b.created || 0).getTime()
+        if (timeA !== timeB) return timeA - timeB
+        return a.id.localeCompare(b.id)
       })
 
       if (courierOrders.length === 0) {
@@ -2437,9 +2477,10 @@ export const deliveryService = {
         lat: courierOrders[0]?.start_base_lat || defaultBase?.lat || -22.6990563,
         lng: courierOrders[0]?.start_base_lng || defaultBase?.lng || -43.296723,
       }
+      // O destino da perna final de retorno é SEMPRE a base de origem (retorno à base canônico)
       const destinationPoint = {
-        lat: courierOrders[0]?.end_address_lat || originPoint.lat,
-        lng: courierOrders[0]?.end_address_lng || originPoint.lng,
+        lat: originPoint.lat,
+        lng: originPoint.lng,
       }
 
       const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
@@ -2466,6 +2507,7 @@ export const deliveryService = {
           lng: Number(lng),
           rawOrder: ord,
           rawCustomer: cust,
+          created: ord.created,
         }
       })
 
@@ -2649,7 +2691,7 @@ export const deliveryService = {
       }
     } catch (err) {
       console.error('Error resequencing active route for courier:', err)
-      // Fallback final: garantir que nenhum pedido fique com sequence = 0 mesmo em falha grave
+      // Fallback final: garantir renumeracao 1..N unica estrita por created mesmo em falha grave
       try {
         const fallbackOrders = await pb.collection<OrderRecord>('orders').getFullList({
           filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished!=true && tracking_code!='TRK-2026-622'`,
@@ -2657,15 +2699,59 @@ export const deliveryService = {
           requestKey: null,
         })
         for (let idx = 0; idx < fallbackOrders.length; idx++) {
-          if (!fallbackOrders[idx].sequence || fallbackOrders[idx].sequence === 0) {
-            await pb.collection('orders').update(fallbackOrders[idx].id, {
-              sequence: idx + 1,
-            })
-          }
+          await pb.collection('orders').update(fallbackOrders[idx].id, {
+            sequence: idx + 1,
+          })
         }
       } catch (fallbackSeqErr) {
         console.warn('Erro no fallback de emergência de sequência:', fallbackSeqErr)
       }
+      // Retry automático 1x antes de desistir
+      if (!isRetry) {
+        console.warn(
+          `[deliveryService] Primeira tentativa de resequenciamento falhou para courier ${courierId}. Tentando retry automático 1x...`,
+        )
+        try {
+          return await this.resequenceActiveRouteForCourier(courierId, settings, true)
+        } catch (retryErr) {
+          console.error(
+            `[deliveryService] Retry de resequenciamento também falhou para courier ${courierId}:`,
+            retryErr,
+          )
+        }
+      }
+
+      // Notificar Central (admin/sistema) e Entregador para que a falha NÃO seja silenciosa
+      try {
+        await this.createNotification({
+          user_id: courierId,
+          title: '⚠️ Aviso na Otimização da Rota',
+          message:
+            'Houve uma instabilidade temporária ao reordenar sua rota viária. As paradas foram mantidas em ordem segura.',
+          type: 'order',
+          read: false,
+        })
+      } catch (notifErr) {
+        console.warn('Erro ao notificar entregador sobre falha de resequenciamento:', notifErr)
+      }
+
+      // Disparar evento global para o frontend (Central / Admin / CourierApp) exibir toast/banner
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(
+            new CustomEvent('rotaly_resequence_failed', {
+              detail: {
+                courierId,
+                error: err instanceof Error ? err.message : String(err),
+                timestamp: new Date().toISOString(),
+              },
+            }),
+          )
+        } catch {
+          /* ignore */
+        }
+      }
+
       return { success: false, sequencedCount: 0, totalDistanceKm: 0 }
     }
   },
@@ -2704,8 +2790,12 @@ export const deliveryService = {
       const defaultBase = bases.find((b) => b.is_default) || bases[0]
       const now = new Date()
 
-      // Atribui sequence provisória = courierOrders.length + 1 para NUNCA ter sequence = 0
-      const provisionalSequence = Math.max(1, courierOrders.length + 1)
+      // Atribui sequence provisória estritamente superior ao maior sequence atual para NUNCA colidir
+      const maxExistingSeq = courierOrders.reduce(
+        (max, o) => Math.max(max, Number(o.sequence) || 0),
+        0,
+      )
+      const provisionalSequence = Math.max(1, maxExistingSeq + 1, courierOrders.length + 1)
 
       // 3. Atualizar o pedido para vincular ao entregador e à rota ativa
       const initialUpdateData: Partial<OrderRecord> = {
@@ -2732,9 +2822,15 @@ export const deliveryService = {
       // 4. RESEQUENCIAMENTO AUTOMÁTICO VIÁRIO COMPLETO DA ROTA INTEIRA
       // Roda o motor viário inteligente e persiste sequences 1..N e distâncias viárias em todos os pedidos ativos
       try {
-        await this.resequenceActiveRouteForCourier(courierId, settings)
+        const reseqRes = await this.resequenceActiveRouteForCourier(courierId, settings)
+        if (!reseqRes.success) {
+          console.warn(
+            '[addOrderToActiveRoute] Resequenciamento retornou insucesso para courier:',
+            courierId,
+          )
+        }
       } catch (reseqErr) {
-        console.warn('Erro ao resequenciar rota inteira após inclusão de pedido:', reseqErr)
+        console.error('Erro ao resequenciar rota inteira após inclusão de pedido:', reseqErr)
       }
 
       // 5. Obter pedido atualizado com sua sequência otimizada final

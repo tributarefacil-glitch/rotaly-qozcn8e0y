@@ -528,6 +528,23 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Deve buscar de forma autônoma se NÃO houver gerenciamento pelo pai OU se o fallback autônomo foi ativado
   const shouldFetchAutonomously = !hasParentData || parentFallbackAutonomous
 
+  // Listener de falha de resequenciamento para alertar a Central (admin/operador)
+  useEffect(() => {
+    const handleResequenceFailure = (evt: any) => {
+      const detail = evt?.detail
+      const courierName = couriers.find((c) => c.id === detail?.courierId)?.name || 'Entregador'
+      toast({
+        title: '⚠️ Aviso de Resequenciamento de Rota',
+        description: `Falha temporária ao recalcular menor trajeto para ${courierName}. Ordem segura mantida com retry automático.`,
+        variant: 'destructive',
+      })
+    }
+    window.addEventListener('rotaly_resequence_failed', handleResequenceFailure)
+    return () => {
+      window.removeEventListener('rotaly_resequence_failed', handleResequenceFailure)
+    }
+  }, [couriers, toast])
+
   // Fetch initial/refreshed data: apenas busca o que não foi fornecido via props pelo pai
   const fetchData = async () => {
     try {

@@ -178,7 +178,15 @@ export function sequenceStopsWithDeterministicTsp(
       curLng = next.lng
       lastStop = next
       lastAddress = next.address
-    } else {
+    } else if (unvisited.length > 0) {
+      // Desempate determinístico por created se houver resíduo
+      unvisited.sort((a, b) => {
+        const timeA = new Date((a as any).created || (a as any).rawOrder?.created || 0).getTime()
+        const timeB = new Date((b as any).created || (b as any).rawOrder?.created || 0).getTime()
+        if (timeA !== timeB) return timeA - timeB
+        return a.id.localeCompare(b.id)
+      })
+      ordered.push(...unvisited.splice(0, unvisited.length))
       break
     }
   }
@@ -417,11 +425,18 @@ export async function optimizeRouteSequence(params: {
     }
   }
 
+  // Desempate determinístico prévio por created para consistência total da entrada
+  const sortedStopsInput = [...stops].sort((a, b) => {
+    const timeA = new Date((a as any).created || (a as any).rawOrder?.created || 0).getTime()
+    const timeB = new Date((b as any).created || (b as any).rawOrder?.created || 0).getTime()
+    if (timeA !== timeB) return timeA - timeB
+    return a.id.localeCompare(b.id)
+  })
+
   // PRÉ-AGRUPAMENTO DE SAME-STREET COHESION (antes do solver):
   // Agrupa previamente paradas contíguas na mesma rua para que o solver
   // respeite a vizinhança sem desfazer a ordem ótima viária no final.
-  const preProcessedStops = consolidateSameStreetAdjacency(origin, stops)
-
+  const preProcessedStops = consolidateSameStreetAdjacency(origin, sortedStopsInput)
   let finalStops: StopCandidate[] = []
   let isGoogleOptimized = false
   let legsData: Array<{ distanceMeters: number; durationSeconds: number }> | null = null

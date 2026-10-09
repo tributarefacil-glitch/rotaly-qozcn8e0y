@@ -102,6 +102,10 @@ export default function CourierApp() {
   // Campos de odômetro legados mantidos apenas como estados neutros em memória (aposentados da UI)
   const [odometroInicialInput, setOdometroInicialInput] = useState<string>('')
   const [odometroFinalInput, setOdometroFinalInput] = useState<string>('')
+  const [resequenceFailureBanner, setResequenceFailureBanner] = useState<{
+    message: string
+    timestamp: string
+  } | null>(null)
   const [fotoOdometroInicial, setFotoOdometroInicial] = useState<File | null>(null)
   const [fotoOdometroFinal, setFotoOdometroFinal] = useState<File | null>(null)
   const [currentCourierLocation, setCurrentCourierLocation] = useState<{
@@ -386,10 +390,24 @@ export default function CourierApp() {
           o.status !== 'delivered' &&
           o.status !== 'cancelled',
       )
-      // As entregas executáveis no app são apenas as da rota ativa que ainda não foram finalizadas
-      const executables = current
+      // As entregas executáveis no app são apenas as da rota ativa que ainda não foram finalizadas.
+      // Elimina fallback silencioso ?? 9999: usa ordem canônica por sequence válida,
+      // desempate determinístico por created e ID.
+      const executables = [...current]
         .filter((o) => o.status === 'in_transit' || o.status === 'assigned')
-        .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
+        .sort((a, b) => {
+          const hasSeqA = a.sequence !== null && a.sequence !== undefined && a.sequence > 0
+          const hasSeqB = b.sequence !== null && b.sequence !== undefined && b.sequence > 0
+          if (hasSeqA && hasSeqB && a.sequence !== b.sequence) {
+            return (a.sequence as number) - (b.sequence as number)
+          }
+          if (hasSeqA && !hasSeqB) return -1
+          if (!hasSeqA && hasSeqB) return 1
+          const timeA = new Date(a.route_released_at || a.created || 0).getTime()
+          const timeB = new Date(b.route_released_at || b.created || 0).getTime()
+          if (timeA !== timeB) return timeA - timeB
+          return a.id.localeCompare(b.id)
+        })
 
       return {
         currentRouteOrders: current,
@@ -418,15 +436,20 @@ export default function CourierApp() {
       }
     }
 
-    // Ordenar por sequência e liberação/criação
+    // Ordenar por sequência e liberação/criação SEM fallback arbitrário 9999
     // Todas as entregas liberadas não iniciadas compõem a rota pronta para ser aceita
     const currentSorted = [...unstartedReleased].sort((a, b) => {
-      const seqA = a.sequence ?? 9999
-      const seqB = b.sequence ?? 9999
-      if (seqA !== seqB) return seqA - seqB
+      const hasSeqA = a.sequence !== null && a.sequence !== undefined && a.sequence > 0
+      const hasSeqB = b.sequence !== null && b.sequence !== undefined && b.sequence > 0
+      if (hasSeqA && hasSeqB && a.sequence !== b.sequence) {
+        return (a.sequence as number) - (b.sequence as number)
+      }
+      if (hasSeqA && !hasSeqB) return -1
+      if (!hasSeqA && hasSeqB) return 1
       const timeA = new Date(a.route_released_at || a.created || 0).getTime()
       const timeB = new Date(b.route_released_at || b.created || 0).getTime()
-      return timeA - timeB
+      if (timeA !== timeB) return timeA - timeB
+      return a.id.localeCompare(b.id)
     })
 
     return {
@@ -460,6 +483,26 @@ export default function CourierApp() {
   // Geofence de chegada à base: confirmação por 2 leituras consecutivas <= 120m
   const baseGeofenceHitCountRef = useRef<number>(0)
   const isAutoFinishingRouteRef = useRef<boolean>(false)
+
+  // Escuta evento global de falha de resequenciamento para exibir banner na rota do entregador
+  useEffect(() => {
+    const handleResequenceFailure = (evt: any) => {
+      const detail = evt?.detail
+      if (!detail) return
+      // Se a falha afeta este entregador ou é global
+      if (!detail.courierId || detail.courierId === user?.id) {
+        setResequenceFailureBanner({
+          message:
+            'Aviso de Rota: a sincronização do menor trajeto viário encontrou oscilação de rede. A ordem segura foi preservada e novas tentativas serão feitas automaticamente.',
+          timestamp: detail.timestamp || new Date().toISOString(),
+        })
+      }
+    }
+    window.addEventListener('rotaly_resequence_failed', handleResequenceFailure)
+    return () => {
+      window.removeEventListener('rotaly_resequence_failed', handleResequenceFailure)
+    }
+  }, [user?.id])
 
   // Assinatura reativa da contagem do buffer offline e listeners de conectividade online/offline
   useEffect(() => {
@@ -1286,7 +1329,20 @@ export default function CourierApp() {
   }
 
   // Ação "Iniciar Entrega" do cliente atual (marca em andamento se ainda não estiver e abre GPS)
+  // REGRA ESTRITA DE ORDEM: Apenas a primeira parada não entregue da rota (#1 pendente)
+  // pode liberar navegação e início de entrega. Pedidos subsequentes ficam travados com "Aguarde, parada #N".
   const handleStartDelivery = async (order: OrderRecord) => {
+    if (!currentActiveDelivery || order.id !== currentActiveDelivery.id) {
+      const targetSeq = order.sequence ?? activeDeliveries.findIndex((d) => d.id === order.id) + 1
+      toast.warning(
+        `Aguarde, parada #${targetSeq}. Siga a ordem da rota: conclua primeiro a entrega de ${currentActiveDelivery?.expand?.customer_id?.name || 'Parada #1'}.`,
+        {
+          duration: 5000,
+        },
+      )
+      return
+    }
+
     try {
       if (order.status !== 'in_transit') {
         await deliveryService.updateOrder(order.id, {
@@ -1479,6 +1535,33 @@ export default function CourierApp() {
             </div>
           </div>
         </div>
+
+        {/* BANNER DE AVISO DE RESEQUENCIAMENTO COM RETRY / INSTABILIDADE */}
+        {resequenceFailureBanner && (
+          <div className="rounded-xl border border-amber-500/60 bg-amber-950/70 p-3.5 space-y-2 text-xs text-amber-200 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <span className="text-xl shrink-0 mt-0.5">⚠️</span>
+                <div className="min-w-0">
+                  <p className="font-bold text-white text-xs">
+                    Sincronização de Rota com Proteção Ativa
+                  </p>
+                  <p className="text-[11px] text-amber-200/90 mt-0.5 leading-relaxed">
+                    {resequenceFailureBanner.message}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResequenceFailureBanner(null)}
+                className="text-amber-400 hover:text-white p-1 text-sm font-bold shrink-0"
+                title="Fechar aviso"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* INDICADOR VISUAL DESTACADO: MODO OFFLINE COM DADOS EM CACHE LOCAL */}
         {(!isOnline || isServingFromOfflineCache) && (
@@ -2162,13 +2245,19 @@ export default function CourierApp() {
                           <span className="font-mono text-xs text-slate-400">
                             {order.tracking_code}
                           </span>
-                          <Badge
-                            variant="outline"
-                            className="bg-[#0A1128] border-[#1E2B58] text-slate-400 text-[10px] flex items-center gap-1 font-semibold"
-                          >
-                            <Lock className="h-2.5 w-2.5" />
-                            Aguardando
-                          </Badge>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleStartDelivery(order)}
+                              className="h-7 px-2 border-slate-700 bg-slate-900/60 text-slate-400 hover:text-amber-300 hover:border-amber-500/40 text-[10px] font-bold rounded-lg flex items-center gap-1"
+                              title={`Parada #${stopNum} travada. Conclua primeiro a parada atual.`}
+                            >
+                              <Lock className="h-3 w-3 text-slate-500" />
+                              <span>Aguarde, parada #{stopNum}</span>
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     )
