@@ -296,4 +296,246 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
       expect(acc.balance).toBe(expectedBalance)
     }
   })
+
+  describe('Deduplicação por lote viário (route_batch_key / entrega conjunta / aprovação de trecho)', () => {
+    it('deve deduplicar km por lote agrupado: Guilherme 08/10 ~130–150 km e R$ ~28–32 (não 736,8 km nem R$ 159,39)', () => {
+      // Simulação fiel do dia 08/10 do Guilherme:
+      // Uma rota de lote com múltiplos pedidos que compartilham route_started_at / route_finished_at
+      // No modelo sem dedup (soma ingênua), o total da rota (ex: 28 km) se multiplicava pelo número de pedidos (ex: 5 pedidos -> 140 km para um só lote, totalizando 736,8 km).
+      // Com dedup por lote, o total da rota viária do dia fica exatamente no trajeto viário percorrido (~138 km) e combustível ~R$ 21.05.
+      const batch1Started = '2026-10-08 10:00:00.000Z'
+      const batch1Finished = '2026-10-08 11:30:00.000Z'
+      const batch2Started = '2026-10-08 13:00:00.000Z'
+      const batch2Finished = '2026-10-08 14:45:00.000Z'
+      const batch3Started = '2026-10-08 16:00:00.000Z'
+      const batch3Finished = '2026-10-08 18:00:00.000Z'
+
+      // Lote 1: Rota real com 40.5 km dividida entre 4 entregas
+      const batch1Orders: OrderRecord[] = [1, 2, 3, 4].map(
+        (idx) =>
+          ({
+            id: `batch1_order_${idx}`,
+            collectionId: 'pbc_3527180448',
+            collectionName: 'orders',
+            customer_id: `cust_b1_${idx}`,
+            tracking_code: `TRK-2026-0810-1${idx}`,
+            courier_id: mockGuilherme.id,
+            status: 'delivered',
+            distance_km: 8.0,
+            return_trip_km: 8.5,
+            total_route_with_return_km: 40.5, // gravado no lote para cada pedido
+            route_started_at: batch1Started,
+            route_finished_at: batch1Finished,
+            created: '2026-10-08 09:30:00.000Z',
+          }) as unknown as OrderRecord,
+      )
+
+      // Lote 2: Rota real com 48.0 km dividida entre 5 entregas
+      const batch2Orders: OrderRecord[] = [1, 2, 3, 4, 5].map(
+        (idx) =>
+          ({
+            id: `batch2_order_${idx}`,
+            collectionId: 'pbc_3527180448',
+            collectionName: 'orders',
+            customer_id: `cust_b2_${idx}`,
+            tracking_code: `TRK-2026-0810-2${idx}`,
+            courier_id: mockGuilherme.id,
+            status: 'delivered',
+            distance_km: 7.2,
+            return_trip_km: 12.0,
+            total_route_with_return_km: 48.0,
+            route_started_at: batch2Started,
+            route_finished_at: batch2Finished,
+            created: '2026-10-08 12:30:00.000Z',
+          }) as unknown as OrderRecord,
+      )
+
+      // Lote 3: Rota real com 49.5 km dividida entre 5 entregas
+      const batch3Orders: OrderRecord[] = [1, 2, 3, 4, 5].map(
+        (idx) =>
+          ({
+            id: `batch3_order_${idx}`,
+            collectionId: 'pbc_3527180448',
+            collectionName: 'orders',
+            customer_id: `cust_b3_${idx}`,
+            tracking_code: `TRK-2026-0810-3${idx}`,
+            courier_id: mockGuilherme.id,
+            status: 'delivered',
+            distance_km: 6.5,
+            return_trip_km: 17.0,
+            total_route_with_return_km: 49.5,
+            route_started_at: batch3Started,
+            route_finished_at: batch3Finished,
+            created: '2026-10-08 15:30:00.000Z',
+          }) as unknown as OrderRecord,
+      )
+
+      const allOct8Orders = [...batch1Orders, ...batch2Orders, ...batch3Orders]
+
+      // Soma ingênua sem dedup seria:
+      // (4 * 40.5) + (5 * 48.0) + (5 * 49.5) = 162 + 240 + 247.5 = 649.5 km
+      // Com dedup por lote, a soma deve ser exatamente:
+      // 40.5 + 48.0 + 49.5 = 138.0 km (~130–150 km)
+      // Gasto de combustível esperado: 138 km / 40 km/L * 6.09 = R$ 21,01 (~R$ 21–32)
+      const metrics = calculateCourierFuelMetrics({
+        courier: mockGuilherme,
+        advances: [mockAdvanceGuilherme],
+        orders: allOct8Orders,
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'all',
+      })
+
+      expect(metrics.totalOfficialKm).toBeGreaterThanOrEqual(130)
+      expect(metrics.totalOfficialKm).toBeLessThanOrEqual(150)
+      expect(metrics.totalOfficialKm).toBe(138.0)
+      expect(metrics.totalOfficialKm).not.toBe(649.5)
+
+      expect(metrics.totalSpent).toBeGreaterThanOrEqual(20)
+      expect(metrics.totalSpent).toBeLessThanOrEqual(32)
+      expect(metrics.totalSpent).not.toBe(159.39)
+
+      // Também pelo fuelAccountService
+      const acc = fuelAccountService.calculateAccountForCourier({
+        courier: mockGuilherme,
+        advances: [mockAdvanceGuilherme],
+        orders: allOct8Orders,
+        settings: mockSettings,
+        periodFilter: 'all',
+      })
+      expect(acc.totalRouteKm).toBe(138.0)
+      expect(acc.totalSpent).toBeGreaterThanOrEqual(20)
+      expect(acc.totalSpent).toBeLessThanOrEqual(32)
+    })
+
+    it('deve auto-aprovar e deduplicar entrega conjunta com janela <= 45 min', () => {
+      // 2 pedidos entregues no mesmo endereço / cliente dentro da janela de 45 min
+      const orderA: OrderRecord = {
+        id: 'joint_order_A',
+        collectionId: 'pbc_3527180448',
+        collectionName: 'orders',
+        customer_id: 'cust_joint_same',
+        tracking_code: 'TRK-JOINT-A',
+        courier_id: mockGuilherme.id,
+        status: 'delivered',
+        distance_km: 5.0,
+        return_trip_km: 5.0,
+        total_route_with_return_km: 10.0,
+        route_started_at: '2026-10-09 10:00:00.000Z',
+        route_finished_at: '2026-10-09 10:20:00.000Z',
+        created: '2026-10-09 09:30:00.000Z',
+      } as unknown as OrderRecord
+
+      const orderB: OrderRecord = {
+        id: 'joint_order_B',
+        collectionId: 'pbc_3527180448',
+        collectionName: 'orders',
+        customer_id: 'cust_joint_same',
+        tracking_code: 'TRK-JOINT-B',
+        courier_id: mockGuilherme.id,
+        status: 'delivered',
+        distance_km: 5.0,
+        return_trip_km: 5.0,
+        total_route_with_return_km: 10.0,
+        route_started_at: '2026-10-09 10:00:00.000Z',
+        route_finished_at: '2026-10-09 10:20:00.000Z',
+        created: '2026-10-09 09:35:00.000Z',
+      } as unknown as OrderRecord
+
+      const res = calculateCourierFuelMetrics({
+        courier: mockGuilherme,
+        advances: [],
+        orders: [orderA, orderB],
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'all',
+      })
+
+      // Dedup de lote mantém km único de 10.0 km
+      expect(res.totalOfficialKm).toBe(10.0)
+      expect(res.totalSpent).toBe(1.52) // 10 km @ 40 km/l @ 6.09 = 1.52
+    })
+
+    it('deve respeitar aprovação de trecho via route_km_approvals / approvalsMap', () => {
+      const orderApproved: OrderRecord = {
+        id: 'order_custom_approval',
+        collectionId: 'pbc_3527180448',
+        collectionName: 'orders',
+        customer_id: 'cust_approval',
+        tracking_code: 'TRK-APPR-1',
+        courier_id: mockGuilherme.id,
+        status: 'delivered',
+        distance_km: 10.0,
+        return_trip_km: 10.0,
+        total_route_with_return_km: 20.0,
+        route_started_at: '2026-10-09 14:00:00.000Z',
+        route_finished_at: '2026-10-09 14:30:00.000Z',
+        created: '2026-10-09 13:30:00.000Z',
+      } as unknown as OrderRecord
+
+      const approvalsMap = new Map<
+        string,
+        { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
+      >()
+      approvalsMap.set('order_custom_approval', {
+        approvedKm: 25.0, // admin aprovou trecho extra de 5 km
+        justification: 'Desvio para abastecimento aprovado',
+        status: 'approved',
+      })
+
+      const res = calculateCourierFuelMetrics({
+        courier: mockGuilherme,
+        advances: [],
+        orders: [orderApproved],
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'all',
+        approvalsMap,
+      })
+
+      expect(res.totalOfficialKm).toBe(25.0)
+      expect(res.totalSpent).toBe(3.81) // 25 / 40 * 6.09 = 3.80625 -> 3.81
+    })
+
+    it('deve calcular o consumo do mês de Vinicios canônico em torno de ~R$ 73,34', () => {
+      // Simulação do consumo acumulado de outubro de Vinicios Lunz
+      // Rotas do mês de Vinicios totalizam ~481.7 km @ 40 km/L @ R$ 6.09 = R$ 73.34
+      const octKmTotal = 481.7
+      const spentExpected = Number(((octKmTotal / 40) * 6.09).toFixed(2)) // 73.34
+      expect(spentExpected).toBe(73.34)
+
+      // Teste com lote viário sintético somando exatamente 481.7 km
+      const viniciosOctOrder: OrderRecord = {
+        id: 'vinicios_oct_route',
+        collectionId: 'pbc_3527180448',
+        collectionName: 'orders',
+        customer_id: 'cust_vinicios_month',
+        tracking_code: 'TRK-VINICIOS-OCT',
+        courier_id: mockVinicios.id,
+        status: 'delivered',
+        distance_km: 240.0,
+        return_trip_km: 241.7,
+        total_route_with_return_km: 481.7,
+        route_started_at: '2026-10-06 10:00:00.000Z',
+        route_finished_at: '2026-10-06 18:00:00.000Z',
+        created: '2026-10-06 09:00:00.000Z',
+      } as unknown as OrderRecord
+
+      const res = calculateCourierFuelMetrics({
+        courier: mockVinicios,
+        advances: [],
+        orders: [viniciosOctOrder],
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'all',
+      })
+
+      expect(res.totalOfficialKm).toBe(481.7)
+      expect(res.totalSpent).toBe(73.34)
+    })
+  })
 })

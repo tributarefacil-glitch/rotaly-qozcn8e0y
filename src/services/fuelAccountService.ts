@@ -240,6 +240,11 @@ export class FuelAccountService {
     offRouteEvents?: OffRouteEventRecord[]
     periodFilter?: 'all' | 'month' | 'week' | 'today'
     carryOverBalance?: number
+    approvalsMap?: Map<
+      string,
+      { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
+    >
+    activeBaseCoords?: { lat: number; lng: number } | null
   }): UnifiedCourierFuelAccount {
     const {
       courier,
@@ -249,6 +254,8 @@ export class FuelAccountService {
       locations = [],
       offRouteEvents = [],
       periodFilter = 'all',
+      approvalsMap,
+      activeBaseCoords,
     } = params
 
     // DATA DE CORTE E SALDO DE ABERTURA OFICIAIS
@@ -296,6 +303,8 @@ export class FuelAccountService {
       settings,
       periodFilter,
       carryOverBalance: openingBalance,
+      approvalsMap,
+      activeBaseCoords,
     })
 
     const isBicycle =
@@ -325,6 +334,8 @@ export class FuelAccountService {
             settings,
             periodFilter: 'all',
             carryOverBalance: openingBalance,
+            approvalsMap,
+            activeBaseCoords,
             isPostCutoffComputation: true,
           })
           postCutoffSpent = allTimeMetrics.totalSpent
@@ -346,6 +357,8 @@ export class FuelAccountService {
             settings,
             periodFilter: 'all',
             carryOverBalance: openingBalance,
+            approvalsMap,
+            activeBaseCoords,
             isPostCutoffComputation: true,
           })
           postCutoffSpent = postCutoffMetrics.totalSpent
@@ -419,6 +432,8 @@ export class FuelAccountService {
           settings,
           periodFilter: 'all',
           carryOverBalance: openingBalance,
+          approvalsMap,
+          activeBaseCoords,
           isPostCutoffComputation: true,
         })
         spent30d = metrics30d.totalSpent
@@ -601,48 +616,75 @@ export class FuelAccountService {
         return null
       }
 
-      // 2. Carrega concorrentemente adiantamentos, pedidos, configurações, locais e desvios do entregador
-      const [advances, orders, settings, locations, offRouteEvents] = await Promise.all([
-        this.getFuelAdvances(courierId),
-        pb
-          .collection<OrderRecord>('orders')
-          .getFullList({
-            filter: `courier_id = '${courierId}'`,
-            sort: '-created',
-            expand: 'customer_id,courier_id,seller_id',
-            requestKey: null,
+      // 2. Carrega concorrentemente adiantamentos, pedidos, configurações, locais, desvios e aprovações do entregador
+      const [advances, orders, settings, locations, offRouteEvents, approvalsList] =
+        await Promise.all([
+          this.getFuelAdvances(courierId),
+          pb
+            .collection<OrderRecord>('orders')
+            .getFullList({
+              filter: `courier_id = '${courierId}'`,
+              sort: '-created',
+              expand: 'customer_id,courier_id,seller_id',
+              requestKey: null,
+            })
+            .catch((err) => {
+              console.warn('[FuelAccountService] Erro ao buscar orders do courier:', err)
+              return [] as OrderRecord[]
+            }),
+          pb
+            .collection<AppSettingsRecord>('app_settings')
+            .getFirstListItem("key = 'global_settings'", { requestKey: null })
+            .catch(async () => {
+              try {
+                return await deliveryService.getSettings()
+              } catch {
+                return null
+              }
+            }),
+          pb
+            .collection<LocationRecord>('locations')
+            .getFullList({
+              filter: `user_id = '${courierId}'`,
+              sort: '-created',
+              requestKey: null,
+            })
+            .catch(() => [] as LocationRecord[]),
+          pb
+            .collection<OffRouteEventRecord>('off_route_events')
+            .getFullList({
+              filter: `courier_id = '${courierId}'`,
+              sort: '-created',
+              requestKey: null,
+            })
+            .catch(() => [] as OffRouteEventRecord[]),
+          pb
+            .collection('route_km_approvals')
+            .getFullList<{
+              order_id: string
+              approved_km: number
+              justification?: string
+              status: 'approved' | 'rejected' | 'pending'
+            }>({
+              filter: `courier_id = '${courierId}'`,
+              requestKey: null,
+            })
+            .catch(() => []),
+        ])
+
+      const approvalsMap = new Map<
+        string,
+        { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
+      >()
+      approvalsList.forEach((a) => {
+        if (a && a.order_id) {
+          approvalsMap.set(a.order_id, {
+            approvedKm: Number(a.approved_km) || 0,
+            justification: a.justification,
+            status: a.status || 'pending',
           })
-          .catch((err) => {
-            console.warn('[FuelAccountService] Erro ao buscar orders do courier:', err)
-            return [] as OrderRecord[]
-          }),
-        pb
-          .collection<AppSettingsRecord>('app_settings')
-          .getFirstListItem("key = 'global_settings'", { requestKey: null })
-          .catch(async () => {
-            try {
-              return await deliveryService.getSettings()
-            } catch {
-              return null
-            }
-          }),
-        pb
-          .collection<LocationRecord>('locations')
-          .getFullList({
-            filter: `user_id = '${courierId}'`,
-            sort: '-created',
-            requestKey: null,
-          })
-          .catch(() => [] as LocationRecord[]),
-        pb
-          .collection<OffRouteEventRecord>('off_route_events')
-          .getFullList({
-            filter: `courier_id = '${courierId}'`,
-            sort: '-created',
-            requestKey: null,
-          })
-          .catch(() => [] as OffRouteEventRecord[]),
-      ])
+        }
+      })
 
       return this.calculateAccountForCourier({
         courier: courierUser,
@@ -652,6 +694,7 @@ export class FuelAccountService {
         locations,
         offRouteEvents,
         periodFilter,
+        approvalsMap,
       })
     } catch (err) {
       console.error('[FuelAccountService] Erro ao obter conta única do courier:', err)
@@ -677,7 +720,7 @@ export class FuelAccountService {
 
     const courierIds = couriers.map((c) => c.id)
 
-    const [advances, settings, locations, offRouteEvents] = await Promise.all([
+    const [advances, settings, locations, offRouteEvents, approvalsList] = await Promise.all([
       this.getFuelAdvances(courierIds, targetCompanyId),
       pb
         .collection<AppSettingsRecord>('app_settings')
@@ -703,7 +746,32 @@ export class FuelAccountService {
           requestKey: null,
         })
         .catch(() => [] as OffRouteEventRecord[]),
+      pb
+        .collection('route_km_approvals')
+        .getFullList<{
+          order_id: string
+          approved_km: number
+          justification?: string
+          status: 'approved' | 'rejected' | 'pending'
+        }>({
+          requestKey: null,
+        })
+        .catch(() => []),
     ])
+
+    const approvalsMap = new Map<
+      string,
+      { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
+    >()
+    approvalsList.forEach((a) => {
+      if (a && a.order_id) {
+        approvalsMap.set(a.order_id, {
+          approvedKm: Number(a.approved_km) || 0,
+          justification: a.justification,
+          status: a.status || 'pending',
+        })
+      }
+    })
 
     // Se já foi passado um pool de pedidos histórico, utiliza-o; caso contrário busca pedidos
     let effectiveOrders = ordersPool
@@ -729,6 +797,7 @@ export class FuelAccountService {
         locations,
         offRouteEvents,
         periodFilter,
+        approvalsMap,
       }),
     )
   }

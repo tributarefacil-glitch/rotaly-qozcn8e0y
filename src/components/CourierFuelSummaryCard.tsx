@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import type { CourierFuelCalculationResult } from '@/hooks/useCourierFuelMetrics'
 import type { UserRecord } from '@/types/delivery'
+import type { UnifiedCourierFuelAccount } from '@/services/fuelAccountService'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { deliveryService } from '@/services/deliveryService'
@@ -21,6 +22,7 @@ import { deliveryService } from '@/services/deliveryService'
 interface CourierFuelSummaryCardProps {
   metrics: CourierFuelCalculationResult
   courier?: UserRecord | null
+  account?: UnifiedCourierFuelAccount | null
   onOpenHistoryModal: () => void
   title?: string
   subtitle?: string
@@ -32,6 +34,7 @@ interface CourierFuelSummaryCardProps {
 export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
   metrics,
   courier,
+  account,
   onOpenHistoryModal,
   title = 'Saldo da Conta Corrente',
   subtitle,
