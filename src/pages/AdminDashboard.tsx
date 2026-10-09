@@ -148,6 +148,7 @@ import {
 import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
 import { useRealtime } from '@/hooks/use-realtime'
+import { APP_VERSION_LABEL } from '@/lib/version'
 
 interface AdminDashboardProps {
   defaultTab?:
@@ -3849,7 +3850,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-300">Rotaly Gestão Executiva</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[#002855] font-mono font-bold">
-                    v0.0.336
+                    {APP_VERSION_LABEL}
                   </span>
                   <span className="text-slate-500">•</span>
                   <span className="text-slate-400">

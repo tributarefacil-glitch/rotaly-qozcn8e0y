@@ -36,6 +36,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
+import { APP_VERSION_LABEL } from '@/lib/version'
 
 export default function PublicTrackingPage() {
   const { tracking_code: rawTrackingCode } = useParams<{ tracking_code: string }>()
@@ -1078,7 +1079,7 @@ export default function PublicTrackingPage() {
           </div>
 
           <div className="flex items-center justify-between pt-1">
-            <span className="font-mono text-[10px] text-slate-400">Rotaly v0.0.336</span>
+            <span className="font-mono text-[10px] text-slate-400">Rotaly {APP_VERSION_LABEL}</span>
             <Button
               type="button"
               onClick={() => setIsSupportModalOpen(false)}

@@ -1,15 +1,16 @@
 /**
- * Rotaly PWA Service Worker (v3)
+ * Rotaly PWA Service Worker (v4)
  *
  * Estratégia de Cache e Resiliência Offline:
- * - Recursos estáticos base da aplicação (app shell, manifest, html, fontes e assets do bundle) em Cache-First.
- * - Navegação HTML com Network-First e fallback gracioso para o app shell em cache (/ ou /index.html).
+ * - Recursos estáticos base da aplicação em Cache-First (assets com hash imutáveis).
+ * - Navegação HTML e raiz (/ e /index.html) SEMPRE em Network-First com fallback gracioso para cache offline.
+ *   Isso garante que qualquer deploy/atualização de bundle seja imediatamente refletido no navegador com conexão.
  * - Dados dinâmicos de rota e fila de telemetria são gerenciados via IndexedDB no cliente (não interceptados pelo SW),
  *   evitando dados defasados na API e garantindo que requisições ao backend /api/ trafeguem em tempo real.
  * - Background Sync para notificar o cliente via postMessage sobre retomada de conexão.
  */
 
-const CACHE_NAME = 'rotaly-pwa-v3'
+const CACHE_NAME = 'rotaly-pwa-v4'
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -47,7 +48,7 @@ self.addEventListener('activate', (event) => {
   self.clients.claim()
 })
 
-// Fetch event - Cache-First para recursos estáticos da aplicação; Network-First para navegação; skip APIs
+// Fetch event - Cache-First para recursos estáticos da aplicação; Network-First para navegação e HTML; skip APIs
 self.addEventListener('fetch', (event) => {
   const request = event.request
 
@@ -65,21 +66,38 @@ self.addEventListener('fetch', (event) => {
   }
 
   const url = new URL(request.url)
+  const isHtmlNavigation =
+    request.mode === 'navigate' ||
+    request.headers.get('accept')?.includes('text/html') ||
+    url.pathname === '/' ||
+    url.pathname === '/index.html'
 
-  // 2. Requisições de navegação HTML (ex: abrir /courier direto na barra de endereços ou atalho do PWA)
-  if (request.mode === 'navigate') {
+  // 2. Requisições de navegação HTML ou /index.html: SEMPRE Network-First
+  // Havendo rede, serve a versão mais recente do servidor e atualiza o cache para modo offline.
+  if (isHtmlNavigation) {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response.status === 200) {
+          if (response && response.status === 200) {
             const copy = response.clone()
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, copy)
+              // Também atualiza / e /index.html para sincronizar o app shell offline
+              if (url.pathname === '/' || url.pathname === '/index.html') {
+                cache.put('/index.html', response.clone())
+                cache.put('/', response.clone())
+              }
+            })
           }
           return response
         })
-        .catch(() => {
+        .catch(async () => {
           // Quando sem conexão, serve o index.html em cache permitindo o React Router assumir offline
-          return caches.match('/index.html') || caches.match('/')
+          const cached = await caches.match(request)
+          if (cached) return cached
+          const indexCached = await caches.match('/index.html')
+          if (indexCached) return indexCached
+          return caches.match('/')
         }),
     )
     return

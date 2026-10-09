@@ -50,6 +50,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
+import { APP_VERSION_LABEL } from '@/lib/version'
 
 type SelectedProfile = 'admin' | 'seller' | 'courier' | null
 
@@ -1572,7 +1573,7 @@ export default function Index() {
           {/* Bottom Copyright Bar (limpo, sem selo de plataforma) */}
           <div className="border-t border-white/10 pt-6 text-center text-xs text-slate-400 font-sans flex flex-col sm:flex-row items-center justify-between gap-2">
             <p>© {new Date().getFullYear()} Rotaly. Todos os direitos reservados.</p>
-            <p className="font-mono text-[11px] text-slate-400">v0.0.336</p>
+            <p className="font-mono text-[11px] text-slate-400">{APP_VERSION_LABEL}</p>
           </div>
         </div>
       </footer>

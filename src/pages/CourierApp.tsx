@@ -37,6 +37,7 @@ import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
+import { APP_VERSION_LABEL } from '@/lib/version'
 import type { OrderRecord } from '@/types/delivery'
 import {
   notifyCourierNewDelivery,
@@ -2189,7 +2190,7 @@ export default function CourierApp() {
           <HelpCircle className="h-3.5 w-3.5" />
           <span>Problemas com GPS no iPhone? Veja como liberar</span>
         </button>
-        <span className="font-mono text-[10px] text-slate-500">v0.0.336</span>
+        <span className="font-mono text-[10px] text-slate-500">{APP_VERSION_LABEL}</span>
       </div>
 
       {/* Navegação Inferior Mobile Mantida Intacta */}
