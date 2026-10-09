@@ -16,6 +16,7 @@ import {
   haversineDistanceMeters,
 } from '@/lib/telemetryKmEngine'
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
+import { getMergedRouteBatchKey, groupOrdersByRouteBatch } from '@/lib/routeBatchHelper'
 import {
   getOperationalWindow,
   isAdvancePostCutoff,
@@ -352,92 +353,14 @@ export function calculateCourierFuelMetrics(params: {
   // a telemetria GPS mede a rota completa do entregador (Base -> Entregas -> Retorno à Base).
   // O KM de combustível da rota é o percurso real completo, e para cada entrega exibimos a sua cota ou valor correspondente.
 
-  // Agrupamento por lote de rota (pedidos com mesmo route_started_at + route_finished_at, ou janela temporal)
-  // Regra B: Deduplicação por rota: dentro de um mesmo entregador, pedidos que compartilham a mesma rota
-  // (mesmo route_started_at + route_finished_at, ou mesmo start_base + janela de tempo)
-  // devem ter o km/combustível da rota contado UMA VEZ só, não por pedido.
-  // Truncar ao minuto e tolerância para evitar que pequenas dessincronizações de segundos separem lotes
-  const getRouteBatchKey = (o: OrderRecord): string => {
-    if (o.route_started_at && o.route_finished_at) {
-      const startMin = Math.floor(new Date(o.route_started_at).getTime() / 60000)
-      const finishMin = Math.floor(new Date(o.route_finished_at).getTime() / 60000)
-      return `route_m_${startMin}_${finishMin}`
-    }
-    if (o.route_started_at) {
-      const oTime = new Date(o.route_started_at).getTime()
-      return `batch_${Math.floor(oTime / (15 * 60 * 1000))}`
-    }
-    if (o.created) {
-      const cTime = new Date(o.created).getTime()
-      return `batch_created_${Math.floor(cTime / (15 * 60 * 1000))}`
-    }
-    return `single_${o.id}`
-  }
-
-  const routeBatches = new Map<string, OrderRecord[]>()
-  eligibleOrders.forEach((o) => {
-    let assignedKey: string | null = null
-    if (o.route_started_at && o.route_finished_at) {
-      const oStartMs = new Date(o.route_started_at).getTime()
-      const oFinishMs = new Date(o.route_finished_at).getTime()
-
-      // Verificar se já existe um lote cujos timestamps estejam dentro de 2 minutos de tolerância
-      for (const existingKey of routeBatches.keys()) {
-        if (existingKey.startsWith('route_m_')) {
-          const parts = existingKey.replace('route_m_', '').split('_')
-          if (parts.length === 2) {
-            const exStartMs = Number(parts[0]) * 60000
-            const exFinishMs = Number(parts[1]) * 60000
-            if (
-              Math.abs(oStartMs - exStartMs) <= 2 * 60 * 1000 &&
-              Math.abs(oFinishMs - exFinishMs) <= 2 * 60 * 1000
-            ) {
-              assignedKey = existingKey
-              break
-            }
-          }
-        }
-      }
-      if (!assignedKey) {
-        const startMin = Math.floor(oStartMs / 60000)
-        const finishMin = Math.floor(oFinishMs / 60000)
-        assignedKey = `route_m_${startMin}_${finishMin}`
-      }
-    } else if (o.route_started_at) {
-      const oTime = new Date(o.route_started_at).getTime()
-      for (const existingKey of routeBatches.keys()) {
-        if (existingKey.startsWith('batch_')) {
-          const batchTime = Number(existingKey.replace('batch_', '')) * (15 * 60 * 1000)
-          if (Math.abs(oTime - batchTime) <= 15 * 60 * 1000) {
-            assignedKey = existingKey
-            break
-          }
-        }
-      }
-      if (!assignedKey) {
-        assignedKey = `batch_${Math.floor(oTime / (15 * 60 * 1000))}`
-      }
-    } else if (o.created) {
-      const cTime = new Date(o.created).getTime()
-      for (const existingKey of routeBatches.keys()) {
-        if (existingKey.startsWith('batch_created_')) {
-          const batchTime = Number(existingKey.replace('batch_created_', '')) * (15 * 60 * 1000)
-          if (Math.abs(cTime - batchTime) <= 15 * 60 * 1000) {
-            assignedKey = existingKey
-            break
-          }
-        }
-      }
-      if (!assignedKey) {
-        assignedKey = `batch_created_${Math.floor(cTime / (15 * 60 * 1000))}`
-      }
-    } else {
-      assignedKey = `single_${o.id}`
-    }
-
-    const list = routeBatches.get(assignedKey) || []
-    list.push(o)
-    routeBatches.set(assignedKey, list)
+  // Agrupamento por lote de rota compartilhado com 2 minutos de tolerância temporal
+  const routeBatches = groupOrdersByRouteBatch(eligibleOrders)
+  // Mapa reverso para mapear cada pedido ao seu lote exato atribuído
+  const orderBatchKeyMap = new Map<string, string>()
+  routeBatches.forEach((bOrders, bKey) => {
+    bOrders.forEach((o) => {
+      orderBatchKeyMap.set(o.id, bKey)
+    })
   })
 
   // Pré-calcular métricas de telemetria e verificar a presença de Odômetro Físico ou Histórico Viário
@@ -575,7 +498,7 @@ export function calculateCourierFuelMetrics(params: {
   let jointSavedFuelCost = 0
 
   const orderCalculations: CourierOrderTelemetryCalculation[] = eligibleOrders.map((order) => {
-    const key = getRouteBatchKey(order)
+    const key = orderBatchKeyMap.get(order.id) || getMergedRouteBatchKey(order, routeBatches.keys())
 
     const batchTelemetry =
       batchTelemetryMap.get(key) ||

@@ -51,6 +51,11 @@ import {
   RouteKmApprovalRecord,
 } from '@/types/delivery'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
+import {
+  getMergedRouteBatchKey,
+  getRouteBatchDisplay,
+  groupOrdersByRouteBatch,
+} from '@/lib/routeBatchHelper'
 import { haversineDistanceMeters } from '@/lib/geo'
 import {
   formatDateInTz,
@@ -242,15 +247,14 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   // Lotes disponíveis para filtro
   const availableBatches = useMemo(() => {
     const setBatches = new Set<string>()
-    allOrdersPool.forEach((o) => {
-      if (selectedCourierId !== 'all' && o.courier_id !== selectedCourierId) return
-      let bKey = 'Avulso'
-      if (o.route_started_at && o.route_finished_at) {
-        bKey = `Rota ${new Date(o.route_started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-      } else if (o.route_started_at) {
-        bKey = `Lote ${new Date(o.route_started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+    const scopedOrders = allOrdersPool.filter(
+      (o) => selectedCourierId === 'all' || o.courier_id === selectedCourierId,
+    )
+    const grouped = groupOrdersByRouteBatch(scopedOrders)
+    grouped.forEach((bOrders) => {
+      if (bOrders.length > 0) {
+        setBatches.add(getRouteBatchDisplay(bOrders[0]))
       }
-      setBatches.add(bKey)
     })
     return Array.from(setBatches)
   }, [allOrdersPool, selectedCourierId])
@@ -316,6 +320,15 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       const courierObj = eligibleCouriers.find((c) => c.id === courierId)
       if (!courierObj) return
 
+      // Derivação de lotes compartilhada com tolerância de 2 minutos calculada uma vez por entregador
+      const courierBatchMap = groupOrdersByRouteBatch(courierOrders)
+      const orderToBatchKey = new Map<string, string>()
+      courierBatchMap.forEach((bOrders, key) => {
+        bOrders.forEach((bo) => {
+          orderToBatchKey.set(bo.id, key)
+        })
+      })
+
       // Rodar motor oficial para este entregador
       const metrics = calculateCourierFuelMetrics({
         courier: courierObj,
@@ -355,18 +368,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         const dateObj = new Date(dateRaw)
         const dateStr = dateObj.toLocaleDateString('pt-BR')
 
-        // Identificação de lote com arredondamento ao minuto
-        let bKey = 'single_' + order.id
-        let batchDisplay = 'Avulso'
-        if (order.route_started_at && order.route_finished_at) {
-          const startMin = Math.floor(new Date(order.route_started_at).getTime() / 60000)
-          const finishMin = Math.floor(new Date(order.route_finished_at).getTime() / 60000)
-          bKey = `route_m_${startMin}_${finishMin}`
-          batchDisplay = `Rota ${new Date(order.route_started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-        } else if (order.route_started_at) {
-          bKey = `batch_${Math.floor(new Date(order.route_started_at).getTime() / (15 * 60 * 1000))}`
-          batchDisplay = `Lote ${new Date(order.route_started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-        }
+        // Identificação de lote com a derivação mesclada do motor (tolerância de 2 minutos)
+        const bKey = orderToBatchKey.get(order.id) || `single_${order.id}`
+        const batchDisplay = getRouteBatchDisplay(order)
 
         // Buscar eventos de telemetria específicos deste trecho / pedido
         const orderEvents = offRouteEvents.filter(

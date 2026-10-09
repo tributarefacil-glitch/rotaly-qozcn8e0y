@@ -52,9 +52,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const request = event.request
 
-  // 1. Pular requisições não-GET e APIs do backend/externas que precisam trafegar livres (PocketBase /api/, Maps, etc)
+  const url = new URL(request.url)
+
+  // 1. Pular requisições não-GET, version.json (bypass direto para rede sem cache) e APIs externas/backend
   if (
     request.method !== 'GET' ||
+    url.pathname === '/version.json' ||
+    request.url.includes('/version.json') ||
     request.url.includes('/api/') ||
     request.url.includes('maps.googleapis.com') ||
     request.url.includes('viacep.com.br') ||
@@ -64,8 +68,6 @@ self.addEventListener('fetch', (event) => {
   ) {
     return
   }
-
-  const url = new URL(request.url)
   const isHtmlNavigation =
     request.mode === 'navigate' ||
     request.headers.get('accept')?.includes('text/html') ||
