@@ -100,13 +100,41 @@ export function sequenceStopsWithDeterministicTsp(
   origin: { lat: number; lng: number },
   destination: { lat: number; lng: number },
   stops: StopCandidate[],
+  osrmDistancesMatrix?: number[][] | null,
 ): StopCandidate[] {
   if (stops.length <= 1) return [...stops]
+
+  // Mapear paradas para índices na matriz viária OSRM
+  // Matriz de tamanho (1 + stops.length): índice 0 = origem, índices 1..N = stops
+  const stopIndexMap = new Map<string, number>()
+  stops.forEach((s, i) => stopIndexMap.set(s.id, i + 1))
+
+  const getDistance = (
+    fromStop: StopCandidate | null,
+    toStop: StopCandidate,
+    fromLat: number,
+    fromLng: number,
+  ): number => {
+    if (osrmDistancesMatrix) {
+      const fromIdx = fromStop ? (stopIndexMap.get(fromStop.id) ?? -1) : 0
+      const toIdx = stopIndexMap.get(toStop.id) ?? -1
+      if (
+        fromIdx >= 0 &&
+        toIdx >= 0 &&
+        osrmDistancesMatrix[fromIdx]?.[toIdx] !== undefined &&
+        osrmDistancesMatrix[fromIdx][toIdx] > 0
+      ) {
+        return osrmDistancesMatrix[fromIdx][toIdx]
+      }
+    }
+    return calcDistanceMeters(fromLat, fromLng, toStop.lat, toStop.lng)
+  }
 
   const unvisited = [...stops]
   const ordered: StopCandidate[] = []
   let curLat = origin.lat
   let curLng = origin.lng
+  let lastStop: StopCandidate | null = null
   let lastAddress = ''
 
   while (unvisited.length > 0) {
@@ -115,7 +143,7 @@ export function sequenceStopsWithDeterministicTsp(
 
     for (let i = 0; i < unvisited.length; i++) {
       const candidate = unvisited[i]
-      const dist = calcDistanceMeters(curLat, curLng, candidate.lat, candidate.lng)
+      const dist = getDistance(lastStop, candidate, curLat, curLng)
 
       // Fator de prioridade do pedido
       let priorityMult = 1.0
@@ -148,13 +176,14 @@ export function sequenceStopsWithDeterministicTsp(
       ordered.push(next)
       curLat = next.lat
       curLng = next.lng
+      lastStop = next
       lastAddress = next.address
     } else {
       break
     }
   }
 
-  // Refinamento Local 2-Opt: desata nós e cruzamentos viários
+  // Refinamento Local 2-Opt: desata nós e cruzamentos viários sobre distâncias viárias
   if (ordered.length >= 4 && ordered.length <= 60) {
     let improved = true
     let iterations = 0
@@ -162,12 +191,29 @@ export function sequenceStopsWithDeterministicTsp(
 
     const evalTourCost = (tour: StopCandidate[]): number => {
       let total = 0
-      let prev = origin
+      let prevStop: StopCandidate | null = null
+      let prevLat = origin.lat
+      let prevLng = origin.lng
+
       for (const stop of tour) {
-        total += calcDistanceMeters(prev.lat, prev.lng, stop.lat, stop.lng)
-        prev = { lat: stop.lat, lng: stop.lng }
+        total += getDistance(prevStop, stop, prevLat, prevLng)
+        prevStop = stop
+        prevLat = stop.lat
+        prevLng = stop.lng
       }
-      total += calcDistanceMeters(prev.lat, prev.lng, destination.lat, destination.lng)
+
+      // Distância de retorno ao destino
+      if (osrmDistancesMatrix && prevStop) {
+        const lastIdx = stopIndexMap.get(prevStop.id) ?? -1
+        if (lastIdx >= 0 && osrmDistancesMatrix[lastIdx]?.[0] !== undefined) {
+          total += osrmDistancesMatrix[lastIdx][0]
+        } else {
+          total += calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng)
+        }
+      } else {
+        total += calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng)
+      }
+
       return total
     }
 
@@ -247,16 +293,14 @@ async function sequenceStopsWithGoogleDirections(
       travelMode: win.google.maps.TravelMode?.DRIVING || 'DRIVING',
     }
 
-    // Adiciona modelo de trânsito se suportado
-    if (win.google.maps.TrafficModel) {
-      request.drivingOptions = {
-        departureTime: new Date(),
-        trafficModel: win.google.maps.TrafficModel.BEST_GUESS,
-      }
-    }
+    // Otimização por DISTÂNCIA:
+    // Chamada pura sem drivingOptions/BEST_GUESS para evitar ganchos de trânsito
+    // que aumentam o km (ex.: 19 km rodoviário vs 13 km direto).
+    // Opcionalmente testa com trânsito e escolhe a rota de MENOR quilometragem total.
+    const requestNoTraffic: any = { ...request }
 
-    const result: any = await new Promise((resolve) => {
-      directionsService.route(request, (res: any, status: any) => {
+    const routeNoTrafficPromise: Promise<any> = new Promise((resolve) => {
+      directionsService.route(requestNoTraffic, (res: any, status: any) => {
         if (status === win.google.maps.DirectionsStatus?.OK || status === 'OK') {
           resolve(res)
         } else {
@@ -265,9 +309,54 @@ async function sequenceStopsWithGoogleDirections(
       })
     })
 
-    if (!result?.routes?.[0]) return null
+    let chosenResult: any = await routeNoTrafficPromise
 
-    const route = result.routes[0]
+    // Se suportado TrafficModel, podemos consultar e comparar para escolher o menor km
+    if (win.google.maps.TrafficModel) {
+      try {
+        const requestWithTraffic = {
+          ...request,
+          drivingOptions: {
+            departureTime: new Date(),
+            trafficModel: win.google.maps.TrafficModel.BEST_GUESS,
+          },
+        }
+        const resultTraffic: any = await new Promise((resolve) => {
+          directionsService.route(requestWithTraffic, (res: any, status: any) => {
+            if (status === win.google.maps.DirectionsStatus?.OK || status === 'OK') {
+              resolve(res)
+            } else {
+              resolve(null)
+            }
+          })
+        })
+
+        if (resultTraffic?.routes?.[0]) {
+          if (!chosenResult?.routes?.[0]) {
+            chosenResult = resultTraffic
+          } else {
+            // Comparar distâncias totais e priorizar a rota de MENOR quilometragem
+            const distNoTraffic = (chosenResult.routes[0].legs || []).reduce(
+              (sum: number, l: any) => sum + (l.distance?.value || 0),
+              0,
+            )
+            const distTraffic = (resultTraffic.routes[0].legs || []).reduce(
+              (sum: number, l: any) => sum + (l.distance?.value || 0),
+              0,
+            )
+            if (distTraffic < distNoTraffic) {
+              chosenResult = resultTraffic
+            }
+          }
+        }
+      } catch {
+        /* mantém chosenResult sem trânsito */
+      }
+    }
+
+    if (!chosenResult?.routes?.[0]) return null
+
+    const route = chosenResult.routes[0]
     const waypointOrder: number[] = route.waypoint_order || []
     const legs = route.legs || []
 
@@ -328,32 +417,54 @@ export async function optimizeRouteSequence(params: {
     }
   }
 
+  // PRÉ-AGRUPAMENTO DE SAME-STREET COHESION (antes do solver):
+  // Agrupa previamente paradas contíguas na mesma rua para que o solver
+  // respeite a vizinhança sem desfazer a ordem ótima viária no final.
+  const preProcessedStops = consolidateSameStreetAdjacency(origin, stops)
+
   let finalStops: StopCandidate[] = []
   let isGoogleOptimized = false
   let legsData: Array<{ distanceMeters: number; durationSeconds: number }> | null = null
 
   // Se tivermos até 23 paradas e a API do Google Maps estiver disponível,
   // tentamos a otimização oficial da Google com respeito às regras viárias
-  if (stops.length <= 23) {
-    const googleResult = await sequenceStopsWithGoogleDirections(origin, destination, stops)
-    if (googleResult && googleResult.orderedStops.length === stops.length) {
+  if (preProcessedStops.length <= 23) {
+    const googleResult = await sequenceStopsWithGoogleDirections(
+      origin,
+      destination,
+      preProcessedStops,
+    )
+    if (googleResult && googleResult.orderedStops.length === preProcessedStops.length) {
       finalStops = googleResult.orderedStops
       legsData = googleResult.legs
       isGoogleOptimized = true
     }
   }
 
-  // Se a Google não estava disponível ou tínhamos mais de 23 waypoints,
-  // aplicamos o sequenciador determinístico com clusterização de mesma rua
+  // Se a Google não estava disponível ou tínhamos mais de 23 paradas:
+  // Usar matriz viária OSRM + TSP determinístico sobre ela.
+  // NUNCA usar aproximação de linha reta ou graus x 111.000.
   if (!isGoogleOptimized) {
-    finalStops = sequenceStopsWithDeterministicTsp(origin, destination, stops)
-  }
+    let osrmMatrix: number[][] | null = null
+    try {
+      const { fetchOsrmDistanceMatrix } = await import('@/services/osrmRoutingService')
+      // Ponto 0: origem; Pontos 1..N: preProcessedStops
+      const allPoints = [origin, ...preProcessedStops.map((s) => ({ lat: s.lat, lng: s.lng }))]
+      const matrixResult = await fetchOsrmDistanceMatrix(allPoints)
+      if (matrixResult?.distancesMeters) {
+        osrmMatrix = matrixResult.distancesMeters
+      }
+    } catch (err) {
+      console.warn('[RoadRouter] Erro ao obter matriz viária OSRM:', err)
+    }
 
-  // PÓS-PROCESSAMENTO DE SAME-STREET COHESION:
-  // Garante que se houver 2 ou mais entregas na mesma rua (mesmo logradouro)
-  // separadas por um salto indevido na lista, elas fiquem agrupadas contiguamente
-  // onde estiver o primeiro elemento da rua na rota.
-  finalStops = consolidateSameStreetAdjacency(origin, finalStops)
+    finalStops = sequenceStopsWithDeterministicTsp(
+      origin,
+      destination,
+      preProcessedStops,
+      osrmMatrix,
+    )
+  }
 
   // Agora calcular as métricas de distância acumulada e pernas (legs)
   const sequencedStops: SequencedStopResult[] = []

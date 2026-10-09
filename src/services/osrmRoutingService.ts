@@ -103,6 +103,56 @@ async function fetchGoogleDirectionsRoute(
  * Tenta primeiro Google Directions se ativo e funcional; se falhar ou não estiver disponível,
  * usa OSRM público com fallback final por interpolação.
  */
+/**
+ * Consulta a matriz viária de distâncias e durações usando o serviço OSRM Table API.
+ * URL: /table/v1/driving/{lng1},{lat1};{lng2},{lat2};...
+ * Retorna matriz N x N em metros e segundos, ou null se falhar/offline.
+ */
+export async function fetchOsrmDistanceMatrix(
+  points: LatLngPoint[],
+): Promise<{ distancesMeters: number[][]; durationsSeconds: number[][] } | null> {
+  if (points.length < 2) return null
+  const coordsStr = points.map((p) => `${p.lng},${p.lat}`).join(';')
+  const url = `https://router.project-osrm.org/table/v1/driving/${coordsStr}?annotations=distance,duration`
+
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000) // 6s timeout para a matriz viária
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    })
+    clearTimeout(timeoutId)
+
+    if (!response.ok) return null
+    const data = await response.json()
+    if (data.code === 'Ok' && Array.isArray(data.distances)) {
+      const distancesMeters: number[][] = data.distances.map((row: any[], i: number) =>
+        row.map((val: any, j: number) => {
+          if (i === j) return 0
+          if (typeof val === 'number' && !isNaN(val) && val >= 0) return Math.round(val)
+          return Math.round(distanceMeters(points[i], points[j]))
+        }),
+      )
+      const durationsSeconds: number[][] = Array.isArray(data.durations)
+        ? data.durations.map((row: any[], i: number) =>
+            row.map((val: any, j: number) => {
+              if (i === j) return 0
+              if (typeof val === 'number' && !isNaN(val) && val >= 0) return Math.round(val)
+              const d = distancesMeters[i]?.[j] || 0
+              return Math.round((d / 1000) * 160 + 300)
+            }),
+          )
+        : distancesMeters.map((row) => row.map((d) => Math.round((d / 1000) * 160 + 300)))
+
+      return { distancesMeters, durationsSeconds }
+    }
+  } catch (err) {
+    console.warn('[osrmRoutingService] Falha ao consultar OSRM distance table:', err)
+  }
+  return null
+}
+
 export async function fetchStreetRoute(
   origin: LatLngPoint,
   destination: LatLngPoint,
