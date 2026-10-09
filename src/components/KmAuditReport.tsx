@@ -535,10 +535,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
   // Resumos globais do escopo (calculados considerando filtros de entregador/data/lote/busca,
   // mantendo a visão completa da operação independente do toggle de fila)
+  // REGRA DE AGREGAÇÃO ÚNICA POR LOTE: qualquer total agregado soma o km do lote UMA única vez,
+  // dedup por route_batch_key (ou batchKey), usando o motor oficial e somando telemetria GPS 1x.
   const scopeSummary = useMemo(() => {
-    let roadKmTotal = 0
-    let gpsKmTotal = 0
-    let afterApprovalKmTotal = 0
     let approvedItemsCount = 0
     let autoApprovedCount = 0
     let divergentPendingCount = 0
@@ -552,6 +551,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     if (selectedDateFilter === 'custom' && customStartDate) {
       customWindow = getCustomOperationalWindow(customStartDate, customEndDate || customStartDate)
     }
+
+    // Filtrar primeiro as linhas elegíveis pelo escopo
+    const inScopeRows: (typeof auditRows)[0][] = []
 
     auditRows.forEach((r) => {
       // Aplica apenas filtros dimensionais (entregador, data, lote, busca)
@@ -589,9 +591,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       }
 
       totalScopeCount++
-      roadKmTotal += r.roadKm
-      gpsKmTotal += r.gpsKm
-      afterApprovalKmTotal += r.officialAfterApprovalKm
+      inScopeRows.push(r)
 
       if (r.isRedirected) redirectedCount++
       if (r.isAutoApproved) autoApprovedCount++
@@ -600,6 +600,34 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       if (r.approval && r.approval.status === 'approved') {
         approvedItemsCount++
       }
+    })
+
+    // Agrupar linhas em escopo por lote único para somar KM viário, GPS e pós-aprovação 1x por lote
+    const scopeBatches = new Map<string, typeof inScopeRows>()
+    inScopeRows.forEach((r) => {
+      const bKey = r.batchKey || `single_${r.order.id}`
+      const list = scopeBatches.get(bKey) || []
+      list.push(r)
+      scopeBatches.set(bKey, list)
+    })
+
+    let roadKmTotal = 0
+    let gpsKmTotal = 0
+    let afterApprovalKmTotal = 0
+
+    scopeBatches.forEach((batchRows) => {
+      // KM viário original do lote: a soma de roadKm das linhas deste lote
+      // Como cada linha calculada já contém a cota rateada do lote (ou 0 se entrega conjunta secundária),
+      // a soma do lote dá exatamente o KM da rota inteira sem duplicar
+      const bRoad = batchRows.reduce((sum, r) => sum + r.roadKm, 0)
+      // Após aprovação: soma de officialAfterApprovalKm das linhas do lote
+      const bAfter = batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
+      // KM GPS do lote: se as linhas já têm rateio proporcional do GPS, soma r.gpsKm (que fecha exatamente em 1x a telemetria do lote)
+      const bGps = batchRows.reduce((sum, r) => sum + r.gpsKm, 0)
+
+      roadKmTotal += bRoad
+      gpsKmTotal += bGps
+      afterApprovalKmTotal += bAfter
     })
 
     return {
@@ -710,21 +738,14 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   ])
 
   // Totais consolidados para o rodapé (Km Oficial Atual, Km GPS, Total Após Aprovações da tabela visível)
+  // Regra de deduplicação por lote também para a tabela filtrada
   const totals = useMemo(() => {
-    let roadKmTotal = 0
-    let gpsKmTotal = 0
-    let afterApprovalKmTotal = 0
     let approvedItemsCount = 0
     let rejectedItemsCount = 0
     let pendingReviewCount = 0
-
     let redirectedCount = 0
 
     filteredRows.forEach((r) => {
-      roadKmTotal += r.roadKm
-      gpsKmTotal += r.gpsKm
-      afterApprovalKmTotal += r.officialAfterApprovalKm
-
       if (r.isRedirected) redirectedCount++
 
       if (r.approval) {
@@ -734,6 +755,28 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       } else if (r.isPendingDecision || r.hasSignificantDeviation || r.isRedirectionPending) {
         pendingReviewCount++
       }
+    })
+
+    const filteredBatches = new Map<string, typeof filteredRows>()
+    filteredRows.forEach((r) => {
+      const bKey = r.batchKey || `single_${r.order.id}`
+      const list = filteredBatches.get(bKey) || []
+      list.push(r)
+      filteredBatches.set(bKey, list)
+    })
+
+    let roadKmTotal = 0
+    let gpsKmTotal = 0
+    let afterApprovalKmTotal = 0
+
+    filteredBatches.forEach((batchRows) => {
+      const bRoad = batchRows.reduce((sum, r) => sum + r.roadKm, 0)
+      const bAfter = batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
+      const bGps = batchRows.reduce((sum, r) => sum + r.gpsKm, 0)
+
+      roadKmTotal += bRoad
+      gpsKmTotal += bGps
+      afterApprovalKmTotal += bAfter
     })
 
     return {

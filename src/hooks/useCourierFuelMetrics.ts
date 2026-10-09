@@ -736,18 +736,72 @@ export function calculateCourierFuelMetrics(params: {
     }
   })
 
-  // Regra "linha = cabeçalho" e Paridade 100% de Rotas Únicas:
-  // Os totais consolidados somam diretamente a soma de cada linha calculada (orderCalculations)
-  // ou a soma das rotas únicas deduplicadas (que bate exatamente com a soma dos pedidos rateados)
-  totalOfficialKm = Number(orderCalculations.reduce((acc, c) => acc + c.officialKm, 0).toFixed(1))
-  totalDeviationKm = Number(orderCalculations.reduce((acc, c) => acc + c.deviationKm, 0).toFixed(1))
-  totalOdometerKm = Number(orderCalculations.reduce((acc, c) => acc + c.totalGpsKm, 0).toFixed(1))
-  totalLiters = Number(orderCalculations.reduce((acc, c) => acc + c.litersSpent, 0).toFixed(2))
+  // Regra de Agregação de Totais Únicos por Lote de Rota (Deduplicação de Lote):
+  // Cada lote de rota (route_batch_key) é somado UMA ÚNICA VEZ nos totais agregados (dia, período, semana),
+  // evitando que pedidos do mesmo lote dupliquem o KM da rota inteira uma vez por parada.
+  // Linhas individuais (orderCalculations) exibem seu valor individual/rateado, mas o cabeçalho/total
+  // agrega exatamente a soma dos lotes únicos (km viário oficial do lote com aprovações, GPS do lote 1x, etc).
+  let aggregatedOfficialKm = 0
+  let aggregatedDeviationKm = 0
+  let aggregatedGpsKm = 0
+  let aggregatedSpent = 0
+  let aggregatedLiters = 0
+
+  routeBatches.forEach((batchOrders, batchKey) => {
+    // Buscar os cálculos das ordens deste lote
+    const batchCalcs = orderCalculations.filter((c) =>
+      batchOrders.some((bo) => bo.id === c.order.id),
+    )
+    if (batchCalcs.length === 0) return
+
+    // Se houve aprovação manual em ordens do lote, a soma das ordens reflete os trechos aprovados
+    const hasAnyApprovalInBatch = batchCalcs.some((c) => c.isApprovedKm)
+
+    if (hasAnyApprovalInBatch) {
+      // Quando há aprovação específica de trecho, soma os valores das paradas do lote
+      const batchKm = batchCalcs.reduce((sum, c) => sum + c.officialKm, 0)
+      const batchDev = batchCalcs.reduce((sum, c) => sum + c.deviationKm, 0)
+      const batchGps = batchCalcs.reduce((sum, c) => sum + c.totalGpsKm, 0)
+      const batchFuel = batchCalcs.reduce((sum, c) => sum + c.fuelCost, 0)
+      const batchLit = batchCalcs.reduce((sum, c) => sum + c.litersSpent, 0)
+
+      aggregatedOfficialKm += batchKm
+      aggregatedDeviationKm += batchDev
+      aggregatedGpsKm += batchGps
+      aggregatedSpent += batchFuel
+      aggregatedLiters += batchLit
+    } else {
+      // Sem aprovações manuais: pega o valor canônico oficial do lote UMA única vez
+      const batchTelem = batchTelemetryMap.get(batchKey)
+      const batchOfficialKm = batchTelem ? batchTelem.officialRealKm : 0
+      const batchDevKm = batchTelem ? batchTelem.deviationKm : 0
+      const batchGpsKm = batchTelem ? batchTelem.totalGpsKm : 0
+
+      // Subtrai eventuais km de entregas secundárias consolidadas (mesmo cliente em <45min)
+      // No rateio normal, a soma de batchCalcs.officialKm já dedup entregas conjuntas
+      // Se não há aprovações, a soma de batchCalcs.officialKm é idêntica ao lote dedup
+      const batchKm = Number(batchCalcs.reduce((sum, c) => sum + c.officialKm, 0).toFixed(1))
+      const batchLit =
+        !isBicycle && consumptionKml > 0 ? Number((batchKm / consumptionKml).toFixed(2)) : 0
+      const batchFuel = !isBicycle ? Number((batchLit * pricePerLiter).toFixed(2)) : 0
+
+      aggregatedOfficialKm += batchKm
+      aggregatedDeviationKm += batchDevKm
+      aggregatedGpsKm += batchGpsKm
+      aggregatedSpent += batchFuel
+      aggregatedLiters += batchLit
+    }
+  })
+
+  totalOfficialKm = Number(aggregatedOfficialKm.toFixed(1))
+  totalDeviationKm = Number(aggregatedDeviationKm.toFixed(1))
+  totalOdometerKm = Number(aggregatedGpsKm.toFixed(1))
+  totalLiters = Number(aggregatedLiters.toFixed(2))
 
   if (isBicycle) {
     totalSpent = 0
   } else {
-    totalSpent = Number(orderCalculations.reduce((acc, c) => acc + c.fuelCost, 0).toFixed(2))
+    totalSpent = Number(aggregatedSpent.toFixed(2))
   }
 
   // GASTO PÓS-CORTE CANÔNICO PARA O SALDO:
