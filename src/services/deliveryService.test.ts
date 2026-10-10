@@ -41,6 +41,74 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
     getFullListSpy.mockRestore()
   })
 
+  describe('resequenceActiveRouteForCourier - destino oficial e unicidade 1..N', () => {
+    it('garante que a rota otimizada utiliza sempre a base oficial como destino de retorno', async () => {
+      const pbModule = await import('@/lib/pocketbase/client')
+      const pb = pbModule.default
+
+      const mockCourier = {
+        id: 'courier_1',
+        name: 'Guilherme',
+        vehicle_type: 'moto',
+      }
+      const mockOrders = [
+        {
+          id: 'ord_1',
+          tracking_code: 'TRK-1',
+          courier_id: 'courier_1',
+          sequence: 1,
+          created: '2026-10-10 10:00:00',
+          expand: {
+            customer_id: {
+              id: 'cust_1',
+              name: 'Cliente 1',
+              lat: -22.7,
+              lng: -43.29,
+              address: 'Rua A',
+            },
+          },
+        },
+      ]
+
+      const getOneUserSpy = vi
+        .spyOn(pb.collection('users'), 'getOne')
+        .mockResolvedValue(mockCourier as any)
+      const getFullListOrdersSpy = vi
+        .spyOn(pb.collection('orders'), 'getFullList')
+        .mockResolvedValue(mockOrders as any)
+      const updateOrderSpy = vi
+        .spyOn(pb.collection('orders'), 'update')
+        .mockResolvedValue({} as any)
+      const getBaseAddressesSpy = vi
+        .spyOn(deliveryService, 'getBaseAddresses')
+        .mockResolvedValue([
+          {
+            id: 'base_1',
+            name: 'Base Matriz',
+            lat: -22.699,
+            lng: -43.296,
+            is_default: true,
+            address: 'Av Base 1',
+          } as any,
+        ])
+
+      const res = await deliveryService.resequenceActiveRouteForCourier('courier_1')
+      expect(res.success).toBe(true)
+
+      // Verificar que update foi chamado com sequence = 1 e base oficial
+      expect(updateOrderSpy).toHaveBeenCalled()
+      const updatePayload = updateOrderSpy.mock.calls[0][1] as any
+      expect(updatePayload.sequence).toBe(1)
+      expect(updatePayload.start_base_lat).toBe(-22.699)
+      expect(updatePayload.start_base_lng).toBe(-43.296)
+
+      getOneUserSpy.mockRestore()
+      getFullListOrdersSpy.mockRestore()
+      updateOrderSpy.mockRestore()
+      getBaseAddressesSpy.mockRestore()
+    })
+  })
+
   describe('NOVA REGRA: pin_entregador (applyAddressCorrectionAutomatic)', () => {
     it('aplica correção automática no cadastro do cliente, preservando número se o reverso não trouxer, e grava audit_trail com autor = entregador', async () => {
       const pbModule = await import('@/lib/pocketbase/client')

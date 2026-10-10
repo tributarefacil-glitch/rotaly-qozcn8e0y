@@ -2250,8 +2250,8 @@ export default function CourierApp() {
                               type="button"
                               size="sm"
                               variant="outline"
-                              onClick={() => handleStartDelivery(order)}
-                              className="h-7 px-2 border-slate-700 bg-slate-900/60 text-slate-400 hover:text-amber-300 hover:border-amber-500/40 text-[10px] font-bold rounded-lg flex items-center gap-1"
+                              disabled={true}
+                              className="h-7 px-2 border-slate-800 bg-slate-900/80 text-slate-500 cursor-not-allowed opacity-80 text-[10px] font-bold rounded-lg flex items-center gap-1 shadow-none pointer-events-none"
                               title={`Parada #${stopNum} travada. Conclua primeiro a parada atual.`}
                             >
                               <Lock className="h-3 w-3 text-slate-500" />

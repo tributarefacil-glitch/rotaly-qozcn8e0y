@@ -420,10 +420,22 @@ function ProtectedRoute({
     return <Navigate to="/seller" replace />
   }
 
+  // BLOQUEIO EXPLÍCITO: Se entregador (role courier) tentar acessar /control-tower,
+  // bloqueia com redirect estrito para /app (ou /courier)
+  if (
+    role === 'courier' &&
+    (location.pathname === '/control-tower' || location.pathname.startsWith('/control-tower/'))
+  ) {
+    return <Navigate to="/app" replace />
+  }
+
   // Role verification para rotas que exigem perfis específicos
   if (allowedRoles && !allowedRoles.includes(role)) {
     if (role === 'admin') return <Navigate to="/admin" replace />
-    if (role === 'courier') return <Navigate to="/courier" replace />
+    if (role === 'courier') {
+      // Se entregador tentar acessar rotas restritas, redireciona para /app (ou /courier)
+      return <Navigate to="/app" replace />
+    }
     return <Navigate to="/seller" replace />
   }
 
@@ -527,7 +539,7 @@ const App = () => (
               <Route
                 path="/control-tower"
                 element={
-                  <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                  <ProtectedRoute allowedRoles={['admin', 'master', 'seller']}>
                     <Suspense fallback={<PageSuspenseFallback />}>
                       <SellerDashboard defaultTab="control-tower" />
                     </Suspense>
@@ -681,7 +693,27 @@ const App = () => (
 
               {/* Protected Courier Mobile App */}
               <Route
+                path="/app"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'courier']}>
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <CourierApp />
+                    </Suspense>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
                 path="/courier"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'courier']}>
+                    <Suspense fallback={<PageSuspenseFallback />}>
+                      <CourierApp />
+                    </Suspense>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/courier-app"
                 element={
                   <ProtectedRoute allowedRoles={['admin', 'courier']}>
                     <Suspense fallback={<PageSuspenseFallback />}>

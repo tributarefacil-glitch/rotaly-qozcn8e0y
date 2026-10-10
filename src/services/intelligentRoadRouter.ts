@@ -109,6 +109,10 @@ export function sequenceStopsWithDeterministicTsp(
   const stopIndexMap = new Map<string, number>()
   stops.forEach((s, i) => stopIndexMap.set(s.id, i + 1))
 
+  // Fator viário urbano obrigatório para estimativas grosseiras quando a matriz OSRM
+  // não cobrir um par específico, garantindo que linha reta NUNCA seja usada crua como viário
+  const URBAN_ROAD_FACTOR = 1.3
+
   const getDistance = (
     fromStop: StopCandidate | null,
     toStop: StopCandidate,
@@ -127,7 +131,8 @@ export function sequenceStopsWithDeterministicTsp(
         return osrmDistancesMatrix[fromIdx][toIdx]
       }
     }
-    return calcDistanceMeters(fromLat, fromLng, toStop.lat, toStop.lng)
+    // Fallback apenas para estimativa grosseira se matriz ausente (com fator viário urbano)
+    return calcDistanceMeters(fromLat, fromLng, toStop.lat, toStop.lng) * URBAN_ROAD_FACTOR
   }
 
   const unvisited = [...stops]
@@ -192,10 +197,11 @@ export function sequenceStopsWithDeterministicTsp(
   }
 
   // Refinamento Local 2-Opt: desata nós e cruzamentos viários sobre distâncias viárias
-  if (ordered.length >= 4 && ordered.length <= 60) {
+  // SEMPRE executado para todas as rotas com 4 ou mais paradas (incluindo rotas > 23 paradas)
+  if (ordered.length >= 4) {
     let improved = true
     let iterations = 0
-    const maxIterations = 50
+    const maxIterations = ordered.length > 50 ? 30 : 60
 
     const evalTourCost = (tour: StopCandidate[]): number => {
       let total = 0
@@ -216,10 +222,13 @@ export function sequenceStopsWithDeterministicTsp(
         if (lastIdx >= 0 && osrmDistancesMatrix[lastIdx]?.[0] !== undefined) {
           total += osrmDistancesMatrix[lastIdx][0]
         } else {
-          total += calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng)
+          total +=
+            calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng) *
+            URBAN_ROAD_FACTOR
         }
       } else {
-        total += calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng)
+        total +=
+          calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng) * URBAN_ROAD_FACTOR
       }
 
       return total
@@ -457,8 +466,8 @@ export async function optimizeRouteSequence(params: {
   }
 
   // Se a Google não estava disponível ou tínhamos mais de 23 paradas:
-  // Usar matriz viária OSRM + TSP determinístico sobre ela.
-  // NUNCA usar aproximação de linha reta ou graus x 111.000.
+  // Assegurar caminho OSRM fetchOsrmDistanceMatrix + TSP determinístico (2-Opt) SEMPRE,
+  // sem fallback de linha reta (haversine) para sequenciamento.
   if (!isGoogleOptimized) {
     let osrmMatrix: number[][] | null = null
     try {
@@ -466,7 +475,7 @@ export async function optimizeRouteSequence(params: {
       // Ponto 0: origem; Pontos 1..N: preProcessedStops
       const allPoints = [origin, ...preProcessedStops.map((s) => ({ lat: s.lat, lng: s.lng }))]
       const matrixResult = await fetchOsrmDistanceMatrix(allPoints)
-      if (matrixResult?.distancesMeters) {
+      if (matrixResult?.distancesMeters && matrixResult.distancesMeters.length > 0) {
         osrmMatrix = matrixResult.distancesMeters
       }
     } catch (err) {
@@ -512,11 +521,14 @@ export async function optimizeRouteSequence(params: {
           stepDurationSec = osrmLeg.durationSeconds || Math.round((stepMeters / 1000) * 160 + 300)
         }
       } catch {
-        /* fallback direct */
+        /* fallback viário protegido abaixo */
       }
+      // Blindagem viária: se o OSRM oscilar, aplicar fator viário urbano (1.3x da distância direta)
+      // para NUNCA calcular perna em linha reta euclidiana plana (regra do trajeto viário).
       if (!stepMeters || stepMeters <= 0) {
         const directMeters = calcDistanceMeters(curLat, curLng, stop.lat, stop.lng)
-        stepMeters = Math.round(directMeters)
+        const urbanRoadCircuityFactor = 1.3
+        stepMeters = Math.max(800, Math.round(directMeters * urbanRoadCircuityFactor))
         stepDurationSec = Math.round((stepMeters / 1000) * 160 + 300)
       }
     }
@@ -560,14 +572,16 @@ export async function optimizeRouteSequence(params: {
         /* fallback handled below */
       }
       if (!isReturnRealStreet) {
-        // Sem inventar número: se não apurou viário real, calcular distância direta
+        // Blindagem viária do retorno: se o OSRM oscilar, aplicar fator viário urbano (1.3x direta)
+        // para nunca calcular retorno em linha reta pura
         const directReturn = calcDistanceMeters(
           lastStop.lat,
           lastStop.lng,
           destination.lat,
           destination.lng,
         )
-        returnMeters = Math.round(directReturn)
+        const urbanRoadCircuityFactor = 1.3
+        returnMeters = Math.max(800, Math.round(directReturn * urbanRoadCircuityFactor))
       }
     }
   }

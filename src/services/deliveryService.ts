@@ -2438,6 +2438,16 @@ export const deliveryService = {
     settings?: Partial<AppSettingsRecord> | null,
     isRetry = false,
   ): Promise<{ success: boolean; sequencedCount: number; totalDistanceKm: number }> {
+    // Verificação defensiva de papel: entregadores não podem reordenar ou otimizar rotas (decisão de produto soberana)
+    const currentAuthRecord = pb.authStore.record as any
+    const currentRole = currentAuthRecord?.role || currentAuthRecord?.papel
+    if (currentRole === 'courier' || currentRole === 'entregador') {
+      console.warn(
+        `[deliveryService] resequenceActiveRouteForCourier bloqueado: papel '${currentRole}' não tem permissão para alterar ordem viária.`,
+      )
+      return { success: false, sequencedCount: 0, totalDistanceKm: 0 }
+    }
+
     try {
       const { optimizeRouteSequence, sequenceStopsWithDeterministicTsp } =
         await import('@/services/intelligentRoadRouter')
@@ -2470,19 +2480,24 @@ export const deliveryService = {
         return { success: true, sequencedCount: 0, totalDistanceKm: 0 }
       }
 
-      // 3. Obter base ativa padrão ou primeira configurada
+      // 3. Obter base ativa padrão ou primeira configurada (autoridade canônica do retorno à base)
       const bases = await this.getBaseAddresses()
       const defaultBase = bases.find((b) => b.is_default) || bases[0]
-      const originPoint = {
-        lat: courierOrders[0]?.start_base_lat || defaultBase?.lat || -22.6990563,
-        lng: courierOrders[0]?.start_base_lng || defaultBase?.lng || -43.296723,
+      // Constante BASE oficial explícita para garantir destino = base oficial soberana
+      const OFFICIAL_BASE_COORDS = {
+        lat: defaultBase?.lat || -22.6990563,
+        lng: defaultBase?.lng || -43.296723,
       }
-      // O destino da perna final de retorno é SEMPRE a base de origem (retorno à base canônico)
-      const destinationPoint = {
+      const originPoint = {
+        lat: defaultBase?.lat || courierOrders[0]?.start_base_lat || OFFICIAL_BASE_COORDS.lat,
+        lng: defaultBase?.lng || courierOrders[0]?.start_base_lng || OFFICIAL_BASE_COORDS.lng,
+      }
+      // BLINDAGEM: O destino da perna final de retorno é SEMPRE originPoint (base oficial),
+      // NUNCA courierOrders[0].end_address ou qualquer endereço de cliente
+      const destinationPoint: { lat: number; lng: number } = {
         lat: originPoint.lat,
         lng: originPoint.lng,
       }
-
       const { pricePerLiter, consumptionKml } = this.getVehicleFuelParams(
         settings,
         courier.vehicle_type,
@@ -2772,6 +2787,16 @@ export const deliveryService = {
     settings?: Partial<AppSettingsRecord> | null
   }): Promise<{ success: boolean; order: OrderRecord }> {
     const { orderId, courierId, settings } = params
+
+    // Verificação defensiva de papel: entregadores não podem incluir pedidos em rotas (apenas vendedor/admin)
+    const currentAuthRecord = pb.authStore.record as any
+    const currentRole = currentAuthRecord?.role || currentAuthRecord?.papel
+    if (currentRole === 'courier' || currentRole === 'entregador') {
+      const errMsg = `Usuário com papel '${currentRole}' não tem permissão para incluir pedidos em rotas ativas.`
+      console.warn(`[deliveryService] addOrderToActiveRoute bloqueado:`, errMsg)
+      throw new Error(errMsg)
+    }
+
     try {
       // 1. Obter entregador para veículo/consumo
       const courier = await pb.collection<UserRecord>('users').getOne(courierId)

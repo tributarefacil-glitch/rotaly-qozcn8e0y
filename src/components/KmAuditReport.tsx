@@ -644,6 +644,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       redirectedCount,
       totalScopeCount,
       unreadableDateCount,
+      batchCount: scopeBatches.size,
     }
   }, [
     auditRows,
@@ -950,7 +951,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
               <span className="text-xs text-slate-500 font-semibold">km</span>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Trajeto planejado ({scopeSummary.totalScopeCount} entregas)
+              {scopeSummary.batchCount} {scopeSummary.batchCount === 1 ? 'rota' : 'rotas'} ·{' '}
+              {scopeSummary.totalScopeCount}{' '}
+              {scopeSummary.totalScopeCount === 1 ? 'entrega' : 'entregas'}
             </p>
           </CardContent>
         </Card>

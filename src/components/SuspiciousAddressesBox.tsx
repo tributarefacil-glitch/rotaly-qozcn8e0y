@@ -42,7 +42,9 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
         empresaId: isMaster ? 'ALL' : empresaId,
         status: statusFilter,
       })
-      setAlerts(data)
+      // REGRA SOBERANA ROTALY: exibir APENAS origem pin_entregador (ocultar varredura_cep)
+      const pinOnlyData = data.filter((item) => item.origin === 'pin_entregador')
+      setAlerts(pinOnlyData)
     } catch (err) {
       console.error('[SuspiciousAddressesBox] Erro ao carregar alertas:', err)
       toast.error('Erro ao carregar endereços suspeitos.')
