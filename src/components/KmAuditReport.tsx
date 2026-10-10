@@ -292,6 +292,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       isPendingDecision: boolean
       approval?: RouteKmApprovalRecord
       officialAfterApprovalKm: number
+      odometerKm: number
     }> = []
 
     // Agrupa pedidos por entregador a partir do pool completo (allOrdersPool)
