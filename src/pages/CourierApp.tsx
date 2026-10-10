@@ -1124,7 +1124,7 @@ export default function CourierApp() {
   const currentActiveDelivery = activeDeliveries.length > 0 ? activeDeliveries[0] : null
   const subsequentDeliveries = activeDeliveries.slice(1)
 
-  // Ação: Confirmação e submissão de Início de Rota com Odômetro Inicial e Foto
+  // Ação: Início imediato de Rota (SEM odômetro nem foto - ITEM 3: telemetria pura)
   const handleConfirmStartRoute = async () => {
     if (!user?.id) {
       toast.error('Entregador não autenticado.')
@@ -1139,41 +1139,23 @@ export default function CourierApp() {
     setIsStartingRoute(true)
     try {
       const orderIdsToStart = activeDeliveries.map((o) => o.id)
-      const odomInitVal = odometroInicialInput
-        ? parseFloat(odometroInicialInput.replace(',', '.'))
-        : undefined
-
-      await deliveryService.startCourierRoute(user.id, orderIdsToStart, {
-        odometro_inicial:
-          !isNaN(odomInitVal as number) && (odomInitVal as number) > 0
-            ? (odomInitVal as number)
-            : undefined,
-        foto_odometro_inicial: fotoOdometroInicial,
-      })
+      await deliveryService.startCourierRoute(user.id, orderIdsToStart)
       setIsStartRouteModalOpen(false)
-      toast.success('🚀 Rota aceita! Telemetria ativa e primeira entrega desbloqueada.', {
+      toast.success('🚀 Rota iniciada! Telemetria ativa e rastreamento oficial em tempo real.', {
         duration: 4000,
       })
       await loadCourierOrders()
     } catch (err) {
-      console.error('Erro ao aceitar rota:', err)
-      toast.error('Falha ao aceitar rota. Tente novamente.')
+      console.error('Erro ao iniciar rota:', err)
+      toast.error('Falha ao iniciar rota. Tente novamente.')
     } finally {
       setIsStartingRoute(false)
     }
   }
 
-  // Ação: Abrir modal de início de rota ANTES de aceitar a rota
+  // Ação: Iniciar rota diretamente ao aceitar
   const handleOpenStartRouteModal = () => {
-    if (!user?.id) {
-      toast.error('Entregador não autenticado.')
-      return
-    }
-    if (activeDeliveries.length === 0) {
-      toast.info('Não há clientes na rota liberada.')
-      return
-    }
-    setIsStartRouteModalOpen(true)
+    handleConfirmStartRoute()
   }
 
   // Navegação externa (Google Maps / Waze)
@@ -1478,8 +1460,7 @@ export default function CourierApp() {
   }
 
   // Ação: Finalizar Rota Inteira na Chegada à Base (manual ou automático por geofence)
-  // Requisito: Odômetro início/fim como condição de encerrar rota (bloqueio suave com liberação admin).
-  // Reconciliação km_odometro vs total_route_with_return_km: odômetro < 70% cria flag de auditoria.
+  // ITEM 3: SEM odômetro nem fotos. KM oficial = telemetria mapeada na rua reconciliada com viário.
   const handleFinishFullRoute = async (isAutomatic = false) => {
     if (!user?.id) {
       if (!isAutomatic) toast.error('Entregador não autenticado.')
@@ -1491,20 +1472,6 @@ export default function CourierApp() {
       return
     }
 
-    // Odômetro é condição para encerramento de rota
-    const odomFinalVal = odometroFinalInput
-      ? parseFloat(odometroFinalInput.replace(',', '.'))
-      : undefined
-
-    if (!isAutomatic && (!odomFinalVal || isNaN(odomFinalVal) || odomFinalVal <= 0)) {
-      if (!isFinishRouteModalOpen) {
-        setIsFinishRouteModalOpen(true)
-        return
-      }
-      toast.error('Informe a quilometragem final do odômetro para encerrar a rota.')
-      return
-    }
-
     if (isFinishingRoute || isAutoFinishingRouteRef.current) return
     isAutoFinishingRouteRef.current = true
     setIsFinishingRoute(true)
@@ -1512,62 +1479,18 @@ export default function CourierApp() {
     try {
       const orderIdsToFinish = currentRouteOrders.map((o) => o.id)
 
-      // Reconciliação de odômetro vs km viário do lote
-      const firstOrder = currentRouteOrders[0]
-      const viarioTotalKm = Number(firstOrder?.total_route_with_return_km || 0)
-      const odomInicial = Number(firstOrder?.odometro_inicial || 0)
-      let odomDeltaKm: number | null = null
-      let isUnder70Percent = false
-
-      if (odomFinalVal && odomInicial > 0 && odomFinalVal > odomInicial) {
-        odomDeltaKm = odomFinalVal - odomInicial
-        if (viarioTotalKm > 0 && odomDeltaKm < viarioTotalKm * 0.7) {
-          isUnder70Percent = true
-        }
-      }
-
-      await deliveryService.finishCourierRoute(user.id, orderIdsToFinish, {
-        odometro_final:
-          !isNaN(odomFinalVal as number) && (odomFinalVal as number) > 0
-            ? (odomFinalVal as number)
-            : undefined,
-        foto_odometro_final: fotoOdometroFinal,
-      })
-
-      // Se odômetro < 70% do viário planejado, registrar flag de auditoria em audit_trail
-      if (isUnder70Percent && odomDeltaKm !== null) {
-        try {
-          await deliveryService.logAuditTrail({
-            action: 'odometer_discrepancy_under_70_percent',
-            user_id: user.id,
-            actor_name: user.name || user.email || 'Entregador',
-            collection: 'orders',
-            record_id: firstOrder.id,
-            field: 'odometro_final',
-            metadata: {
-              odometro_inicial: odomInicial,
-              odometro_final: odomFinalVal,
-              odometro_delta_km: odomDeltaKm,
-              viario_total_km: viarioTotalKm,
-              percentage: Math.round((odomDeltaKm / viarioTotalKm) * 100),
-              notes: `Alerta de Auditoria: Odômetro percorrido (${odomDeltaKm.toFixed(1)} km) foi inferior a 70% do trajeto viário oficial do lote (${viarioTotalKm.toFixed(1)} km).`,
-            },
-          })
-        } catch {
-          /* intentionally ignored */
-        }
-      }
+      await deliveryService.finishCourierRoute(user.id, orderIdsToFinish)
 
       if (isAutomatic) {
         toast.success(
-          '🏁 Você chegou à base! Rota finalizada automaticamente. Quilometragem e combustível computados com sucesso.',
+          '🏁 Você chegou à base! Rota finalizada automaticamente. Telemetria real computada com sucesso.',
           {
             duration: 6000,
           },
         )
       } else {
         toast.success(
-          '🏁 Rota finalizada com sucesso na base! Odômetro oficial apurado e você já está liberado para receber uma nova rota.',
+          '🏁 Rota finalizada com sucesso na base! Telemetria apurada e você já está liberado para a próxima rota.',
           {
             duration: 5000,
           },
@@ -2529,207 +2452,7 @@ export default function CourierApp() {
         onOpenChange={setIsTutorialModalOpen}
       />
 
-      {/* ITEM 1 (a): Modal de Confirmação de Início de Rota (Odômetro Inicial + Foto) */}
-      <Dialog open={isStartRouteModalOpen} onOpenChange={setIsStartRouteModalOpen}>
-        <DialogContent className="max-w-md bg-[#0E1738] border-[#1E2B58] text-white">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-white font-heading text-base">
-              <Gauge className="h-5 w-5 text-emerald-400" />
-              Iniciar Rota — Registro de Odômetro
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-300">
-              Informe a quilometragem do painel e fotografe o odômetro antes de sair da base para
-              auditoria.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2 text-xs">
-            {/* Input KM do Odômetro Inicial */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-slate-200 block">
-                KM Inicial do Odômetro (Opcional):
-              </label>
-              <div className="relative">
-                <Input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  placeholder="Ex: 12450.5"
-                  value={odometroInicialInput}
-                  onChange={(e) => setOdometroInicialInput(e.target.value)}
-                  className="bg-[#0A1128] border-[#1E2B58] text-white font-mono font-bold text-sm pr-12"
-                />
-                <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-bold">
-                  km
-                </span>
-              </div>
-            </div>
-
-            {/* Foto do Odômetro Inicial */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-slate-200 block flex items-center gap-1.5">
-                <Camera className="h-4 w-4 text-emerald-400" />
-                Foto do Painel / Odômetro Inicial:
-              </label>
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-[#1E2B58] hover:border-emerald-500/60 rounded-xl p-4 cursor-pointer bg-[#0A1128]/70 transition-colors">
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      setFotoOdometroInicial(e.target.files[0])
-                    }
-                  }}
-                />
-                {fotoOdometroInicial ? (
-                  <div className="text-center space-y-1">
-                    <CheckCircle className="h-6 w-6 text-emerald-400 mx-auto" />
-                    <p className="text-xs font-semibold text-emerald-300 truncate max-w-xs">
-                      {fotoOdometroInicial.name}
-                    </p>
-                    <span className="text-[10px] text-slate-400 block">
-                      Toque para trocar a foto
-                    </span>
-                  </div>
-                ) : (
-                  <div className="text-center space-y-1 text-slate-400">
-                    <Camera className="h-6 w-6 mx-auto text-slate-300" />
-                    <p className="text-xs font-medium text-slate-300">Tirar Foto do Odômetro</p>
-                    <span className="text-[10px] text-slate-500 block">
-                      Câmera traseira do aparelho
-                    </span>
-                  </div>
-                )}
-              </label>
-            </div>
-          </div>
-
-          <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isStartingRoute}
-              onClick={() => setIsStartRouteModalOpen(false)}
-              className="border-[#1E2B58] text-slate-300 hover:bg-[#121E46]"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={isStartingRoute}
-              onClick={handleConfirmStartRoute}
-              className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold gap-2"
-            >
-              <Play className="h-4 w-4 fill-current" />
-              {isStartingRoute ? 'Iniciando Rota...' : 'Confirmar e Iniciar'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ITEM 1 (b): Modal de Encerramento de Rota (Odômetro Final + Foto) */}
-      <Dialog open={isFinishRouteModalOpen} onOpenChange={setIsFinishRouteModalOpen}>
-        <DialogContent className="max-w-md bg-[#0E1738] border-[#1E2B58] text-white">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-white font-heading text-base">
-              <CheckCircle className="h-5 w-5 text-emerald-400" />
-              Finalizar Rota na Base — Odômetro Final
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-300">
-              Informe a quilometragem final e fotografe o odômetro na base para cálculo do km
-              percorrido (final − inicial).
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2 text-xs">
-            {/* Input KM do Odômetro Final */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-slate-200 block">
-                KM Final do Odômetro (Opcional):
-              </label>
-              <div className="relative">
-                <Input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  placeholder="Ex: 12488.0"
-                  value={odometroFinalInput}
-                  onChange={(e) => setOdometroFinalInput(e.target.value)}
-                  className="bg-[#0A1128] border-[#1E2B58] text-white font-mono font-bold text-sm pr-12"
-                />
-                <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-bold">
-                  km
-                </span>
-              </div>
-            </div>
-
-            {/* Foto do Odômetro Final */}
-            <div className="space-y-1.5">
-              <label className="font-semibold text-slate-200 block flex items-center gap-1.5">
-                <Camera className="h-4 w-4 text-emerald-400" />
-                Foto do Painel / Odômetro Final:
-              </label>
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-[#1E2B58] hover:border-emerald-500/60 rounded-xl p-4 cursor-pointer bg-[#0A1128]/70 transition-colors">
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      setFotoOdometroFinal(e.target.files[0])
-                    }
-                  }}
-                />
-                {fotoOdometroFinal ? (
-                  <div className="text-center space-y-1">
-                    <CheckCircle className="h-6 w-6 text-emerald-400 mx-auto" />
-                    <p className="text-xs font-semibold text-emerald-300 truncate max-w-xs">
-                      {fotoOdometroFinal.name}
-                    </p>
-                    <span className="text-[10px] text-slate-400 block">
-                      Toque para trocar a foto
-                    </span>
-                  </div>
-                ) : (
-                  <div className="text-center space-y-1 text-slate-400">
-                    <Camera className="h-6 w-6 mx-auto text-slate-300" />
-                    <p className="text-xs font-medium text-slate-300">
-                      Tirar Foto do Odômetro Final
-                    </p>
-                    <span className="text-[10px] text-slate-500 block">
-                      Câmera traseira do aparelho
-                    </span>
-                  </div>
-                )}
-              </label>
-            </div>
-          </div>
-
-          <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isFinishingRoute}
-              onClick={() => setIsFinishRouteModalOpen(false)}
-              className="border-[#1E2B58] text-slate-300 hover:bg-[#121E46]"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={isFinishingRoute}
-              onClick={() => handleFinishFullRoute(false)}
-              className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold gap-2"
-            >
-              <CheckCircle className="h-4 w-4" />
-              {isFinishingRoute ? 'Finalizando...' : 'Confirmar e Finalizar Rota'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ITEM 3: Odômetro removido por completo (sem modal de foto/leitura de odômetro) */}
 
       {/* Alerta de Presença Forçada em Tela Cheia Vermelha (Bloco 1) */}
       <ForcedPresenceAlert

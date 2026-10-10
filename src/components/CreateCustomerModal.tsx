@@ -1040,39 +1040,30 @@ export function CreateCustomerModal({
     try {
       const targetCustomer = customerToEdit || matchedExistingCustomer
 
-      if (targetCustomer) {
-        // Checar conflito com OUTRO cliente
-        const conflict = await deliveryService.checkPhoneConflict(
-          phonesToValidate,
-          targetCustomer.id,
-        )
-        if (conflict.conflict && conflict.customer) {
-          toast.error(
-            `O telefone ${conflict.duplicatePhone} já pertence ao cliente "${conflict.customer.name}". Evite duplicações!`,
-          )
-          return
-        }
+      // ITEM 2: Normalizar telefone e CPF (só dígitos) e bloquear save se JÁ EXISTIR outro cliente ativo com mesmo telefone OU CPF
+      const dupCheck = await deliveryService.checkCustomerDuplicateConflict({
+        phones: phonesToValidate,
+        document: document.trim() || null,
+        excludeCustomerId: targetCustomer?.id,
+      })
 
+      if (dupCheck.conflict && dupCheck.customer) {
+        toast.error(dupCheck.message || `Já existe cliente cadastrado com este dado: [${dupCheck.customer.name}, ${dupCheck.customer.id}]`, {
+          duration: 7000,
+        })
+        setIsSubmitting(false)
+        return
+      }
+
+      if (targetCustomer) {
         const updated = await deliveryService.updateCustomer(targetCustomer.id, payload)
         toast.success(`Cadastro do cliente "${trimmedName}" atualizado com sucesso!`)
         resetForm()
         onCustomerCreated(updated)
         onOpenChange(false)
       } else {
-        // Checar se já existe pelo telefone
-        const conflict = await deliveryService.checkPhoneConflict(phonesToValidate)
-        if (conflict.conflict && conflict.customer) {
-          // Atualiza o existente em vez de duplicar
-          const updated = await deliveryService.updateCustomer(conflict.customer.id, payload)
-          toast.info(
-            `Telefone vinculado ao cliente "${conflict.customer.name}". Cadastro atualizado sem duplicidade!`,
-          )
-          resetForm()
-          onCustomerCreated(updated)
-          onOpenChange(false)
-        } else {
-          const created = await deliveryService.createCustomer(payload)
-          toast.success(`Cliente "${created.name}" cadastrado com sucesso!`)
+        const created = await deliveryService.createCustomer(payload)
+        toast.success(`Cliente "${created.name}" cadastrado com sucesso!`)
 
           // Se cliente foi cadastrado sem coordenadas ou sem endereço, oferecer botão WhatsApp imediato
           const isIncomplete = !created.lat || !created.lng || !created.street?.trim()

@@ -99,6 +99,7 @@ function SectionSkeleton() {
 }
 import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
 import { CustomerQualityReport } from '@/components/CustomerQualityReport'
+import { CustomerDuplicatesPanel } from '@/components/CustomerDuplicatesPanel'
 import { FuelAdvanceModal } from '@/components/FuelAdvanceModal'
 import { Globe, KeyRound, Lock, ShieldAlert } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -3766,6 +3767,18 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
               {/* ABA: CLIENTES (Com Geocodificação Google e Doutrina de Coordenada Travada) */}
               <TabsContent value="customers" className="space-y-6">
+                {/* ITEM 2: PAINEL DE DUPLICATAS CANDIDATAS COM UNIFICAÇÃO MANUAL E AUDITORIA */}
+                <CustomerDuplicatesPanel
+                  customers={customers}
+                  currentUserName={user?.name || user?.email || 'Administrador'}
+                  currentUserId={user?.id}
+                  onRefresh={loadData}
+                  onEditCustomer={(c) => {
+                    setCustomerToEdit(c)
+                    setIsCreateCustomerModalOpen(true)
+                  }}
+                />
+
                 {/* ITENS 14 & 15: RELATÓRIO DE QUALIDADE DO CADASTRO & FILA CADASTRO INCOMPLETO */}
                 <CustomerQualityReport
                   customers={customers}

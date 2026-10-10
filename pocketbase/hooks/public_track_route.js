@@ -42,15 +42,67 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
       } catch (_) {}
     }
 
-    // Dados do pedido para resposta pública (sempre disponíveis mesmo se não liberado ou pendente)
+    // Obter apenas o PRIMEIRO NOME do entregador para segurança pública (nunca CPF, telefone, email ou sobrenome completo)
+    let courierFirstName = ''
+    if (courierId) {
+      try {
+        const courierRecord = $app.findRecordById('users', courierId)
+        if (courierRecord) {
+          const rawName = (courierRecord.getString('name') || '').trim()
+          if (rawName) {
+            courierFirstName = rawName.split(/\s+/)[0]
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Buscar a localização mais recente do entregador para verificar atividade (<15 minutos)
+    let latestCourierLocation = null
+    let isGpsFresh = false
+    const FIFTEEN_MINUTES_MS = 15 * 60 * 1000
+
+    if (courierId && targetStatus === 'in_transit') {
+      try {
+        const locRecords = $app.findRecordsByFilter(
+          'locations',
+          `user_id = '${courierId}'`,
+          '-created',
+          1,
+          0,
+        )
+        if (locRecords && locRecords.length > 0) {
+          const loc = locRecords[0]
+          const locCreatedStr = loc.getString('created') || loc.get('created')
+          const locTime = new Date(locCreatedStr).getTime()
+          const now = Date.now()
+          const ageMs = now - locTime
+          if (!isNaN(locTime) && ageMs >= 0 && ageMs <= FIFTEEN_MINUTES_MS) {
+            isGpsFresh = true
+            latestCourierLocation = {
+              lat: loc.getFloat('lat'),
+              lng: loc.getFloat('lng'),
+              speed: loc.getFloat('speed') || 0,
+              created: locCreatedStr,
+              age_seconds: Math.round(ageMs / 1000),
+            }
+          }
+        }
+      } catch (locErr) {
+        console.log('Erro ao buscar localização recente do entregador:', locErr)
+      }
+    }
+
+    // Dados do pedido para resposta pública (sempre seguros: NUNCA expor dados sensíveis do entregador)
     const baseResponse = {
       order_id: targetOrder.id,
       tracking_code: trackingCode,
       status: targetStatus,
       sequence: targetSequence,
-      courier_id: courierId,
+      courier_id: courierId ? courierId : null,
+      courier_first_name: courierFirstName || null,
       route_released: targetOrder.getBool('route_released'),
       route_started: targetOrder.getBool('route_started'),
+      route_finished: targetOrder.getBool('route_finished'),
       estimated_arrival: targetOrder.getString('estimated_arrival'),
       destination: targetCustomer
         ? {
@@ -60,58 +112,73 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
             address: targetCustomer.getString('address'),
           }
         : null,
+      courier_location: isGpsFresh ? latestCourierLocation : null,
+      is_gps_active: isGpsFresh,
       stops_before: [],
       total_stops_before: 0,
+      completed_stops_before: 0,
+      queue_position: 1,
+      total_deliveries_in_batch: 1,
     }
 
     // Se a entrega já foi finalizada ou cancelada, ou se não tem entregador
+    // NUNCA expor marcador nem dados do entregador após entrega/cancelamento
     if (targetStatus === 'delivered' || targetStatus === 'cancelled' || !courierId) {
+      baseResponse.courier_first_name = null
+      baseResponse.courier_location = null
+      baseResponse.is_gps_active = false
       return e.json(200, baseResponse)
     }
 
     // Buscar pedidos anteriores do mesmo entregador que ainda estão pendentes/em trânsito
-    // na mesma remessa/dia
+    // na mesma remessa/dia, além de contar paradas já concluídas
     let stopsBefore = []
+    let completedStopsBefore = 0
+    let totalInBatch = 1
+
     try {
-      const activeOrders = $app.findRecordsByFilter(
+      const allBatchOrders = $app.findRecordsByFilter(
         'orders',
-        `courier_id = '${courierId}' && (status = 'in_transit' || status = 'pending')`,
+        `courier_id = '${courierId}' && status != 'cancelled'`,
         'sequence',
         100,
         0,
       )
 
-      for (const ord of activeOrders) {
+      totalInBatch = allBatchOrders.length || 1
+
+      for (const ord of allBatchOrders) {
         if (ord.id === targetOrder.id) continue
 
         const ordSeq = ord.getInt('sequence') || 0
+        const ordStatus = ord.getString('status')
 
-        // Se o pedido alvo tem sequência definida (> 0), paradas anteriores são ordSeq < targetSequence
-        // Se ambos não tiverem sequência ou tiverem sequence=0, comparar por id ou data
         let isBefore = false
         if (targetSequence > 0) {
           isBefore = ordSeq > 0 && ordSeq < targetSequence
         } else {
-          // Se o pedido alvo não tiver sequência definida mas outros tiverem,
-          // ou se tiver status pending/in_transit
           isBefore = ordSeq > 0
         }
 
         if (isBefore) {
-          const cId = ord.getString('customer_id')
-          let cust = null
-          if (cId) {
-            try {
-              cust = $app.findRecordById('customers', cId)
-            } catch (_) {}
-          }
+          if (ordStatus === 'delivered') {
+            completedStopsBefore++
+          } else if (ordStatus === 'in_transit' || ordStatus === 'pending') {
+            const cId = ord.getString('customer_id')
+            let cust = null
+            if (cId) {
+              try {
+                cust = $app.findRecordById('customers', cId)
+              } catch (_) {}
+            }
 
-          if (cust && cust.getFloat('lat') && cust.getFloat('lng')) {
-            stopsBefore.push({
-              sequence: ordSeq,
-              lat: cust.getFloat('lat'),
-              lng: cust.getFloat('lng'),
-            })
+            if (cust && cust.getFloat('lat') && cust.getFloat('lng')) {
+              stopsBefore.push({
+                sequence: ordSeq,
+                lat: cust.getFloat('lat'),
+                lng: cust.getFloat('lng'),
+              })
+            }
           }
         }
       }
@@ -122,9 +189,15 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
     // Ordenar paradas anteriores por sequência crescente
     stopsBefore.sort((a, b) => a.sequence - b.sequence)
 
+    // Posição na fila: paradas concluídas antes + paradas pendentes antes + 1
+    const queuePosition = completedStopsBefore + stopsBefore.length + 1
+
     const finalResponse = Object.assign({}, baseResponse, {
       stops_before: stopsBefore,
       total_stops_before: stopsBefore.length,
+      completed_stops_before: completedStopsBefore,
+      queue_position: queuePosition,
+      total_deliveries_in_batch: Math.max(totalInBatch, queuePosition),
     })
 
     return e.json(200, finalResponse)

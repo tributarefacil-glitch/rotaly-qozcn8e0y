@@ -2,6 +2,7 @@ import pb from '@/lib/pocketbase/client'
 import { getMatrizCompanyId, resolveMatrizCompany } from '@/lib/companyResolver'
 import { haversineDistanceMeters } from '@/lib/geo'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
+import { recalcularLote, RecalcularLoteResult } from '@/services/recalcularLoteHelper'
 import type {
   OrderRecord,
   CustomerRecord,
@@ -794,13 +795,30 @@ export const deliveryService = {
   async getPublicTrackingRoute(trackingCode: string) {
     try {
       return await pb.send<{
+        order_id: string
         tracking_code: string
         status: string
         sequence: number
-        courier_id: string
+        courier_id: string | null
+        courier_first_name: string | null
+        route_released: boolean
+        route_started: boolean
+        route_finished: boolean
+        estimated_arrival: string
         destination: { name: string; lat: number; lng: number; address: string } | null
+        courier_location: {
+          lat: number
+          lng: number
+          speed: number
+          created: string
+          age_seconds: number
+        } | null
+        is_gps_active: boolean
         stops_before: { sequence: number; lat: number; lng: number }[]
         total_stops_before: number
+        completed_stops_before: number
+        queue_position: number
+        total_deliveries_in_batch: number
       }>(
         `/backend/v1/public-track/${encodeURIComponent(trackingCode.trim().toUpperCase())}/route`,
         {
@@ -983,6 +1001,102 @@ export const deliveryService = {
   },
 
   /**
+   * Busca cliente por CPF / Documento (normalizado para dígitos)
+   */
+  async findCustomerByDocument(
+    rawDoc: string,
+    excludeCustomerId?: string,
+  ): Promise<CustomerRecord | null> {
+    const digits = (rawDoc || '').replace(/\D/g, '')
+    if (!digits || digits.length < 11) return null
+
+    try {
+      // Busca clientes com documento parecido
+      const records = await pb.collection<CustomerRecord>('customers').getList(1, 50, {
+        filter: `document ~ '${digits}' || document = '${rawDoc}'`,
+        requestKey: null,
+      })
+
+      const candidates = excludeCustomerId
+        ? records.items.filter((c) => c.id !== excludeCustomerId)
+        : records.items
+
+      const match = candidates.find((c) => {
+        const cDocDigits = (c.document || '').replace(/\D/g, '')
+        return cDocDigits === digits
+      })
+
+      return match || null
+    } catch (e) {
+      console.warn('findCustomerByDocument search error:', e)
+      return null
+    }
+  },
+
+  /**
+   * ITEM 2: Validação de duplicidade por Telefone OU CPF (apenas dígitos).
+   * Bloqueia se já existir outro cliente ativo com mesmo telefone ou mesmo CPF.
+   * Retorna mensagem clara: "Já existe cliente com este telefone/CPF: [nome, id]".
+   */
+  /**
+   * ITEM 3 (0.2): Recálculo em cascata usando recalcularLote como fonte única de verdade
+   */
+  async recalcularLoteCascata(routeBatchKey: string): Promise<RecalcularLoteResult> {
+    return recalcularLote(routeBatchKey)
+  },
+
+  async checkCustomerDuplicateConflict(params: {
+    phones: (string | undefined | null)[]
+    document?: string | null
+    excludeCustomerId?: string
+  }): Promise<{
+    conflict: boolean
+    reason?: 'phone' | 'document'
+    customer?: CustomerRecord
+    duplicateValue?: string
+    message?: string
+  }> {
+    const { phones, document, excludeCustomerId } = params
+
+    // 1. Verificar documento / CPF
+    if (document) {
+      const docDigits = document.replace(/\D/g, '')
+      if (docDigits.length >= 11) {
+        const existingDocCustomer = await this.findCustomerByDocument(document, excludeCustomerId)
+        if (existingDocCustomer) {
+          return {
+            conflict: true,
+            reason: 'document',
+            customer: existingDocCustomer,
+            duplicateValue: document,
+            message: `Já existe cliente com este CPF: [${existingDocCustomer.name}, ${existingDocCustomer.id}]`,
+          }
+        }
+      }
+    }
+
+    // 2. Verificar telefones (apenas dígitos)
+    for (const p of phones) {
+      if (!p) continue
+      const digits = p.replace(/\D/g, '')
+      if (digits.length >= 8) {
+        const found = await this.findCustomerByPhone(p, excludeCustomerId)
+        if (found) {
+          return {
+            conflict: true,
+            reason: 'phone',
+            customer: found,
+            duplicateValue: p,
+            message: `Já existe cliente com este telefone: [${found.name}, ${found.id}]`,
+          }
+        }
+      }
+    }
+
+    return { conflict: false }
+  },
+
+  /**
    * Checks if any of the given phone numbers already belongs to another customer.
    * Returns conflicting CustomerRecord if duplicate found, or null if all phones are unique.
    */
@@ -1001,6 +1115,131 @@ export const deliveryService = {
       }
     }
     return { conflict: false }
+  },
+
+  /**
+   * ITEM 2: Unificação manual de clientes pelo Admin com reatribuição de pedidos e registro em audit_trail.
+   * SEM mescla automática. Reatribui pedidos do cliente secundário para o primário e remove ou desativa o secundário.
+   */
+  async unifyCustomers(params: {
+    primaryCustomerId: string
+    secondaryCustomerId: string
+    actorName: string
+    actorUserId?: string
+    notes?: string
+  }): Promise<{ success: boolean; reassignedOrdersCount: number; message: string }> {
+    const { primaryCustomerId, secondaryCustomerId, actorName, actorUserId, notes } = params
+
+    if (primaryCustomerId === secondaryCustomerId) {
+      throw new Error('O cliente primário e secundário não podem ser o mesmo.')
+    }
+
+    const primary = await pb.collection<CustomerRecord>('customers').getOne(primaryCustomerId)
+    const secondary = await pb.collection<CustomerRecord>('customers').getOne(secondaryCustomerId)
+
+    if (!primary || !secondary) {
+      throw new Error('Clientes não encontrados para unificação.')
+    }
+
+    // 1. Buscar todos os pedidos do secundário
+    const secondaryOrders = await pb.collection<OrderRecord>('orders').getFullList({
+      filter: `customer_id = '${secondaryCustomerId}'`,
+      requestKey: null,
+    })
+
+    let reassignedCount = 0
+    for (const ord of secondaryOrders) {
+      await pb.collection('orders').update(ord.id, {
+        customer_id: primaryCustomerId,
+        // Mantém as coordenadas de entrega se o secundário já tinha, ou usa a do primário se faltava
+        end_address_name: ord.end_address_name || primary.name,
+      })
+      reassignedCount++
+
+      // Registrar auditoria em cada pedido reatribuído
+      await this.createAuditTrailEntry({
+        order_id: ord.id,
+        user_id: actorUserId || '',
+        actor_name: actorName || 'Admin',
+        action: 'customer_unification_order_reassigned',
+        old_value: `${secondary.name} (${secondaryCustomerId})`,
+        new_value: `${primary.name} (${primaryCustomerId})`,
+        metadata: {
+          primary_customer_id: primaryCustomerId,
+          primary_customer_name: primary.name,
+          secondary_customer_id: secondaryCustomerId,
+          secondary_customer_name: secondary.name,
+          notes: notes || 'Unificação manual de clientes',
+        },
+      }).catch(() => {})
+    }
+
+    // 2. Registrar evento no audit_trail geral
+    await this.createAuditTrailEntry({
+      user_id: actorUserId || '',
+      actor_name: actorName || 'Admin',
+      action: 'customer_manual_unification',
+      old_value: `${secondary.name} [${secondary.id}]`,
+      new_value: `${primary.name} [${primary.id}]`,
+      metadata: {
+        primary_customer: {
+          id: primary.id,
+          name: primary.name,
+          phone: primary.phone,
+          document: primary.document,
+        },
+        secondary_customer: {
+          id: secondary.id,
+          name: secondary.name,
+          phone: secondary.phone,
+          document: secondary.document,
+        },
+        reassigned_orders_count: reassignedCount,
+        notes: notes || 'Unificação manual pelo admin no painel de duplicatas',
+      },
+    }).catch(() => {})
+
+    // 3. Atualizar telefones do cliente primário caso estejam vazios e o secundário tenha
+    const updates: Partial<CustomerRecord> = {}
+    if (!primary.document && secondary.document) updates.document = secondary.document
+    if (!primary.phone2 && secondary.phone && secondary.phone !== primary.phone) {
+      updates.phone2 = secondary.phone
+    }
+    if (!primary.email && secondary.email) updates.email = secondary.email
+    if (!primary.lat && secondary.lat && secondary.lng) {
+      updates.lat = secondary.lat
+      updates.lng = secondary.lng
+      updates.address = primary.address || secondary.address
+    }
+    if (Object.keys(updates).length > 0) {
+      await pb
+        .collection('customers')
+        .update(primaryCustomerId, updates)
+        .catch(() => {})
+    }
+
+    // 4. Excluir o cliente secundário após reatribuição completa de seus pedidos
+    try {
+      await pb.collection('customers').delete(secondaryCustomerId)
+    } catch (delErr) {
+      console.warn(
+        'Erro ao deletar cliente secundário unificado, marcando inativo em notes:',
+        delErr,
+      )
+      await pb
+        .collection('customers')
+        .update(secondaryCustomerId, {
+          notes: `[UNIFICADO COM ${primary.name} (${primary.id})] ${secondary.notes || ''}`.trim(),
+          phone: `UNIF_${secondary.phone || ''}`,
+        })
+        .catch(() => {})
+    }
+
+    return {
+      success: true,
+      reassignedOrdersCount: reassignedCount,
+      message: `Unificação concluída com sucesso! ${reassignedCount} pedido(s) reatribuído(s) para "${primary.name}".`,
+    }
   },
 
   async createCustomer(data: Partial<CustomerRecord>) {

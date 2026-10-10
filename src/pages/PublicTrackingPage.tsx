@@ -64,9 +64,30 @@ export default function PublicTrackingPage() {
 
   // Rota pública otimizada e cálculo de ETA viária sequencial (+3 min por parada)
   const [publicRouteData, setPublicRouteData] = useState<{
+    order_id: string
+    tracking_code: string
+    status: string
+    sequence: number
+    courier_id: string | null
+    courier_first_name: string | null
+    route_released: boolean
+    route_started: boolean
+    route_finished: boolean
+    estimated_arrival: string
+    destination: { name: string; lat: number; lng: number; address: string } | null
+    courier_location: {
+      lat: number
+      lng: number
+      speed: number
+      created: string
+      age_seconds: number
+    } | null
+    is_gps_active: boolean
     stops_before: { sequence: number; lat: number; lng: number }[]
     total_stops_before: number
-    destination: { name: string; lat: number; lng: number; address: string } | null
+    completed_stops_before: number
+    queue_position: number
+    total_deliveries_in_batch: number
   } | null>(null)
 
   const [realEtaMinutes, setRealEtaMinutes] = useState<number | null>(null)
@@ -122,16 +143,40 @@ export default function PublicTrackingPage() {
           setPublicRouteData(routeInfo)
         }
 
-        // Carrega localização e avaliações de modo resiliente e não-bloqueante
-        if (orderData.courier_id) {
+        // Carrega localização apenas se rota ativa (in_transit e NÃO delivered/cancelled)
+        if (orderData.status === 'delivered' || orderData.status === 'cancelled') {
+          setCourierLocation(null)
+        } else if (routeInfo?.courier_location && routeInfo.is_gps_active) {
+          setCourierLocation({
+            id: 'hook_loc',
+            collectionId: 'locations',
+            collectionName: 'locations',
+            created: routeInfo.courier_location.created,
+            updated: routeInfo.courier_location.created,
+            user_id: routeInfo.courier_id || orderData.courier_id || '',
+            lat: routeInfo.courier_location.lat,
+            lng: routeInfo.courier_location.lng,
+            speed: routeInfo.courier_location.speed,
+            heading: 90,
+            accuracy: 10,
+            gps_status: 'active',
+          } as LocationRecord)
+        } else if (orderData.courier_id && orderData.status === 'in_transit') {
           try {
             const loc = await deliveryService.getLatestLocationForCourier(orderData.courier_id)
             if (loc) {
-              setCourierLocation(loc)
+              const locAgeMs = Date.now() - new Date(loc.created).getTime()
+              if (locAgeMs <= 15 * 60 * 1000) {
+                setCourierLocation(loc)
+              } else {
+                setCourierLocation(null)
+              }
             }
           } catch (locErr) {
             console.warn('Não foi possível obter localização do entregador:', locErr)
           }
+        } else {
+          setCourierLocation(null)
         }
 
         // Carrega review existente se já houver
@@ -186,6 +231,45 @@ export default function PublicTrackingPage() {
     loadOrder()
   }, [resolvedTrackingCode])
 
+  // Recarrega periodicamente a cada ~30s para atualizar o marcador ao vivo e status de rota
+  useEffect(() => {
+    if (!resolvedTrackingCode) return
+    const interval = setInterval(() => {
+      // Recarrega dados públicos
+      deliveryService
+        .getPublicTrackingRoute(resolvedTrackingCode)
+        .then((routeInfo) => {
+          if (!routeInfo) return
+          setPublicRouteData(routeInfo)
+          if (
+            routeInfo.status === 'delivered' ||
+            routeInfo.status === 'cancelled' ||
+            !routeInfo.is_gps_active
+          ) {
+            setCourierLocation(null)
+          } else if (routeInfo.courier_location) {
+            setCourierLocation({
+              id: 'hook_loc',
+              collectionId: 'locations',
+              collectionName: 'locations',
+              created: routeInfo.courier_location.created,
+              updated: routeInfo.courier_location.created,
+              user_id: routeInfo.courier_id || '',
+              lat: routeInfo.courier_location.lat,
+              lng: routeInfo.courier_location.lng,
+              speed: routeInfo.courier_location.speed,
+              heading: 90,
+              accuracy: 10,
+              gps_status: 'active',
+            } as LocationRecord)
+          }
+        })
+        .catch(() => {})
+    }, 30000)
+
+    return () => clearInterval(interval)
+  }, [resolvedTrackingCode])
+
   // Realtime updates for order status and courier locations
   useRealtime<OrderRecord>('orders', (e) => {
     if (
@@ -195,15 +279,23 @@ export default function PublicTrackingPage() {
         e.record.tracking_code.toUpperCase() === resolvedTrackingCode.toUpperCase())
     ) {
       setOrder((prev) => (prev ? { ...prev, ...e.record } : (e.record as any)))
-      // Se atribuiu courier agora, busca a localização mais recente dele
-      if (
+      if (e.record.status === 'delivered' || e.record.status === 'cancelled') {
+        setCourierLocation(null)
+      } else if (
         e.record.courier_id &&
         (!courierLocation || courierLocation.user_id !== e.record.courier_id)
       ) {
         deliveryService
           .getLatestLocationForCourier(e.record.courier_id)
           .then((loc) => {
-            if (loc) setCourierLocation(loc)
+            if (loc) {
+              const locAgeMs = Date.now() - new Date(loc.created).getTime()
+              if (locAgeMs <= 15 * 60 * 1000) {
+                setCourierLocation(loc)
+              } else {
+                setCourierLocation(null)
+              }
+            }
           })
           .catch(() => {})
       }
@@ -211,14 +303,39 @@ export default function PublicTrackingPage() {
   })
 
   useRealtime<LocationRecord>('locations', (e) => {
+    if (order?.status !== 'in_transit' || order?.route_finished) {
+      setCourierLocation(null)
+      return
+    }
     if (order?.courier_id && e.record.user_id === order.courier_id) {
-      setCourierLocation(e.record)
+      const locAgeMs = Date.now() - new Date(e.record.created).getTime()
+      if (locAgeMs <= 15 * 60 * 1000) {
+        setCourierLocation(e.record)
+      } else {
+        setCourierLocation(null)
+      }
     }
   })
 
   const customer = order?.expand?.customer_id
   const courier = order?.expand?.courier_id
   const seller = order?.expand?.seller_id
+
+  // Primeiro nome seguro do entregador (item 1: expor SOMENTE primeiro nome)
+  const courierSafeFirstName = useMemo(() => {
+    if (order?.status === 'delivered' || order?.status === 'cancelled') return null
+    if (publicRouteData?.courier_first_name) return publicRouteData.courier_first_name
+    if (courier?.name) return courier.name.trim().split(/\s+/)[0]
+    return null
+  }, [publicRouteData?.courier_first_name, courier?.name, order?.status])
+
+  // Verificação de GPS fresco < 15min
+  const isCourierGpsFresh = useMemo(() => {
+    if (!courierLocation?.created) return false
+    if (order?.status !== 'in_transit' || order?.route_finished) return false
+    const locTime = new Date(courierLocation.created).getTime()
+    return Date.now() - locTime <= 15 * 60 * 1000
+  }, [courierLocation?.created, order?.status, order?.route_finished])
 
   // Recalcular ETA viária real sequencial (+ 3 min por parada anterior)
   useEffect(() => {
@@ -347,25 +464,34 @@ export default function PublicTrackingPage() {
     publicRouteData,
   ])
 
-  // Map markers: destination (pin do cliente na cor do entregador quando ativo) + courier current location
+  // Map markers: destination + marcador ao vivo do entregador SOMENTE se <15min e rota ativa
   const mapMarkers: MapMarkerItem[] = useMemo(() => {
     const list: MapMarkerItem[] = []
 
     const activeCourierId = order?.courier_id || courier?.id
-    const isRouteActive = order?.status === 'in_transit' && !!courierLocation?.lat
+    const isRouteActive =
+      order?.status === 'in_transit' &&
+      !order?.route_finished &&
+      isCourierGpsFresh &&
+      !!courierLocation?.lat
     const courierColorTheme =
       isRouteActive && activeCourierId ? getCourierRouteColor(activeCourierId) : null
 
-    if (customer && customer.lat && customer.lng) {
+    const destLat = customer?.lat || publicRouteData?.destination?.lat
+    const destLng = customer?.lng || publicRouteData?.destination?.lng
+    const destAddress = customer?.address || publicRouteData?.destination?.address || ''
+    const destName = customer?.name || publicRouteData?.destination?.name || 'Endereço de Entrega'
+
+    if (destLat && destLng) {
       list.push({
         id: 'destination',
-        title: `📍 ${customer.name || 'Endereço de Entrega'}`,
-        subtitle: customer.address,
-        lat: customer.lat,
-        lng: customer.lng,
+        title: `📍 ${destName}`,
+        subtitle: destAddress,
+        lat: destLat,
+        lng: destLng,
         type: 'order_transit',
-        customer_name: customer.name,
-        customer_address: customer.address,
+        customer_name: destName,
+        customer_address: destAddress,
         delivery_sequence: order?.sequence,
         estimated_arrival: estimatedArrivalDate
           ? estimatedArrivalDate.toISOString()
@@ -375,19 +501,20 @@ export default function PublicTrackingPage() {
       })
     }
 
-    if (courierLocation && courierLocation.lat && courierLocation.lng) {
+    // Regra ITEM 1: marcador ao vivo do entregador SOMENTE se última posição < 15 min e rota em trânsito não finalizada
+    if (isRouteActive && courierLocation && courierLocation.lat && courierLocation.lng) {
       const courierSpeed =
         typeof courierLocation.speed === 'number' && !isNaN(courierLocation.speed)
           ? Math.max(0, Math.round(courierLocation.speed))
           : 0
       list.push({
         id: `courier-${order?.courier_id || 'live'}`,
-        title: courier?.name || 'Entregador em Rota',
+        title: courierSafeFirstName || 'Entregador em Rota',
         subtitle: `Velocidade: ${courierSpeed} km/h`,
         lat: courierLocation.lat,
         lng: courierLocation.lng,
         type: 'courier',
-        courier_name: courier?.name,
+        courier_name: courierSafeFirstName || undefined,
         speed: courierSpeed,
         vehicle_type: courier?.vehicle_type,
         location_timestamp: courierLocation.created,
@@ -396,7 +523,16 @@ export default function PublicTrackingPage() {
     }
 
     return list
-  }, [customer, courierLocation, order, courier, estimatedArrivalDate])
+  }, [
+    customer,
+    publicRouteData?.destination,
+    courierLocation,
+    order,
+    courier,
+    estimatedArrivalDate,
+    isCourierGpsFresh,
+    courierSafeFirstName,
+  ])
 
   // Centro inicial do mapa (prioriza entregador, depois cliente, depois fallback)
   const mapCenter = useMemo(() => {
@@ -524,6 +660,21 @@ export default function PublicTrackingPage() {
 
     // Em trânsito normal dentro do prazo
     if (order.status === 'in_transit') {
+      // Se a rota foi encerrada ou sem GPS >15min
+      if (order.route_finished || !isCourierGpsFresh) {
+        return {
+          type: 'confirmed' as const,
+          chipLabel: 'Em preparação',
+          chipClass: 'text-slate-700 bg-slate-100 border border-slate-200',
+          dotColor: 'bg-slate-400',
+          title: 'Preparando sua entrega',
+          subtitle:
+            'Seu pacote está sob os cuidados da nossa equipe e em breve o sinal em tempo real estará disponível.',
+          stepperProgress: 0,
+          isDelayed: false,
+        }
+      }
+
       const timeStr = estimatedArrivalDate
         ? new Intl.DateTimeFormat('pt-BR', {
             timeZone: 'America/Sao_Paulo',
@@ -536,10 +687,11 @@ export default function PublicTrackingPage() {
         ? `Seu pedido chega por volta das ${timeStr}`
         : 'Seu pedido está a caminho'
 
+      const courierDesc = courierSafeFirstName ? `${courierSafeFirstName}` : 'Seu entregador'
       const subtitle =
         realDistanceKm !== null && realEtaMinutes !== null
-          ? `Seu entregador está a ${realDistanceKm} km — chega em ~${realEtaMinutes} min`
-          : 'Sua compra está em rota com rastreamento ativo em tempo real.'
+          ? `${courierDesc} está a ${realDistanceKm} km de você — chega em ~${realEtaMinutes} min`
+          : `${courierDesc} está a caminho com rastreamento ativo em tempo real.`
 
       return {
         type: 'in_transit' as const,
@@ -714,6 +866,37 @@ export default function PublicTrackingPage() {
                 </p>
               </div>
 
+              {/* ITEM 1: Card "Você é a Nª entrega (X já concluídas antes de você)" */}
+              {order.status !== 'delivered' && order.status !== 'cancelled' && publicRouteData && (
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-sky-50 to-indigo-50/60 border border-sky-100 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-8 w-8 rounded-xl bg-sky-600 text-white font-bold flex items-center justify-center shrink-0 shadow-sm">
+                      #{publicRouteData.queue_position}
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-900 text-xs">
+                        Você é a {publicRouteData.queue_position}ª entrega da rota
+                      </p>
+                      <p className="text-[11px] text-slate-600 mt-0.5">
+                        {publicRouteData.completed_stops_before > 0
+                          ? `${publicRouteData.completed_stops_before} já concluída${publicRouteData.completed_stops_before > 1 ? 's' : ''} antes de você`
+                          : 'Sua entrega é uma das primeiras do itinerário'}
+                      </p>
+                    </div>
+                  </div>
+                  {realDistanceKm !== null && isCourierGpsFresh && (
+                    <div className="text-right shrink-0">
+                      <span className="text-[10px] uppercase font-bold text-sky-700 block">
+                        Distância
+                      </span>
+                      <span className="font-extrabold text-sm text-sky-900">
+                        {realDistanceKm} km
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Linha do tempo horizontal (stepper): bolinha → linha → caminhão → linha → círculo */}
               <div className="pt-2 pb-1">
                 <div className="relative flex items-center justify-between px-3">
@@ -822,7 +1005,7 @@ export default function PublicTrackingPage() {
                     <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
                       <span className="text-slate-500 font-medium">Entregador</span>
                       <span className="font-semibold text-slate-900">
-                        {courier?.name || 'Equipe Rotaly'}
+                        {courierSafeFirstName || 'Equipe de Entregas'}
                       </span>
                     </div>
 
