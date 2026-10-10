@@ -277,6 +277,18 @@ export interface OrderRecord extends RecordModel {
   redirection_new_address?: string
   redirection_extra_km?: number
   customer_address_updated?: boolean
+  // Geofence de Entrega e Auditoria de KM Real
+  km_real_perna?: number
+  entrega_fora_pin_m?: number
+  entrega_geofence_flag?:
+    | 'ok'
+    | 'flag_150_500m'
+    | 'bloqueado_gt_500m'
+    | 'sem_coordenadas'
+    | 'liberado_admin'
+    | string
+  entrega_admin_unlock_reason?: string
+  entrega_admin_unlock_by?: string
   // expanded relations
   expand?: {
     customer_id?: CustomerRecord

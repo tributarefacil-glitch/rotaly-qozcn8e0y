@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-10T14:10:00.379Z",
+  "generatedAt": "2026-10-10T14:29:23.662Z",
   "collections": [
     {
       "name": "users",
@@ -660,6 +660,37 @@
           "type": "bool",
           "required": false,
           "system": false
+        },
+        {
+          "name": "km_real_perna",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "entrega_fora_pin_m",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "entrega_geofence_flag",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "entrega_admin_unlock_reason",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "entrega_admin_unlock_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
         }
       ],
       "indexes": [
