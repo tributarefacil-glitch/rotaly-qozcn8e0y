@@ -1529,6 +1529,8 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                             const res = await deliveryService.resequenceActiveRouteForCourier(
                               selectedCourier.id,
                               appSettings,
+                              false,
+                              'manual_command',
                             )
                             if (res.success) {
                               toast({
@@ -1537,6 +1539,11 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                               })
                               fetchData()
                               if (onRefresh) onRefresh()
+                            } else if (res.reason === 'prejuizo_km') {
+                              toast({
+                                title: 'Aviso',
+                                description: 'Nova sequência não melhora a rota — mantida a atual',
+                              })
                             } else {
                               toast({
                                 title: 'Aviso',

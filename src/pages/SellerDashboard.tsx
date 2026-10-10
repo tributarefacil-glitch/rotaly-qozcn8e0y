@@ -674,7 +674,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       // Se estava em rota de entregador, resequenciar e recalcular na hora o trajeto viário oficial
       if (courierId) {
         try {
-          await deliveryService.resequenceActiveRouteForCourier(courierId, settings)
+          await deliveryService.resequenceActiveRouteForCourier(
+            courierId,
+            settings,
+            false,
+            'manual_command',
+          )
         } catch (reseqErr) {
           console.warn('Erro ao resequenciar após cancelamento:', reseqErr)
         }
@@ -716,7 +721,12 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       // Se havia entregador, reordenar as sequências restantes viariamente pelo menor trajeto e notificar
       if (courierId) {
         try {
-          await deliveryService.resequenceActiveRouteForCourier(courierId, settings)
+          await deliveryService.resequenceActiveRouteForCourier(
+            courierId,
+            settings,
+            false,
+            'manual_command',
+          )
 
           await deliveryService.createNotification({
             user_id: courierId,

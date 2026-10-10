@@ -1038,12 +1038,27 @@ export const deliveryService = {
         }
         for (const courierId of courierIdsToResequence) {
           try {
-            const res = await this.resequenceActiveRouteForCourier(courierId)
+            const res = await this.resequenceActiveRouteForCourier(
+              courierId,
+              null,
+              false,
+              'manual_command',
+            )
             if (!res.success) {
               console.warn(
                 '[updateCustomer] Resequenciamento retornou insucesso para courier:',
                 courierId,
               )
+            } else {
+              // Notificar entregador da nova sequência
+              await this.createNotification({
+                user_id: courierId,
+                title: '📍 Endereço de Cliente Atualizado na Rota',
+                message:
+                  'O endereço de um cliente na sua rota foi calibrado pela central e o trajeto foi reotimizado.',
+                type: 'order',
+                read: false,
+              }).catch(() => {})
             }
           } catch (reseqErr) {
             console.error(
@@ -1147,6 +1162,61 @@ export const deliveryService = {
           }
         } catch {
           /* intentionally ignored */
+        }
+
+        // (4) Se o pedido excluído em cascata não foi visitado, registrar cancelamento de km e auditar
+        const hadVisit = Boolean(ord.delivery_time || ord.delivery_lat || ord.delivery_lng)
+        const orderDistanceKm = Number(ord.distance_km) || 0
+        if (!hadVisit && orderDistanceKm > 0) {
+          try {
+            await this.createAuditTrailEntry({
+              order_id: ord.id,
+              user_id: '',
+              actor_name: 'Sistema',
+              action: 'km_canceled_unvisited',
+              old_value: String(orderDistanceKm),
+              new_value: '0',
+              metadata: {
+                system_trigger: true,
+                courier_id: ord.courier_id || '',
+                tracking_code: ord.tracking_code,
+                canceled_distance_km: orderDistanceKm,
+                reason: 'deleteCustomerCascade - cliente excluído sem visita',
+              },
+            })
+          } catch (auditErr) {
+            console.warn(
+              '[deleteCustomerCascade] Falha ao registrar audit_trail km_canceled_unvisited:',
+              auditErr,
+            )
+          }
+
+          // Se estava em rota de entregador, abater o km dos pedidos restantes do lote
+          if (ord.courier_id) {
+            try {
+              const remainingCourierOrders = await pb
+                .collection<OrderRecord>('orders')
+                .getFullList({
+                  filter: `courier_id='${ord.courier_id}' && id!='${ord.id}' && status!='cancelled' && route_finished!=true`,
+                  requestKey: null,
+                })
+              for (const rem of remainingCourierOrders) {
+                const currentTotal = Number(rem.total_route_with_return_km) || 0
+                const newTotal = Math.max(0, Number((currentTotal - orderDistanceKm).toFixed(2)))
+                await pb
+                  .collection('orders')
+                  .update(rem.id, {
+                    total_route_with_return_km: newTotal,
+                  })
+                  .catch(() => {})
+              }
+            } catch (remErr) {
+              console.warn(
+                '[deleteCustomerCascade] Erro ao abater km de pedidos restantes do entregador:',
+                remErr,
+              )
+            }
+          }
         }
 
         await pb.collection('orders').delete(ord.id)
@@ -2186,7 +2256,12 @@ export const deliveryService = {
           )
           let reseqSuccess = false
           try {
-            const reseqRes = await this.resequenceActiveRouteForCourier(targetCourier)
+            const reseqRes = await this.resequenceActiveRouteForCourier(
+              targetCourier,
+              null,
+              false,
+              'manual_command',
+            )
             reseqSuccess = reseqRes.success && reseqRes.sequencedCount > 0
           } catch (reseqErr) {
             console.error('[releaseRouteForOrders] Falha no recálculo automático:', reseqErr)
@@ -2438,7 +2513,23 @@ export const deliveryService = {
     courierId: string,
     settings?: Partial<AppSettingsRecord> | null,
     isRetry = false,
-  ): Promise<{ success: boolean; sequencedCount: number; totalDistanceKm: number }> {
+    origin?: string,
+  ): Promise<{
+    success: boolean
+    reason?: string
+    keptCurrent?: boolean
+    sequencedCount: number
+    totalDistanceKm: number
+  }> {
+    if (origin !== 'manual_command') {
+      return {
+        success: false,
+        reason: 'unauthorized_auto_trigger',
+        sequencedCount: 0,
+        totalDistanceKm: 0,
+      }
+    }
+
     // Verificação defensiva de papel: entregadores não podem reordenar ou otimizar rotas (decisão de produto soberana)
     const currentAuthRecord = pb.authStore.record as any
     const currentRole = currentAuthRecord?.role || currentAuthRecord?.papel
@@ -2606,6 +2697,29 @@ export const deliveryService = {
         }
       }
 
+      // (3) PROIBIDO ROTA COM PREJUÍZO:
+      // Se proposedTotalDistanceKm > currentRouteTotalDistanceKm (km viário real), abortar e MANTER a sequência atual
+      const currentRouteTotalDistanceKm = courierOrders.reduce((max, o) => {
+        const val = Number(o.total_route_with_return_km) || 0
+        return Math.max(max, val)
+      }, 0)
+
+      if (
+        currentRouteTotalDistanceKm > 0 &&
+        roadResult.total_distance_km > currentRouteTotalDistanceKm
+      ) {
+        console.warn(
+          `[deliveryService] Proibido rota com prejuízo: proposto ${roadResult.total_distance_km} km > atual ${currentRouteTotalDistanceKm} km. Mantendo sequência atual.`,
+        )
+        return {
+          success: false,
+          reason: 'prejuizo_km',
+          keptCurrent: true,
+          sequencedCount: courierOrders.length,
+          totalDistanceKm: currentRouteTotalDistanceKm,
+        }
+      }
+
       // Regra "linha = cabeçalho":
       // A soma dos combustíveis e distâncias das pernas de cada parada deve coincidir com o total da rota.
       // A última perna ou rateio do retorno é incorporado para garantir que Σ fuel_cost = total_route_fuel_cost.
@@ -2728,7 +2842,7 @@ export const deliveryService = {
           `[deliveryService] Primeira tentativa de resequenciamento falhou para courier ${courierId}. Tentando retry automático 1x...`,
         )
         try {
-          return await this.resequenceActiveRouteForCourier(courierId, settings, true)
+          return await this.resequenceActiveRouteForCourier(courierId, settings, true, origin)
         } catch (retryErr) {
           console.error(
             `[deliveryService] Retry de resequenciamento também falhou para courier ${courierId}:`,
@@ -2845,32 +2959,22 @@ export const deliveryService = {
 
       await pb.collection<OrderRecord>('orders').update(orderId, initialUpdateData)
 
-      // 4. RESEQUENCIAMENTO AUTOMÁTICO VIÁRIO COMPLETO DA ROTA INTEIRA
-      // Roda o motor viário inteligente e persiste sequences 1..N e distâncias viárias em todos os pedidos ativos
-      try {
-        const reseqRes = await this.resequenceActiveRouteForCourier(courierId, settings)
-        if (!reseqRes.success) {
-          console.warn(
-            '[addOrderToActiveRoute] Resequenciamento retornou insucesso para courier:',
-            courierId,
-          )
-        }
-      } catch (reseqErr) {
-        console.error('Erro ao resequenciar rota inteira após inclusão de pedido:', reseqErr)
-      }
+      // 4. REGRA ROTA IMUTÁVEL SEM COMANDO:
+      // O pedido novo fica com provisionalSequence = maxExistingSeq + 1 (fim da fila pendente, paradas anteriores intocadas).
+      // NÃO disparar auto-resequenciamento viário automático aqui — rota só muda por comando explícito de vendedor/admin.
 
-      // 5. Obter pedido atualizado com sua sequência otimizada final
+      // 5. Obter pedido atualizado com sua sequência provisória final
       const finalOrder = await pb.collection<OrderRecord>('orders').getOne(orderId, {
         expand: 'customer_id',
       })
       const customer = finalOrder.expand?.customer_id as CustomerRecord | undefined
 
-      // Criar notificação realtime ao entregador informando a parada otimizada
+      // Criar notificação realtime ao entregador informando a nova parada aguardando otimização
       try {
         await this.createNotification({
           user_id: courierId,
-          title: '📦 Nova Entrega Otimizada na sua Rota!',
-          message: `O pedido ${finalOrder.tracking_code || ''} para ${customer?.name || 'Cliente'} foi incorporado e otimizado na sua rota (Parada #${finalOrder.sequence || 1}).`,
+          title: '📦 Nova Entrega Adicionada à Rota',
+          message: `O pedido ${finalOrder.tracking_code || ''} para ${customer?.name || 'Cliente'} foi adicionado ao fim da sua rota (Parada #${finalOrder.sequence || provisionalSequence}).`,
           type: 'order',
           read: false,
           order_id: orderId,
@@ -2928,6 +3032,12 @@ export const deliveryService = {
 
       let cancelledOrdersCount = 0
       for (const order of pendingToReset) {
+        // (4) CANCELAMENTO AUTOMÁTICO DE KM:
+        // Pedido não visitado (status !== 'delivered', sem visita registrada)
+        // recalcular total_route_with_return_km do lote sem a perna dele + audit_trail
+        const hadVisit = Boolean(order.delivery_time || order.delivery_lat || order.delivery_lng)
+        const orderDistanceKm = Number(order.distance_km) || 0
+
         await pb.collection('orders').update(order.id, {
           courier_id: null,
           status: 'pending',
@@ -2940,6 +3050,51 @@ export const deliveryService = {
           route_finished_at: null,
         })
         cancelledOrdersCount++
+
+        if (!hadVisit) {
+          try {
+            await this.createAuditTrailEntry({
+              order_id: order.id,
+              user_id: '',
+              actor_name: 'Sistema',
+              action: 'km_canceled_unvisited',
+              old_value: String(orderDistanceKm),
+              new_value: '0',
+              metadata: {
+                system_trigger: true,
+                courier_id: courierId,
+                tracking_code: order.tracking_code,
+                canceled_distance_km: orderDistanceKm,
+                reason: 'cancelActiveRoute - pedido não visitado',
+              },
+            })
+          } catch (auditErr) {
+            console.warn(
+              '[cancelActiveRoute] Falha ao registrar audit_trail km_canceled_unvisited:',
+              auditErr,
+            )
+          }
+        }
+      }
+
+      // Recalcular total_route_with_return_km dos pedidos preservados (entregues/restantes do lote)
+      if (preserved.length > 0) {
+        const remainingBatchDistanceKm = preserved.reduce(
+          (sum, o) => sum + (Number(o.distance_km) || 0) + (Number(o.return_trip_km) || 0),
+          0,
+        )
+        for (const pres of preserved) {
+          try {
+            await pb.collection('orders').update(pres.id, {
+              total_route_with_return_km: Number(remainingBatchDistanceKm.toFixed(2)),
+            })
+          } catch (upErr) {
+            console.warn(
+              '[cancelActiveRoute] Erro ao recalcular total_route_with_return_km do preservado:',
+              upErr,
+            )
+          }
+        }
       }
 
       // 2. Liberar status do entregador para 'active'
@@ -2995,13 +3150,17 @@ export const deliveryService = {
     courierId: string
     settings?: Partial<AppSettingsRecord> | null
     autoResequence?: boolean
+    origin?: string
   }): Promise<{ success: boolean; remainingCount: number }> {
-    const { orderId, courierId, settings, autoResequence = true } = params
+    const { orderId, courierId, settings, autoResequence = false, origin } = params
     try {
       const order = await pb.collection<OrderRecord>('orders').getOne(orderId)
       if (order.status === 'delivered') {
         throw new Error('Entregas já concluídas não podem ser removidas da rota.')
       }
+
+      const hadVisit = Boolean(order.delivery_time || order.delivery_lat || order.delivery_lng)
+      const orderDistanceKm = Number(order.distance_km) || 0
 
       await pb.collection('orders').update(orderId, {
         courier_id: null,
@@ -3015,16 +3174,70 @@ export const deliveryService = {
         route_finished_at: null,
       })
 
+      // (4) CANCELAMENTO AUTOMÁTICO DE KM:
+      // Pedido não visitado (status !== 'delivered', sem visita registrada) →
+      // recalcular total_route_with_return_km do lote sem a perna dele + audit_trail
+      if (!hadVisit) {
+        try {
+          await this.createAuditTrailEntry({
+            order_id: orderId,
+            user_id: '',
+            actor_name: 'Sistema',
+            action: 'km_canceled_unvisited',
+            old_value: String(orderDistanceKm),
+            new_value: '0',
+            metadata: {
+              system_trigger: true,
+              courier_id: courierId,
+              tracking_code: order.tracking_code,
+              canceled_distance_km: orderDistanceKm,
+              reason: 'removeOrderFromActiveRoute - pedido não visitado',
+            },
+          })
+        } catch (auditErr) {
+          console.warn(
+            '[removeOrderFromActiveRoute] Falha ao registrar audit_trail km_canceled_unvisited:',
+            auditErr,
+          )
+        }
+      }
+
+      // Buscar pedidos restantes ativos da rota desse entregador
+      const remainingOrders = await pb.collection<OrderRecord>('orders').getFullList({
+        filter: `courier_id='${courierId}' && status!='cancelled' && route_finished!=true`,
+        requestKey: null,
+      })
+
+      // Recalcular total_route_with_return_km do lote abatendo a perna do pedido cancelado não visitado
+      if (!hadVisit && remainingOrders.length > 0 && orderDistanceKm > 0) {
+        for (const rem of remainingOrders) {
+          const currentTotal = Number(rem.total_route_with_return_km) || 0
+          const newTotal = Math.max(0, Number((currentTotal - orderDistanceKm).toFixed(2)))
+          try {
+            await pb.collection('orders').update(rem.id, {
+              total_route_with_return_km: newTotal,
+            })
+          } catch (upErr) {
+            console.warn(
+              '[removeOrderFromActiveRoute] Erro ao abater km do pedido restante:',
+              upErr,
+            )
+          }
+        }
+      }
+
       let remainingCount = 0
-      if (autoResequence) {
-        const reseqRes = await this.resequenceActiveRouteForCourier(courierId, settings)
+      if (autoResequence && origin === 'manual_command') {
+        const reseqRes = await this.resequenceActiveRouteForCourier(
+          courierId,
+          settings,
+          false,
+          origin,
+        )
         remainingCount = reseqRes.sequencedCount
       } else {
-        const remainingOrders = await pb.collection<OrderRecord>('orders').getFullList({
-          filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled' && route_finished!=true`,
-          requestKey: null,
-        })
-        remainingCount = remainingOrders.length
+        const pendingRemaining = remainingOrders.filter((o) => o.status !== 'delivered')
+        remainingCount = pendingRemaining.length
       }
 
       return { success: true, remainingCount }
@@ -3121,24 +3334,31 @@ export const deliveryService = {
         }
       }
 
-      // 4. OTIMIZAÇÃO AUTOMÁTICA VIÁRIA E PERSISTÊNCIA DA SEQUÊNCIA
-      const reseqRes = await this.resequenceActiveRouteForCourier(courierId, settings)
+      // 4. OTIMIZAÇÃO VIÁRIA POR COMANDO EXPLÍCITO E PERSISTÊNCIA DA SEQUÊNCIA
+      const reseqRes = await this.resequenceActiveRouteForCourier(
+        courierId,
+        settings,
+        false,
+        'manual_command',
+      )
 
-      // 5. Notificar o entregador se houver modificações
-      try {
-        await this.createNotification({
-          user_id: courierId,
-          title: '🔄 Rota Atualizada e Otimizada!',
-          message: `Sua rota foi reotimizada pela central (${reseqRes.sequencedCount} parada(s)). A nova sequência viária já está sincronizada no seu app.`,
-          type: 'order',
-          read: false,
-        })
-      } catch (notifErr) {
-        console.warn('Erro ao enviar notificação de rota atualizada:', notifErr)
+      // 5. Notificar o entregador se houver modificações e resequenciamento concluído
+      if (reseqRes.success) {
+        try {
+          await this.createNotification({
+            user_id: courierId,
+            title: '🔄 Rota Atualizada e Otimizada!',
+            message: `Sua rota foi reotimizada pela central (${reseqRes.sequencedCount} parada(s)). A nova sequência viária já está sincronizada no seu app.`,
+            type: 'order',
+            read: false,
+          })
+        } catch (notifErr) {
+          console.warn('Erro ao enviar notificação de rota atualizada:', notifErr)
+        }
       }
 
       return {
-        success: true,
+        success: reseqRes.success,
         removedCount,
         addedCount,
         finalCount: reseqRes.sequencedCount,

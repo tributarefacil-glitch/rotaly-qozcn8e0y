@@ -24,7 +24,12 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
     // Spy no resequenceActiveRouteForCourier para simular falha no recálculo
     const reseqSpy = vi
       .spyOn(deliveryService, 'resequenceActiveRouteForCourier')
-      .mockResolvedValueOnce({ success: false, sequencedCount: 0, totalDistanceKm: 0 })
+      .mockResolvedValueOnce({
+        success: false,
+        reason: 'unauthorized_auto_trigger',
+        sequencedCount: 0,
+        totalDistanceKm: 0,
+      })
 
     // Spy no client PB
     const pbModule = await import('@/lib/pocketbase/client')
@@ -90,7 +95,12 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
         } as any,
       ])
 
-      const res = await deliveryService.resequenceActiveRouteForCourier('courier_1')
+      const res = await deliveryService.resequenceActiveRouteForCourier(
+        'courier_1',
+        null,
+        false,
+        'manual_command',
+      )
       expect(res.success).toBe(true)
 
       // Verificar que update foi chamado com sequence = 1 e base oficial

@@ -22,6 +22,48 @@ export interface DeliveredNotice {
   timestamp: Date
 }
 
+interface NewOrderAwaitingOptimizationBannerProps {
+  onOpenOptimizer: () => void
+  count?: number
+}
+
+export const NewOrderAwaitingOptimizationBanner: React.FC<
+  NewOrderAwaitingOptimizationBannerProps
+> = ({ onOpenOptimizer, count }) => {
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/15 to-amber-600/20 border-2 border-amber-400 p-3.5 sm:p-4 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in slide-in-from-top-2 duration-300">
+      <div className="flex items-center gap-3">
+        <div className="h-9 w-9 rounded-full bg-amber-500/30 border border-amber-400 text-amber-300 flex items-center justify-center shrink-0">
+          <RefreshCw className="h-4 w-4 text-amber-300 animate-spin" />
+        </div>
+        <div>
+          <div className="flex items-center gap-2">
+            <Badge className="bg-amber-400 text-slate-950 font-black text-[11px] uppercase px-2 py-0.5">
+              ROTA IMUTÁVEL
+            </Badge>
+            {count && count > 0 ? (
+              <span className="font-mono text-xs font-bold text-amber-200">
+                {count} {count === 1 ? 'pedido novo' : 'pedidos novos'}
+              </span>
+            ) : null}
+          </div>
+          <p className="text-sm font-bold text-white mt-0.5">
+            Pedido novo aguardando — otimize para reposicionar
+          </p>
+        </div>
+      </div>
+      <Button
+        size="sm"
+        onClick={onOpenOptimizer}
+        className="h-8 bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md gap-1.5 self-end sm:self-center"
+      >
+        <RefreshCw className="h-3.5 w-3.5" />
+        Otimizar Rota
+      </Button>
+    </div>
+  )
+}
+
 interface ControlTowerHeroBannerProps {
   metrics: ControlTowerMetrics
   activeTab: 'kanban' | 'map' | 'split'

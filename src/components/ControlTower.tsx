@@ -110,7 +110,9 @@ import {
   ControlTowerDeliveredNotice,
   ControlTowerHeroBanner,
   ControlTowerFilters,
+  NewOrderAwaitingOptimizationBanner,
 } from '@/components/control-tower/ControlTowerCards'
+import { RouteOptimizerModal } from '@/components/RouteOptimizerModal'
 import { ControlTowerColumns } from '@/components/control-tower/ControlTowerColumns'
 import { ControlTowerMap } from '@/components/control-tower/ControlTowerMap'
 import { ControlTowerModals } from '@/components/control-tower/ControlTowerModals'
@@ -286,6 +288,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const [courierFilter, setCourierFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState<'kanban' | 'map' | 'split'>('split')
+  const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
 
   // Selected for Modal/Drawer details
   const [selectedCourier, setSelectedCourier] = useState<UserRecord | null>(null)
@@ -450,7 +453,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
 
           // Resequenciar a rota restante viariamente pelo menor trajeto
-          await deliveryService.resequenceActiveRouteForCourier(courierId, appSettings)
+          await deliveryService.resequenceActiveRouteForCourier(
+            courierId,
+            appSettings,
+            false,
+            'manual_command',
+          )
 
           // Notificar o entregador via push/notificação em tempo real
           await deliveryService.createNotification({
@@ -3383,6 +3391,29 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         />
       )}
 
+      {/* Banner Regra 1: Pedido novo aguardando — otimize para reposicionar */}
+      {(() => {
+        const newOrdersAwaitingCount = orders.filter(
+          (o) =>
+            o.status === 'assigned' ||
+            (o.route_released &&
+              (!o.route_started || o.status === 'in_transit') &&
+              (!o.sequence || o.sequence > 1)),
+        ).length
+        const hasUnassignedOrAwaiting = orders.some(
+          (o) => o.status === 'assigned' || (o.route_released && !o.route_started),
+        )
+        if (hasUnassignedOrAwaiting) {
+          return (
+            <NewOrderAwaitingOptimizationBanner
+              count={newOrdersAwaitingCount}
+              onOpenOptimizer={() => setIsOptimizerModalOpen(true)}
+            />
+          )
+        }
+        return null
+      })()}
+
       {/* 1. VUUPT-INSPIRED HERO BANNER "ACOMPANHE EM TEMPO REAL" */}
       <ControlTowerHeroBanner
         metrics={metrics}
@@ -3498,6 +3529,22 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         toast={toast}
         deliveryService={deliveryService}
       />
+
+      {/* Modal Otimizador de Rota acionado pelo banner */}
+      {isOptimizerModalOpen && (
+        <RouteOptimizerModal
+          open={isOptimizerModalOpen}
+          onOpenChange={setIsOptimizerModalOpen}
+          orders={orders}
+          couriers={couriers}
+          customers={orders.map((o) => o.expand?.customer_id).filter(Boolean) as any}
+          locations={locations}
+          onRoutesApplied={() => {
+            fetchData()
+            if (onRefresh) onRefresh()
+          }}
+        />
+      )}
     </div>
   )
 }

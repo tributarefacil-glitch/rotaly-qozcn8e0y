@@ -473,6 +473,15 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         settings: appSettings,
       })
 
+      if (!res.success) {
+        toast.warning('Nova sequência não melhora a rota — mantida a atual')
+        setEditRouteModalOpen(false)
+        setTargetCourierForEditRoute(null)
+        setEditRouteExcludedOrderIds([])
+        setEditRouteIncludedOrderIds([])
+        return
+      }
+
       // Atualizar localOrders no estado para refletir imediatamente as alterações
       setLocalOrders((prev) =>
         prev.map((o) => {
