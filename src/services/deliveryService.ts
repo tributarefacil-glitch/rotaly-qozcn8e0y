@@ -4099,6 +4099,55 @@ export const deliveryService = {
   },
 
   /**
+   * Registrar evento na trilha de auditoria (audit_trail).
+   * Ações automáticas/do sistema devem usar user_id='' (ou omitido), actor_name='Sistema' e metadata.system_trigger=true.
+   */
+  async logAuditTrail(params: {
+    action: string
+    user_id?: string
+    actor_name?: string
+    collection: string
+    record_id: string
+    field?: string
+    old_value?: any
+    new_value?: any
+    courier_id?: string
+    empresa_id?: string
+    metadata?: Record<string, any>
+  }): Promise<AuditTrailRecord | null> {
+    try {
+      const isSystem = !params.user_id || params.user_id === '' || params.actor_name === 'Sistema'
+      const actorName = params.actor_name || (isSystem ? 'Sistema' : 'Usuário')
+      const mergedMetadata = {
+        ...(params.metadata || {}),
+        actor_name: actorName,
+        system_trigger: isSystem ? true : (params.metadata?.system_trigger ?? false),
+      }
+
+      const payload: any = {
+        action: params.action,
+        user_id: isSystem ? '' : params.user_id,
+        collection: params.collection,
+        record_id: params.record_id,
+        field: params.field || '',
+        old_value: params.old_value !== undefined ? String(params.old_value) : '',
+        new_value: params.new_value !== undefined ? String(params.new_value) : '',
+        courier_id: params.courier_id || undefined,
+        empresa_id: params.empresa_id || undefined,
+        metadata: mergedMetadata,
+        timestamp: new Date().toISOString(),
+      }
+
+      return await pb.collection<AuditTrailRecord>('audit_trail').create(payload, {
+        requestKey: null,
+      })
+    } catch (err) {
+      console.warn('[deliveryService] Erro ao gravar audit_trail:', err)
+      return null
+    }
+  },
+
+  /**
    * Buscar registros da trilha de auditoria (read-only)
    */
   async getAuditTrail(params?: {
