@@ -2500,6 +2500,7 @@ export default function CourierApp() {
         onConfirmed={loadCourierOrders}
         courierId={user?.id}
         locations={locations}
+        allOrders={orders}
       />
 
       {/* Modal de Entrega Redirecionada (Grava Ponto A e pede novo endereço) */}

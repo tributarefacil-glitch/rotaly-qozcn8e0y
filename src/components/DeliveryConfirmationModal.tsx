@@ -25,13 +25,15 @@ import {
 import { deliveryService } from '@/services/deliveryService'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
 import { calculateRedirectionExtraKm } from '@/lib/redirectionKmEngine'
+import { haversineDistanceMeters } from '@/lib/geo'
+import { pb } from '@/lib/pocketbase/client'
 import type { OrderRecord, CompletionReason, OrderStatus, LocationRecord } from '@/types/delivery'
 import { toast } from 'sonner'
 import { compressImageFile, dataUrlToFile } from '@/lib/imageCompression'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
-import { MapPin, Navigation, Info } from 'lucide-react'
+import { MapPin, Navigation, Info, Lock, ShieldCheck } from 'lucide-react'
 
 interface DeliveryConfirmationModalProps {
   order: OrderRecord | null
@@ -40,6 +42,7 @@ interface DeliveryConfirmationModalProps {
   onConfirmed: () => void
   courierId?: string
   locations?: LocationRecord[]
+  allOrders?: OrderRecord[]
 }
 
 export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps> = ({
@@ -49,6 +52,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   onConfirmed,
   courierId,
   locations = [],
+  allOrders = [],
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [reason, setReason] = useState<CompletionReason>('delivered')
@@ -65,6 +69,16 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const [isDrawing, setIsDrawing] = useState(false)
   const [lastPos, setLastPos] = useState<{ x: number; y: number } | null>(null)
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
+
+  // BLOCO 1 (v0.0.366): Geofence com GPS na confirmação de entrega e Correção Real de Endereço
+  const [capturedGps, setCapturedGps] = useState<{ lat: number; lng: number } | null>(null)
+  const [isCapturingGps, setIsCapturingGps] = useState(false)
+  const [geofenceBlockedMsg, setGeofenceBlockedMsg] = useState<string | null>(null)
+  const [adminUnlockReasonInput, setAdminUnlockReasonInput] = useState('')
+  const [showAdminUnlockPrompt, setShowAdminUnlockPrompt] = useState(false)
+  const [proposeAddressCorrection, setProposeAddressCorrection] = useState(false)
+  const [addressCorrectionConfirmed, setAddressCorrectionConfirmed] = useState(false)
+  const [addressCorrectionDone, setAddressCorrectionDone] = useState(false)
 
   // Campos específicos de Entrega Redirecionada
   const isRedirectionFlow = Boolean(
@@ -142,6 +156,27 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       setIsDrawing(false)
       setLastPos(null)
       setUpdateOfficialCustomerAddress(true)
+      setCapturedGps(null)
+      setIsCapturingGps(false)
+      setGeofenceBlockedMsg(null)
+      setAdminUnlockReasonInput('')
+      setShowAdminUnlockPrompt(false)
+      setProposeAddressCorrection(false)
+      setAddressCorrectionConfirmed(false)
+      setAddressCorrectionDone(false)
+
+      // Capturar GPS imediatamente ao abrir o modal para adiantar precisão
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setCapturedGps({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+          },
+          (err) => {
+            console.warn('[DeliveryConfirmationModal] GPS preliminar indisponível:', err)
+          },
+          { enableHighAccuracy: true, timeout: 6000, maximumAge: 15000 },
+        )
+      }
 
       // Initialize canvas context after render
       setTimeout(() => {
@@ -276,6 +311,28 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  // Captura de GPS precisa sob demanda (promisified)
+  const getFreshLocation = (): Promise<{ lat: number; lng: number } | null> => {
+    return new Promise((resolve) => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) {
+        resolve(capturedGps)
+        return
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const fresh = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+          setCapturedGps(fresh)
+          resolve(fresh)
+        },
+        (err) => {
+          console.warn('[DeliveryConfirmationModal] Falha na leitura GPS sob demanda:', err)
+          resolve(capturedGps)
+        },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 },
+      )
+    })
+  }
+
   const handleConfirmDelivery = async () => {
     if (!order) return
 
@@ -288,6 +345,138 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       if (!hasSignature && !signatureDataUrl) {
         toast.error('Assinatura obrigatória! O cliente deve assinar no quadro antes de confirmar.')
         return
+      }
+    }
+
+    // BLOCO 1 (v0.0.366): Captura de GPS automática no momento do clique em "Confirmar entrega"
+    setIsCapturingGps(true)
+    const currentLoc = await getFreshLocation()
+    setIsCapturingGps(false)
+
+    // Coordenadas cadastradas do cliente / destino original
+    const clientLat =
+      typeof order.expand?.customer_id?.lat === 'number' && order.expand.customer_id.lat !== 0
+        ? order.expand.customer_id.lat
+        : typeof order.end_address_lat === 'number' && order.end_address_lat !== 0
+          ? order.end_address_lat
+          : null
+    const clientLng =
+      typeof order.expand?.customer_id?.lng === 'number' && order.expand.customer_id.lng !== 0
+        ? order.expand.customer_id.lng
+        : typeof order.end_address_lng === 'number' && order.end_address_lng !== 0
+          ? order.end_address_lng
+          : null
+
+    const hasClientCoords = clientLat !== null && clientLng !== null
+
+    let geofenceFlag:
+      | 'ok'
+      | 'flag_150_500m'
+      | 'bloqueado_gt_500m'
+      | 'sem_coordenadas'
+      | 'liberado_admin' = 'ok'
+    let distanceToPinM = 0
+
+    if (isDelivered) {
+      if (!hasClientCoords) {
+        // CLIENTE SEM COORDENADAS NUNCA BLOQUEIA
+        geofenceFlag = 'sem_coordenadas'
+        // Criar alerta de pin_entregador automaticamente na coleção address_alerts
+        if (currentLoc) {
+          try {
+            await pb.collection('address_alerts').create({
+              customer: order.customer_id || '',
+              company: order.empresa_id || undefined,
+              origin: 'pin_entregador',
+              status: 'pendente',
+              distance_meters: 0,
+              marked_by: courierId || pb.authStore.record?.id || '',
+              marked_at: new Date().toISOString(),
+              suggested_address: {
+                address: order.expand?.customer_id?.address || order.end_address_text || '',
+                lat: currentLoc.lat,
+                lng: currentLoc.lng,
+              },
+              notes: `Pin capturado automaticamente pelo entregador na entrega do pedido ${order.tracking_code}`,
+            })
+          } catch (alertErr) {
+            console.warn(
+              '[DeliveryConfirmationModal] Aviso ao registrar address_alerts pin_entregador:',
+              alertErr,
+            )
+          }
+        }
+      } else if (currentLoc) {
+        // CLIENTE COM COORDENADAS: calcular distância GPS ↔ PIN
+        distanceToPinM = Math.round(
+          haversineDistanceMeters(currentLoc.lat, currentLoc.lng, clientLat, clientLng),
+        )
+
+        if (distanceToPinM <= 150) {
+          geofenceFlag = 'ok'
+        } else if (distanceToPinM > 150 && distanceToPinM <= 500) {
+          geofenceFlag = 'flag_150_500m'
+        } else {
+          // > 500m: BLOQUEIA a confirmação, a não ser que tenha liberação admin
+          const distKmFormatted = (distanceToPinM / 1000).toFixed(1)
+          const blockedExactMessage = `Você está a ${distKmFormatted} km do endereço do cliente. Chegue ao local para confirmar`
+
+          const isAdminUnlocked = showAdminUnlockPrompt && adminUnlockReasonInput.trim().length >= 5
+
+          if (!isAdminUnlocked) {
+            setGeofenceBlockedMsg(blockedExactMessage)
+            setShowAdminUnlockPrompt(true)
+            toast.error(blockedExactMessage)
+            return
+          } else {
+            geofenceFlag = 'liberado_admin'
+          }
+        }
+      }
+    }
+
+    // CORREÇÃO REAL DE ENDEREÇO: Se o pin capturado divergir do cadastrado (>150m) e não foi proposto nem respondido ainda
+    if (
+      isDelivered &&
+      currentLoc &&
+      (!hasClientCoords || distanceToPinM > 150) &&
+      !addressCorrectionDone
+    ) {
+      if (!proposeAddressCorrection && !addressCorrectionConfirmed) {
+        setProposeAddressCorrection(true)
+        // Pausa momentânea para aguardar a decisão do entregador antes de submeter
+        return
+      }
+    }
+
+    // Calcular km_real_perna (distância desde a parada anterior ou base usando a posição capturada)
+    let kmRealPerna: number | undefined = undefined
+    if (currentLoc) {
+      // Procurar a parada imediatamente anterior neste lote
+      const batchKey = order.route_batch_key
+      const sameBatch = allOrders
+        .filter((o) => (batchKey ? o.route_batch_key === batchKey : true) && o.id !== order.id)
+        .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0))
+
+      const mySeq = order.sequence ?? 1
+      const prevOrder = sameBatch
+        .filter((o) => (o.sequence ?? 0) < mySeq)
+        .sort((a, b) => (b.sequence ?? 0) - (a.sequence ?? 0))[0]
+
+      const prevLat =
+        prevOrder?.expand?.customer_id?.lat ||
+        prevOrder?.end_address_lat ||
+        order.start_base_lat ||
+        -22.9068
+      const prevLng =
+        prevOrder?.expand?.customer_id?.lng ||
+        prevOrder?.end_address_lng ||
+        order.start_base_lng ||
+        -43.1729
+
+      if (prevLat && prevLng) {
+        const meters = haversineDistanceMeters(prevLat, prevLng, currentLoc.lat, currentLoc.lng)
+        kmRealPerna = parseFloat((meters / 1000).toFixed(2))
       }
     }
 
@@ -549,6 +738,21 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           formData.append('signature', signatureFile)
         }
 
+        // BLOCO 1: Campos de Geofence e KM Real da Perna
+        if (isDelivered) {
+          formData.append('entrega_geofence_flag', geofenceFlag)
+          if (distanceToPinM > 0) {
+            formData.append('entrega_fora_pin_m', String(distanceToPinM))
+          }
+          if (kmRealPerna !== undefined && kmRealPerna > 0) {
+            formData.append('km_real_perna', String(kmRealPerna))
+          }
+          if (geofenceFlag === 'liberado_admin') {
+            formData.append('entrega_admin_unlock_reason', adminUnlockReasonInput.trim())
+            formData.append('entrega_admin_unlock_by', pb.authStore.record?.id || '')
+          }
+        }
+
         await deliveryService.updateOrder(order.id, formData)
       } else {
         const updateData: Partial<OrderRecord> = {
@@ -560,8 +764,91 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           route_started: true,
           ...(distanceKm > 0 ? { distance_km: distanceKm } : {}),
           ...(returnTripKm > 0 ? { return_trip_km: returnTripKm } : {}),
+          ...(isDelivered
+            ? {
+                entrega_geofence_flag: geofenceFlag,
+                ...(distanceToPinM > 0 ? { entrega_fora_pin_m: distanceToPinM } : {}),
+                ...(kmRealPerna !== undefined && kmRealPerna > 0
+                  ? { km_real_perna: kmRealPerna }
+                  : {}),
+                ...(geofenceFlag === 'liberado_admin'
+                  ? {
+                      entrega_admin_unlock_reason: adminUnlockReasonInput.trim(),
+                      entrega_admin_unlock_by: pb.authStore.record?.id || '',
+                    }
+                  : {}),
+              }
+            : {}),
         }
         await deliveryService.updateOrder(order.id, updateData)
+      }
+
+      // Se liberado por admin, gravar em audit_trail
+      if (isDelivered && geofenceFlag === 'liberado_admin') {
+        try {
+          await deliveryService.logAuditTrail({
+            action: 'geofence_admin_unlock',
+            user_id: pb.authStore.record?.id || '',
+            actor_name: pb.authStore.record?.name || 'Administrador',
+            collection: 'orders',
+            record_id: order.id,
+            field: 'entrega_geofence_flag',
+            old_value: 'bloqueado_gt_500m',
+            new_value: 'liberado_admin',
+            courier_id: courierId || order.courier_id,
+            empresa_id: order.empresa_id,
+            metadata: {
+              distance_m: distanceToPinM,
+              reason: adminUnlockReasonInput.trim(),
+              tracking_code: order.tracking_code,
+              courier_gps: currentLoc,
+            },
+          })
+        } catch (auditErr) {
+          console.warn(
+            '[DeliveryConfirmationModal] Erro ao gravar audit_trail de desbloqueio admin:',
+            auditErr,
+          )
+        }
+      }
+
+      // CORREÇÃO REAL DE ENDEREÇO confirmada pelo entregador
+      if (isDelivered && addressCorrectionConfirmed && currentLoc && order.customer_id) {
+        try {
+          const oldLat = order.expand?.customer_id?.lat
+          const oldLng = order.expand?.customer_id?.lng
+          const oldAddress = order.expand?.customer_id?.address
+
+          await pb.collection('customers').update(order.customer_id, {
+            lat: currentLoc.lat,
+            lng: currentLoc.lng,
+          })
+
+          await deliveryService.logAuditTrail({
+            action: 'customer_pin_corrected_by_courier',
+            user_id: pb.authStore.record?.id || '',
+            actor_name: pb.authStore.record?.name || 'Entregador',
+            collection: 'customers',
+            record_id: order.customer_id,
+            field: 'lat,lng',
+            old_value: `${oldLat},${oldLng}`,
+            new_value: `${currentLoc.lat},${currentLoc.lng}`,
+            courier_id: courierId || order.courier_id,
+            empresa_id: order.empresa_id,
+            metadata: {
+              order_id: order.id,
+              tracking_code: order.tracking_code,
+              address: oldAddress,
+              real_gps: currentLoc,
+            },
+          })
+          toast.success('Ponto do cliente corrigido para sua localização real!')
+        } catch (corrErr) {
+          console.warn(
+            '[DeliveryConfirmationModal] Falha ao atualizar coordenadas do cliente:',
+            corrErr,
+          )
+        }
       }
 
       // In-app Notification
@@ -708,6 +995,90 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                     coordenada GPS (Ponto B) para as próximas rotas saírem corretas.
                   </span>
                 </label>
+              </div>
+            </div>
+          )}
+
+          {/* BLOCO 1: Aviso de Bloqueio por Geofence >500m com Liberação Excepcional por Admin */}
+          {geofenceBlockedMsg && (
+            <div className="p-3.5 rounded-card border-2 border-rose-500 bg-rose-50 text-rose-950 text-xs space-y-2 shadow-sm animate-shake">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-rose-900 leading-snug">
+                    Confirmação Bloqueada por Distância:
+                  </p>
+                  <p className="text-rose-800 mt-0.5 font-medium">{geofenceBlockedMsg}</p>
+                </div>
+              </div>
+
+              {showAdminUnlockPrompt && (
+                <div className="pt-2 border-t border-rose-200 space-y-1.5">
+                  <p className="text-[11px] font-bold text-rose-900 flex items-center gap-1">
+                    <Lock className="h-3.5 w-3.5 text-rose-700" />
+                    Liberação excepcional por administrador:
+                  </p>
+                  <input
+                    type="text"
+                    value={adminUnlockReasonInput}
+                    onChange={(e) => setAdminUnlockReasonInput(e.target.value)}
+                    placeholder="Motivo obrigatório para desbloqueio (mín 5 caracteres)..."
+                    className="w-full h-8 px-2.5 text-xs bg-white border border-rose-300 rounded text-slate-900 focus:outline-none focus:ring-1 focus:ring-rose-500"
+                  />
+                  <p className="text-[10px] text-rose-700">
+                    Ao confirmar com este motivo preenchido, a liberação será gravada na trilha de
+                    auditoria (audit_trail).
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* BLOCO 1: Proposta de Correção Real de Endereço */}
+          {proposeAddressCorrection && !addressCorrectionDone && (
+            <div className="p-3.5 rounded-card border border-blue-400 bg-blue-50 text-blue-950 text-xs space-y-2 shadow-sm">
+              <div className="flex items-start gap-2">
+                <MapPin className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-blue-950">Correção Real de Endereço</p>
+                  <p className="text-blue-900 mt-0.5 font-medium">
+                    O endereço cadastrado parece diferente daqui. Atualizar para este ponto?
+                  </p>
+                  {capturedGps && (
+                    <p className="text-[11px] font-mono text-blue-700 mt-1">
+                      Coordenadas capturadas: {capturedGps.lat.toFixed(6)},{' '}
+                      {capturedGps.lng.toFixed(6)}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    setAddressCorrectionConfirmed(true)
+                    setAddressCorrectionDone(true)
+                    setProposeAddressCorrection(false)
+                    toast.success('Ponto do cliente será atualizado com a posição real capturada.')
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs h-8 px-3"
+                >
+                  Sim, atualizar cadastro
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setAddressCorrectionConfirmed(false)
+                    setAddressCorrectionDone(true)
+                    setProposeAddressCorrection(false)
+                  }}
+                  className="border-blue-300 text-blue-900 hover:bg-blue-100 text-xs h-8 px-3"
+                >
+                  Manter como está
+                </Button>
               </div>
             </div>
           )}
