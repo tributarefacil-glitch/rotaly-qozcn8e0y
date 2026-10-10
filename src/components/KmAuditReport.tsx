@@ -634,14 +634,30 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     let afterApprovalKmTotal = 0
 
     scopeBatches.forEach((batchRows) => {
-      // KM viário original do lote: a soma de roadKm das linhas deste lote
-      // Como cada linha calculada já contém a cota rateada do lote (ou 0 se entrega conjunta secundária),
-      // a soma do lote dá exatamente o KM da rota inteira sem duplicar
-      const bRoad = batchRows.reduce((sum, r) => sum + r.roadKm, 0)
-      // Após aprovação: soma de officialAfterApprovalKm das linhas do lote
-      const bAfter = batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
-      // KM GPS do lote: se as linhas já têm rateio proporcional do GPS, soma r.gpsKm (que fecha exatamente em 1x a telemetria do lote)
-      const bGps = batchRows.reduce((sum, r) => sum + r.gpsKm, 0)
+      // KM viário original do lote contado 1x:
+      // Em lotes unificados ou consolidados, total_route_with_return_km representa o valor CHEIO do lote.
+      // Se definido e > 0, usa esse valor canônico 1x; caso contrário fallback para a soma de roadKm das linhas.
+      const hasCanonicalRoadKm =
+        typeof batchRows[0]?.order?.total_route_with_return_km === 'number' &&
+        batchRows[0].order.total_route_with_return_km > 0
+      const bRoad = hasCanonicalRoadKm
+        ? batchRows[0].order.total_route_with_return_km!
+        : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
+
+      // Após aprovação: se alguma linha tem aprovação manual, soma officialAfterApprovalKm das linhas;
+      // senão, reflete o valor canônico viário do lote (1x)
+      const hasManualApproval = batchRows.some((r) =>
+        Boolean(r.approval && r.approval.status === 'approved'),
+      )
+      const bAfter = hasManualApproval
+        ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
+        : hasCanonicalRoadKm
+          ? batchRows[0].order.total_route_with_return_km!
+          : batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
+
+      // KM GPS do lote 1x: a telemetria do lote é uma janela única, não soma das paradas.
+      // Pega o maior valor de gpsKm entre as linhas do lote (nunca a soma de janelas sobrepostas).
+      const bGps = batchRows.reduce((max, r) => Math.max(max, r.gpsKm || 0), 0)
 
       roadKmTotal += bRoad
       gpsKmTotal += bGps
@@ -789,9 +805,30 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     let afterApprovalKmTotal = 0
 
     filteredBatches.forEach((batchRows) => {
-      const bRoad = batchRows.reduce((sum, r) => sum + r.roadKm, 0)
-      const bAfter = batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
-      const bGps = batchRows.reduce((sum, r) => sum + r.gpsKm, 0)
+      // KM viário original do lote contado 1x:
+      // Em lotes unificados ou consolidados, total_route_with_return_km representa o valor CHEIO do lote.
+      // Se definido e > 0, usa esse valor canônico 1x; caso contrário fallback para a soma de roadKm das linhas.
+      const hasCanonicalRoadKm =
+        typeof batchRows[0]?.order?.total_route_with_return_km === 'number' &&
+        batchRows[0].order.total_route_with_return_km > 0
+      const bRoad = hasCanonicalRoadKm
+        ? batchRows[0].order.total_route_with_return_km!
+        : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
+
+      // Após aprovação: se alguma linha tem aprovação manual, soma officialAfterApprovalKm das linhas;
+      // senão, reflete o valor canônico viário do lote (1x)
+      const hasManualApproval = batchRows.some((r) =>
+        Boolean(r.approval && r.approval.status === 'approved'),
+      )
+      const bAfter = hasManualApproval
+        ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
+        : hasCanonicalRoadKm
+          ? batchRows[0].order.total_route_with_return_km!
+          : batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
+
+      // KM GPS do lote 1x: a telemetria do lote é uma janela única, não soma das paradas.
+      // Pega o maior valor de gpsKm entre as linhas do lote (nunca a soma de janelas sobrepostas).
+      const bGps = batchRows.reduce((max, r) => Math.max(max, r.gpsKm || 0), 0)
 
       roadKmTotal += bRoad
       gpsKmTotal += bGps
