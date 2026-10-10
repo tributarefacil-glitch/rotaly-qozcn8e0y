@@ -147,6 +147,17 @@ export interface CustomerRecord extends RecordModel {
   state?: string
   postal_code?: string
   complement?: string
+  reference_point?: string
+  plus_code?: string
+  pending_client_pin?: {
+    lat: number
+    lng: number
+    plus_code?: string
+    reference_point?: string
+    client_note?: string
+    submitted_at?: string
+    source?: string
+  }
   lat?: number
   lng?: number
 }

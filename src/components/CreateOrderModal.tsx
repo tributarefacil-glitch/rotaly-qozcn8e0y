@@ -65,6 +65,7 @@ import {
   normalizeBrazilianUF,
   geocodeAddressWithValidation,
 } from '@/lib/googleMaps'
+import { encodePlusCode } from '@/lib/plusCode'
 import { haversineDistanceMeters } from '@/lib/geo'
 import { BaseAddressAutocomplete, BaseAddressResult } from '@/components/BaseAddressAutocomplete'
 import { FormErrorBoundary } from '@/components/FormErrorBoundary'
@@ -140,6 +141,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [ufState, setUfState] = useState('RJ')
   const [postalCode, setPostalCode] = useState('')
   const [complement, setComplement] = useState('')
+  const [referencePoint, setReferencePoint] = useState('')
+  const [plusCode, setPlusCode] = useState('')
 
   // Coordinates
   const [selectedCoords, setSelectedCoords] = useState<{ lat: number; lng: number }>(DEFAULT_CENTER)
@@ -280,6 +283,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
     setPostalCode(cust.postal_code || '')
     setComplement(cust.complement || '')
+    setReferencePoint(cust.reference_point || '')
+    setPlusCode(cust.plus_code || '')
 
     if (cust.lat && cust.lng) {
       setSelectedCoords({ lat: cust.lat, lng: cust.lng })
@@ -470,6 +475,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     (lat: number, lng: number, zoomLevel = 16, shouldReverseGeocode = false) => {
       setSelectedCoords({ lat, lng })
       setHasLocationPinned(true)
+      const code = encodePlusCode(lat, lng)
+      if (code) setPlusCode(code)
       calculateSmartRouteSuggestion(lat, lng)
 
       const google = getGoogle()
@@ -1071,8 +1078,23 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         }
       }
 
+      // ITEM 11: Campo 'Ponto de referência' OBRIGATÓRIO quando sem número (lote/quadra/comunidade)
+      const hasNoNumber =
+        !streetAndNumber.trim() ||
+        /\b(s\/n|sn|sem\s+n[uú]mero|lote|quadra|qd|lt|comunidade)\b/i.test(streetAndNumber) ||
+        !/\d+/.test(streetAndNumber)
+      if (hasNoNumber && !referencePoint.trim()) {
+        toast.error(
+          'Endereço sem número detectado (lote/quadra/comunidade/s/n): o Ponto de Referência é OBRIGATÓRIO.',
+        )
+        return
+      }
+
       const cleanPhone2 = newCustPhone2.trim() ? sanitizePhone(newCustPhone2) : undefined
       const cleanPhone3 = newCustPhone3.trim() ? sanitizePhone(newCustPhone3) : undefined
+
+      const computedPlusCode =
+        parsedLat && parsedLng ? encodePlusCode(parsedLat, parsedLng) : plusCode
 
       const customerPayload: Partial<CustomerRecord> = {
         name: newCustName.trim(),
@@ -1091,6 +1113,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               .replace(/^(\d{5})(\d{3})$/, '$1-$2')
           : '',
         complement: complement.trim(),
+        reference_point: referencePoint.trim(),
+        plus_code: computedPlusCode || undefined,
         lat: parsedLat,
         lng: parsedLng,
       }
@@ -1562,8 +1586,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     />
                   </div>
 
-                  {/* 2. Customer Location Link Importer (WhatsApp / Google Maps pin) */}
-                  <div className="rounded-lg border border-slate-200/80 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-800/80 space-y-2">
+                  {/* 2. Customer Location Link Importer (WhatsApp / Google Maps pin) + Botão 'Cliente envia localização' */}
+                  <div className="rounded-lg border border-slate-200/80 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-800/80 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                         <Link2 className="h-3.5 w-3.5 text-indigo-600" />
@@ -1573,6 +1597,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         <HelpCircle className="h-3 w-3" /> Pin de WhatsApp / Maps
                       </span>
                     </div>
+
                     <div className="flex gap-2">
                       <Input
                         placeholder="Cole link do Google Maps, WhatsApp ou coordenadas (-22.90, -43.17)..."
@@ -1600,6 +1625,44 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                           <Crosshair className="h-3.5 w-3.5" />
                         )}
                         Carregar Ponto
+                      </Button>
+                    </div>
+
+                    {/* ITEM 13: Botão 'Cliente envia localização' (WhatsApp Link) */}
+                    <div className="pt-1 border-t border-slate-200/70 dark:border-slate-700/60 flex items-center justify-between">
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Rua sem número ou sem CEP? O cliente marca no mapa:
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const targetId = existingMatchedCustomerId || customerId
+                          if (!targetId) {
+                            toast.warning(
+                              'Selecione ou identifique o cliente pelo telefone primeiro para gerar o link do WhatsApp.',
+                            )
+                            return
+                          }
+                          const cleanPhoneDigits = (newCustPhone || '').replace(/\D/g, '')
+                          const pinUrl = `${window.location.origin}/pin/${targetId}`
+                          const msgText = encodeURIComponent(
+                            `Olá ${newCustName || 'cliente'}! Para garantir a entrega exata do seu pedido, por favor abra o link abaixo e confirme a localização do seu imóvel no mapa (basta arrastar o pino até o seu portão e clicar em Confirmar):\n\n${pinUrl}`,
+                          )
+                          const waUrl =
+                            cleanPhoneDigits.length >= 8
+                              ? `https://wa.me/55${cleanPhoneDigits}?text=${msgText}`
+                              : `https://wa.me/?text=${msgText}`
+                          window.open(waUrl, '_blank')
+                          toast.success(
+                            'WhatsApp aberto com link interativo de mapa para o cliente!',
+                          )
+                        }}
+                        className="h-7 text-xs bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 gap-1.5 font-medium"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                        Cliente envia localização
                       </Button>
                     </div>
                   </div>
@@ -1695,8 +1758,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     {/* CEP */}
                     <div className="sm:col-span-2">
                       <div className="flex items-center justify-between">
-                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                          CEP
+                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                          CEP{' '}
+                          <span className="text-[10px] text-slate-400 font-normal">(Opcional)</span>
                         </Label>
                         {isLoadingViaCep && (
                           <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
@@ -1708,6 +1772,46 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         onChange={handleCepChange}
                         maxLength={9}
                         className="mt-1 bg-white dark:bg-slate-800 text-xs font-mono"
+                      />
+                    </div>
+
+                    {/* ITEM 10: Aviso de CEP opcional */}
+                    {!postalCode && (
+                      <div className="sm:col-span-12 px-2.5 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-[11px] text-blue-800 dark:text-blue-300 flex items-center justify-between">
+                        <span>
+                          💡 <strong>Área sem CEP? Use o pin no mapa</strong> — o CEP é opcional
+                          (comunidades, loteamentos ou zonas rurais).
+                        </span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                          Pin soberano ativo
+                        </span>
+                      </div>
+                    )}
+
+                    {/* ITEM 11: Campo 'Ponto de referência' */}
+                    <div className="sm:col-span-12">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                          Ponto de Referência
+                          {(!streetAndNumber.trim() ||
+                            /\b(s\/n|sn|sem\s+n[uú]mero|lote|quadra|qd|lt|comunidade)\b/i.test(
+                              streetAndNumber,
+                            ) ||
+                            !/\d+/.test(streetAndNumber)) && (
+                            <span className="text-rose-500 font-bold text-[11px]">
+                              * Obrigatório (lote/quadra/comunidade/sem número)
+                            </span>
+                          )}
+                        </Label>
+                        <span className="text-[10px] text-slate-400">
+                          Exibido em destaque na rota do entregador
+                        </span>
+                      </div>
+                      <Input
+                        placeholder="Ex: Em frente ao Mercadinho do Zé, portão cinza, fundos do lote 14"
+                        value={referencePoint}
+                        onChange={(e) => setReferencePoint(e.target.value)}
+                        className="mt-1 bg-white dark:bg-slate-800 text-xs"
                       />
                     </div>
                   </div>
@@ -1742,11 +1846,18 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                           <Crosshair className="h-3 w-3" /> Minha Posição Atual
                         </Button>
                         {hasLocationPinned && (
-                          <span className="text-[10px] font-mono text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5">
-                            <Check className="h-3 w-3" /> {selectedCoords.lat.toFixed(4)},{' '}
-                            {selectedCoords.lng.toFixed(4)}
-                          </span>
-                        )}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-mono text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-0.5">
+                              <Check className="h-3 w-3" /> {selectedCoords.lat.toFixed(4)},{' '}
+                              {selectedCoords.lng.toFixed(4)}
+                            </span>
+                            {plusCode && (
+                              <span className="text-[10px] font-mono text-blue-600 bg-blue-50 dark:bg-blue-950/40 px-1.5 py-0.5 rounded border border-blue-200">
+                                Plus Code: {plusCode}
+                              </span>
+                            )}
+                          </div>
+                        )}{' '}
                       </div>
                     </div>
 

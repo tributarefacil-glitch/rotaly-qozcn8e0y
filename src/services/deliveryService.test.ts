@@ -79,18 +79,16 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
       const updateOrderSpy = vi
         .spyOn(pb.collection('orders'), 'update')
         .mockResolvedValue({} as any)
-      const getBaseAddressesSpy = vi
-        .spyOn(deliveryService, 'getBaseAddresses')
-        .mockResolvedValue([
-          {
-            id: 'base_1',
-            name: 'Base Matriz',
-            lat: -22.699,
-            lng: -43.296,
-            is_default: true,
-            address: 'Av Base 1',
-          } as any,
-        ])
+      const getBaseAddressesSpy = vi.spyOn(deliveryService, 'getBaseAddresses').mockResolvedValue([
+        {
+          id: 'base_1',
+          name: 'Base Matriz',
+          lat: -22.699,
+          lng: -43.296,
+          is_default: true,
+          address: 'Av Base 1',
+        } as any,
+      ])
 
       const res = await deliveryService.resequenceActiveRouteForCourier('courier_1')
       expect(res.success).toBe(true)

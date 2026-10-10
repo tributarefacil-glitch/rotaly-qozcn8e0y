@@ -27,6 +27,7 @@ import {
   reverseGeocodeCoordinates,
   loadGoogleMapsScript,
 } from '@/lib/googleMaps'
+import { encodePlusCode } from '@/lib/plusCode'
 import { haversineDistanceMeters } from '@/lib/geo'
 import {
   BaseAddressAutocomplete,
@@ -78,12 +79,14 @@ export function CreateCustomerModal({
   const [email, setEmail] = useState('')
   const [streetAndNumber, setStreetAndNumber] = useState('')
   const [complement, setComplement] = useState('')
+  const [referencePoint, setReferencePoint] = useState('')
   const [neighborhood, setNeighborhood] = useState('')
   const [city, setCity] = useState('')
-  const [ufState, setUfState] = useState('SP')
+  const [ufState, setUfState] = useState('RJ')
   const [postalCode, setPostalCode] = useState('')
   const [lat, setLat] = useState<number | undefined>(undefined)
   const [lng, setLng] = useState<number | undefined>(undefined)
+  const [plusCode, setPlusCode] = useState('')
   const [hasPrecisionWarning, setHasPrecisionWarning] = useState(false)
   const [precisionWarningDismissed, setPrecisionWarningDismissed] = useState(false)
   const [precisionWarningText, setPrecisionWarningText] = useState('')
@@ -135,6 +138,7 @@ export function CreateCustomerModal({
       }
       setStreetAndNumber(customerToEdit.street || customerToEdit.address?.split(',')[0] || '')
       setComplement(customerToEdit.complement || '')
+      setReferencePoint(customerToEdit.reference_point || '')
       setNeighborhood(customerToEdit.neighborhood || '')
       setCity(customerToEdit.city || '')
       if (customerToEdit.state) {
@@ -142,6 +146,7 @@ export function CreateCustomerModal({
         if (uf && BRAZILIAN_STATES.includes(uf)) setUfState(uf)
       }
       setPostalCode(customerToEdit.postal_code || '')
+      setPlusCode(customerToEdit.plus_code || '')
       setLat(customerToEdit.lat)
       setLng(customerToEdit.lng)
       setInitialSavedCoords({ lat: customerToEdit.lat, lng: customerToEdit.lng })
@@ -178,10 +183,12 @@ export function CreateCustomerModal({
     setEmail('')
     setStreetAndNumber('')
     setComplement('')
+    setReferencePoint('')
     setNeighborhood('')
     setCity('')
     setUfState('RJ')
     setPostalCode('')
+    setPlusCode('')
     setLat(undefined)
     setLng(undefined)
     setInitialSavedCoords({})
@@ -225,6 +232,8 @@ export function CreateCustomerModal({
         }
         setPostalCode(found.postal_code || '')
         setComplement(found.complement || '')
+        setReferencePoint(found.reference_point || '')
+        setPlusCode(found.plus_code || '')
         if (found.lat && found.lng) {
           setLat(found.lat)
           setLng(found.lng)
@@ -444,7 +453,7 @@ export function CreateCustomerModal({
     }
   }, [])
 
-  // Sincroniza mini-mapa quando lat/lng mudam
+  // Sincroniza mini-mapa e Plus Code quando lat/lng mudam
   useEffect(() => {
     if (open && typeof lat === 'number' && typeof lng === 'number') {
       loadGoogleMapsScript().then((loaded) => {
@@ -452,6 +461,10 @@ export function CreateCustomerModal({
           initOrUpdateMiniMap(lat, lng)
         }
       })
+      const code = encodePlusCode(lat, lng)
+      if (code) {
+        setPlusCode(code)
+      }
     }
   }, [open, lat, lng, initOrUpdateMiniMap])
 
@@ -843,6 +856,18 @@ export function CreateCustomerModal({
       return
     }
 
+    // ITEM 11: Campo 'Ponto de referência' OBRIGATÓRIO quando sem número (lote/quadra/comunidade/s/n)
+    const hasNoNumber =
+      !streetAndNumber.trim() ||
+      /\b(s\/n|sn|sem\s+n[uú]mero|lote|quadra|qd|lt|comunidade)\b/i.test(streetAndNumber) ||
+      !/\d+/.test(streetAndNumber)
+    if (hasNoNumber && !referencePoint.trim()) {
+      toast.error(
+        'Endereço sem número detectado (lote/quadra/comunidade/s/n): o Ponto de Referência é OBRIGATÓRIO.',
+      )
+      return
+    }
+
     const phonesToValidate = [mainPhone, phone2.trim() || undefined, phone3.trim() || undefined]
 
     // DOUTRINA: "Pino Explícito é Soberano"
@@ -990,6 +1015,9 @@ export function CreateCustomerModal({
       state: ufState.trim(),
       postal_code: postalCode.trim(),
       complement: complement.trim(),
+      reference_point: referencePoint.trim(),
+      plus_code:
+        (finalLat && finalLng ? encodePlusCode(finalLat, finalLng) : plusCode) || undefined,
       lat: finalLat,
       lng: finalLng,
     }
@@ -1411,7 +1439,9 @@ export function CreateCustomerModal({
 
               <div className="sm:col-span-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs font-semibold text-slate-300">CEP</Label>
+                  <Label className="text-xs font-semibold text-slate-300">
+                    CEP <span className="text-[10px] font-normal text-slate-400">(Opcional)</span>
+                  </Label>
                   {isLoadingViaCep && <Loader2 className="h-3 w-3 animate-spin text-[#60A5FA]" />}
                 </div>
                 <Input
@@ -1420,6 +1450,46 @@ export function CreateCustomerModal({
                   onChange={handleCepChange}
                   maxLength={9}
                   className="mt-1 h-9 text-xs font-mono bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500"
+                />
+              </div>
+
+              {/* ITEM 10: Aviso de CEP opcional para comunidades */}
+              {!postalCode && (
+                <div className="sm:col-span-12 px-2.5 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/30 text-[11px] text-blue-300 flex items-center justify-between">
+                  <span>
+                    💡 <strong>Área sem CEP? Use o pin no mapa</strong> — o CEP é 100% opcional
+                    (comunidades, zonas rurais ou áreas não codificadas).
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-medium">
+                    Pin soberano ativo
+                  </span>
+                </div>
+              )}
+
+              {/* ITEM 11: Campo 'Ponto de referência' */}
+              <div className="sm:col-span-12">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    Ponto de Referência
+                    {(!streetAndNumber.trim() ||
+                      /\b(s\/n|sn|sem\s+n[uú]mero|lote|quadra|qd|lt|comunidade)\b/i.test(
+                        streetAndNumber,
+                      ) ||
+                      !/\d+/.test(streetAndNumber)) && (
+                      <span className="text-[#FF6B35] font-bold text-[11px]">
+                        * Obrigatório (endereço sem número, lote, quadra ou comunidade)
+                      </span>
+                    )}
+                  </Label>
+                  <span className="text-[10px] text-slate-400">
+                    Exibido em destaque na rota do entregador
+                  </span>
+                </div>
+                <Input
+                  placeholder="Ex: Em frente ao Mercadinho do Zé, portão cinza, fundos do lote 14"
+                  value={referencePoint}
+                  onChange={(e) => setReferencePoint(e.target.value)}
+                  className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                 />
               </div>
             </div>
@@ -1572,10 +1642,22 @@ export function CreateCustomerModal({
               </div>
 
               {typeof lat === 'number' && typeof lng === 'number' && (
-                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
-                  <span className="font-mono text-slate-300">
-                    Fixado em: {lat.toFixed(6)}, {lng.toFixed(6)}
-                  </span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] text-slate-400 pt-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-slate-300">
+                      Fixado: {lat.toFixed(6)}, {lng.toFixed(6)}
+                    </span>
+                    {/* ITEM 12: Plus Code gerado automaticamente */}
+                    {plusCode && (
+                      <Badge
+                        variant="outline"
+                        className="font-mono text-[10px] border-blue-500/50 text-blue-300 bg-blue-500/10 px-1.5 py-0"
+                        title="Plus Code aberto do Google gerado a partir do pin"
+                      >
+                        Plus Code: {plusCode}
+                      </Badge>
+                    )}
+                  </div>
                   {isPinManuallyAdjusted ? (
                     <span className="text-emerald-400 font-semibold flex items-center gap-1">
                       ✓ Pino calibrado manualmente (travado)

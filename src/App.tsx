@@ -20,6 +20,7 @@ import CourierProfilePage from './pages/CourierProfilePage'
 import PublicTrackingPage from './pages/PublicTrackingPage'
 import CompaniesPage from './pages/CompaniesPage'
 import CourierRedirectionPdfGuidePage from './pages/CourierRedirectionPdfGuidePage'
+import { PublicCustomerPinPage } from './pages/PublicCustomerPinPage'
 import NotFound from './pages/NotFound'
 
 // Code-split heavy dashboard pages to optimize initial bundle
@@ -511,6 +512,10 @@ const App = () => (
               <Route path="/guia-entregador" element={<CourierRedirectionPdfGuidePage />} />
               <Route path="/guia-redirecionamento" element={<CourierRedirectionPdfGuidePage />} />
               <Route path="/courier/guia-pdf" element={<CourierRedirectionPdfGuidePage />} />
+
+              {/* Public Customer Pin Route (ITEM 13: Cliente envia localização pelo WhatsApp) */}
+              <Route path="/pin/:customerId" element={<PublicCustomerPinPage />} />
+              <Route path="/pin" element={<PublicCustomerPinPage />} />
 
               {/* Public Track Routes (com suporte a sufixos e variações de path) */}
               <Route path="/track/:tracking_code" element={<PublicTrackingPage />} />

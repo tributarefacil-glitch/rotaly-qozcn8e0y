@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-10T00:51:40.597Z",
+  "generatedAt": "2026-10-10T01:04:18.433Z",
   "collections": [
     {
       "name": "users",
@@ -245,6 +245,24 @@
         {
           "name": "email",
           "type": "email",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "reference_point",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "plus_code",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "pending_client_pin",
+          "type": "json",
           "required": false,
           "system": false
         }
