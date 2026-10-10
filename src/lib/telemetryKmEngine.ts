@@ -26,9 +26,15 @@ import {
   DEVIATION_THRESHOLD_METERS,
   UNEXPECTED_STOP_THRESHOLD_METERS,
   haversineDistanceMeters,
+  isSuspectPin,
 } from '@/lib/geo'
 
-export { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS, haversineDistanceMeters }
+export {
+  DEVIATION_THRESHOLD_METERS,
+  UNEXPECTED_STOP_THRESHOLD_METERS,
+  haversineDistanceMeters,
+  isSuspectPin,
+}
 
 /**
  * Retorna a distância rodoviária estimada entre a base de saída e o destino do cliente da entrega.
