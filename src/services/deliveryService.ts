@@ -2212,11 +2212,11 @@ export const deliveryService = {
       }
     }
 
-    // Default moto: prioridade consumo da moto cadastrada -> app_settings -> 40.0 km/L; preço: override -> app_settings -> R$ 6,09
+    // Default moto: segue app_settings (ou taxa padrão 30 km/L e R$ 6,49 conforme regra do sistema)
     return {
       category: 'moto',
-      pricePerLiter: settings?.moto_fuel_price || settings?.fuel_price_per_liter || 6.09,
-      consumptionKml: settings?.moto_consumption_kml || settings?.fuel_consumption_kml || 40.0,
+      pricePerLiter: settings?.moto_fuel_price || settings?.fuel_price_per_liter || 6.49,
+      consumptionKml: settings?.moto_consumption_kml || settings?.fuel_consumption_kml || 30.0,
     }
   },
 

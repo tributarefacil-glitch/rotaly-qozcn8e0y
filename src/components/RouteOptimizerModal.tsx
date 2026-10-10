@@ -188,6 +188,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   onRoutesApplied,
 }) => {
   const { user } = useAuth()
+
   // Estado local sincronizado de pedidos e clientes para atualização e exclusão instantâneas no modal
   const [localOrders, setLocalOrders] = useState<OrderRecord[]>(initialOrders)
   const [localCustomers, setLocalCustomers] = useState<CustomerRecord[]>(initialCustomers)
@@ -1225,10 +1226,12 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       let cumMeters = 0
 
       const updatedStops: OptimizedStop[] = stops.map((stop) => {
-        // Usa step_distance_meters se já apurado viariamente ou distância direta
+        // Usa step_distance_meters se já apurado viariamente ou estimativa viária com fator urbano 1.3
         const directMeters = haversineDistance(curLat, curLng, stop.lat, stop.lng)
         const stepDist =
-          stop.step_distance_meters > 0 ? stop.step_distance_meters : Math.round(directMeters)
+          stop.step_distance_meters > 0
+            ? stop.step_distance_meters
+            : Math.max(800, Math.round(directMeters * 1.3))
         cumMeters += stepDist
         curLat = stop.lat
         curLng = stop.lng
@@ -1240,7 +1243,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       })
 
       const directReturn = stops.length > 0 ? haversineDistance(curLat, curLng, endLat, endLng) : 0
-      const returnMeters = Math.round(directReturn)
+      const returnMeters = Math.max(800, Math.round(directReturn * 1.3))
       const totalMeters = cumMeters + returnMeters
       const outboundKm = Number((cumMeters / 1000).toFixed(2))
       const returnKm = Number((returnMeters / 1000).toFixed(2))
@@ -1251,7 +1254,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         appSettings,
         courierVehicleType,
       )
-      const isBicycle = category === 'bicicleta'
+      const isBicycle =
+        category === 'bicicleta' ||
+        courierVehicleType === 'bicicleta' ||
+        courierVehicleType === 'bicycle'
       const fuelCost =
         !isBicycle && consumptionKml > 0 && pricePerLiter > 0
           ? (totalDistKmNum * pricePerLiter) / consumptionKml
@@ -1920,19 +1926,23 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           rawCustomer: co.customer,
         }))
 
+        const isCourierBike =
+          courierData.courier.vehicle_type === 'bicicleta' ||
+          (courierData.courier.vehicle_type as string) === 'bicycle' ||
+          (courierData.courier.vehicle_type as string) === 'bike'
+
         const { pricePerLiter: planFuelPrice, consumptionKml: planFuelCons } =
           deliveryService.getVehicleFuelParams(appSettings, courierData.courier.vehicle_type)
 
-        // Roteamento viário inteligente com Google Directions optimize:true e fallback determinístico de rua
+        // Roteamento viário inteligente com Google Directions optimize:true e modo bicycling/driving
         const roadRouteResult = await optimizeRouteSequence({
           origin: originPoint,
           destination: destinationPoint,
           stops: candidates,
-          vehicleType: courierData.courier.vehicle_type,
+          vehicleType: isCourierBike ? 'bicicleta' : courierData.courier.vehicle_type,
           pricePerLiter: planFuelPrice,
           consumptionKml: planFuelCons,
         })
-
         const stops: OptimizedStop[] = roadRouteResult.stops.map((s) => ({
           id: s.id,
           tracking_code: s.tracking_code,
@@ -1977,6 +1987,18 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const grandDistKm = grandTotalDistanceMeters / 1000
       const totalFuelCost = plans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
       const totalEstDuration = plans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
+
+      // ITEM 4: Alertar se custo viário + combustível exceder o valor das entregas (rota não pode dar prejuízo)
+      const totalDeliveriesValue = ordersToOptimize.reduce(
+        (sum, o) => sum + (Number(o.total_price) || 0),
+        0,
+      )
+      if (totalDeliveriesValue > 0 && totalFuelCost > totalDeliveriesValue) {
+        toast.warning(
+          `⚠️ Alerta de Rentabilidade: O custo estimado de combustível (R$ ${totalFuelCost.toFixed(2)}) excede o valor total das entregas (R$ ${totalDeliveriesValue.toFixed(2)}). A rota dará prejuízo!`,
+          { duration: 9000 },
+        )
+      }
 
       // Identificar pedidos selecionados que não possuem coordenadas válidas
       const validOrderIds = new Set(validOrdersWithCoords.map((v) => v.order.id))
@@ -3156,6 +3178,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
     })
     toast.success('Entrega reatribuída para outro entregador.')
+  }
+
+  // ITEM 4: Apenas vendedor e administrador podem acessar o RouteOptimizerModal. Entregador NUNCA otimiza rota.
+  if (user?.role === 'courier') {
+    return null
   }
 
   return (

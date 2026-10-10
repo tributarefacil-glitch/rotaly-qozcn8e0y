@@ -282,6 +282,7 @@ async function sequenceStopsWithGoogleDirections(
   origin: { lat: number; lng: number },
   destination: { lat: number; lng: number },
   stops: StopCandidate[],
+  vehicleType?: string,
 ): Promise<{
   orderedStops: StopCandidate[]
   legs: Array<{ distanceMeters: number; durationSeconds: number }>
@@ -302,12 +303,17 @@ async function sequenceStopsWithGoogleDirections(
       stopover: true,
     }))
 
+    const requestTravelMode =
+      vehicleType === 'bicicleta' || vehicleType === 'bicycle' || vehicleType === 'bike'
+        ? win.google.maps.TravelMode?.BICYCLING || 'BICYCLING'
+        : win.google.maps.TravelMode?.DRIVING || 'DRIVING'
+
     const request: any = {
       origin: googleOrigin,
       destination: googleDestination,
       waypoints,
       optimizeWaypoints: true, // SOLVER OFICIAL DE ROTEAMENTO VIÁRIO DA GOOGLE
-      travelMode: win.google.maps.TravelMode?.DRIVING || 'DRIVING',
+      travelMode: requestTravelMode,
     }
 
     // Otimização por DISTÂNCIA:
@@ -457,6 +463,7 @@ export async function optimizeRouteSequence(params: {
       origin,
       destination,
       preProcessedStops,
+      vehicleType,
     )
     if (googleResult && googleResult.orderedStops.length === preProcessedStops.length) {
       finalStops = googleResult.orderedStops

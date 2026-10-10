@@ -535,18 +535,15 @@ export function BatchReconciliationSection({
                     1. KM Viário Oficial
                   </th>
                   <th className="py-3 px-4 text-center bg-purple-50/50 text-purple-900">
-                    2. KM GPS (Telemetria)
+                    2. Km telemetria (real na rua)
                   </th>
-                  <th className="py-3 px-4 text-center bg-slate-100/60 text-slate-800">
-                    3. KM Odômetro (Painel)
-                  </th>
-                  <th className="py-3 px-4 text-right">Status / Divergência</th>
+                  <th className="py-3 px-4 text-right">Status / Reconciliação</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredBatches.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-400">
+                    <td colSpan={6} className="py-12 text-center text-slate-400">
                       Nenhum lote de rota encontrado para os filtros selecionados.
                     </td>
                   </tr>
@@ -604,29 +601,14 @@ export function BatchReconciliationSection({
                                 <span className="text-[9px] text-slate-400 block">
                                   {batch.gpsTelemetryPoints} pontos válidos
                                 </span>
+                                <span className="text-[9px] text-slate-500 block">
+                                  Fonte: telemetria na rua, conciliada com viário
+                                </span>
                               </>
                             ) : (
                               <span className="text-[11px] text-slate-400 italic">
                                 sem telemetria
                               </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* 3. KM Odômetro (Painel) */}
-                        <td className="py-3 px-4 align-middle text-center bg-slate-50/40">
-                          <div className="space-y-0.5">
-                            {batch.odometerKm !== null && batch.odometerKm > 0 ? (
-                              <>
-                                <span className="font-mono text-sm font-black text-slate-800 dark:text-slate-200">
-                                  {batch.odometerKm.toFixed(1)} km
-                                </span>
-                                <span className="text-[9px] text-slate-400 block">
-                                  final − inicial
-                                </span>
-                              </>
-                            ) : (
-                              <span className="text-[11px] text-slate-400">—</span>
                             )}
                           </div>
                         </td>

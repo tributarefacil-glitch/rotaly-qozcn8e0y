@@ -195,8 +195,8 @@ export async function snapRouteGpsTrack(
         const leg = await fetchStreetRoute(keyPoints[i], keyPoints[i + 1])
         if (leg && leg.distanceMeters > 0) {
           totalMeters += leg.distanceMeters
-          if (leg.geometryCoordinates) {
-            snappedCoords.push(...leg.geometryCoordinates)
+          if (leg.coordinates) {
+            snappedCoords.push(...leg.coordinates)
           }
         }
       }

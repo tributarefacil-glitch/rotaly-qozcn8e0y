@@ -1299,18 +1299,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-100/70 text-slate-600 uppercase tracking-wider text-[11px] font-bold select-none">
                   <th className="py-3 px-4">a) Cliente / Endereço</th>
-                  <th className="py-3 px-3 text-center">b) KM Trajeto Viário</th>
-                  <th className="py-3 px-3 text-center">c) KM Trajeto GPS</th>
-                  <th className="py-3 px-3 text-center">d) Odômetro (Entregador)</th>
-                  <th className="py-3 px-3 text-center">e) Desvio de Rota</th>
-                  <th className="py-3 px-3 text-center">f) Parada Fora do Local</th>
-                  <th className="py-3 px-4 text-right">g) Aprovação do Administrador</th>
+                  <th className="py-3 px-3 text-center">b) Km trajeto viário</th>
+                  <th className="py-3 px-3 text-center">c) Km telemetria (real na rua)</th>
+                  <th className="py-3 px-3 text-center">d) Desvio de Rota</th>
+                  <th className="py-3 px-3 text-center">e) Parada Fora do Local</th>
+                  <th className="py-3 px-4 text-right">f) Aprovação do Administrador</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-400">
+                    <td colSpan={6} className="py-12 text-center text-slate-400">
                       {queueViewMode === 'pending_divergent' ? (
                         <>
                           <CheckCircle2 className="h-10 w-10 mx-auto text-emerald-500 mb-2" />
@@ -1423,14 +1422,14 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna b: KM Trajeto Viário */}
+                        {/* Coluna b: Km trajeto viário */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
                             <span className="font-mono text-sm font-black text-slate-900 dark:text-white">
                               {row.roadKm.toFixed(1)} km
                             </span>
                             <span className="text-[10px] text-slate-400 block">
-                              Planejado viário
+                              Km trajeto viário
                             </span>
                             {row.isJointSecondary && (
                               <span className="text-[9px] text-indigo-600 block font-semibold">
@@ -1440,7 +1439,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna c: KM Trajeto GPS */}
+                        {/* Coluna c: Km telemetria (real na rua) */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
                             <span
@@ -1453,7 +1452,10 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                               {row.gpsKm > 0 ? `${row.gpsKm.toFixed(1)} km` : '-'}
                             </span>
                             <span className="text-[10px] text-slate-400 block">
-                              Telemetria real
+                              Km telemetria (real na rua)
+                            </span>
+                            <span className="text-[9px] text-slate-500 block">
+                              Fonte: telemetria na rua, conciliada com viário • {row.dateStr}
                             </span>
                             {row.gpsKm > 0 && Math.abs(row.gpsKm - row.roadKm) >= 0.5 && (
                               <span
@@ -1469,40 +1471,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna d: Odômetro (Entregador) */}
-                        <td className="py-3 px-3 align-top text-center">
-                          <div className="space-y-0.5">
-                            <span className="font-mono text-sm font-black text-slate-800 dark:text-slate-200 block">
-                              {row.odometerKm > 0 ? `${row.odometerKm.toFixed(1)} km` : '—'}
-                            </span>
-                            {row.odometerKm > 0 && (
-                              <span className="text-[10px] text-slate-400 block">
-                                Painel da moto
-                              </span>
-                            )}
-                            {row.odometerKm > 0 &&
-                              row.roadKm > 0 &&
-                              (() => {
-                                const diffRatio = Math.abs(row.odometerKm - row.roadKm) / row.roadKm
-                                if (diffRatio <= 0.15) return null
-                                const pct = Math.round(diffRatio * 100)
-                                const isSevere = diffRatio > 0.25
-                                return (
-                                  <Badge
-                                    className={`text-[9px] font-bold px-1.5 py-0 ${
-                                      isSevere
-                                        ? 'bg-rose-100 text-rose-700 border-rose-300'
-                                        : 'bg-amber-100 text-amber-700 border-amber-300'
-                                    }`}
-                                  >
-                                    ⚠️ {pct}% div.
-                                  </Badge>
-                                )
-                              })()}
-                          </div>
-                        </td>
-
-                        {/* Coluna e: Desvio de Rota / KM Extra Redireção */}
+                        {/* Coluna d: Desvio de Rota / KM Extra Redireção */}
                         <td className="py-3 px-3 align-top text-center">
                           {row.isRedirected ? (
                             <div className="space-y-0.5">

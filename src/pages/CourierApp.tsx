@@ -782,22 +782,45 @@ export default function CourierApp() {
       const now = Date.now()
       const last = lastRecordedGpsRef.current
 
-      // A) THROTTLE RÍGIDO DE 30s & DEDUPLICAÇÃO
-      // Garantir intervalo mínimo de 30s entre envios reais.
-      // Deduplicação: se a posição mudou menos de ~10m OU accuracy continua >= 500m (sem fix),
-      // não criar pings repetidos; aguarda rigorosamente a janela de 30s.
+      // ITEM 6: FREQUÊNCIA ADAPTATIVA (10s perto da parada, 30s em deslocamento)
+      // Calcular distância até a parada ativa (se houver)
+      let distToTargetStopMeters = 9999
+      if (
+        currentActiveDelivery &&
+        currentActiveDelivery.end_address_lat &&
+        currentActiveDelivery.end_address_lng
+      ) {
+        distToTargetStopMeters = haversineDistanceMeters(
+          lat,
+          lng,
+          currentActiveDelivery.end_address_lat,
+          currentActiveDelivery.end_address_lng,
+        )
+      } else if (isReturningToBase && baseCoordinates.lat && baseCoordinates.lng) {
+        distToTargetStopMeters = haversineDistanceMeters(
+          lat,
+          lng,
+          baseCoordinates.lat,
+          baseCoordinates.lng,
+        )
+      }
+
+      // Se estiver a menos de 300 metros da parada (ou da base de retorno), frequência alta de 10s
+      // Em deslocamento normal na rota: 30s
+      const minIntervalSeconds = distToTargetStopMeters < 300 ? 10 : 30
+
       if (last && !forceSend) {
         const timeDiffSeconds = (now - last.timestamp) / 1000
         const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
         const isWeakFix = (accuracyVal ?? 2000) >= 500 || (last.accuracy ?? 2000) >= 500
 
-        // Throttle rígido: nunca envia antes de 30 segundos
-        if (timeDiffSeconds < 30) {
+        // Throttle adaptativo: 10s perto da parada (<300m), 30s em deslocamento
+        if (timeDiffSeconds < minIntervalSeconds) {
           return
         }
 
-        // Se mudou menos de 10m e acurácia continua fraca/sem-fix, rejeita novo envio imediato
-        if (distanceDiffMeters < 10 && isWeakFix && timeDiffSeconds < 60) {
+        // Se mudou menos de 5m e acurácia continua fraca/sem-fix, rejeita novo envio imediato
+        if (distanceDiffMeters < 5 && isWeakFix && timeDiffSeconds < 45) {
           return
         }
       }
@@ -866,9 +889,8 @@ export default function CourierApp() {
           e,
         )
 
-        // Salvar no buffer offline se em rota ativa E não estiver online (bloquear enfileiramento se navigator.onLine)
-        const isActuallyOnline = typeof navigator !== 'undefined' && navigator.onLine === true
-        if (hasActiveStartedRoute && !isActuallyOnline) {
+        // ITEM 6: Salvar no buffer offline se em rota ativa quando falha a conexão (offline ou erro de rede)
+        if (hasActiveStartedRoute) {
           offlineTelemetryBuffer.enqueuePoint({
             userId: user.id,
             lat,

@@ -242,14 +242,18 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
     const legKm = legDistances[idx] || totalViarioKm / validCount
 
     // Atualiza pedido no banco de dados com os valores recalculados em cascata
+    const updatePayload: Record<string, any> = {
+      total_route_with_return_km: kmOficial,
+      fuel_cost: ordFuel,
+      route_batch_key: routeBatchKey,
+      distance_km: Number(legKm.toFixed(2)),
+    }
+    if (kmTelemetriaReal !== null) {
+      updatePayload.km_real_rodado = kmTelemetriaReal
+    }
     await pb
       .collection('orders')
-      .update(ord.id, {
-        total_route_with_return_km: kmOficial,
-        fuel_cost: ordFuel,
-        route_batch_key: routeBatchKey,
-        distance_km: Number(legKm.toFixed(2)),
-      })
+      .update(ord.id, updatePayload)
       .catch((err) => {
         console.warn(`[recalcularLote] Erro ao atualizar ordem ${ord.id}:`, err)
       })

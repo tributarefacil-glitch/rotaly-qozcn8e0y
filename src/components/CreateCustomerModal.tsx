@@ -1048,9 +1048,13 @@ export function CreateCustomerModal({
       })
 
       if (dupCheck.conflict && dupCheck.customer) {
-        toast.error(dupCheck.message || `Já existe cliente cadastrado com este dado: [${dupCheck.customer.name}, ${dupCheck.customer.id}]`, {
-          duration: 7000,
-        })
+        toast.error(
+          dupCheck.message ||
+            `Já existe cliente cadastrado com este dado: [${dupCheck.customer.name}, ${dupCheck.customer.id}]`,
+          {
+            duration: 7000,
+          },
+        )
         setIsSubmitting(false)
         return
       }
@@ -1065,32 +1069,31 @@ export function CreateCustomerModal({
         const created = await deliveryService.createCustomer(payload)
         toast.success(`Cliente "${created.name}" cadastrado com sucesso!`)
 
-          // Se cliente foi cadastrado sem coordenadas ou sem endereço, oferecer botão WhatsApp imediato
-          const isIncomplete = !created.lat || !created.lng || !created.street?.trim()
-          if (isIncomplete) {
-            const origin = typeof window !== 'undefined' ? window.location.origin : ''
-            const pinUrl = `${origin}/pin/${created.id}`
-            const phoneDigits = (created.phone || '').replace(/\D/g, '')
-            const msg = encodeURIComponent(
-              `Olá ${created.name}, tudo bem? Para que seu pedido chegue certinho e sem atrasos, por favor confirme ou ajuste a localização do seu endereço clicando aqui: ${pinUrl}`,
-            )
-            const waUrl = phoneDigits
-              ? `https://wa.me/55${phoneDigits}?text=${msg}`
-              : `https://wa.me/?text=${msg}`
-            toast.info('Cadastro salvo na fila "Cadastro Incompleto"!', {
-              description: 'Envie o link para o cliente enviar a localização exata.',
-              action: {
-                label: 'WhatsApp Pin',
-                onClick: () => window.open(waUrl, '_blank'),
-              },
-              duration: 10000,
-            })
-          }
-
-          resetForm()
-          onCustomerCreated(created)
-          onOpenChange(false)
+        // Se cliente foi cadastrado sem coordenadas ou sem endereço, oferecer botão WhatsApp imediato
+        const isIncomplete = !created.lat || !created.lng || !created.street?.trim()
+        if (isIncomplete) {
+          const origin = typeof window !== 'undefined' ? window.location.origin : ''
+          const pinUrl = `${origin}/pin/${created.id}`
+          const phoneDigits = (created.phone || '').replace(/\D/g, '')
+          const msg = encodeURIComponent(
+            `Olá ${created.name}, tudo bem? Para que seu pedido chegue certinho e sem atrasos, por favor confirme ou ajuste a localização do seu endereço clicando aqui: ${pinUrl}`,
+          )
+          const waUrl = phoneDigits
+            ? `https://wa.me/55${phoneDigits}?text=${msg}`
+            : `https://wa.me/?text=${msg}`
+          toast.info('Cadastro salvo na fila "Cadastro Incompleto"!', {
+            description: 'Envie o link para o cliente enviar a localização exata.',
+            action: {
+              label: 'WhatsApp Pin',
+              onClick: () => window.open(waUrl, '_blank'),
+            },
+            duration: 10000,
+          })
         }
+
+        resetForm()
+        onCustomerCreated(created)
+        onOpenChange(false)
       }
     } catch (err) {
       console.error('Erro ao salvar cliente:', err)
