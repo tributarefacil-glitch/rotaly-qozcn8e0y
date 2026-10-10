@@ -32,9 +32,11 @@ import {
   COURIER_POINT_A_HINT_KEY,
 } from '@/components/CourierRedirectionTutorialModal'
 import { IPhoneGpsGuideModal } from '@/components/IPhoneGpsGuideModal'
+import { NavigationAppChoiceModal } from '@/components/NavigationAppChoiceModal'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
+import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import { APP_VERSION_LABEL } from '@/lib/version'
@@ -88,6 +90,13 @@ export default function CourierApp() {
   const [isTutorialModalOpen, setIsTutorialModalOpen] = useState(false)
   const [isStartRouteModalOpen, setIsStartRouteModalOpen] = useState(false)
   const [isFinishRouteModalOpen, setIsFinishRouteModalOpen] = useState(false)
+  const [isNavigationChoiceOpen, setIsNavigationChoiceOpen] = useState(false)
+  const [navigationTarget, setNavigationTarget] = useState<{
+    name: string
+    address?: string
+    lat?: number
+    lng?: number
+  } | null>(null)
 
   // Alerta com Presença Forçada em Tela Cheia Vermelha (Bloco 1)
   const [forcedAlertOpen, setForcedAlertOpen] = useState(false)
@@ -951,7 +960,26 @@ export default function CourierApp() {
       )
     }
 
-    // Iniciar watchPosition contínuo (ideal enquanto há rota ativa ou app aberto)
+    // Iniciar Foreground Service nativo Android caso estejamos no APK nativo
+    if (hasActiveStartedRoute && nativeGpsBridge.isNativeEnvironment()) {
+      nativeGpsBridge
+        .startTracking({
+          userId: user.id,
+          notificationTitle: 'Rotaly — Entregas Ativas',
+          notificationText: 'Rastreamento GPS em primeiro plano ativo (contínuo)',
+          minIntervalMs: 5000,
+          minDistanceMeters: 10,
+        })
+        .catch((e) => console.warn('Erro ao iniciar native foreground GPS:', e))
+    }
+
+    // Escutar coordenadas da ponte nativa Android
+    const unsubscribeNativeGps = nativeGpsBridge.onLocation((coord) => {
+      if (!isEffectActive) return
+      processAndSendGps(coord.latitude, coord.longitude, coord.speed, coord.accuracy, false)
+    })
+
+    // Iniciar watchPosition contínuo (fallback web ou padrão enquanto app aberto)
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       try {
         watchId = navigator.geolocation.watchPosition(
@@ -1068,6 +1096,7 @@ export default function CourierApp() {
 
     return () => {
       isEffectActive = false
+      unsubscribeNativeGps()
       if (watchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchId)
         watchId = null
@@ -1180,19 +1209,29 @@ export default function CourierApp() {
     handleConfirmStartRoute()
   }
 
-  // Navegação externa (Google Maps / Waze)
-  const openExternalNavigation = (address: string, lat?: number, lng?: number) => {
-    const destination = lat && lng ? `${lat},${lng}` : encodeURIComponent(address)
-    const googleMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination}`
-    window.open(googleMapsUrl, '_blank')
+  // Navegação externa (Google Maps / Waze) com escolha do entregador
+  const openExternalNavigation = (
+    address: string,
+    lat?: number,
+    lng?: number,
+    label = 'Destino',
+  ) => {
+    setNavigationTarget({
+      name: label,
+      address,
+      lat,
+      lng,
+    })
+    setIsNavigationChoiceOpen(true)
   }
 
   const openWazeNavigation = (lat?: number, lng?: number, address?: string) => {
-    const wazeUrl =
-      lat && lng
-        ? `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`
-        : `https://waze.com/ul?q=${encodeURIComponent(address || '')}`
-    window.open(wazeUrl, '_blank')
+    nativeGpsBridge.openNavigation({
+      lat,
+      lng,
+      address,
+      app: 'waze',
+    })
   }
 
   // Ação: "Marcar endereço correto no local (GPS)"
@@ -1468,17 +1507,22 @@ export default function CourierApp() {
         await loadCourierOrders()
       }
       toast.success(`Navegação iniciada para ${cust?.name || 'o cliente'}!`)
-      // Abrir navegação
-      openExternalNavigation(cust?.address || '', cust?.lat, cust?.lng)
+      // Abrir modal de escolha de navegação (Waze ou Google Maps)
+      openExternalNavigation(cust?.address || '', cust?.lat, cust?.lng, cust?.name || 'Cliente')
     } catch {
       toast.error('Erro ao iniciar entrega.')
     }
   }
 
-  // Ação: Retornar à Base (abre navegação para a base)
+  // Ação: Retornar à Base (abre navegação para a base com escolha Waze/Maps)
   const handleNavigateToBase = () => {
     toast.info(`Navegando de volta para a base: ${baseCoordinates.name}`)
-    openExternalNavigation(baseCoordinates.address, baseCoordinates.lat, baseCoordinates.lng)
+    openExternalNavigation(
+      baseCoordinates.address,
+      baseCoordinates.lat,
+      baseCoordinates.lng,
+      baseCoordinates.name,
+    )
   }
 
   // Ação: Finalizar Rota Inteira na Chegada à Base (manual ou automático por geofence)
@@ -2410,16 +2454,28 @@ export default function CourierApp() {
         )}
       </main>
 
-      {/* Link de ajuda no rodapé para o entregador resolver GPS sozinho a qualquer momento */}
-      <div className="max-w-xl mx-auto w-full px-4 pt-1 pb-2 flex flex-col items-center justify-center gap-1">
-        <button
-          type="button"
-          onClick={() => setIsIPhoneGuideOpen(true)}
-          className="text-[11px] text-slate-400 hover:text-[#60A5FA] flex items-center gap-1.5 transition underline decoration-dotted"
-        >
-          <HelpCircle className="h-3.5 w-3.5" />
-          <span>Problemas com GPS no iPhone? Veja como liberar</span>
-        </button>
+      {/* Links de suporte e download do APK Nativo no rodapé */}
+      <div className="max-w-xl mx-auto w-full px-4 pt-1 pb-2 flex flex-col items-center justify-center gap-1.5 text-center">
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <a
+            href="/app-download"
+            className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-semibold underline decoration-dotted"
+          >
+            <Smartphone className="h-3.5 w-3.5" />
+            <span>Baixar APK Nativo (GPS em 2º plano)</span>
+          </a>
+
+          <span className="text-slate-600">•</span>
+
+          <button
+            type="button"
+            onClick={() => setIsIPhoneGuideOpen(true)}
+            className="text-[11px] text-slate-400 hover:text-[#60A5FA] flex items-center gap-1.5 transition underline decoration-dotted"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+            <span>GPS no iPhone? Como liberar</span>
+          </button>
+        </div>
         <span className="font-mono text-[10px] text-slate-500">{APP_VERSION_LABEL}</span>
       </div>
 
@@ -2493,6 +2549,16 @@ export default function CourierApp() {
               }
             : undefined
         }
+      />
+
+      {/* Modal de Escolha de Navegação Externa (Waze ou Google Maps) */}
+      <NavigationAppChoiceModal
+        open={isNavigationChoiceOpen}
+        onOpenChange={setIsNavigationChoiceOpen}
+        destinationName={navigationTarget?.name}
+        destinationAddress={navigationTarget?.address}
+        lat={navigationTarget?.lat}
+        lng={navigationTarget?.lng}
       />
     </div>
   )

@@ -1,0 +1,122 @@
+name: Build Rotaly Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'android/**'
+      - 'package.json'
+      - 'capacitor.config.ts'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Tipo de build (release ou debug)'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+concurrency:
+  group: apk-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build APK Android
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Instalar dependências Web
+        run: |
+          npm ci --prefer-offline --no-audit
+
+      - name: Build do frontend Web (Vite)
+        run: |
+          npm run build
+
+      - name: Copiar assets Web para o Android
+        run: |
+          mkdir -p android/app/src/main/assets/public
+          cp -r dist/* android/app/src/main/assets/public/
+
+      - name: Configurar Java 17 (JDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Verificar Keystore de Produção nos Secrets
+        id: check_keystore
+        run: |
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ] && [ -n "${{ secrets.KEYSTORE_PASSWORD }}" ] && [ -n "${{ secrets.KEY_ALIAS }}" ] && [ -n "${{ secrets.KEY_PASSWORD }}" ]; then
+            echo "has_keystore=true" >> $GITHUB_OUTPUT
+            echo "Keystore configurado! Build será assinado com a chave de produção."
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/release.keystore
+          else
+            echo "has_keystore=false" >> $GITHUB_OUTPUT
+            echo "::warning::Secrets de assinatura ausentes (KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD). O APK será gerado em modo DEBUG/UNSIGNED como fallback."
+          fi
+
+      - name: Dar permissão de execução ao Gradle Wrapper
+        run: |
+          cd android
+          if [ ! -f "gradlew" ]; then
+            gradle wrapper
+          fi
+          chmod +x gradlew
+
+      - name: Compilar APK (Release ou Fallback Debug)
+        id: compile_apk
+        env:
+          KEYSTORE_FILE: ${{ steps.check_keystore.outputs.has_keystore == 'true' && '../release.keystore' || '' }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cd android
+          if [ "${{ steps.check_keystore.outputs.has_keystore }}" = "true" ] && [ "${{ github.event.inputs.build_type || 'release' }}" = "release" ]; then
+            echo "Compilando APK Release Assinado..."
+            ./gradlew assembleRelease --no-daemon --stacktrace
+            echo "apk_path=android/app/build/outputs/apk/release/app-release.apk" >> $GITHUB_ENV
+            echo "artifact_name=rotaly-app-v1.0.0-release.apk" >> $GITHUB_ENV
+          else
+            echo "Compilando APK Debug (Fallback sem segredos de keystore)..."
+            ./gradlew assembleDebug --no-daemon --stacktrace
+            echo "apk_path=android/app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_ENV
+            echo "artifact_name=rotaly-app-v1.0.0-debug.apk" >> $GITHUB_ENV
+          fi
+
+      - name: Preparar Artifact do APK
+        run: |
+          mkdir -p build-output
+          cp ${{ env.apk_path }} build-output/${{ env.artifact_name }}
+          echo "APK copiado com sucesso para build-output/${{ env.artifact_name }}"
+          ls -lh build-output/
+
+      - name: Publicar Artifact no GitHub Actions (rotaly-apk)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotaly-apk
+          path: build-output/*
+          retention-days: 30
+          if-no-files-found: error

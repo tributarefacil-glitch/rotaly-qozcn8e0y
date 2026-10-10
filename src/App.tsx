@@ -27,6 +27,7 @@ import NotFound from './pages/NotFound'
 const SellerDashboard = lazy(() => import('./pages/SellerDashboard'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
 const CourierApp = lazy(() => import('./pages/CourierApp'))
+const AppDownloadPage = lazy(() => import('./pages/AppDownloadPage'))
 
 const PageSuspenseFallback = () => (
   <div className="flex min-h-[60vh] w-full items-center justify-center bg-transparent">
@@ -508,6 +509,32 @@ const App = () => (
             <Toaster />
             <Sonner richColors position="top-right" />
             <Routes>
+              {/* Página Pública de Download do APK Android Nativo para Entregadores */}
+              <Route
+                path="/app-download"
+                element={
+                  <Suspense fallback={<PageSuspenseFallback />}>
+                    <AppDownloadPage />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/download"
+                element={
+                  <Suspense fallback={<PageSuspenseFallback />}>
+                    <AppDownloadPage />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/apk"
+                element={
+                  <Suspense fallback={<PageSuspenseFallback />}>
+                    <AppDownloadPage />
+                  </Suspense>
+                }
+              />
+
               {/* Material de Treinamento e Guia em PDF (Acesso livre para WhatsApp dos entregadores) */}
               <Route path="/guia-entregador" element={<CourierRedirectionPdfGuidePage />} />
               <Route path="/guia-redirecionamento" element={<CourierRedirectionPdfGuidePage />} />
