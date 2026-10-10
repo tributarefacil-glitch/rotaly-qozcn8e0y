@@ -716,9 +716,13 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       typeof courier?.opening_balance === 'number' ? courier.opening_balance : carryOverBalance
 
     // Filtrar adiantamentos pós-corte de acordo com o periodFilter (fuso America/Sao_Paulo)
-    // Ignorar cancelados e movimentações anteriores ao corte (se houver corte)
+    // Regra 1a/3: totalAdvances/totalAdiantado deve somar SOMENTE registros com entry_type === 'advance'
+    // (ou entry_type vazio/ausente por retrocompatibilidade) E status !== 'cancelled'.
+    // Excluir toda entrada entry_type === 'balance_adjustment'.
     const filteredAdvances = allCourierAdvances.filter((a) => {
       if (a.status === 'cancelled') return false
+      if (a.entry_type === 'balance_adjustment') return false
+      if (a.entry_type && a.entry_type !== 'advance') return false
       if (hasCutoff && !isAdvancePostCutoff(a.date || a.created, cutoffDateStr)) return false
 
       if (periodFilter === 'all') return true
@@ -796,10 +800,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     // As métricas de período (km oficial, combustível, entregas, desvios, economia) respondem ao periodFilter.
     // O "Saldo da Conta Corrente" passa a ser calculado sobre TODO o histórico pós-corte
     // (allCourierAdvances com created >= cutoff_date e pedidos com created >= cutoff_date):
-    // abertura + adiantamentos/ajustes pós-corte − gasto de combustível pós-corte, invariante ao filtro.
+    // abertura + adiantamentos reais pós-corte (regra 1a) − gasto de combustível pós-corte, invariante ao filtro.
     // Mesma fórmula canônica do fuelAccountService.ts.
     const allPostCutoffAdvances = allCourierAdvances.filter((a) => {
       if (a.status === 'cancelled') return false
+      if (a.entry_type === 'balance_adjustment') return false
+      if (a.entry_type && a.entry_type !== 'advance') return false
       if (hasCutoff && !isAdvancePostCutoff(a.date || a.created, cutoffDateStr)) return false
       return true
     })

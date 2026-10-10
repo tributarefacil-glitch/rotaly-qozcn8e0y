@@ -213,13 +213,16 @@ export function calculateCourierFuelMetrics(params: {
   })
 
   // Totais pós-corte consolidados (período-independentes, para apurar o Saldo canônico):
+  // Regra 1a/3: totalAdvances deve somar SOMENTE registros com entry_type === 'advance'
+  // (ou entry_type vazio/ausente por retrocompatibilidade) E status !== 'cancelled'.
+  // Excluir toda entrada entry_type === 'balance_adjustment'.
   let totalPostCutoffAdvances = 0
   let totalPostCutoffAdjustments = 0
   allPostCutoffAdvances.forEach((a) => {
     const val = Number(a.amount) || 0
     if (a.entry_type === 'balance_adjustment') {
       totalPostCutoffAdjustments += val
-    } else {
+    } else if (!a.entry_type || a.entry_type === 'advance') {
       totalPostCutoffAdvances += val
     }
   })
@@ -251,13 +254,13 @@ export function calculateCourierFuelMetrics(params: {
     const val = Number(a.amount) || 0
     if (a.entry_type === 'balance_adjustment') {
       periodAdjustments += val
-    } else {
+    } else if (!a.entry_type || a.entry_type === 'advance') {
       periodAdvances += val
     }
   })
 
-  // totalAdvances do objeto reflete os movimentos pós-corte totais consolidados
-  const totalAdvances = totalPostCutoffAdvances + totalPostCutoffAdjustments
+  // totalAdvances do objeto reflete os adiantamentos reais (regra 1a)
+  const totalAdvances = totalPostCutoffAdvances
 
   // 2. Filtrar telemetria e ocorrências do entregador
   const baseLatFallback = activeBaseCoords?.lat ?? -22.7001402
@@ -900,16 +903,9 @@ export function calculateCourierFuelMetrics(params: {
     }
   }
 
-  // FÓRMULA ÚNICA E INVARIANTE DO SALDO:
-  // Saldo = opening_balance (fixo) + adiantamentos pós-corte + ajustes pós-corte − gasto pós-corte
-  const balance = Number(
-    (
-      openingBalance +
-      totalPostCutoffAdvances +
-      totalPostCutoffAdjustments -
-      postCutoffSpent
-    ).toFixed(2),
-  )
+  // FÓRMULA ÚNICA E INVARIANTE DO SALDO (Regra 1b):
+  // Saldo = opening_balance (fixo) + adiantamentos reais pós-corte (regra 1a) − gasto pós-corte
+  const balance = Number((openingBalance + totalPostCutoffAdvances - postCutoffSpent).toFixed(2))
   const calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
   const calculationSourceLabel = 'Trajeto Viário Oficial'
 

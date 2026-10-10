@@ -213,7 +213,19 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
     for (const p of periods) {
       const res = calculateCourierFuelMetrics({
         courier: mockGuilherme,
-        advances: [mockAdvanceGuilherme],
+        advances: [
+          mockAdvanceGuilherme,
+          // Lançamento com balance_adjustment que deve ser EXCLUÍDO de totalAdvances (Regra 1a)
+          {
+            id: 'mock_adj_guilherme',
+            courier_id: mockGuilherme.id,
+            amount: 188.45,
+            entry_type: 'balance_adjustment',
+            status: 'active',
+            date: '2026-10-05 00:00:00.000Z',
+            created: '2026-10-05 10:00:00.000Z',
+          } as unknown as FuelAdvanceRecord,
+        ],
         orders: guilhermeOrders,
         locations: [],
         offRouteEvents: [],
@@ -223,7 +235,7 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
 
       // Abertura R$ 22,10 + Adiantamento R$ 200,00 = R$ 222,10
       // Gasto pós-corte: 5.1 km @ 40 km/L @ R$ 6.09 = R$ 1,11 (2.3km=0.50 + 1.6km=0.35 + 1.2km=0.26 = 1.11)
-      // Saldo = 222.10 - 1.11 = 220.99
+      // Saldo = 222.10 - 1.11 = 220.99 (balance_adjustment excluído)
       expect(res.balance).toBe(220.99)
       expect(res.advanceCount).toBe(1)
       expect(res.totalAdvances).toBe(200)
@@ -231,7 +243,18 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
       // Testando também via fuelAccountService
       const acc = fuelAccountService.calculateAccountForCourier({
         courier: mockGuilherme,
-        advances: [mockAdvanceGuilherme],
+        advances: [
+          mockAdvanceGuilherme,
+          {
+            id: 'mock_adj_guilherme',
+            courier_id: mockGuilherme.id,
+            amount: 188.45,
+            entry_type: 'balance_adjustment',
+            status: 'active',
+            date: '2026-10-05 00:00:00.000Z',
+            created: '2026-10-05 10:00:00.000Z',
+          } as unknown as FuelAdvanceRecord,
+        ],
         orders: guilhermeOrders,
         settings: mockSettings,
         periodFilter: p,

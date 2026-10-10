@@ -47,6 +47,7 @@ export interface UnifiedCourierFuelAccount {
   suggestedRecharge?: number
   availableBalance?: number
   reachedAlertThreshold?: boolean
+  averageLabel?: string
 }
 export class FuelAccountService {
   private static instance: FuelAccountService
@@ -245,6 +246,7 @@ export class FuelAccountService {
       { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
     >
     activeBaseCoords?: { lat: number; lng: number } | null
+    allPostCutoffOrders?: OrderRecord[]
   }): UnifiedCourierFuelAccount {
     const {
       courier,
@@ -256,6 +258,7 @@ export class FuelAccountService {
       periodFilter = 'all',
       approvalsMap,
       activeBaseCoords,
+      allPostCutoffOrders,
     } = params
 
     // DATA DE CORTE E SALDO DE ABERTURA OFICIAIS
@@ -279,13 +282,16 @@ export class FuelAccountService {
     })
 
     // Totais pós-corte consolidados (período-independentes, para compor o Saldo canônico):
+    // Regra 1a: totalAdvances deve somar SOMENTE registros com entry_type === 'advance'
+    // (ou entry_type vazio/ausente por retrocompatibilidade) E status !== 'cancelled'.
+    // Excluir toda entrada entry_type === 'balance_adjustment'.
     let totalPostCutoffAdvances = 0
     let totalPostCutoffAdjustments = 0
     postCutoffAdvances.forEach((a) => {
       const amount = Number(a.amount) || 0
       if (a.entry_type === 'balance_adjustment') {
         totalPostCutoffAdjustments += amount
-      } else {
+      } else if (!a.entry_type || a.entry_type === 'advance') {
         totalPostCutoffAdvances += amount
       }
     })
@@ -315,66 +321,48 @@ export class FuelAccountService {
     // Gasto do período selecionado (meramente informativo)
     const periodSpent = isBicycle ? 0 : metrics.totalSpent
 
-    // GASTO PÓS-CORTE CANÔNICO PARA O SALDO:
+    // GASTO PÓS-CORTE CANÔNICO PARA O SALDO (Regra 1b):
     // Saldo é SEMPRE período-independente: opening_balance + totalPostCutoffAdvances − totalPostCutoffSpent.
-    // Pedidos >= cutoffTime calculados com periodFilter 'all'.
-    // calculateCourierFuelMetrics já computa e consolida o saldo e gasto canônico internamente (com isPostCutoffComputation de guarda).
+    // O saldo deve ser calculado sobre o HISTÓRICO COMPLETO pós-corte, independente do pool filtrado por período.
+    // Se allPostCutoffOrders foi fornecido, usa-o; caso contrário, usa courierOrders (filtrando por cutoffTime se hasCutoff).
+    const fullOrderPool =
+      allPostCutoffOrders && allPostCutoffOrders.length > 0
+        ? allPostCutoffOrders.filter((o) => o && o.courier_id === courier.id)
+        : courierOrders
+
     let postCutoffSpent = 0
     if (!isBicycle) {
-      if (!hasCutoff) {
-        if (periodFilter === 'all') {
-          postCutoffSpent = metrics.totalSpent
-        } else {
-          const allTimeMetrics = calculateCourierFuelMetrics({
-            courier,
-            advances: postCutoffAdvances,
-            orders: courierOrders,
-            locations,
-            offRouteEvents,
-            settings,
-            periodFilter: 'all',
-            carryOverBalance: openingBalance,
-            approvalsMap,
-            activeBaseCoords,
-            isPostCutoffComputation: true,
+      const postCutoffOrdersList = hasCutoff
+        ? fullOrderPool.filter((o) => {
+            const orderDateVal = o.route_finished_at || o.actual_arrival || o.created
+            const orderTs = new Date(orderDateVal).getTime()
+            return orderTs >= cutoffTime
           })
-          postCutoffSpent = allTimeMetrics.totalSpent
-        }
-      } else {
-        const postCutoffOrdersList = courierOrders.filter((o) => {
-          const orderDateVal = o.route_finished_at || o.actual_arrival || o.created
-          const orderTs = new Date(orderDateVal).getTime()
-          return orderTs >= cutoffTime
-        })
+        : fullOrderPool
 
-        if (postCutoffOrdersList.length > 0) {
-          const postCutoffMetrics = calculateCourierFuelMetrics({
-            courier,
-            advances: postCutoffAdvances,
-            orders: postCutoffOrdersList,
-            locations,
-            offRouteEvents,
-            settings,
-            periodFilter: 'all',
-            carryOverBalance: openingBalance,
-            approvalsMap,
-            activeBaseCoords,
-            isPostCutoffComputation: true,
-          })
-          postCutoffSpent = postCutoffMetrics.totalSpent
-        }
+      if (postCutoffOrdersList.length > 0) {
+        const postCutoffMetrics = calculateCourierFuelMetrics({
+          courier,
+          advances: postCutoffAdvances,
+          orders: postCutoffOrdersList,
+          locations,
+          offRouteEvents,
+          settings,
+          periodFilter: 'all',
+          carryOverBalance: openingBalance,
+          approvalsMap,
+          activeBaseCoords,
+          isPostCutoffComputation: true,
+        })
+        postCutoffSpent = postCutoffMetrics.totalSpent
       }
     }
 
-    // FÓRMULA ÚNICA E INVARIANTE DO SALDO:
-    // balance = opening_balance + totalPostCutoffAdvances + totalPostCutoffAdjustments − postCutoffSpent
+    // FÓRMULA ÚNICA E INVARIANTE DO SALDO (Regra 1b):
+    // Saldo canônico pós-corte = opening_balance + adiantamentos reais (regra 1a) − gasto total pós-corte.
+    // Exclui balance_adjustments legados/duplicados para preservar os saldos canônicos validados.
     const finalBalance = Number(
-      (
-        openingBalance +
-        totalPostCutoffAdvances +
-        totalPostCutoffAdjustments -
-        postCutoffSpent
-      ).toFixed(2),
+      (openingBalance + totalPostCutoffAdvances - postCutoffSpent).toFixed(2),
     )
 
     // Parcelas informativas do período selecionado (para exibição em colunas/cards quando aplicável)
@@ -385,16 +373,16 @@ export class FuelAccountService {
 
     // Sincronizar o objeto metrics interno para carregar o saldo oficial invariante
     metrics.balance = finalBalance
-    metrics.totalAdvances = Number(
-      (totalPostCutoffAdvances + totalPostCutoffAdjustments).toFixed(2),
-    )
-    metrics.advanceCount = postCutoffAdvances.length
+    metrics.totalAdvances = Number(totalPostCutoffAdvances.toFixed(2))
+    metrics.advanceCount = postCutoffAdvances.filter(
+      (a) => !a.entry_type || a.entry_type === 'advance',
+    ).length
     if (metrics.fuelAccount) {
       metrics.fuelAccount.balance = finalBalance
-      metrics.fuelAccount.totalAdvances = Number(
-        (totalPostCutoffAdvances + totalPostCutoffAdjustments).toFixed(2),
-      )
-      metrics.fuelAccount.advanceCount = postCutoffAdvances.length
+      metrics.fuelAccount.totalAdvances = Number(totalPostCutoffAdvances.toFixed(2))
+      metrics.fuelAccount.advanceCount = postCutoffAdvances.filter(
+        (a) => !a.entry_type || a.entry_type === 'advance',
+      ).length
       metrics.fuelAccount.totalSpent = periodSpent
       metrics.fuelAccount.deliveriesCount =
         metrics.totalOfficialKm > 0 || metrics.orderCalculations.length > 0
@@ -402,13 +390,17 @@ export class FuelAccountService {
           : metrics.deliveriesCount
     }
 
-    // FRENTE 2 & 3: Média dos últimos 30 dias, projeção até fim do mês civil e sugestão de recarga
+    // FRENTE 2 & 3: Média diária (30d ou janela disponível real), projeção até fim do mês civil e sugestão de recarga
+    // Regra 1c: dailyAverage30d: dividir o gasto da janela REAL de 30 dias por 30.
+    // Se a janela disponível for menor (ex.: 7 dias), rotular o card como "Média 7d" — nunca dividir gasto de 7 dias por 30.
+    // Regra 1d: suggestedRecharge: max(0, projeçãoRestanteDoMês − finalBalance). Com saldo 220,99 → R$ 0,00, badge verde "Crédito Disponível".
     let dailyAverage30d = 0
     let spent30d = 0
     let remainingDays = 0
     let remainingIntervalLabel = ''
     let projectionRemainingMonth = 0
     let suggestedRecharge = 0
+    let averageLabel = 'Média 30d'
     const availableBalance = Number((openingBalance + totalPostCutoffAdvances).toFixed(2))
 
     if (!isBicycle) {
@@ -437,9 +429,25 @@ export class FuelAccountService {
           isPostCutoffComputation: true,
         })
         spent30d = metrics30d.totalSpent
-      }
 
-      dailyAverage30d = Number((spent30d / 30).toFixed(2))
+        // Determinar a amplitude da janela disponível em dias
+        const oldestOrderTs = orders30d.reduce((minTs, o) => {
+          const t = new Date(o.route_finished_at || o.actual_arrival || o.created).getTime()
+          return t < minTs ? t : minTs
+        }, now.getTime())
+
+        const elapsedDays = Math.max(1, Math.ceil((now.getTime() - oldestOrderTs) / (24 * 3600000)))
+        const windowDays = Math.min(30, elapsedDays)
+
+        if (windowDays < 28) {
+          // Janela menor que 30 dias (ex: 7 dias) -> divide pelos dias reais e rotula conforme
+          dailyAverage30d = Number((spent30d / windowDays).toFixed(2))
+          averageLabel = `Média ${windowDays}d`
+        } else {
+          dailyAverage30d = Number((spent30d / 30).toFixed(2))
+          averageLabel = 'Média 30d'
+        }
+      }
 
       // Calendário operacional civil (America/Sao_Paulo)
       // Se hora < 5 da manhã, dia operacional é o dia anterior
@@ -495,13 +503,17 @@ export class FuelAccountService {
       reachedAlertThreshold = true
     }
 
+    const realAdvancesCount = postCutoffAdvances.filter(
+      (a) => !a.entry_type || a.entry_type === 'advance',
+    ).length
+
     return {
       courier,
-      totalAdvances: Number((totalPostCutoffAdvances + totalPostCutoffAdjustments).toFixed(2)),
+      totalAdvances: Number(totalPostCutoffAdvances.toFixed(2)),
       totalRouteKm: metrics.totalOfficialKm,
       totalSpent: periodSpent,
       balance: finalBalance,
-      advanceCount: postCutoffAdvances.length,
+      advanceCount: realAdvancesCount,
       deliveriesCount: metrics.deliveriesCount,
       advances: courierAdvances,
       calculationSource: metrics.calculationSource,
@@ -520,6 +532,7 @@ export class FuelAccountService {
       suggestedRecharge,
       availableBalance,
       reachedAlertThreshold,
+      averageLabel,
     }
   }
 

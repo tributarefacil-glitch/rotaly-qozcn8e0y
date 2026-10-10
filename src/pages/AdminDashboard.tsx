@@ -1233,13 +1233,22 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const isFuelViewActive = activeTab === 'fuel' || isCourierHistoryModalOpen
 
   // Versão de sincronização global para invalidar caches legados e forçar recarga imediata
-  const FUEL_GLOBAL_VERSION = 'v0090_operational_window_sync'
+  const FUEL_GLOBAL_VERSION = 'v0091_canonical_balance_sync'
+
+  // Pool completo pós-corte para apuração do saldo canônico (independente do fuelPeriodFilter)
+  const [allPostCutoffOrdersPool, setAllPostCutoffOrdersPool] = useState<OrderRecord[]>([])
 
   const fetchFuelHistoryOrders = useCallback(
     async (forceRefresh = false) => {
       const cacheKey = `${fuelPeriodFilter}_${FUEL_GLOBAL_VERSION}`
+      const fullCacheKey = `full_post_cutoff_${FUEL_GLOBAL_VERSION}`
       const now = Date.now()
       const cached = fuelOrdersCacheRef.current.get(cacheKey)
+      const cachedFull = fuelOrdersCacheRef.current.get(fullCacheKey)
+
+      if (cachedFull && !forceRefresh) {
+        setAllPostCutoffOrdersPool(cachedFull.data)
+      }
 
       if (!forceRefresh && cached && now - cached.timestamp < 5 * 60 * 1000) {
         setFuelHistoryOrders(cached.data)
@@ -1268,15 +1277,33 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
       setIsLoadingFuelOrders(true)
       try {
-        const fetched = await deliveryService.getOrdersInBatches(
-          filter,
-          '-created',
-          'customer_id,courier_id,seller_id',
-          200,
-        )
+        // Busca paralela: pedidos do filtro + pedidos completos pós-corte se ainda não em cache
+        const promises: [Promise<OrderRecord[]>, Promise<OrderRecord[]> | null] = [
+          deliveryService.getOrdersInBatches(
+            filter,
+            '-created',
+            'customer_id,courier_id,seller_id',
+            200,
+          ),
+          !cachedFull || forceRefresh
+            ? deliveryService.getOrdersInBatches(
+                '', // histórico completo pós-corte
+                '-created',
+                'customer_id,courier_id,seller_id',
+                300,
+              )
+            : null,
+        ]
+
+        const [fetched, fetchedFull] = await Promise.all(promises)
         fuelOrdersCacheRef.current.set(cacheKey, { data: fetched, timestamp: Date.now() })
         setFuelHistoryOrders(fetched)
         setLoadedFuelPeriod(fuelPeriodFilter)
+
+        if (fetchedFull) {
+          fuelOrdersCacheRef.current.set(fullCacheKey, { data: fetchedFull, timestamp: Date.now() })
+          setAllPostCutoffOrdersPool(fetchedFull)
+        }
       } catch (err) {
         console.error('Erro ao carregar pedidos de combustível do período:', err)
         // Fallback para orders do dia em caso de falha de rede
@@ -1296,13 +1323,23 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   }, [isFuelViewActive, fuelPeriodFilter, fetchFuelHistoryOrders])
 
   // Pedidos ativos para o cálculo de combustível: se já carregou ou está em cache, usa fuelHistoryOrders
+  // Regra 2: fuelPeriodFilter alimenta APENAS "Gasto no Período" e "Km Rodado" (via activeFuelOrdersPool)
   const activeFuelOrdersPool =
     fuelHistoryOrders.length > 0 || loadedFuelPeriod === fuelPeriodFilter
       ? fuelHistoryOrders
       : orders
 
+  // Pool completo pós-corte para o cálculo do saldo canônico
+  const effectiveFullOrdersPool =
+    allPostCutoffOrdersPool.length > 0
+      ? allPostCutoffOrdersPool
+      : fuelPeriodFilter === 'all'
+        ? activeFuelOrdersPool
+        : orders
+
   // Recalcular fuelAccounts com o motor único calculateCourierFuelMetrics via fuelAccountService / deliveryService
-  // Com alternador rápido de período (Hoje, Mês, Total desde o início) e rótulos explícitos
+  // Regra 2: O card de saldo chama calculateAccountForCourier com o pool COMPLETO pós-corte (independente do filtro),
+  // para receber o saldo canônico.
   const currentFuelAccounts = useMemo(() => {
     return couriers.map((courier) => {
       return fuelAccountService.calculateAccountForCourier({
@@ -1313,12 +1350,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         locations,
         offRouteEvents,
         periodFilter: fuelPeriodFilter,
+        allPostCutoffOrders: effectiveFullOrdersPool,
       })
     })
   }, [
     couriers,
     fuelAdvances,
     activeFuelOrdersPool,
+    effectiveFullOrdersPool,
     settings,
     locations,
     offRouteEvents,
@@ -1977,7 +2016,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                     </div>
                                     <div className="flex items-baseline justify-between pt-0.5">
                                       <span className="text-[10px] text-slate-500">
-                                        Média 30d:{' '}
+                                        {acc.averageLabel || 'Média 30d'}:{' '}
                                         <strong>R$ {acc.dailyAverage30d.toFixed(2)}/dia</strong> •
                                         Projeção: R${' '}
                                         {(acc.projectionRemainingMonth || 0).toFixed(2)}
