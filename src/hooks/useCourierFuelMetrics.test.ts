@@ -523,6 +523,87 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
       expect(res.totalSpent).toBe(3.81) // 25 / 40 * 6.09 = 3.80625 -> 3.81
     })
 
+    it('trava canônica: saldo período-independente no card de Conta Corrente (Guilherme R$ 220,99 · Vinicios R$ 67,62) e balance_adjustment excluído do Total Adiantado', () => {
+      // Guilherme de Paiva:
+      // Saldo canônico R$ 220,99 independente do filtro de período (all, month, week, today)
+      // Total Adiantado canônico R$ 200,00 (excluindo qualquer balance_adjustment)
+      const periods: Array<'all' | 'month' | 'week' | 'today'> = ['all', 'month', 'week', 'today']
+      for (const p of periods) {
+        const guilhermeMetrics = calculateCourierFuelMetrics({
+          courier: mockGuilherme,
+          advances: [
+            mockAdvanceGuilherme,
+            {
+              id: 'bzbatiglleqj3vi',
+              courier_id: mockGuilherme.id,
+              amount: 188.45,
+              entry_type: 'balance_adjustment',
+              status: 'active',
+              date: '2026-10-05 00:00:00.000Z',
+              created: '2026-10-05 10:00:00.000Z',
+            } as unknown as FuelAdvanceRecord,
+          ],
+          orders: guilhermeOrders,
+          locations: [],
+          offRouteEvents: [],
+          settings: mockSettings,
+          periodFilter: p,
+        })
+        expect(guilhermeMetrics.balance).toBe(220.99)
+        expect(guilhermeMetrics.totalAdvances).toBe(200.0)
+        expect(guilhermeMetrics.advanceCount).toBe(1)
+
+        const guilhermeAcc = fuelAccountService.calculateAccountForCourier({
+          courier: mockGuilherme,
+          advances: [
+            mockAdvanceGuilherme,
+            {
+              id: 'bzbatiglleqj3vi',
+              courier_id: mockGuilherme.id,
+              amount: 188.45,
+              entry_type: 'balance_adjustment',
+              status: 'active',
+              date: '2026-10-05 00:00:00.000Z',
+              created: '2026-10-05 10:00:00.000Z',
+            } as unknown as FuelAdvanceRecord,
+          ],
+          orders: guilhermeOrders,
+          settings: mockSettings,
+          periodFilter: p,
+        })
+        expect(guilhermeAcc.balance).toBe(220.99)
+        expect(guilhermeAcc.totalAdvances).toBe(200.0)
+        expect(guilhermeAcc.advanceCount).toBe(1)
+
+        // Vinicios Lunz:
+        // Saldo canônico R$ 67,62 independente do filtro de período
+        // Total Adiantado canônico R$ 0,00 (sem adiantamentos pós-corte)
+        const viniciosMetrics = calculateCourierFuelMetrics({
+          courier: mockVinicios,
+          advances: [],
+          orders: [],
+          locations: [],
+          offRouteEvents: [],
+          settings: mockSettings,
+          periodFilter: p,
+        })
+        expect(viniciosMetrics.balance).toBe(67.62)
+        expect(viniciosMetrics.totalAdvances).toBe(0.0)
+        expect(viniciosMetrics.advanceCount).toBe(0)
+
+        const viniciosAcc = fuelAccountService.calculateAccountForCourier({
+          courier: mockVinicios,
+          advances: [],
+          orders: [],
+          settings: mockSettings,
+          periodFilter: p,
+        })
+        expect(viniciosAcc.balance).toBe(67.62)
+        expect(viniciosAcc.totalAdvances).toBe(0.0)
+        expect(viniciosAcc.advanceCount).toBe(0)
+      }
+    })
+
     it('deve calcular o consumo do mês de Vinicios canônico em torno de ~R$ 73,34', () => {
       // Simulação do consumo acumulado de outubro de Vinicios Lunz
       // Rotas do mês de Vinicios totalizam ~481.7 km @ 40 km/L @ R$ 6.09 = R$ 73.34
