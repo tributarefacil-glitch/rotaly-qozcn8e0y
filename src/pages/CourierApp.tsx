@@ -1328,7 +1328,7 @@ export default function CourierApp() {
     }
   }
 
-  // Ação "Iniciar Entrega" do cliente atual (marca em andamento se ainda não estiver e abre GPS)
+  // Ação "Iniciar Entrega" do cliente atual (marca em andamento se ainda não estiver e abre GPS / Como Chegar)
   // REGRA ESTRITA DE ORDEM: Apenas a primeira parada não entregue da rota (#1 pendente)
   // pode liberar navegação e início de entrega. Pedidos subsequentes ficam travados com "Aguarde, parada #N".
   const handleStartDelivery = async (order: OrderRecord) => {
@@ -1343,6 +1343,18 @@ export default function CourierApp() {
       return
     }
 
+    const cust = order.expand?.customer_id
+
+    // Exibe o ponto de referência em destaque sonoro/toast antes de abrir o mapa
+    if (cust?.reference_point) {
+      toast.info(`📍 Ponto de Referência: "${cust.reference_point}"`, {
+        description: cust.plus_code
+          ? `Plus Code: ${cust.plus_code}`
+          : 'Confira os detalhes na chegada ao local.',
+        duration: 7000,
+      })
+    }
+
     try {
       if (order.status !== 'in_transit') {
         await deliveryService.updateOrder(order.id, {
@@ -1352,9 +1364,8 @@ export default function CourierApp() {
         })
         await loadCourierOrders()
       }
-      toast.success(`Navegação iniciada para ${order.expand?.customer_id?.name || 'o cliente'}!`)
+      toast.success(`Navegação iniciada para ${cust?.name || 'o cliente'}!`)
       // Abrir navegação
-      const cust = order.expand?.customer_id
       openExternalNavigation(cust?.address || '', cust?.lat, cust?.lng)
     } catch {
       toast.error('Erro ao iniciar entrega.')
@@ -1962,6 +1973,19 @@ export default function CourierApp() {
                           ? `${customer.street}${customer.complement ? `, ${customer.complement}` : ''} - ${customer.neighborhood || customer.city || ''}`
                           : customer?.address || 'Endereço a confirmar'}
                       </p>
+                      {customer?.reference_point && (
+                        <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold">
+                          <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />
+                          <span className="truncate max-w-[240px]">
+                            Ref: {customer.reference_point}
+                          </span>
+                        </div>
+                      )}
+                      {customer?.plus_code && (
+                        <span className="ml-1.5 text-[9px] font-mono text-blue-300 bg-blue-500/20 px-1 py-0.2 rounded border border-blue-400/30">
+                          {customer.plus_code}
+                        </span>
+                      )}
                     </div>
                     <span className="text-[11px] font-mono font-bold text-[#60A5FA] shrink-0">
                       {order.tracking_code}
@@ -2026,17 +2050,41 @@ export default function CourierApp() {
                 <div className="space-y-2 text-xs text-slate-300">
                   <div className="flex items-start gap-2">
                     <MapPin className="h-4 w-4 text-[#FF6B35] shrink-0 mt-0.5" />
-                    <div>
+                    <div className="flex-1 min-w-0">
                       <p className="font-medium text-white leading-relaxed">
                         {currentActiveDelivery.expand?.customer_id?.street
                           ? `${currentActiveDelivery.expand.customer_id.street}${currentActiveDelivery.expand.customer_id.complement ? `, ${currentActiveDelivery.expand.customer_id.complement}` : ''} - ${currentActiveDelivery.expand.customer_id.neighborhood || ''}, ${currentActiveDelivery.expand.customer_id.city || ''}`
                           : currentActiveDelivery.expand?.customer_id?.address ||
                             'Endereço a confirmar'}
                       </p>
-                      {currentActiveDelivery.expand?.customer_id?.postal_code && (
-                        <p className="text-[10px] font-mono text-slate-400 mt-0.5">
-                          CEP: {currentActiveDelivery.expand.customer_id.postal_code}
-                        </p>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        {currentActiveDelivery.expand?.customer_id?.postal_code ? (
+                          <span className="text-[10px] font-mono text-slate-400">
+                            CEP: {currentActiveDelivery.expand.customer_id.postal_code}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-mono text-amber-400/90 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/30">
+                            Sem CEP
+                          </span>
+                        )}
+                        {currentActiveDelivery.expand?.customer_id?.plus_code && (
+                          <span className="text-[10px] font-mono text-blue-300 bg-blue-500/20 px-1.5 py-0.2 rounded border border-blue-400/30">
+                            Plus Code: {currentActiveDelivery.expand.customer_id.plus_code}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* ITEM 1: Ponto de Referência em DESTAQUE AMARELO (Alerta Prioritário) */}
+                      {currentActiveDelivery.expand?.customer_id?.reference_point && (
+                        <div className="mt-2 p-2.5 rounded-xl bg-amber-500/20 border-2 border-amber-500/60 text-amber-100 shadow-md">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-300 text-xs">
+                            <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 animate-pulse" />
+                            <span>Ponto de Referência (Atenção ao Chegar):</span>
+                          </div>
+                          <p className="mt-1 text-xs font-semibold text-white leading-snug">
+                            {currentActiveDelivery.expand.customer_id.reference_point}
+                          </p>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -2238,6 +2286,19 @@ export default function CourierApp() {
                                 ? `${customer.street}${customer.complement ? `, ${customer.complement}` : ''} - ${customer.neighborhood || customer.city || ''}`
                                 : customer?.address || 'Endereço a confirmar'}
                             </p>
+                            {customer?.reference_point && (
+                              <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold">
+                                <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />
+                                <span className="truncate max-w-[220px]">
+                                  Ref: {customer.reference_point}
+                                </span>
+                              </div>
+                            )}
+                            {customer?.plus_code && (
+                              <span className="ml-1.5 text-[9px] font-mono text-blue-300 bg-blue-500/20 px-1 py-0.2 rounded border border-blue-400/30">
+                                {customer.plus_code}
+                              </span>
+                            )}
                           </div>
                         </div>
 

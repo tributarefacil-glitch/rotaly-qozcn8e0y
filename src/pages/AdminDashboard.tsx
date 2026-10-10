@@ -93,6 +93,7 @@ function SectionSkeleton() {
   )
 }
 import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
+import { CustomerQualityReport } from '@/components/CustomerQualityReport'
 import { FuelAdvanceModal } from '@/components/FuelAdvanceModal'
 import { Globe, KeyRound, Lock, ShieldAlert } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -3697,7 +3698,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
               </TabsContent>
 
               {/* ABA: CLIENTES (Com Geocodificação Google e Doutrina de Coordenada Travada) */}
-              <TabsContent value="customers" className="space-y-4">
+              <TabsContent value="customers" className="space-y-6">
+                {/* ITENS 14 & 15: RELATÓRIO DE QUALIDADE DO CADASTRO & FILA CADASTRO INCOMPLETO */}
+                <CustomerQualityReport
+                  customers={customers}
+                  onEditCustomer={(c) => {
+                    setCustomerToEdit(c)
+                    setIsCreateCustomerModalOpen(true)
+                  }}
+                  onRefresh={loadData}
+                />
+
                 <Card className="border-slate-200/80 dark:border-slate-800 shadow-sm">
                   <CardHeader className="pb-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

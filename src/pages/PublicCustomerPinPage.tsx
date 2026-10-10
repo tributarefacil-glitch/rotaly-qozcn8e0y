@@ -68,7 +68,10 @@ export const PublicCustomerPinPage: React.FC = () => {
     let isMounted = true
     setLoading(true)
 
-    fetch(`/backend/v1/public-client-pin/${customerIdParam}`)
+    const baseUrl = (import.meta.env.VITE_POCKETBASE_URL || '').replace(/\/$/, '')
+    const targetUrl = `${baseUrl}/backend/v1/public-client-pin/${customerIdParam}`
+
+    fetch(targetUrl)
       .then(async (res) => {
         if (!res.ok) {
           throw new Error('Não foi possível carregar os dados deste pedido.')
@@ -222,7 +225,10 @@ export const PublicCustomerPinPage: React.FC = () => {
     try {
       const code = plusCode || encodePlusCode(currentLat, currentLng)
 
-      const response = await fetch(`/backend/v1/public-client-pin/${customerIdParam}`, {
+      const baseUrl = (import.meta.env.VITE_POCKETBASE_URL || '').replace(/\/$/, '')
+      const targetUrl = `${baseUrl}/backend/v1/public-client-pin/${customerIdParam}`
+
+      const response = await fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
