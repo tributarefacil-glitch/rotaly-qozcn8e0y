@@ -427,6 +427,18 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         const roadKmOriginal = originalOrderMap.get(order.id) ?? calc.officialKm
         const officialAfterApprovalKm = calc.officialKm
 
+        // Odômetro registrado no pedido ou lote
+        let orderOdometerKm = 0
+        if (typeof order.km_odometro === 'number' && order.km_odometro > 0) {
+          orderOdometerKm = order.km_odometro
+        } else if (
+          typeof order.odometro_final === 'number' &&
+          typeof order.odometro_inicial === 'number' &&
+          order.odometro_final > order.odometro_inicial
+        ) {
+          orderOdometerKm = Number((order.odometro_final - order.odometro_inicial).toFixed(1))
+        }
+
         // Indicador de desvio relevante para priorizar triagem:
         // - Desvio de rota > 500m
         // - Ou parada fora do local > 300m
@@ -521,6 +533,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           isPendingDecision,
           approval,
           officialAfterApprovalKm,
+          odometerKm: orderOdometerKm,
         })
       })
     })
