@@ -63,6 +63,9 @@ onRecordUpdate((e) => {
     // Buscar pedidos associados a este cliente:
     // (A) Não finalizados: status != 'delivered' && status != 'cancelled'
     // (B) Entregues do dia corrente: status = 'delivered' && (actual_arrival >= start && actual_arrival <= end || (actual_arrival == '' && created >= start && created <= end))
+    // CRÍTICO: Lote já auditado/congelado (ex: total_route_with_return_km canônico fixado, encadeamento auditado, aprovação manual de KM)
+    // NUNCA sofre sobrescrita silenciosa. Em vez disso, se houver alteração, recebe REVISÃO com audit_trail
+    // action='batch_unification_recalc' (user_id='', actor_name='Sistema', metadata.system_trigger=true).
     const uncompletedFilter = `customer_id = '${custId}' && status != 'delivered' && status != 'cancelled'`
     const deliveredTodayFilter = `customer_id = '${custId}' && status = 'delivered' && ((actual_arrival >= '${startWindowStr}' && actual_arrival <= '${endWindowStr}') || (actual_arrival = '' && created >= '${startWindowStr}' && created <= '${endWindowStr}'))`
 
@@ -161,72 +164,144 @@ onRecordUpdate((e) => {
         continue
       }
 
-      // Atualizar o pedido com as novas coordenadas e o novo distance_km
-      order.set('distance_km', newCalculatedKm)
-      order.set('end_address_lat', newLat)
-      order.set('end_address_lng', newLng)
-      if (custAddress) {
-        order.set('end_address_text', custAddress)
-      }
-      if (custName) {
-        order.set('end_address_name', custName)
-      }
+      // Verificar se este pedido pertence a um lote já auditado/congelado:
+      // - Já finalizado (route_finished == true) com total_route_with_return_km canônico registrado
+      // - Ou com registro de encadeamento/unificação prévio em audit_trail ou notes
+      const orderNotes = order.getString('notes') || ''
+      const isAuditedOrFrozen =
+        order.getBool('route_finished') &&
+        (order.getFloat('total_route_with_return_km') > 0 ||
+          orderNotes.includes('encadeamento') ||
+          orderNotes.includes('unificado'))
 
-      // Adicionar observação discreta no pedido sem quebrar notas existentes
-      const currentNotes = order.getString('notes') || ''
-      const recalcTag = `[KM Recalculado via Pin Corrigido: ${oldKm.toFixed(1)} km -> ${newCalculatedKm.toFixed(1)} km]`
-      if (!currentNotes.includes('KM Recalculado via Pin Corrigido')) {
-        order.set('notes', currentNotes ? `${currentNotes} | ${recalcTag}` : recalcTag)
-      }
+      if (isAuditedOrFrozen) {
+        // PROIBIDA SOBRESCRITA SILENCIOSA DO TOTAL CANÔNICO DO LOTE AUDITADO!
+        // O total_route_with_return_km permanece protegido. Atualiza apenas as coordenadas de snapshot
+        // e registra REVISÃO explícita com action='batch_unification_recalc'.
+        order.set('end_address_lat', newLat)
+        order.set('end_address_lng', newLng)
+        if (custAddress) {
+          order.set('end_address_text', custAddress)
+        }
+        if (custName) {
+          order.set('end_address_name', custName)
+        }
 
-      e.app.save(order)
+        const reviewTag = `[Revisão de Pin em Lote Auditado: coord calibrada (${oldEndLat.toFixed(4)}, ${oldEndLng.toFixed(4)}) -> (${newLat.toFixed(4)}, ${newLng.toFixed(4)})]`
+        if (!orderNotes.includes('Revisão de Pin em Lote Auditado')) {
+          order.set('notes', orderNotes ? `${orderNotes} | ${reviewTag}` : reviewTag)
+        }
+        e.app.save(order)
 
-      console.log(
-        `[customers_recalc_orders_km] Pedido ${order.getString('tracking_code') || order.id} recalculado: ${oldKm.toFixed(1)} km -> ${newCalculatedKm.toFixed(1)} km (cliente ${custName})`,
-      )
-
-      // Registrar na trilha de auditoria (audit_trail)
-      // REGRA: user_id VAZIO + actor_name='Sistema' + metadata.system_trigger=true
-      // Motivo exigido: 'pin corrigido após criação do pedido', valores antes/depois
-      // NUNCA MEXE EM SALDOS DE CONTA CORRENTE
-      if (auditCol) {
-        try {
-          const auditRec = new Record(auditCol)
-          const courierId = order.getString('courier_id')
-          if (courierId) {
-            auditRec.set('courier_id', courierId)
+        if (auditCol) {
+          try {
+            const auditRec = new Record(auditCol)
+            const courierId = order.getString('courier_id')
+            if (courierId) {
+              auditRec.set('courier_id', courierId)
+            }
+            auditRec.set('collection', 'orders')
+            auditRec.set('record_id', order.id)
+            auditRec.set('action', 'batch_unification_recalc')
+            auditRec.set('field', 'end_address_coordinates')
+            auditRec.set(
+              'old_value',
+              `(${oldEndLat.toFixed(6)}, ${oldEndLng.toFixed(6)}) - distance_km: ${oldKm.toFixed(2)}`,
+            )
+            auditRec.set(
+              'new_value',
+              `(${newLat.toFixed(6)}, ${newLng.toFixed(6)}) - distance_km: ${oldKm.toFixed(2)} (lote congelado mantido)`,
+            )
+            auditRec.set('user_id', '') // user_id vazio obrigatório para ações de Sistema
+            auditRec.set('timestamp', new Date().toISOString())
+            auditRec.set('metadata', {
+              reason: 'revisão auditada de pin em lote previamente congelado/auditado',
+              customer_id: custId,
+              customer_name: custName,
+              tracking_code: order.getString('tracking_code'),
+              status: order.getString('status'),
+              old_distance_km: oldKm,
+              suggested_distance_km: newCalculatedKm,
+              total_route_with_return_km: order.getFloat('total_route_with_return_km'),
+              actor_name: 'Sistema',
+              actor_role: 'system',
+              system_trigger: true,
+              coord_shift_meters: Math.round(coordShiftMeters),
+              operational_date: todayStr,
+            })
+            e.app.save(auditRec)
+          } catch (auditErr) {
+            console.warn(
+              '[customers_recalc_orders_km] Erro ao gravar audit_trail de revisão:',
+              auditErr,
+            )
           }
-          // user_id fica VAZIO para ações automáticas do sistema (relation não aceita string 'system')
-          auditRec.set('collection', 'orders')
-          auditRec.set('record_id', order.id)
-          auditRec.set('action', 'recalc_km_frozen_pin')
-          auditRec.set('field', 'distance_km')
-          auditRec.set(
-            'old_value',
-            `${oldKm.toFixed(2)} km (${oldEndLat.toFixed(6)}, ${oldEndLng.toFixed(6)})`,
-          )
-          auditRec.set(
-            'new_value',
-            `${newCalculatedKm.toFixed(2)} km (${newLat.toFixed(6)}, ${newLng.toFixed(6)})`,
-          )
-          auditRec.set('timestamp', new Date().toISOString())
-          auditRec.set('metadata', {
-            reason: 'pin corrigido após criação do pedido',
-            customer_id: custId,
-            customer_name: custName,
-            tracking_code: order.getString('tracking_code'),
-            status: order.getString('status'),
-            old_distance_km: oldKm,
-            new_distance_km: newCalculatedKm,
-            actor_name: 'Sistema',
-            actor_role: 'system',
-            system_trigger: true,
-            coord_shift_meters: Math.round(coordShiftMeters),
-            operational_date: todayStr,
-          })
-          e.app.save(auditRec)
-        } catch (auditErr) {
-          console.warn('[customers_recalc_orders_km] Erro ao gravar audit_trail:', auditErr)
+        }
+      } else {
+        // Pedido não congelado/não auditado: atualiza normalmente e audita
+        order.set('distance_km', newCalculatedKm)
+        order.set('end_address_lat', newLat)
+        order.set('end_address_lng', newLng)
+        if (custAddress) {
+          order.set('end_address_text', custAddress)
+        }
+        if (custName) {
+          order.set('end_address_name', custName)
+        }
+
+        const currentNotes = order.getString('notes') || ''
+        const recalcTag = `[KM Recalculado via Pin Corrigido: ${oldKm.toFixed(1)} km -> ${newCalculatedKm.toFixed(1)} km]`
+        if (!currentNotes.includes('KM Recalculado via Pin Corrigido')) {
+          order.set('notes', currentNotes ? `${currentNotes} | ${recalcTag}` : recalcTag)
+        }
+
+        e.app.save(order)
+
+        console.log(
+          `[customers_recalc_orders_km] Pedido ${order.getString('tracking_code') || order.id} recalculado: ${oldKm.toFixed(1)} km -> ${newCalculatedKm.toFixed(1)} km (cliente ${custName})`,
+        )
+
+        // Registrar na trilha de auditoria (audit_trail)
+        // REGRA: user_id VAZIO + actor_name='Sistema' + metadata.system_trigger=true
+        if (auditCol) {
+          try {
+            const auditRec = new Record(auditCol)
+            const courierId = order.getString('courier_id')
+            if (courierId) {
+              auditRec.set('courier_id', courierId)
+            }
+            auditRec.set('collection', 'orders')
+            auditRec.set('record_id', order.id)
+            auditRec.set('action', 'recalc_km_frozen_pin')
+            auditRec.set('field', 'distance_km')
+            auditRec.set(
+              'old_value',
+              `${oldKm.toFixed(2)} km (${oldEndLat.toFixed(6)}, ${oldEndLng.toFixed(6)})`,
+            )
+            auditRec.set(
+              'new_value',
+              `${newCalculatedKm.toFixed(2)} km (${newLat.toFixed(6)}, ${newLng.toFixed(6)})`,
+            )
+            auditRec.set('user_id', '')
+            auditRec.set('timestamp', new Date().toISOString())
+            auditRec.set('metadata', {
+              reason: 'pin corrigido após criação do pedido',
+              customer_id: custId,
+              customer_name: custName,
+              tracking_code: order.getString('tracking_code'),
+              status: order.getString('status'),
+              old_distance_km: oldKm,
+              new_distance_km: newCalculatedKm,
+              actor_name: 'Sistema',
+              actor_role: 'system',
+              system_trigger: true,
+              coord_shift_meters: Math.round(coordShiftMeters),
+              operational_date: todayStr,
+            })
+            e.app.save(auditRec)
+          } catch (auditErr) {
+            console.warn('[customers_recalc_orders_km] Erro ao gravar audit_trail:', auditErr)
+          }
         }
       }
     }

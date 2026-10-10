@@ -108,6 +108,7 @@ import {
   areAddressesOnSameStreet,
   calcDistanceMeters,
 } from '@/services/intelligentRoadRouter'
+import { isSuspectPin } from '@/lib/geo'
 import { toast } from 'sonner'
 
 interface RouteOptimizerModalProps {
@@ -1493,6 +1494,56 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       }
     }
 
+    // BLOQUEIO RIGOROSO DE PIN SUSPEITO / SEM PIN CALIBRADO:
+    // Não permitir gerar nem salvar rota se qualquer pedido selecionado tiver pin suspeito
+    // (dispersão aleatória removida por completo).
+    for (const ord of ordersToOptimize) {
+      const cust = localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
+      const customerName = cust?.name || ord.end_address_name || 'Cliente'
+      const lat = cust?.lat ?? ord.end_address_lat ?? null
+      const lng = cust?.lng ?? ord.end_address_lng ?? null
+      const notes = ord.notes || cust?.notes || ''
+
+      const isSuspect = isSuspectPin(lat, lng, notes)
+      if (isSuspect) {
+        toast.error(`Cliente sem pin calibrado — calibre antes: ${customerName}`, {
+          description: 'Ajuste o pin no mapa do cliente antes de gerar ou salvar a rota.',
+          duration: 7000,
+        })
+
+        // Gravar audit_trail: action='pin_calibration_required', user_id='', actor_name='Sistema', metadata.system_trigger=true
+        deliveryService
+          .logAuditTrail({
+            action: 'pin_calibration_required',
+            user_id: '',
+            actor_name: 'Sistema',
+            collection: 'orders',
+            record_id: ord.id,
+            field: 'pin_calibration',
+            old_value: `${lat ?? 'null'}, ${lng ?? 'null'}`,
+            new_value: 'calibration_required',
+            courier_id: ord.courier_id || undefined,
+            metadata: {
+              system_trigger: true,
+              actor_name: 'Sistema',
+              customer_id: ord.customer_id,
+              customer_name: customerName,
+              order_id: ord.id,
+              tracking_code: ord.tracking_code,
+              reason: 'Bloqueio de otimização de rota: cliente sem pin calibrado',
+              lat,
+              lng,
+              notes,
+            },
+          })
+          .catch((err) =>
+            console.warn('[RouteOptimizerModal] Erro ao gravar audit_trail de pin suspeito:', err),
+          )
+
+        return
+      }
+    }
+
     setIsOptimizing(true)
 
     try {
@@ -1516,7 +1567,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         }
       })
 
-      // 2. Prepare orders with valid coordinates
+      // 2. Prepare orders with valid coordinates (SEM dispersão aleatória)
       const validOrdersWithCoords: Array<{
         order: OrderRecord
         lat: number
@@ -1524,27 +1575,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         customer: CustomerRecord | undefined
       }> = []
 
-      const unassignedWithoutCoords: OrderRecord[] = []
-
       for (const ord of ordersToOptimize) {
         const cust = localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
-        if (cust && cust.lat && cust.lng) {
+        const lat = cust?.lat ?? ord.end_address_lat
+        const lng = cust?.lng ?? ord.end_address_lng
+
+        if (lat !== undefined && lng !== undefined && lat !== null && lng !== null) {
           validOrdersWithCoords.push({
             order: ord,
-            lat: cust.lat,
-            lng: cust.lng,
-            customer: cust,
-          })
-        } else {
-          // Fallback coords around hub center if missing (usa a base de saída como âncora)
-          const hubCenterLat = startBase.lat || -22.906847
-          const hubCenterLng = startBase.lng || -43.172896
-          const hubLat = hubCenterLat + (Math.random() - 0.5) * 0.02
-          const hubLng = hubCenterLng + (Math.random() - 0.5) * 0.02
-          validOrdersWithCoords.push({
-            order: ord,
-            lat: hubLat,
-            lng: hubLng,
+            lat,
+            lng,
             customer: cust,
           })
         }
@@ -2493,6 +2533,97 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     if (totalStopsInPlans === 0) {
       toast.error('Não é possível salvar: nenhuma entrega foi otimizada nas rotas.')
       return
+    }
+
+    // BLOQUEIO RIGOROSO DE PIN SUSPEITO ANTES DE SALVAR:
+    for (const plan of optimizationResult.courierPlans) {
+      for (const stop of plan.stops) {
+        const ord = plan.orders.find((o) => o.id === stop.id)
+        const cust =
+          localCustomers.find((c) => c.id === ord?.customer_id) || ord?.expand?.customer_id
+        const customerName = stop.customer_name || cust?.name || 'Cliente'
+        const lat = stop.lat ?? cust?.lat ?? null
+        const lng = stop.lng ?? cust?.lng ?? null
+        const notes = ord?.notes || cust?.notes || ''
+
+        if (isSuspectPin(lat, lng, notes)) {
+          toast.error(`Cliente sem pin calibrado — calibre antes: ${customerName}`, {
+            description: 'Ajuste o pin no mapa do cliente antes de salvar a rota.',
+            duration: 7000,
+          })
+          deliveryService
+            .logAuditTrail({
+              action: 'pin_calibration_required',
+              user_id: '',
+              actor_name: 'Sistema',
+              collection: 'orders',
+              record_id: stop.id,
+              field: 'pin_calibration',
+              old_value: `${lat ?? 'null'}, ${lng ?? 'null'}`,
+              new_value: 'calibration_required',
+              courier_id: plan.courier.id,
+              metadata: {
+                system_trigger: true,
+                actor_name: 'Sistema',
+                customer_name: customerName,
+                order_id: stop.id,
+                tracking_code: stop.tracking_code,
+                reason: 'Bloqueio ao salvar rota: cliente sem pin calibrado',
+                lat,
+                lng,
+                notes,
+              },
+            })
+            .catch((err) =>
+              console.warn(
+                '[RouteOptimizerModal] Erro ao gravar audit_trail de pin suspeito ao salvar:',
+                err,
+              ),
+            )
+          return
+        }
+      }
+    }
+
+    // TRAVA NA MONTAGEM/DISTRIBUIÇÃO:
+    // Bloquear lote com:
+    // 1. km total > 5x soma viária das paradas
+    // 2. perna única > 50 km (moto)
+    for (const plan of optimizationResult.courierPlans) {
+      if (plan.stops.length === 0) continue
+      const isMotoPlan =
+        (plan.courier.vehicle_type || '').toLowerCase() === 'moto' ||
+        (plan.courier.vehicle_type || '').toLowerCase() === 'motocicleta'
+
+      // Perna única > 50 km (moto)
+      const maxSingleLegMeters = Math.max(...plan.stops.map((s) => s.step_distance_meters || 0))
+      const returnLegMeters = (plan.return_distance_km || 0) * 1000
+      const highestLegMeters = Math.max(maxSingleLegMeters, returnLegMeters)
+      if (isMotoPlan && highestLegMeters > 50000) {
+        const legKm = (highestLegMeters / 1000).toFixed(1)
+        toast.error(
+          `Trava de montagem violada: rota de ${plan.courier.name} possui perna única de ${legKm} km (> 50 km para moto).`,
+          {
+            description: 'Verifique se há endereços fora de área ou em outra cidade.',
+            duration: 8000,
+          },
+        )
+        return
+      }
+
+      // km total > 5x soma viária das paradas (outbound)
+      const outboundMeters = plan.stops.reduce((acc, s) => acc + (s.step_distance_meters || 0), 0)
+      const totalPlanMeters = (Number(plan.total_distance_km) || 0) * 1000
+      if (outboundMeters > 0 && totalPlanMeters > 5 * outboundMeters) {
+        toast.error(
+          `Trava de montagem violada: km total do lote (${plan.total_distance_km} km) excede 5× a soma das paradas (${(outboundMeters / 1000).toFixed(1)} km).`,
+          {
+            description: 'Possível anomalia de retorno ou base excessivamente distante.',
+            duration: 8000,
+          },
+        )
+        return
+      }
     }
 
     for (const plan of optimizationResult.courierPlans) {
