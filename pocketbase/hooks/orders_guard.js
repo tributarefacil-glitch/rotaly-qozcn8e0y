@@ -141,9 +141,74 @@ onRecordUpdateRequest((e) => {
         )
       }
     }
+
+    // PONTO 4 — Anti-fraude geofence: se entrega for marcada como entregue fora do geofence (>500m) e liberada por admin
+    // EXIGE justificativa/motivo preenchido com pelo menos 5 caracteres e grava em audit_trail
+    const targetOrder = e.record
+    const newStatus = targetOrder.getString('status')
+    const geofenceFlag = targetOrder.getString('entrega_geofence_flag')
+    if (newStatus === 'delivered' && geofenceFlag === 'liberado_admin') {
+      const unlockReason = (targetOrder.getString('entrega_admin_unlock_reason') || '').trim()
+      if (!unlockReason || unlockReason.length < 5) {
+        throw new BadRequestError(
+          'Liberação administrativa fora do geofence (>500m) exige justificativa detalhada com pelo menos 5 caracteres.',
+        )
+      }
+
+      // Garantir gravação no audit_trail com quem liberou, quando, motivo e distância medida
+      try {
+        const adminId = authRecord ? authRecord.id : ''
+        const adminName = authRecord
+          ? authRecord.getString('name') || 'Administrador'
+          : 'Administrador'
+        const distanceM = targetOrder.getFloat('entrega_distance_to_pin_m') || 0
+        const trackingCode = targetOrder.getString('tracking_code') || ''
+        const empresaId = targetOrder.getString('empresa_id') || ''
+        const courierIdVal = targetOrder.getString('courier_id') || ''
+
+        const auditCol = $app.findCollectionByNameOrId('audit_trail')
+        if (auditCol) {
+          const auditRec = new Record(auditCol)
+          if (adminId) {
+            auditRec.set('user_id', adminId)
+          }
+          auditRec.set('actor_name', adminName)
+          auditRec.set('action', 'geofence_admin_unlock')
+          auditRec.set('collection', 'orders')
+          auditRec.set('record_id', targetOrder.id)
+          auditRec.set('field', 'entrega_geofence_flag')
+          auditRec.set('old_value', 'bloqueado_gt_500m')
+          auditRec.set('new_value', 'liberado_admin')
+          if (courierIdVal) auditRec.set('courier_id', courierIdVal)
+          if (empresaId) auditRec.set('empresa_id', empresaId)
+          auditRec.set(
+            'metadata',
+            JSON.stringify({
+              order_id: targetOrder.id,
+              tracking_code: trackingCode,
+              admin_user_id: adminId,
+              admin_user_name: adminName,
+              distance_m: distanceM,
+              reason: unlockReason,
+            }),
+          )
+          $app.save(auditRec)
+          console.log(
+            '[orders_guard] audit_trail registrado com sucesso para liberação admin >500m:',
+            targetOrder.id,
+          )
+        }
+      } catch (auditErr) {
+        console.log('[orders_guard] Aviso ao salvar audit_trail para liberação admin:', auditErr)
+      }
+    }
   } catch (err) {
     // Se for o BadRequestError explicitamente lançado, propaga para barrar a requisição
-    if (err && err.name === 'BadRequestError') {
+    if (
+      err &&
+      (err.name === 'BadRequestError' ||
+        (err.message && err.message.includes('Liberação administrativa')))
+    ) {
       throw err
     }
     console.log(

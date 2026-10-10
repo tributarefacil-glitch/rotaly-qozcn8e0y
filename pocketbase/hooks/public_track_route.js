@@ -1,10 +1,84 @@
 // Public Tracking Route Details hook
 // Endpoint público para fornecer informações da rota ativa de uma encomenda (waypoints anteriores na ordem otimizada)
 // Permite o cálculo real da rota viária e ETA com paradas anteriores de forma segura, sem expor dados sensíveis.
+// Protegido contra enumeração/adivinhação e varredura de bots com Rate Limiting por IP (~30 req/min).
 
 routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
   try {
-    const trackingCode = (e.request.pathValue('tracking_code') || '').trim().toUpperCase()
+    // 1. Rate Limit por IP para conter varredura de bots e enumeração (~30 requisições/minuto)
+    let clientIp = 'default_client_ip'
+    try {
+      const req = e.request
+      const xForwardedFor = req.header
+        ? req.header.get('X-Forwarded-For') || req.header.get('x-forwarded-for')
+        : ''
+      if (xForwardedFor) {
+        const parts = xForwardedFor.split(',')
+        const first = (parts[0] || '').trim()
+        if (first) clientIp = first
+      } else {
+        const xRealIp = req.header ? req.header.get('X-Real-IP') || req.header.get('x-real-ip') : ''
+        if (xRealIp) {
+          clientIp = xRealIp.trim()
+        } else {
+          const cfConnectingIp = req.header
+            ? req.header.get('CF-Connecting-IP') || req.header.get('cf-connecting-ip')
+            : ''
+          if (cfConnectingIp) {
+            clientIp = cfConnectingIp.trim()
+          } else if (req.remoteAddr) {
+            clientIp = String(req.remoteAddr).split(':')[0]
+          }
+        }
+      }
+    } catch (_) {}
+
+    // Objeto global persistido ou rate limit na tabela app_settings/cache
+    const now = Date.now()
+    const windowMs = 60 * 1000
+    const maxRequests = 30
+
+    let rateAllowed = true
+    let retryAfter = 60
+
+    try {
+      if (!globalThis.__publicTrackRateLimit) {
+        globalThis.__publicTrackRateLimit = {}
+      }
+      const cache = globalThis.__publicTrackRateLimit
+      const keys = Object.keys(cache)
+      if (keys.length > 500) {
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i]
+          if (now - cache[k].startTime > windowMs) {
+            delete cache[k]
+          }
+        }
+      }
+
+      const record = cache[clientIp]
+      if (!record || now - record.startTime > windowMs) {
+        cache[clientIp] = { count: 1, startTime: now }
+      } else {
+        record.count++
+        if (record.count > maxRequests) {
+          rateAllowed = false
+          retryAfter = Math.max(1, Math.ceil((record.startTime + windowMs - now) / 1000))
+        }
+      }
+    } catch (rlErr) {
+      console.log('[public_track_route] Aviso no rate limiter:', rlErr)
+    }
+
+    if (!rateAllowed) {
+      return e.json(429, {
+        error: 'Muitas consultas recentes. Limite de 30 requisições por minuto excedido.',
+        retry_after_seconds: retryAfter,
+      })
+    }
+
+    const rawCode = (e.request.pathValue('tracking_code') || '').trim()
+    const trackingCode = rawCode.toUpperCase()
     if (!trackingCode) {
       return e.json(400, { error: 'Código de rastreamento obrigatório.' })
     }
@@ -40,6 +114,39 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
       try {
         targetCustomer = $app.findRecordById('customers', customerId)
       } catch (_) {}
+    }
+
+    // Se a entrega já foi finalizada ou cancelada, ou se não tem entregador:
+    // NUNCA expor marcador nem dados do entregador após entrega/cancelamento (status final)
+    if (targetStatus === 'delivered' || targetStatus === 'cancelled' || !courierId) {
+      const finishedResponse = {
+        order_id: targetOrder.id,
+        tracking_code: trackingCode,
+        status: targetStatus,
+        sequence: targetSequence,
+        courier_id: null,
+        courier_first_name: null,
+        route_released: targetOrder.getBool('route_released'),
+        route_started: targetOrder.getBool('route_started'),
+        route_finished: targetOrder.getBool('route_finished'),
+        estimated_arrival: targetOrder.getString('estimated_arrival'),
+        destination: targetCustomer
+          ? {
+              name: targetCustomer.getString('name'),
+              lat: targetCustomer.getFloat('lat'),
+              lng: targetCustomer.getFloat('lng'),
+              address: targetCustomer.getString('address'),
+            }
+          : null,
+        courier_location: null,
+        is_gps_active: false,
+        stops_before: [],
+        total_stops_before: 0,
+        completed_stops_before: 0,
+        queue_position: 1,
+        total_deliveries_in_batch: 1,
+      }
+      return e.json(200, finishedResponse)
     }
 
     // Obter apenas o PRIMEIRO NOME do entregador para segurança pública (nunca CPF, telefone, email ou sobrenome completo)
@@ -119,15 +226,6 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
       completed_stops_before: 0,
       queue_position: 1,
       total_deliveries_in_batch: 1,
-    }
-
-    // Se a entrega já foi finalizada ou cancelada, ou se não tem entregador
-    // NUNCA expor marcador nem dados do entregador após entrega/cancelamento
-    if (targetStatus === 'delivered' || targetStatus === 'cancelled' || !courierId) {
-      baseResponse.courier_first_name = null
-      baseResponse.courier_location = null
-      baseResponse.is_gps_active = false
-      return e.json(200, baseResponse)
     }
 
     // Buscar pedidos anteriores do mesmo entregador que ainda estão pendentes/em trânsito

@@ -126,10 +126,12 @@ export async function snapRouteGpsTrack(
 
   // 1. Tentar Google Roads API se houver chave pública configurada no window ou env
   const googleKey =
-    typeof window !== 'undefined'
-      ? (window as any).__GOOGLE_MAPS_KEY__ || (window as any).googleApiKey
-      : null
-
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) ||
+    (typeof window !== 'undefined'
+      ? (window as any).__VITE_GOOGLE_MAPS_API_KEY ||
+        (window as any).__GOOGLE_MAPS_KEY__ ||
+        (window as any).googleApiKey
+      : null)
   if (googleKey && typeof googleKey === 'string' && googleKey.length > 10) {
     try {
       const pathParam = downsampled.map((p) => `${p.lat},${p.lng}`).join('|')

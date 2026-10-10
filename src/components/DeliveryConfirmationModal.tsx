@@ -279,6 +279,21 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      // PONTO 3 — Validação no frontend: tipo de arquivo e tamanho máximo (5MB)
+      const allowedMimes = ['image/jpeg', 'image/png', 'image/webp']
+      if (!allowedMimes.includes(file.type) && !file.type.startsWith('image/')) {
+        toast.error('Formato inválido! Apenas imagens JPEG, PNG ou WEBP são permitidas.')
+        if (e.target) e.target.value = ''
+        return
+      }
+
+      const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 // 5MB
+      if (file.size > MAX_UPLOAD_BYTES) {
+        toast.error('Arquivo muito grande! O tamanho máximo permitido para foto é de 5MB.')
+        if (e.target) e.target.value = ''
+        return
+      }
+
       setIsCompressingPhoto(true)
       try {
         // Redimensionar no cliente para máx ~1600px no lado maior e qualidade ~0.8 JPEG
@@ -287,6 +302,11 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           quality: 0.8,
           mimeType: 'image/jpeg',
         })
+        if (compressed.size > MAX_UPLOAD_BYTES) {
+          toast.error('A foto excedeu o limite máximo de 5MB após processamento.')
+          if (e.target) e.target.value = ''
+          return
+        }
         setPhotoFile(compressed)
         const previewUrl = URL.createObjectURL(compressed)
         setPhotoPreview(previewUrl)
@@ -421,16 +441,32 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           const distKmFormatted = (distanceToPinM / 1000).toFixed(1)
           const blockedExactMessage = `Você está a ${distKmFormatted} km do endereço do cliente. Chegue ao local para confirmar`
 
-          const isAdminUnlocked = showAdminUnlockPrompt && adminUnlockReasonInput.trim().length >= 5
+          const cleanReason = adminUnlockReasonInput.trim()
+          const isAdminUnlocked = showAdminUnlockPrompt && cleanReason.length >= 5
 
-          if (!isAdminUnlocked) {
+          if (!showAdminUnlockPrompt) {
             setGeofenceBlockedMsg(blockedExactMessage)
             setShowAdminUnlockPrompt(true)
             toast.error(blockedExactMessage)
             return
-          } else {
-            geofenceFlag = 'liberado_admin'
           }
+
+          // Se o prompt já está aberto, a liberação EXIGE motivo digitado com no mínimo 5 caracteres
+          if (!cleanReason) {
+            toast.error(
+              'Motivo obrigatório! Digite a justificativa administrativa para liberar a entrega fora do geofence.',
+            )
+            return
+          }
+
+          if (cleanReason.length < 5) {
+            toast.error(
+              'Justificativa muito curta. Digite um motivo detalhado com pelo menos 5 caracteres.',
+            )
+            return
+          }
+
+          geofenceFlag = 'liberado_admin'
         }
       }
     }
@@ -783,13 +819,15 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         await deliveryService.updateOrder(order.id, updateData)
       }
 
-      // Se liberado por admin, gravar em audit_trail
+      // Se liberado por admin, gravar em audit_trail com ordem, admin user id, nome, distância em metros e reason
       if (isDelivered && geofenceFlag === 'liberado_admin') {
         try {
+          const currentAdmin = pb.authStore.record
+          const cleanReason = adminUnlockReasonInput.trim()
           await deliveryService.logAuditTrail({
             action: 'geofence_admin_unlock',
-            user_id: pb.authStore.record?.id || '',
-            actor_name: pb.authStore.record?.name || 'Administrador',
+            user_id: currentAdmin?.id || '',
+            actor_name: currentAdmin?.name || 'Administrador',
             collection: 'orders',
             record_id: order.id,
             field: 'entrega_geofence_flag',
@@ -798,9 +836,12 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
             courier_id: courierId || order.courier_id,
             empresa_id: order.empresa_id,
             metadata: {
-              distance_m: distanceToPinM,
-              reason: adminUnlockReasonInput.trim(),
+              order_id: order.id,
               tracking_code: order.tracking_code,
+              admin_user_id: currentAdmin?.id || '',
+              admin_user_name: currentAdmin?.name || 'Administrador',
+              distance_m: distanceToPinM,
+              reason: cleanReason,
               courier_gps: currentLoc,
             },
           })
@@ -901,7 +942,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         <input
           ref={cameraInputRef}
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp"
           capture="environment"
           onChange={handleFileChange}
           className="hidden"
@@ -910,7 +951,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp"
           onChange={handleFileChange}
           className="hidden"
           id="gallery-file-input"
