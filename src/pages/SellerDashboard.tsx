@@ -395,7 +395,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     loadData()
   })
 
-  // Realtime hook for seller notifications (off-route alerts with audible warning for seller)
+  // Realtime hook for seller notifications (off-route alerts and base arrival warnings)
   useRealtime<NotificationRecord>('notifications', async (e) => {
     if (
       e.action === 'create' &&
@@ -435,6 +435,17 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               duration: 9000,
             })
           }
+        }
+      } else if (e.record.type === 'warning') {
+        // Notificação de chegada à base com rota aberta ou telemetria encerrada logo após desvio
+        const dedupeKey = `notif-warn-${e.record.id || `${e.record.title}-${e.record.created}`}`
+        if (shouldDisplayToast(dedupeKey)) {
+          playOffRouteWarningSound()
+          sendBrowserPushNotification(e.record.title, e.record.message)
+          toast.warning(e.record.title, {
+            description: e.record.message,
+            duration: 10000,
+          })
         }
       }
     }

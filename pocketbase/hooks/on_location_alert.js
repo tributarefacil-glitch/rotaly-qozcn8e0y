@@ -477,5 +477,170 @@ onRecordAfterCreateSuccess((e) => {
     }
   }
 
+  // 3. CHECAGEM DE CHEGADA À BASE COM ROTA ABERTA
+  // Geofence da base Mais Saudavel (Rua da Prosperidade, 13: lat -22.6990563, lng -43.296723, raio <= 150m)
+  // Se o entregador chegou à base e ainda tem rota aberta (route_started=true e route_finished!=true),
+  // dispara notificação de tipo warning ao vendedor responsável e a todos os admins da empresa,
+  // com horário de chegada (America/Sao_Paulo) e tempo de rota aberta.
+  const MAIS_SAUDAVEL_BASE_LAT = -22.6990563
+  const MAIS_SAUDAVEL_BASE_LNG = -43.296723
+  const BASE_GEOFENCE_RADIUS_METERS = 150
+
+  const distToBaseMeters = calcHaversineMeters(
+    lat,
+    lng,
+    MAIS_SAUDAVEL_BASE_LAT,
+    MAIS_SAUDAVEL_BASE_LNG,
+  )
+
+  if (distToBaseMeters <= BASE_GEOFENCE_RADIUS_METERS && isGpsSignalFresh) {
+    // Verificar se há rota iniciada não encerrada para este courier
+    let openOrdersForBaseAlert = []
+    try {
+      openOrdersForBaseAlert = $app.findRecordsByFilter(
+        'orders',
+        `courier_id = '${courierId}' && route_started = true && (route_finished = false || route_finished = null)`,
+        'route_started_at,created',
+        20,
+        0,
+      )
+    } catch (_) {}
+
+    if (openOrdersForBaseAlert.length > 0) {
+      // Cooldown de 15 minutos para alertas de chegada à base sem encerrar rota
+      let recentBaseAlerts = []
+      try {
+        const fifteenMinAgo = new Date(currentLocTime - 15 * 60 * 1000).toISOString()
+        recentBaseAlerts = $app.findRecordsByFilter(
+          'notifications',
+          `order_id = '${openOrdersForBaseAlert[0].id}' && type = 'warning' && title ~ 'Chegada à Base' && created >= '${fifteenMinAgo}'`,
+          '-created',
+          1,
+          0,
+        )
+      } catch (_) {}
+
+      if (recentBaseAlerts.length === 0) {
+        const firstOrder = openOrdersForBaseAlert[0]
+        const routeStartedAtStr =
+          firstOrder.getString('route_started_at') || firstOrder.getString('created')
+        const routeStartedTime = new Date(routeStartedAtStr).getTime()
+        const durationMin = Math.max(1, Math.round((currentLocTime - routeStartedTime) / 60000))
+        const durationDisplay =
+          durationMin >= 60
+            ? `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`
+            : `${durationMin} min`
+
+        // Horário de chegada formatado em Brasília (UTC-3)
+        const d = new Date(currentLocTime)
+        const utcMs = d.getTime() + d.getTimezoneOffset() * 60000
+        const bsbDate = new Date(utcMs - 3 * 3600000)
+        const bsbHours = String(bsbDate.getHours()).padStart(2, '0')
+        const bsbMinutes = String(bsbDate.getMinutes()).padStart(2, '0')
+        const arrivalTimeBsb = `${bsbHours}:${bsbMinutes}`
+
+        const warningTitle = '⚠️ Chegada à Base com Rota Aberta'
+        const warningMsg = `O entregador ${courierName} chegou à base às ${arrivalTimeBsb} com rota aberta (tempo de rota: ${durationDisplay}, ${openOrdersForBaseAlert.length} pedido(s) pendente(s) de finalização).`
+
+        // 1. Notificação para o entregador
+        try {
+          const notifCol = $app.findCollectionByNameOrId('notifications')
+          const nCourier = new Record(notifCol)
+          nCourier.set('user_id', courierId)
+          nCourier.set('order_id', firstOrder.id)
+          nCourier.set('type', 'warning')
+          nCourier.set('title', warningTitle)
+          nCourier.set(
+            'message',
+            `Você chegou à base — finalize a rota antes de encerrar o expediente (tempo de rota: ${durationDisplay}).`,
+          )
+          nCourier.set('is_read', false)
+          $app.save(nCourier)
+        } catch (_) {}
+
+        // 2. Notificação para o vendedor responsável
+        const vSellerId = firstOrder.getString('seller_id')
+        if (vSellerId) {
+          try {
+            const notifCol = $app.findCollectionByNameOrId('notifications')
+            const nSeller = new Record(notifCol)
+            nSeller.set('user_id', vSellerId)
+            nSeller.set('order_id', firstOrder.id)
+            nSeller.set('type', 'warning')
+            nSeller.set('title', warningTitle)
+            nSeller.set('message', warningMsg)
+            nSeller.set('is_read', false)
+            $app.save(nSeller)
+          } catch (_) {}
+        }
+
+        // 3. Notificação para os admins
+        try {
+          const adminUsers = $app.findRecordsByFilter(
+            'users',
+            `(role = 'admin' || role = 'master') && status = 'active'`,
+            '-created',
+            5,
+            0,
+          )
+          const notifCol = $app.findCollectionByNameOrId('notifications')
+          for (let a = 0; a < adminUsers.length; a++) {
+            const adm = adminUsers[a]
+            if (adm.id === vSellerId) continue
+            try {
+              const nAdmin = new Record(notifCol)
+              nAdmin.set('user_id', adm.id)
+              nAdmin.set('order_id', firstOrder.id)
+              nAdmin.set('type', 'warning')
+              nAdmin.set('title', warningTitle)
+              nAdmin.set('message', warningMsg)
+              nAdmin.set('is_read', false)
+              $app.save(nAdmin)
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  // 4. ALERTA VERMELHO: TELEMETRIA ENCERRADA LOGO APÓS DESVIO DE ROTA
+  // Se houver desvio recente (off_route_events criado <= 2 min antes do último sinal)
+  // e o buraco de GPS atingir > 15 minutos, notifica admin + vendedor
+  try {
+    const fifteenMinAgo = new Date(nowMs - 15 * 60 * 1000).toISOString()
+    const seventeenMinAgo = new Date(nowMs - 17 * 60 * 1000).toISOString()
+    const recentOffRoutes = $app.findRecordsByFilter(
+      'off_route_events',
+      `courier_id = '${courierId}' && created >= '${seventeenMinAgo}' && created <= '${fifteenMinAgo}'`,
+      '-created',
+      1,
+      0,
+    )
+    if (recentOffRoutes.length > 0) {
+      // checar se já alertou
+      const alertDedup = $app.findRecordsByFilter(
+        'notifications',
+        `order_id = '${recentOffRoutes[0].getString('order_id')}' && title ~ 'Telemetria encerrada logo após desvio'`,
+        '-created',
+        1,
+        0,
+      )
+      if (alertDedup.length === 0) {
+        const notifCol = $app.findCollectionByNameOrId('notifications')
+        const alertMsg = `Alerta Vermelho: O entregador ${courierName} teve a telemetria GPS interrompida por mais de 15 minutos logo após registrar desvio de rota.`
+        if (sellerId) {
+          const nS = new Record(notifCol)
+          nS.set('user_id', sellerId)
+          nS.set('order_id', recentOffRoutes[0].getString('order_id'))
+          nS.set('type', 'warning')
+          nS.set('title', '🚨 Telemetria encerrada logo após desvio de rota')
+          nS.set('message', alertMsg)
+          nS.set('is_read', false)
+          $app.save(nS)
+        }
+      }
+    }
+  } catch (_) {}
+
   e.next()
 }, 'locations')

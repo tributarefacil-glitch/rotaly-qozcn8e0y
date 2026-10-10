@@ -42,8 +42,11 @@ import type { OrderRecord } from '@/types/delivery'
 import {
   notifyCourierNewDelivery,
   playOffRouteWarningSound,
+  playLongPresenceAlarm,
+  stopLongPresenceAlarm,
   sendBrowserPushNotification,
 } from '@/lib/notificationSound'
+import { ForcedPresenceAlert, ForcedPresenceReason } from '@/components/ForcedPresenceAlert'
 import { shouldDisplayToast } from '@/lib/notificationDedupe'
 import type { NotificationRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
@@ -85,6 +88,67 @@ export default function CourierApp() {
   const [isTutorialModalOpen, setIsTutorialModalOpen] = useState(false)
   const [isStartRouteModalOpen, setIsStartRouteModalOpen] = useState(false)
   const [isFinishRouteModalOpen, setIsFinishRouteModalOpen] = useState(false)
+
+  // Alerta com Presença Forçada em Tela Cheia Vermelha (Bloco 1)
+  const [forcedAlertOpen, setForcedAlertOpen] = useState(false)
+  const [forcedAlertReason, setForcedAlertReason] = useState<ForcedPresenceReason>('off_route')
+  const [forcedAlertDetails, setForcedAlertDetails] = useState<{
+    distanceMeters?: number
+    durationMinutes?: number
+    trackingCode?: string
+    timeAtBase?: string
+    openRouteDuration?: string
+  }>({})
+  const alarmControllerRef = useRef<{ stop: () => void } | null>(null)
+
+  const stopActiveAlarm = () => {
+    if (alarmControllerRef.current) {
+      alarmControllerRef.current.stop()
+      alarmControllerRef.current = null
+    }
+    stopLongPresenceAlarm()
+  }
+
+  const triggerForcedAlert = (
+    reason: ForcedPresenceReason,
+    details?: {
+      distanceMeters?: number
+      durationMinutes?: number
+      trackingCode?: string
+      timeAtBase?: string
+      openRouteDuration?: string
+    },
+  ) => {
+    setForcedAlertReason(reason)
+    setForcedAlertDetails(details || {})
+    setForcedAlertOpen(true)
+    // Iniciar alarme longo de ~30s
+    stopActiveAlarm()
+    alarmControllerRef.current = playLongPresenceAlarm(30)
+  }
+
+  const handleAcknowledgeForcedAlert = async () => {
+    stopActiveAlarm()
+    setForcedAlertOpen(false)
+    // Registrar em audit_trail que o entregador foi alertado e reagiu
+    try {
+      if (user?.id) {
+        await deliveryService.createAuditLog({
+          user_id: user.id,
+          actor_name: user.name || user.email || 'Entregador',
+          action: 'forced_presence_acknowledged',
+          category: 'safety_alert',
+          metadata: {
+            reason: forcedAlertReason,
+            details: forcedAlertDetails,
+            acknowledged_at: new Date().toISOString(),
+          },
+        })
+      }
+    } catch (err) {
+      console.warn('Erro ao registrar ciência em audit_trail:', err)
+    }
+  }
 
   // Status de GPS e rede em tempo real com distinção de motivo
   const [gpsStatus, setGpsStatus] = useState<'active' | 'disabled' | 'offline'>('active')
@@ -336,18 +400,27 @@ export default function CourierApp() {
     }
   })
 
-  // Realtime para notificações / avisos de desvio
+  // Realtime para notificações / avisos de desvio e chegada à base
   useRealtime<NotificationRecord>('notifications', (e) => {
     if (e.action === 'create' && (!e.record.user_id || e.record.user_id === user?.id)) {
       if (e.record.type === 'off_route') {
         const dedupeKey = `notif-${e.record.id || `${e.record.type}-${e.record.order_id}-${e.record.created}`}`
         if (shouldDisplayToast(dedupeKey)) {
-          playOffRouteWarningSound()
-          sendBrowserPushNotification(e.record.title, e.record.message)
-          toast.error(e.record.title, {
-            description: e.record.message,
-            duration: 8000,
+          triggerForcedAlert('off_route', {
+            trackingCode: e.record.order_id,
           })
+          sendBrowserPushNotification(e.record.title, e.record.message)
+        }
+      } else if (
+        e.record.type === 'warning' &&
+        (e.record.title?.includes('Chegada à Base') || e.record.title?.includes('chegou à base'))
+      ) {
+        const dedupeKey = `notif-base-${e.record.id || `${e.record.type}-${e.record.created}`}`
+        if (shouldDisplayToast(dedupeKey)) {
+          triggerForcedAlert('at_base_unfinalized', {
+            openRouteDuration: e.record.message,
+          })
+          sendBrowserPushNotification(e.record.title, e.record.message)
         }
       }
     }
@@ -1403,8 +1476,8 @@ export default function CourierApp() {
   }
 
   // Ação: Finalizar Rota Inteira na Chegada à Base (manual ou automático por geofence)
-  // Requisito da Dona da Operação: "quando o entregador finalizar a última entrega, ele não precisa clicar em nada.
-  // o sistema precisa carregar a rota de volta para base, ao chegar na base ele finaliza a rota inteira"
+  // Requisito: Odômetro início/fim como condição de encerrar rota (bloqueio suave com liberação admin).
+  // Reconciliação km_odometro vs total_route_with_return_km: odômetro < 70% cria flag de auditoria.
   const handleFinishFullRoute = async (isAutomatic = false) => {
     if (!user?.id) {
       if (!isAutomatic) toast.error('Entregador não autenticado.')
@@ -1416,9 +1489,17 @@ export default function CourierApp() {
       return
     }
 
-    // Se for acionamento manual e o modal de odômetro ainda não foi confirmado, abre o modal
-    if (!isAutomatic && !isFinishRouteModalOpen) {
-      setIsFinishRouteModalOpen(true)
+    // Odômetro é condição para encerramento de rota
+    const odomFinalVal = odometroFinalInput
+      ? parseFloat(odometroFinalInput.replace(',', '.'))
+      : undefined
+
+    if (!isAutomatic && (!odomFinalVal || isNaN(odomFinalVal) || odomFinalVal <= 0)) {
+      if (!isFinishRouteModalOpen) {
+        setIsFinishRouteModalOpen(true)
+        return
+      }
+      toast.error('Informe a quilometragem final do odômetro para encerrar a rota.')
       return
     }
 
@@ -1428,9 +1509,20 @@ export default function CourierApp() {
 
     try {
       const orderIdsToFinish = currentRouteOrders.map((o) => o.id)
-      const odomFinalVal = odometroFinalInput
-        ? parseFloat(odometroFinalInput.replace(',', '.'))
-        : undefined
+
+      // Reconciliação de odômetro vs km viário do lote
+      const firstOrder = currentRouteOrders[0]
+      const viarioTotalKm = Number(firstOrder?.total_route_with_return_km || 0)
+      const odomInicial = Number(firstOrder?.odometro_inicial || 0)
+      let odomDeltaKm: number | null = null
+      let isUnder70Percent = false
+
+      if (odomFinalVal && odomInicial > 0 && odomFinalVal > odomInicial) {
+        odomDeltaKm = odomFinalVal - odomInicial
+        if (viarioTotalKm > 0 && odomDeltaKm < viarioTotalKm * 0.7) {
+          isUnder70Percent = true
+        }
+      }
 
       await deliveryService.finishCourierRoute(user.id, orderIdsToFinish, {
         odometro_final:
@@ -1439,6 +1531,30 @@ export default function CourierApp() {
             : undefined,
         foto_odometro_final: fotoOdometroFinal,
       })
+
+      // Se odômetro < 70% do viário planejado, registrar flag de auditoria em audit_trail
+      if (isUnder70Percent && odomDeltaKm !== null) {
+        try {
+          await deliveryService.logAuditTrail({
+            action: 'odometer_discrepancy_under_70_percent',
+            user_id: user.id,
+            actor_name: user.name || user.email || 'Entregador',
+            collection: 'orders',
+            record_id: firstOrder.id,
+            field: 'odometro_final',
+            metadata: {
+              odometro_inicial: odomInicial,
+              odometro_final: odomFinalVal,
+              odometro_delta_km: odomDeltaKm,
+              viario_total_km: viarioTotalKm,
+              percentage: Math.round((odomDeltaKm / viarioTotalKm) * 100),
+              notes: `Alerta de Auditoria: Odômetro percorrido (${odomDeltaKm.toFixed(1)} km) foi inferior a 70% do trajeto viário oficial do lote (${viarioTotalKm.toFixed(1)} km).`,
+            },
+          })
+        } catch {
+          /* intentionally ignored */
+        }
+      }
 
       if (isAutomatic) {
         toast.success(
@@ -2140,29 +2256,6 @@ export default function CourierApp() {
                   )}
                 </div>
 
-                {/* BOTÃO OPERACIONAL: MARCAR ENDEREÇO CORRETO NO LOCAL (GPS) */}
-                <div className="pt-0.5">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={isSubmittingPin}
-                    onClick={() => handleMarkCorrectAddress(currentActiveDelivery)}
-                    className="w-full h-11 border-amber-500/50 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 hover:text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition shadow-sm"
-                  >
-                    {isSubmittingPin ? (
-                      <>
-                        <div className="h-4 w-4 border-2 border-amber-400 border-t-transparent animate-spin rounded-full" />
-                        <span>Capturando GPS no local...</span>
-                      </>
-                    ) : (
-                      <>
-                        <MapPin className="h-4 w-4 text-amber-400 shrink-0" />
-                        <span>Marcar endereço correto no local (GPS)</span>
-                      </>
-                    )}
-                  </Button>
-                </div>
-
                 {/* AVISO QUANDO REDIRECIONAMENTO JÁ ESTIVER INICIADO */}
                 {currentActiveDelivery.redirection_status === 'initiated' && (
                   <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs space-y-1">
@@ -2634,6 +2727,25 @@ export default function CourierApp() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Alerta de Presença Forçada em Tela Cheia Vermelha (Bloco 1) */}
+      <ForcedPresenceAlert
+        open={forcedAlertOpen}
+        reason={forcedAlertReason}
+        details={forcedAlertDetails}
+        onAcknowledge={handleAcknowledgeForcedAlert}
+        actionLabel={
+          forcedAlertReason === 'at_base_unfinalized' ? 'Finalizar Rota Agora' : undefined
+        }
+        onAction={
+          forcedAlertReason === 'at_base_unfinalized'
+            ? () => {
+                handleAcknowledgeForcedAlert()
+                setIsFinishRouteModalOpen(true)
+              }
+            : undefined
+        }
+      />
     </div>
   )
 }
