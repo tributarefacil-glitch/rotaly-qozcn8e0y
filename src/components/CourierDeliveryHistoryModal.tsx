@@ -758,17 +758,17 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     // evitando inflação por multiplicação de pedidos dentro do mesmo lote.
     const isFullScopePeriod = periodFilter === 'all' || periodFilter === 'week'
     const totalKm =
-      isFullScopePeriod && consolidatedMetrics.totalOfficialKm > 0
+      isFullScopePeriod && consolidatedMetrics && consolidatedMetrics.totalOfficialKm > 0
         ? consolidatedMetrics.totalOfficialKm
         : filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
 
     const totalFuelCost =
-      isFullScopePeriod && consolidatedMetrics.totalSpent > 0
+      isFullScopePeriod && consolidatedMetrics && consolidatedMetrics.totalSpent > 0
         ? consolidatedMetrics.totalSpent
         : filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
 
     const totalLiters =
-      isFullScopePeriod && consolidatedMetrics.totalLiters > 0
+      isFullScopePeriod && consolidatedMetrics && consolidatedMetrics.totalLiters > 0
         ? consolidatedMetrics.totalLiters
         : filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
 

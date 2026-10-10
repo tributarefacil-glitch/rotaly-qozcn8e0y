@@ -1794,13 +1794,14 @@ export const deliveryService = {
   },
 
   // Notifications
-  async getNotifications(userId?: string) {
+  async getNotifications(userId?: string, limit = 50) {
     const filter = userId ? `user_id = '${userId}' || user_id = ''` : ''
-    return pb.collection<NotificationRecord>('notifications').getFullList({
+    const res = await pb.collection<NotificationRecord>('notifications').getList(1, limit, {
       filter,
       sort: '-created',
       requestKey: null,
     })
+    return res.items
   },
 
   async markNotificationAsRead(id: string) {
@@ -3441,7 +3442,12 @@ export const deliveryService = {
   },
 
   // Reviews (Avaliação de Entregador e Vendedor no Rastreio Público)
-  async getReviews(filter = '', sort = '-created', expand = 'order_id,courier_id,seller_id') {
+  async getReviews(
+    filter = '',
+    sort = '-created',
+    expand = 'order_id,courier_id,seller_id',
+    limit = 50,
+  ) {
     let finalFilter = filter
     if (!filter.includes('empresa_id') && !filter.includes('order_id')) {
       const companyClause = this.getCompanyFilterClause('empresa_id')
@@ -3450,12 +3456,13 @@ export const deliveryService = {
       }
     }
 
-    return pb.collection<ReviewRecord>('reviews').getFullList({
+    const res = await pb.collection<ReviewRecord>('reviews').getList(1, limit, {
       filter: finalFilter,
       sort,
       expand,
       requestKey: null,
     })
+    return res.items
   },
 
   async getReviewByOrderId(orderId: string): Promise<ReviewRecord | null> {
@@ -3475,7 +3482,12 @@ export const deliveryService = {
   },
 
   // Off Route & Unexpected Stop Events
-  async getOffRouteEvents(filter = '', sort = '-created', expand = 'courier_id,order_id') {
+  async getOffRouteEvents(
+    filter = '',
+    sort = '-created',
+    expand = 'courier_id,order_id',
+    limit = 50,
+  ) {
     let finalFilter = filter
     if (!filter.includes('empresa_id')) {
       const companyClause = this.getCompanyFilterClause('empresa_id')
@@ -3484,12 +3496,13 @@ export const deliveryService = {
       }
     }
 
-    return pb.collection<OffRouteEventRecord>('off_route_events').getFullList({
+    const res = await pb.collection<OffRouteEventRecord>('off_route_events').getList(1, limit, {
       filter: finalFilter,
       sort,
       expand,
       requestKey: null,
     })
+    return res.items
   },
 
   async createOffRouteEvent(data: Partial<OffRouteEventRecord>) {
@@ -3508,6 +3521,16 @@ export const deliveryService = {
     originLng = -43.172896,
   ): Promise<OptimizedRouteResult> {
     return this.clientSideOptimizeRoute(orderIds, originLat, originLng)
+  },
+
+  // Alias for compatibility with spec
+  async suggestOptimalCourier(params: {
+    customerLat: number
+    customerLng: number
+    priority?: OrderPriority
+    timeWindow?: string
+  }): Promise<RouteSuggestionDetails | null> {
+    return this.suggestBestCourierForOrder(params)
   },
 
   // Calculate Best Courier & Route Suggestion for a new delivery
@@ -4454,6 +4477,33 @@ export const deliveryService = {
     const updatedOrder = await pb.collection<OrderRecord>('orders').update(order.id, formData, {
       expand: 'customer_id,courier_id,seller_id',
     })
+
+    // Registrar no audit_trail a mudança de endereço/redirecionamento pelo entregador
+    try {
+      await pb.collection('audit_trail').create({
+        user_id: authUser?.id || '',
+        actor_name: authUser?.name || 'Entregador',
+        actor_role: 'courier',
+        collection: 'orders',
+        record_id: order.id,
+        courier_id: params.courierId,
+        action: 'customer_address_moved_redirection',
+        field: 'redirection_new_address',
+        old_value: order.end_address_text || '',
+        new_value: `${params.newAddressText || ''} (+${extraKm.toFixed(1)}km)`,
+        timestamp: now,
+        metadata: {
+          point_a: { lat: pointALat, lng: pointALng },
+          point_b: { lat: pointBLat, lng: pointBLng },
+          extra_km: extraKm,
+          is_auto_approved: isAutoApproved,
+          tracking_code: order.tracking_code,
+          suggested_customer_update: params.updateCustomerAddressOfficial,
+        },
+      })
+    } catch (auditErr) {
+      console.warn('[deliveryService] Erro ao gravar audit_trail de redirecionamento:', auditErr)
+    }
 
     // 4. Se o usuário solicitou atualizar o cadastro oficial do cliente
     if (params.updateCustomerAddressOfficial && order.customer_id) {

@@ -168,8 +168,16 @@ export const CustomerQualityReport: React.FC<CustomerQualityReportProps> = ({
         if (isMissingCep) issues.push('Sem CEP')
         if (isMissingRef) issues.push('Sem número e sem Ponto de Referência')
 
+        const isMissingAddress = !c.street?.trim() && !c.address?.trim() && (!c.lat || !c.lng)
+        if (isMissingAddress) issues.push('Cadastro Incompleto (Sem endereço e sem pin)')
+
         const isIncomplete =
-          isUrgent5 || hasPendingPin || isMissingCep || isMissingRef || isFallbackPin
+          isUrgent5 ||
+          hasPendingPin ||
+          isMissingCep ||
+          isMissingRef ||
+          isFallbackPin ||
+          isMissingAddress
 
         return {
           customer: c,

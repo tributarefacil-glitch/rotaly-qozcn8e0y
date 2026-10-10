@@ -851,16 +851,30 @@ export function CreateCustomerModal({
     }
 
     const fullAddress = getFullFormattedAddress() || streetAndNumber.trim()
-    if (!streetAndNumber.trim() && !fullAddress.trim()) {
+    const hasAnyAddressInput = Boolean(
+      streetAndNumber.trim() ||
+      neighborhood.trim() ||
+      city.trim() ||
+      postalCode.trim() ||
+      complement.trim() ||
+      addressSearchQuery.trim() ||
+      locationLinkInput.trim(),
+    )
+
+    // Validação de endereço: só bloqueia se endereço PARCIAL foi iniciado
+    // Nome + telefone sem NENHUM campo de endereço salvam normalmente
+    if (hasAnyAddressInput && !streetAndNumber.trim() && !fullAddress.trim()) {
       toast.error('Preencha a Rua e Número ou busque pelo endereço/CEP.')
       return
     }
 
-    // ITEM 11: Campo 'Ponto de referência' OBRIGATÓRIO quando sem número (lote/quadra/comunidade/s/n)
+    // ITEM 11: Campo 'Ponto de referência' OBRIGATÓRIO somente quando rua foi digitada sem número (lote/quadra/comunidade/s/n)
+    const hasStreetTyped = Boolean(streetAndNumber.trim())
     const hasNoNumber =
-      !streetAndNumber.trim() ||
-      /\b(s\/n|sn|sem\s+n[uú]mero|lote|quadra|qd|lt|comunidade)\b/i.test(streetAndNumber) ||
-      !/\d+/.test(streetAndNumber)
+      hasStreetTyped &&
+      (/\b(s\/n|sn|sem\s+n[uú]mero|lote|quadra|qd|lt|comunidade)\b/i.test(streetAndNumber) ||
+        !/\d+/.test(streetAndNumber))
+
     if (hasNoNumber && !referencePoint.trim()) {
       toast.error(
         'Endereço sem número detectado (lote/quadra/comunidade/s/n): o Ponto de Referência é OBRIGATÓRIO.',
@@ -1059,6 +1073,29 @@ export function CreateCustomerModal({
         } else {
           const created = await deliveryService.createCustomer(payload)
           toast.success(`Cliente "${created.name}" cadastrado com sucesso!`)
+
+          // Se cliente foi cadastrado sem coordenadas ou sem endereço, oferecer botão WhatsApp imediato
+          const isIncomplete = !created.lat || !created.lng || !created.street?.trim()
+          if (isIncomplete) {
+            const origin = typeof window !== 'undefined' ? window.location.origin : ''
+            const pinUrl = `${origin}/pin/${created.id}`
+            const phoneDigits = (created.phone || '').replace(/\D/g, '')
+            const msg = encodeURIComponent(
+              `Olá ${created.name}, tudo bem? Para que seu pedido chegue certinho e sem atrasos, por favor confirme ou ajuste a localização do seu endereço clicando aqui: ${pinUrl}`,
+            )
+            const waUrl = phoneDigits
+              ? `https://wa.me/55${phoneDigits}?text=${msg}`
+              : `https://wa.me/?text=${msg}`
+            toast.info('Cadastro salvo na fila "Cadastro Incompleto"!', {
+              description: 'Envie o link para o cliente enviar a localização exata.',
+              action: {
+                label: 'WhatsApp Pin',
+                onClick: () => window.open(waUrl, '_blank'),
+              },
+              duration: 10000,
+            })
+          }
+
           resetForm()
           onCustomerCreated(created)
           onOpenChange(false)
@@ -1354,7 +1391,10 @@ export function CreateCustomerModal({
               <div className="sm:col-span-8">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-semibold text-slate-300">
-                    Rua e Número <span className="text-[#FF6B35]">*</span>
+                    Rua e Número{' '}
+                    <span className="text-[10px] text-slate-400 font-normal">
+                      (Opcional se cliente enviar pin)
+                    </span>
                   </Label>
                   <Button
                     type="button"
@@ -1381,7 +1421,6 @@ export function CreateCustomerModal({
                   onChange={(e) => handleAddressFieldChange(setStreetAndNumber, e.target.value)}
                   onBlur={handleAddressFieldsBlur}
                   className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
-                  required
                 />
               </div>
 
