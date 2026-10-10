@@ -502,10 +502,17 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              window.open(
-                                `https://www.google.com/maps?q=${cur.lat},${cur.lng}`,
-                                '_blank',
-                              )
+                              if (cur.lat && cur.lng) {
+                                window.open(
+                                  `https://www.google.com/maps?q=${cur.lat},${cur.lng}`,
+                                  '_blank',
+                                )
+                              } else if (cur.address) {
+                                window.open(
+                                  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cur.address)}`,
+                                  '_blank',
+                                )
+                              }
                             }}
                             className="h-8 text-xs border-slate-300 text-slate-700 dark:text-slate-200 hover:bg-slate-100"
                             title="Auditar endereço e pin original do cliente no Google Maps"

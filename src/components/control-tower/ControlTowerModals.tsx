@@ -36,6 +36,8 @@ import {
   ExternalLink,
   Sparkles,
 } from 'lucide-react'
+import pb from '@/lib/pocketbase/client'
+import { toast as sonnerToast } from 'sonner'
 import { OrderRecord, UserRecord, AppSettingsRecord, LocationRecord } from '@/types/delivery'
 import { LatLngPoint, findNearestPointOnRoute } from '@/services/osrmRoutingService'
 import { DEVIATION_THRESHOLD_METERS } from '@/lib/geo'
@@ -57,6 +59,7 @@ interface ControlTowerModalsProps {
   isDrawerOpen: boolean
   setIsDrawerOpen: (open: boolean) => void
   selectedOrder: OrderRecord | null
+  setSelectedOrder?: (order: OrderRecord | null) => void
   orderCourierInfo?: ActiveRouteCourierData
   copiedCode: string | null
   copyTracking: (code: string) => void
@@ -101,6 +104,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
   isDrawerOpen,
   setIsDrawerOpen,
   selectedOrder,
+  setSelectedOrder,
   orderCourierInfo,
   copiedCode,
   copyTracking,
@@ -321,16 +325,19 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                                 reason: 'Aprovado na Torre de Controle',
                               },
                             })
-                            setSelectedOrder({
-                              ...selectedOrder,
-                              entrega_geofence_flag: 'aprovado_admin',
-                            })
-                            toast.success(
+                            if (setSelectedOrder) {
+                              setSelectedOrder({
+                                ...selectedOrder,
+                                entrega_geofence_flag: 'aprovado_admin',
+                              })
+                            }
+                            fetchData()
+                            sonnerToast.success(
                               `Entrega ${selectedOrder.tracking_code} aprovada pelo administrador com sucesso!`,
                             )
                           } catch (errApprove) {
                             console.error('Erro ao aprovar entrega:', errApprove)
-                            toast.error('Não foi possível aprovar a entrega.')
+                            sonnerToast.error('Não foi possível aprovar a entrega.')
                           }
                         }}
                         className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 rounded-xl shadow-sm"
@@ -352,7 +359,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                                 '_blank',
                               )
                             } else {
-                              toast.info('Cliente sem coordenadas para abrir no mapa.')
+                              sonnerToast.info('Cliente sem coordenadas para abrir no mapa.')
                             }
                           }}
                           className="h-8 border-amber-500/40 bg-amber-950/40 hover:bg-amber-900/60 text-amber-200 font-bold text-xs gap-1.5 rounded-xl"

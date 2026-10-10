@@ -3494,6 +3494,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         isDrawerOpen={isDrawerOpen}
         setIsDrawerOpen={setIsDrawerOpen}
         selectedOrder={selectedOrder}
+        setSelectedOrder={setSelectedOrder}
         orderCourierInfo={orderCourierInfo}
         copiedCode={copiedCode}
         copyTracking={copyTracking}
