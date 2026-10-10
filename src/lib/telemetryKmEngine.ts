@@ -139,6 +139,9 @@ export interface RealKmCalculationResult {
   jointGroupSize?: number
   jointPrimaryTrackingCode?: string
   jointPartnerTrackingCodes?: string[]
+  /** Sinalização de parada com pin suspeito (excluída do viário e auditada) */
+  isSuspectPin?: boolean
+  suspectPinReason?: string
 }
 
 /**
@@ -487,6 +490,13 @@ export function calculateRealKmForOrder(params: {
 }): RealKmCalculationResult {
   const { order, allCourierLocations, courierEvents, allCourierOrders = [] } = params
 
+  // Verificação de Sanidade de Pin (isSuspectPin):
+  // Se a parada estiver com coordenadas suspeitas/não calibradas, ela é excluída do viário e sinalizada
+  const orderCustLatCheck = order.expand?.customer_id?.lat ?? order.end_address_lat ?? null
+  const orderCustLngCheck = order.expand?.customer_id?.lng ?? order.end_address_lng ?? null
+  const orderCustNotesCheck = order.notes || order.expand?.customer_id?.notes || ''
+  const isOrderPinSuspect = isSuspectPin(orderCustLatCheck, orderCustLngCheck, orderCustNotesCheck)
+
   // 1. Obter KM planejado e viário do histórico de rotas (fallback e comparação)
   let plannedBaseKm =
     typeof order.distance_km === 'number' && order.distance_km > 0 ? order.distance_km : 0
@@ -686,7 +696,11 @@ export function calculateRealKmForOrder(params: {
   let finalOfficialKm = 0
   let calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
 
-  if (routeTotalRoadKm > 0) {
+  if (isOrderPinSuspect) {
+    // Parada com pin suspeito é excluída do viário oficial
+    finalOfficialKm = 0
+    calculationSource = 'historico_viario'
+  } else if (routeTotalRoadKm > 0) {
     finalOfficialKm = routeTotalRoadKm
     calculationSource = 'historico_viario'
   } else if (isCompletedOrAttempted && plannedTotalKm > 0) {
@@ -714,6 +728,10 @@ export function calculateRealKmForOrder(params: {
     samplingCurvatureFactor: curvatureFactor,
     calculationSource,
     odometerKm: odometerDifference || undefined,
-    auditNotes: `Fonte: Trajeto Viário Oficial das Paradas. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
+    isSuspectPin: isOrderPinSuspect,
+    suspectPinReason: isOrderPinSuspect ? 'Parada com Pin Suspeito' : undefined,
+    auditNotes: isOrderPinSuspect
+      ? `Parada com Pin Suspeito: excluída do viário oficial. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km.`
+      : `Fonte: Trajeto Viário Oficial das Paradas. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
   }
 }

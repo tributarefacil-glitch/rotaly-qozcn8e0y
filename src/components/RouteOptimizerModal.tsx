@@ -1969,6 +1969,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const totalFuelCost = plans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
       const totalEstDuration = plans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
 
+      // Identificar pedidos selecionados que não possuem coordenadas válidas
+      const validOrderIds = new Set(validOrdersWithCoords.map((v) => v.order.id))
+      const unassignedWithoutCoords = ordersToOptimize.filter((o) => !validOrderIds.has(o.id))
+
       const finalResult: MultiCourierOptimizationResult = {
         courierPlans: plans,
         unassignedOrders: unassignedWithoutCoords,

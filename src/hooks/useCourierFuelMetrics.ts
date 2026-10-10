@@ -15,6 +15,7 @@ import {
   DEVIATION_THRESHOLD_METERS,
   haversineDistanceMeters,
 } from '@/lib/telemetryKmEngine'
+import { isSuspectPin } from '@/lib/geo'
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
 import { getMergedRouteBatchKey, groupOrdersByRouteBatch } from '@/lib/routeBatchHelper'
 import {
@@ -49,6 +50,8 @@ export interface CourierOrderTelemetryCalculation {
   isApprovedKm?: boolean
   approvedKm?: number
   approvalJustification?: string
+  isSuspectPin?: boolean
+  suspectPinReason?: string
 }
 
 export interface CourierRouteAuditSummary {
@@ -494,8 +497,15 @@ export function calculateCourierFuelMetrics(params: {
       return Math.max(max, roadKm)
     }, 0)
 
-    // Soma viária apenas das pernas de paradas (sem o retorno da última parada à base)
+    // Soma viária apenas das pernas de paradas (sem o retorno da última parada à base),
+    // desconsiderando paradas com pin suspeito que foram excluídas do viário
     const sumOutboundLegsKm = batchOrders.reduce((sum, ord) => {
+      const cLat = ord.expand?.customer_id?.lat ?? ord.end_address_lat ?? null
+      const cLng = ord.expand?.customer_id?.lng ?? ord.end_address_lng ?? null
+      const cNotes = ord.notes || ord.expand?.customer_id?.notes || ''
+      if (isSuspectPin(cLat, cLng, cNotes)) {
+        return sum
+      }
       const dist = typeof ord.distance_km === 'number' ? ord.distance_km : 0
       return sum + dist
     }, 0)
@@ -566,14 +576,20 @@ export function calculateCourierFuelMetrics(params: {
   const isBicycle = category === 'bicicleta'
 
   // Helper para peso individual da entrega no rateio da rota:
-  // Regra oficial: ida proporcional ao trecho (distance_km) + retorno rateado uma vez
-  // Fim do x2: peso não duplica retorno para cada entrega
+  // Regra oficial: ida proporcional ao trecho (distance_km) + retorno rateado uma vez.
+  // Paradas com pin suspeito recebem peso 0 para não absorverem quilometragem viária.
   const computeOrderWeight = (ord: OrderRecord): number => {
+    const cLat = ord.expand?.customer_id?.lat ?? ord.end_address_lat ?? null
+    const cLng = ord.expand?.customer_id?.lng ?? ord.end_address_lng ?? null
+    const cNotes = ord.notes || ord.expand?.customer_id?.notes || ''
+    if (isSuspectPin(cLat, cLng, cNotes)) {
+      return 0
+    }
+
     const baseLat = ord.start_base_lat || baseLatFallback
     const baseLng = ord.start_base_lng || baseLngFallback
     const custLat = ord.expand?.customer_id?.lat || ord.end_address_lat || 0
     const custLng = ord.expand?.customer_id?.lng || ord.end_address_lng || 0
-
     const hasCustomerCoords =
       typeof ord.expand?.customer_id?.lat === 'number' &&
       typeof ord.expand?.customer_id?.lng === 'number' &&
@@ -664,12 +680,17 @@ export function calculateCourierFuelMetrics(params: {
       // Rateio pro-rata: peso = max(roadDistFromBase(i), 0.8) + returnToBase(i)
       const totalBatchWeight = batchOrders.reduce((sum, b) => sum + computeOrderWeight(b), 0)
       const thisWeight = computeOrderWeight(order)
-      const ratio = totalBatchWeight > 0 ? thisWeight / totalBatchWeight : 1 / batchCount
+      const ratio = totalBatchWeight > 0 ? thisWeight / totalBatchWeight : 0
 
       const orderIndex = batchOrders.findIndex((b) => b.id === order.id)
       const isLastOrderInBatch = orderIndex === batchCount - 1
 
-      if (isLastOrderInBatch) {
+      if (thisWeight === 0) {
+        // Parada com pin suspeito: 0 km viário e 0 combustível
+        officialKm = 0
+        fuelCost = 0
+        litersSpent = 0
+      } else if (isLastOrderInBatch) {
         // O último item do lote absorve exatamente o resíduo de arredondamento
         // garantindo que Σ km = total do lote e Σ fuel = total do lote
         officialKm = Number(
@@ -732,6 +753,19 @@ export function calculateCourierFuelMetrics(params: {
       }
     }
 
+    // REGRA DE PIN SUSPEITO:
+    // Parada com isSuspectPin é excluída do viário e sinalizada 'Parada com Pin Suspeito'
+    const custLatToCheck = order.expand?.customer_id?.lat ?? order.end_address_lat ?? null
+    const custLngToCheck = order.expand?.customer_id?.lng ?? order.end_address_lng ?? null
+    const custNotesToCheck = order.notes || order.expand?.customer_id?.notes || ''
+    const isSuspect = isSuspectPin(custLatToCheck, custLngToCheck, custNotesToCheck)
+
+    if (isSuspect) {
+      officialKm = 0
+      fuelCost = 0
+      litersSpent = 0
+    }
+
     // REGRA DE APROVAÇÃO DE KM DO ADMINISTRADOR:
     // Quando o admin aprova um KM customizado para esta entrega (ex: erro de endereço, chuva, área de risco),
     // o valor aprovado SUBSTITUI o trecho no cálculo oficial de KM real e de consumo de combustível.
@@ -777,6 +811,8 @@ export function calculateCourierFuelMetrics(params: {
       isApprovedKm,
       approvedKm: approvedKmVal,
       approvalJustification,
+      isSuspectPin: isSuspect,
+      suspectPinReason: isSuspect ? 'Parada com Pin Suspeito' : undefined,
     }
   })
 

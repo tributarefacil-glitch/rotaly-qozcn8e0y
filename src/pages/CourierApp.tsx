@@ -2342,11 +2342,20 @@ export default function CourierApp() {
                               type="button"
                               size="sm"
                               variant="outline"
-                              disabled={true}
-                              className="h-7 px-2 border-slate-800 bg-slate-900/80 text-slate-500 cursor-not-allowed opacity-80 text-[10px] font-bold rounded-lg flex items-center gap-1 shadow-none pointer-events-none"
-                              title={`Parada #${stopNum} travada. Conclua primeiro a parada atual.`}
+                              onClick={() => {
+                                playOffRouteWarningSound()
+                                toast.warning(
+                                  `Entrega fora de ordem! Conclua primeiro a parada #${currentActiveDelivery ? currentActiveDelivery.sequence || 1 : 1} (${currentActiveDelivery?.expand?.customer_id?.name || 'Cliente atual'}).`,
+                                  {
+                                    description: `Parada #${stopNum} (${customer?.name || 'Cliente'}) só pode ser atendida após a conclusão da entrega atual.`,
+                                    duration: 5000,
+                                  },
+                                )
+                              }}
+                              className="h-7 px-2 border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] font-bold rounded-lg flex items-center gap-1 cursor-pointer transition shadow-none"
+                              title={`Parada #${stopNum} bloqueada. Toque para ouvir o alerta de fora de ordem.`}
                             >
-                              <Lock className="h-3 w-3 text-slate-500" />
+                              <Lock className="h-3 w-3 text-amber-400" />
                               <span>Aguarde, parada #{stopNum}</span>
                             </Button>
                           </div>

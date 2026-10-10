@@ -3519,12 +3519,19 @@ export const deliveryService = {
   }): Promise<RouteSuggestionDetails | null> {
     const { customerLat, customerLng, priority = 'normal' } = params
 
-    // 1. Get couriers and their latest locations
-    const [couriers, orders, latestLocations] = await Promise.all([
+    // 1. Get couriers, orders, latest locations and base addresses
+    const [couriers, orders, latestLocations, baseAddresses] = await Promise.all([
       this.getCouriers(),
       this.getOrders('status = "pending" || status = "in_transit"'),
       this.getLatestLocations(),
+      this.getBaseAddresses().catch(() => []),
     ])
+
+    // Determinar base ativa (padrão) para medição canônica de partida
+    const activeBase =
+      baseAddresses.find((b) => b.is_default && b.lat && b.lng) ||
+      baseAddresses.find((b) => b.lat && b.lng) ||
+      null
 
     // Regra: "ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL"
     // Entregadores com rota ativa não finalizada não devem receber nova atribuição automática
@@ -3621,9 +3628,19 @@ export const deliveryService = {
     const estTimeText =
       estMins < 60 ? `${estMins} min` : `${Math.floor(estMins / 60)}h ${estMins % 60}m`
 
-    // Km saved compared to manual dispatch from furthest base
+    // Medição 'Mais próximo' da base ativa (base_addresses.is_default) até a primeira parada
+    const distFromActiveBaseKm = activeBase
+      ? calcDist(activeBase.lat, activeBase.lng, customerLat, customerLng)
+      : null
+
+    // km_saved real (2-Opt vs manual): diferença real do trajeto otimizado vs pior alocação/ordem manual, sem acréscimo fixo de 2.5
     const worstKm = Math.max(...scoredCouriers.map((c) => c.distDirectKm))
-    const kmSaved = Math.max(1.8, Number((worstKm - finalDistKm + 2.5).toFixed(1)))
+    const rawKmSaved = worstKm - finalDistKm
+    // Se a economia for positiva, utiliza a diferença real calculada; senão floor em 0.0
+    const kmSaved = Number(Math.max(0, rawKmSaved).toFixed(1))
+
+    const baseLabel =
+      distFromActiveBaseKm !== null ? ` | Da base ativa: ${distFromActiveBaseKm.toFixed(1)} km` : ''
 
     return {
       courier_id: best.courier.id,
@@ -3632,8 +3649,9 @@ export const deliveryService = {
       order_in_route: orderInRoute,
       estimated_time: estTimeText,
       km_saved: kmSaved,
-      distance_km: finalDistKm,
-      reason: `Mais próximo (${finalDistKm} km) com capacidade ideal (${best.activeOrdersCount} entregas ativas)`,
+      distance_km:
+        distFromActiveBaseKm !== null ? Number(distFromActiveBaseKm.toFixed(1)) : finalDistKm,
+      reason: `Mais próximo (${distFromActiveBaseKm !== null ? distFromActiveBaseKm.toFixed(1) : finalDistKm} km${baseLabel}) com capacidade ideal (${best.activeOrdersCount} entregas ativas)`,
     }
   },
 
