@@ -79,6 +79,11 @@ const KmAuditReport = lazy(() =>
 const AuditTrailSection = lazy(() =>
   import('@/components/AuditTrailSection').then((m) => ({ default: m.AuditTrailSection })),
 )
+const BatchReconciliationSection = lazy(() =>
+  import('@/components/BatchReconciliationSection').then((m) => ({
+    default: m.BatchReconciliationSection,
+  })),
+)
 
 function SectionSkeleton() {
   return (
@@ -158,6 +163,7 @@ interface AdminDashboardProps {
     | 'reports'
     | 'fuel'
     | 'km-audit'
+    | 'batch-reconciliation'
     | 'deviations'
     | 'audit-trail'
     | 'settings'
@@ -210,6 +216,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'reports'
     | 'fuel'
     | 'km-audit'
+    | 'batch-reconciliation'
     | 'deviations'
     | 'audit-trail'
     | 'settings'
@@ -225,6 +232,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'reports'
     | 'fuel'
     | 'km-audit'
+    | 'batch-reconciliation'
     | 'deviations'
     | 'audit-trail'
     | 'settings'
@@ -244,6 +252,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         'reports',
         'fuel',
         'km-audit',
+        'batch-reconciliation',
         'deviations',
         'audit-trail',
         'settings',
@@ -1506,6 +1515,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     | 'reports'
                     | 'fuel'
                     | 'km-audit'
+                    | 'batch-reconciliation'
                     | 'deviations'
                     | 'audit-trail'
                     | 'settings'
@@ -1552,6 +1562,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 >
                   <Route className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
                   Auditoria de KM
+                </TabsTrigger>
+                <TabsTrigger
+                  value="batch-reconciliation"
+                  className="text-xs font-semibold text-slate-700 data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg"
+                >
+                  <Compass className="h-3.5 w-3.5 mr-1.5 text-indigo-600" />
+                  Reconciliação por Lote (3 Fontes)
                 </TabsTrigger>
                 <TabsTrigger
                   value="deviations"
@@ -2155,6 +2172,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     settings={settings}
                     currentCompanyId={resolvedCompany?.id || currentCompany?.id}
                     onDataChange={loadData}
+                  />
+                </Suspense>
+              </TabsContent>
+
+              {/* TAB: RECONCILIAÇÃO POR LOTE (3 FONTES: VIÁRIO OFICIAL 1x, GPS TELEMETRIA, ODÔMETRO) */}
+              <TabsContent value="batch-reconciliation" className="space-y-6">
+                <Suspense fallback={<SectionSkeleton />}>
+                  <BatchReconciliationSection
+                    orders={orders}
+                    couriers={couriers}
+                    locations={locations}
                   />
                 </Suspense>
               </TabsContent>

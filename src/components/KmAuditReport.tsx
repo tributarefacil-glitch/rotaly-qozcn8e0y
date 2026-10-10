@@ -1250,15 +1250,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                   <th className="py-3 px-4">a) Cliente / Endereço</th>
                   <th className="py-3 px-3 text-center">b) KM Trajeto Viário</th>
                   <th className="py-3 px-3 text-center">c) KM Trajeto GPS</th>
-                  <th className="py-3 px-3 text-center">d) Desvio de Rota</th>
-                  <th className="py-3 px-3 text-center">e) Parada Fora do Local</th>
-                  <th className="py-3 px-4 text-right">f) Aprovação do Administrador</th>
+                  <th className="py-3 px-3 text-center">d) Odômetro (Entregador)</th>
+                  <th className="py-3 px-3 text-center">e) Desvio de Rota</th>
+                  <th className="py-3 px-3 text-center">f) Parada Fora do Local</th>
+                  <th className="py-3 px-4 text-right">g) Aprovação do Administrador</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-slate-400">
+                    <td colSpan={7} className="py-12 text-center text-slate-400">
                       {queueViewMode === 'pending_divergent' ? (
                         <>
                           <CheckCircle2 className="h-10 w-10 mx-auto text-emerald-500 mb-2" />
@@ -1417,7 +1418,40 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna d: Desvio de Rota / KM Extra Redireção */}
+                        {/* Coluna d: Odômetro (Entregador) */}
+                        <td className="py-3 px-3 align-top text-center">
+                          <div className="space-y-0.5">
+                            <span className="font-mono text-sm font-black text-slate-800 dark:text-slate-200 block">
+                              {row.odometerKm > 0 ? `${row.odometerKm.toFixed(1)} km` : '—'}
+                            </span>
+                            {row.odometerKm > 0 && (
+                              <span className="text-[10px] text-slate-400 block">
+                                Painel da moto
+                              </span>
+                            )}
+                            {row.odometerKm > 0 &&
+                              row.roadKm > 0 &&
+                              (() => {
+                                const diffRatio = Math.abs(row.odometerKm - row.roadKm) / row.roadKm
+                                if (diffRatio <= 0.15) return null
+                                const pct = Math.round(diffRatio * 100)
+                                const isSevere = diffRatio > 0.25
+                                return (
+                                  <Badge
+                                    className={`text-[9px] font-bold px-1.5 py-0 ${
+                                      isSevere
+                                        ? 'bg-rose-100 text-rose-700 border-rose-300'
+                                        : 'bg-amber-100 text-amber-700 border-amber-300'
+                                    }`}
+                                  >
+                                    ⚠️ {pct}% div.
+                                  </Badge>
+                                )
+                              })()}
+                          </div>
+                        </td>
+
+                        {/* Coluna e: Desvio de Rota / KM Extra Redireção */}
                         <td className="py-3 px-3 align-top text-center">
                           {row.isRedirected ? (
                             <div className="space-y-0.5">
@@ -1458,7 +1492,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           )}
                         </td>
 
-                        {/* Coluna e: Parada Fora do Local */}
+                        {/* Coluna f: Parada Fora do Local */}
                         <td className="py-3 px-3 align-top text-center">
                           {row.unexpectedStopsCount > 0 ? (
                             <div className="space-y-0.5">
@@ -1476,7 +1510,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           )}
                         </td>
 
-                        {/* Coluna f: Botão de Aprovação do Administrador */}
+                        {/* Coluna g: Botão de Aprovação do Administrador */}
                         <td className="py-3 px-4 align-top text-right">
                           <div className="flex flex-col items-end gap-1.5">
                             {/* Caso 1: Já deliberado no banco (aprovado ou rejeitado) */}
