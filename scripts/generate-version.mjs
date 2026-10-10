@@ -9,7 +9,7 @@ const rootDir = path.resolve(__dirname, '..')
 try {
   const pkgPath = path.join(rootDir, 'package.json')
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
-  const version = pkg.version || '0.0.342'
+  const version = pkg.version || '0.0.350'
   const versionPayload = JSON.stringify(
     {
       version,
