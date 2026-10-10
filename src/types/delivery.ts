@@ -284,8 +284,10 @@ export interface OrderRecord extends RecordModel {
     | 'ok'
     | 'flag_150_500m'
     | 'bloqueado_gt_500m'
+    | 'pendente_aprovacao_gt_500m'
     | 'sem_coordenadas'
     | 'liberado_admin'
+    | 'aprovado_admin'
     | string
   entrega_admin_unlock_reason?: string
   entrega_admin_unlock_by?: string

@@ -3008,6 +3008,50 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
               {/* TAB 1: OVERVIEW */}
               <TabsContent value="overview" className="space-y-6">
+                {/* BANNER DE ENTREGAS COM APROVAÇÃO PENDENTE (>500M) */}
+                {(() => {
+                  const pendingGeofenceOrders = orders.filter(
+                    (o) => o.entrega_geofence_flag === 'pendente_aprovacao_gt_500m',
+                  )
+                  if (pendingGeofenceOrders.length === 0) return null
+                  return (
+                    <div className="mb-6 rounded-card border-2 border-amber-500/70 bg-gradient-to-r from-amber-500/10 via-amber-950/20 to-slate-900 p-4 shadow-brand-dark">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
+                            <AlertTriangle className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-heading text-sm font-bold text-white">
+                                Entregas com Aprovação Pendente (Distância &gt;500m do Pin)
+                              </h3>
+                              <Badge className="bg-amber-500 text-white text-[10px] font-bold">
+                                {pendingGeofenceOrders.length} pedido(s)
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-amber-200/80 mt-0.5">
+                              Entregas confirmadas na rua cujo GPS do entregador estava além de 500m
+                              do pino. Analise na Torre de Controle ou na Caixa de Endereços
+                              Suspeitos abaixo.
+                            </p>
+                          </div>
+                        </div>
+
+                        <Button
+                          onClick={() => {
+                            setActiveTab('control-tower')
+                            navigate('/admin?tab=control-tower')
+                          }}
+                          className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shrink-0 rounded-input shadow-sm"
+                        >
+                          Ver na Torre de Controle →
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })()}
+
                 {/* CAIXA DE AUDITORIA DE ENDEREÇOS SUSPEITOS & ANTI-CEP */}
                 <div id="suspicious-addresses-box" className="mb-6">
                   <SuspiciousAddressesBox

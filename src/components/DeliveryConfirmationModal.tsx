@@ -70,12 +70,10 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const [lastPos, setLastPos] = useState<{ x: number; y: number } | null>(null)
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
 
-  // BLOCO 1 (v0.0.366): Geofence com GPS na confirmação de entrega e Correção Real de Endereço
+  // BLOCO 1 (v0.0.366 / v0.0.371): Geofence com GPS na confirmação de entrega e Correção Real de Endereço
+  // Nova Regra Permanente: confirmação NUNCA mais bloqueia por distância (>500m vai para aprovação central)
   const [capturedGps, setCapturedGps] = useState<{ lat: number; lng: number } | null>(null)
   const [isCapturingGps, setIsCapturingGps] = useState(false)
-  const [geofenceBlockedMsg, setGeofenceBlockedMsg] = useState<string | null>(null)
-  const [adminUnlockReasonInput, setAdminUnlockReasonInput] = useState('')
-  const [showAdminUnlockPrompt, setShowAdminUnlockPrompt] = useState(false)
   const [proposeAddressCorrection, setProposeAddressCorrection] = useState(false)
   const [addressCorrectionConfirmed, setAddressCorrectionConfirmed] = useState(false)
   const [addressCorrectionDone, setAddressCorrectionDone] = useState(false)
@@ -158,9 +156,6 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       setUpdateOfficialCustomerAddress(true)
       setCapturedGps(null)
       setIsCapturingGps(false)
-      setGeofenceBlockedMsg(null)
-      setAdminUnlockReasonInput('')
-      setShowAdminUnlockPrompt(false)
       setProposeAddressCorrection(false)
       setAddressCorrectionConfirmed(false)
       setAddressCorrectionDone(false)
@@ -392,9 +387,11 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
     let geofenceFlag:
       | 'ok'
       | 'flag_150_500m'
+      | 'pendente_aprovacao_gt_500m'
       | 'bloqueado_gt_500m'
       | 'sem_coordenadas'
-      | 'liberado_admin' = 'ok'
+      | 'liberado_admin'
+      | 'aprovado_admin' = 'ok'
     let distanceToPinM = 0
 
     if (isDelivered) {
@@ -437,36 +434,33 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         } else if (distanceToPinM > 150 && distanceToPinM <= 500) {
           geofenceFlag = 'flag_150_500m'
         } else {
-          // > 500m: BLOQUEIA a confirmação, a não ser que tenha liberação admin
-          const distKmFormatted = (distanceToPinM / 1000).toFixed(1)
-          const blockedExactMessage = `Você está a ${distKmFormatted} km do endereço do cliente. Chegue ao local para confirmar`
+          // NOVA REGRA PERMANENTE: confirmação NUNCA bloqueia.
+          // Distância > 500m: marca pendente_aprovacao_gt_500m e encaminha para aprovação da central
+          geofenceFlag = 'pendente_aprovacao_gt_500m'
 
-          const cleanReason = adminUnlockReasonInput.trim()
-          const isAdminUnlocked = showAdminUnlockPrompt && cleanReason.length >= 5
-
-          if (!showAdminUnlockPrompt) {
-            setGeofenceBlockedMsg(blockedExactMessage)
-            setShowAdminUnlockPrompt(true)
-            toast.error(blockedExactMessage)
-            return
-          }
-
-          // Se o prompt já está aberto, a liberação EXIGE motivo digitado com no mínimo 5 caracteres
-          if (!cleanReason) {
-            toast.error(
-              'Motivo obrigatório! Digite a justificativa administrativa para liberar a entrega fora do geofence.',
+          // Registrar alerta em address_alerts para a central de auditoria
+          try {
+            await pb.collection('address_alerts').create({
+              customer: order.customer_id || '',
+              company: order.empresa_id || undefined,
+              origin: 'pin_entregador',
+              status: 'pendente',
+              distance_meters: distanceToPinM,
+              marked_by: courierId || pb.authStore.record?.id || '',
+              marked_at: new Date().toISOString(),
+              suggested_address: {
+                address: order.expand?.customer_id?.address || order.end_address_text || '',
+                lat: currentLoc.lat,
+                lng: currentLoc.lng,
+              },
+              notes: `Entrega realizada a ${(distanceToPinM / 1000).toFixed(1)} km do pin cadastrado no pedido ${order.tracking_code}. Aguarda conferência da central.`,
+            })
+          } catch (alertErr) {
+            console.warn(
+              '[DeliveryConfirmationModal] Aviso ao criar address_alerts para >500m:',
+              alertErr,
             )
-            return
           }
-
-          if (cleanReason.length < 5) {
-            toast.error(
-              'Justificativa muito curta. Digite um motivo detalhado com pelo menos 5 caracteres.',
-            )
-            return
-          }
-
-          geofenceFlag = 'liberado_admin'
         }
       }
     }
@@ -783,10 +777,6 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           if (kmRealPerna !== undefined && kmRealPerna > 0) {
             formData.append('km_real_perna', String(kmRealPerna))
           }
-          if (geofenceFlag === 'liberado_admin') {
-            formData.append('entrega_admin_unlock_reason', adminUnlockReasonInput.trim())
-            formData.append('entrega_admin_unlock_by', pb.authStore.record?.id || '')
-          }
         }
 
         await deliveryService.updateOrder(order.id, formData)
@@ -807,52 +797,42 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                 ...(kmRealPerna !== undefined && kmRealPerna > 0
                   ? { km_real_perna: kmRealPerna }
                   : {}),
-                ...(geofenceFlag === 'liberado_admin'
-                  ? {
-                      entrega_admin_unlock_reason: adminUnlockReasonInput.trim(),
-                      entrega_admin_unlock_by: pb.authStore.record?.id || '',
-                    }
-                  : {}),
               }
             : {}),
         }
         await deliveryService.updateOrder(order.id, updateData)
       }
 
-      // Se liberado por admin, gravar em audit_trail com ordem, admin user id, nome, distância em metros e reason
-      if (isDelivered && geofenceFlag === 'liberado_admin') {
+      // Se entrega com >500m, registrar trilha de auditoria para triagem da central
+      if (isDelivered && geofenceFlag === 'pendente_aprovacao_gt_500m') {
         try {
-          const currentAdmin = pb.authStore.record
-          const cleanReason = adminUnlockReasonInput.trim()
           await deliveryService.logAuditTrail({
-            action: 'geofence_admin_unlock',
-            user_id: currentAdmin?.id || '',
-            actor_name: currentAdmin?.name || 'Administrador',
+            action: 'geofence_pending_approval',
+            user_id: '',
+            actor_name: 'Sistema',
             collection: 'orders',
             record_id: order.id,
             field: 'entrega_geofence_flag',
-            old_value: 'bloqueado_gt_500m',
-            new_value: 'liberado_admin',
+            old_value: 'em_transito',
+            new_value: 'pendente_aprovacao_gt_500m',
             courier_id: courierId || order.courier_id,
             empresa_id: order.empresa_id,
             metadata: {
+              system_trigger: true,
               order_id: order.id,
               tracking_code: order.tracking_code,
-              admin_user_id: currentAdmin?.id || '',
-              admin_user_name: currentAdmin?.name || 'Administrador',
               distance_m: distanceToPinM,
-              reason: cleanReason,
               courier_gps: currentLoc,
+              reason: `Entrega confirmada a ${distanceToPinM}m do pin cadastrado (>500m). Encaminhado para aprovação da central.`,
             },
           })
         } catch (auditErr) {
           console.warn(
-            '[DeliveryConfirmationModal] Erro ao gravar audit_trail de desbloqueio admin:',
+            '[DeliveryConfirmationModal] Erro ao gravar audit_trail de geofence_pending_approval:',
             auditErr,
           )
         }
       }
-
       // CORREÇÃO REAL DE ENDEREÇO confirmada pelo entregador
       if (isDelivered && addressCorrectionConfirmed && currentLoc && order.customer_id) {
         try {
@@ -905,7 +885,14 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       })
 
       if (reason === 'delivered') {
-        toast.success(`Pedido ${order.tracking_code} confirmado com sucesso!`)
+        if (geofenceFlag === 'pendente_aprovacao_gt_500m') {
+          toast.success(
+            `Entrega confirmada! Encaminhada para verificação de distância com a central (${(distanceToPinM / 1000).toFixed(1)} km do pin).`,
+            { duration: 6000 },
+          )
+        } else {
+          toast.success(`Pedido ${order.tracking_code} confirmado com sucesso!`)
+        }
       } else if (reason === 'address_error') {
         toast.warning(`Pedido ${order.tracking_code} finalizado: Erro de Endereço.`)
       } else {
@@ -1037,41 +1024,6 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                   </span>
                 </label>
               </div>
-            </div>
-          )}
-
-          {/* BLOCO 1: Aviso de Bloqueio por Geofence >500m com Liberação Excepcional por Admin */}
-          {geofenceBlockedMsg && (
-            <div className="p-3.5 rounded-card border-2 border-rose-500 bg-rose-50 text-rose-950 text-xs space-y-2 shadow-sm animate-shake">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold text-rose-900 leading-snug">
-                    Confirmação Bloqueada por Distância:
-                  </p>
-                  <p className="text-rose-800 mt-0.5 font-medium">{geofenceBlockedMsg}</p>
-                </div>
-              </div>
-
-              {showAdminUnlockPrompt && (
-                <div className="pt-2 border-t border-rose-200 space-y-1.5">
-                  <p className="text-[11px] font-bold text-rose-900 flex items-center gap-1">
-                    <Lock className="h-3.5 w-3.5 text-rose-700" />
-                    Liberação excepcional por administrador:
-                  </p>
-                  <input
-                    type="text"
-                    value={adminUnlockReasonInput}
-                    onChange={(e) => setAdminUnlockReasonInput(e.target.value)}
-                    placeholder="Motivo obrigatório para desbloqueio (mín 5 caracteres)..."
-                    className="w-full h-8 px-2.5 text-xs bg-white border border-rose-300 rounded text-slate-900 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                  />
-                  <p className="text-[10px] text-rose-700">
-                    Ao confirmar com este motivo preenchido, a liberação será gravada na trilha de
-                    auditoria (audit_trail).
-                  </p>
-                </div>
-              )}
             </div>
           )}
 

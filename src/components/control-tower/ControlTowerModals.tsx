@@ -233,7 +233,9 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                   <div>
                     {selectedOrder.status === 'delivered' ? (
                       <Badge className="bg-emerald-600 text-white font-bold text-xs">
-                        ✓ Entregue
+                        {selectedOrder.entrega_geofence_flag === 'pendente_aprovacao_gt_500m'
+                          ? '✓ Entregue (Aprovação Pendente)'
+                          : '✓ Entregue'}
                       </Badge>
                     ) : selectedOrder.status === 'in_transit' || selectedOrder.route_started ? (
                       <Badge className="bg-blue-600 text-white font-bold text-xs animate-pulse">
@@ -258,6 +260,111 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
 
               {/* Drawer Body (Scrollable) */}
               <div className="flex-1 overflow-y-auto p-5 space-y-5 scrollbar-thin scrollbar-thumb-slate-800">
+                {/* BANNER DE APROVAÇÃO PENDENTE DE GEOFENCE >500M */}
+                {selectedOrder.entrega_geofence_flag === 'pendente_aprovacao_gt_500m' && (
+                  <div className="rounded-2xl border-2 border-amber-500/70 bg-gradient-to-r from-amber-950/60 via-[#1c1606] to-[#0E1738] p-4 space-y-2.5 shadow-lg">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 text-amber-300">
+                        <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0" />
+                        <div>
+                          <h4 className="font-bold text-sm text-white">
+                            Aprovação pendente — entregue a{' '}
+                            {selectedOrder.entrega_fora_pin_m
+                              ? selectedOrder.entrega_fora_pin_m >= 1000
+                                ? `${(selectedOrder.entrega_fora_pin_m / 1000).toFixed(1)} km`
+                                : `${selectedOrder.entrega_fora_pin_m} m`
+                              : '&gt;500m'}{' '}
+                            do pin
+                          </h4>
+                          <p className="text-xs text-amber-200/80 mt-0.5">
+                            O entregador concluiu a entrega com assinatura coletada. A central pode
+                            aprovar ou auditar a calibração do pin do cliente.
+                          </p>
+                        </div>
+                      </div>
+                      <Badge className="bg-amber-500 text-white font-bold text-[10px] uppercase">
+                        Aprovação Pendente
+                      </Badge>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            const adminId = pb.authStore.record?.id || ''
+                            const adminName = pb.authStore.record?.name || 'Administrador'
+                            await deliveryService.updateOrder(selectedOrder.id, {
+                              entrega_geofence_flag: 'aprovado_admin',
+                              entrega_admin_unlock_by: adminId,
+                              entrega_admin_unlock_reason:
+                                'Aprovado pelo administrador na Torre de Controle',
+                            })
+                            await deliveryService.logAuditTrail({
+                              action: 'geofence_admin_unlock',
+                              user_id: adminId,
+                              actor_name: adminName,
+                              collection: 'orders',
+                              record_id: selectedOrder.id,
+                              field: 'entrega_geofence_flag',
+                              old_value: 'pendente_aprovacao_gt_500m',
+                              new_value: 'aprovado_admin',
+                              courier_id: selectedOrder.courier_id,
+                              empresa_id: selectedOrder.empresa_id,
+                              metadata: {
+                                order_id: selectedOrder.id,
+                                tracking_code: selectedOrder.tracking_code,
+                                admin_user_id: adminId,
+                                admin_user_name: adminName,
+                                distance_m: selectedOrder.entrega_fora_pin_m || 0,
+                                reason: 'Aprovado na Torre de Controle',
+                              },
+                            })
+                            setSelectedOrder({
+                              ...selectedOrder,
+                              entrega_geofence_flag: 'aprovado_admin',
+                            })
+                            toast.success(
+                              `Entrega ${selectedOrder.tracking_code} aprovada pelo administrador com sucesso!`,
+                            )
+                          } catch (errApprove) {
+                            console.error('Erro ao aprovar entrega:', errApprove)
+                            toast.error('Não foi possível aprovar a entrega.')
+                          }
+                        }}
+                        className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 rounded-xl shadow-sm"
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        Aprovar Entrega
+                      </Button>
+
+                      {selectedOrder.customer_id && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const cust = selectedOrder.expand?.customer_id
+                            if (cust?.lat && cust?.lng) {
+                              window.open(
+                                `https://www.google.com/maps?q=${cust.lat},${cust.lng}`,
+                                '_blank',
+                              )
+                            } else {
+                              toast.info('Cliente sem coordenadas para abrir no mapa.')
+                            }
+                          }}
+                          className="h-8 border-amber-500/40 bg-amber-950/40 hover:bg-amber-900/60 text-amber-200 font-bold text-xs gap-1.5 rounded-xl"
+                        >
+                          <MapPin className="h-4 w-4 text-amber-400" />
+                          Auditar Endereço no Maps
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* CARD 1: QUAL ENTREGADOR ESTÁ COM A ENTREGA */}
                 <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 space-y-3">
                   <div className="flex items-center justify-between">

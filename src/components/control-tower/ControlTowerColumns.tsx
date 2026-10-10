@@ -149,6 +149,22 @@ export const ControlTowerColumns: React.FC<ControlTowerColumnsProps> = ({
                           </div>
                         </div>
 
+                        {/* Alerta de Aprovação Pendente (>500m do pin) */}
+                        {order.entrega_geofence_flag === 'pendente_aprovacao_gt_500m' && (
+                          <div className="mt-2 text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/50 px-2 py-1 rounded-md font-bold flex items-center gap-1.5 shadow-sm">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                            <span>
+                              Aprovação pendente — entregue a{' '}
+                              {order.entrega_fora_pin_m
+                                ? order.entrega_fora_pin_m >= 1000
+                                  ? `${(order.entrega_fora_pin_m / 1000).toFixed(1)} km`
+                                  : `${order.entrega_fora_pin_m} m`
+                                : 'distância &gt;500m'}{' '}
+                              do pin
+                            </span>
+                          </div>
+                        )}
+
                         {/* Nome do Cliente */}
                         <div className="mt-2">
                           <h4 className="text-sm font-bold text-white truncate">

@@ -314,7 +314,9 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                                 : 'bg-rose-600 text-white'
                           }`}
                         >
-                          {alert.status}
+                          {alert.status === 'pendente' && distMeters > 500
+                            ? `Aprovação pendente — entregue a ${Number(distKm) >= 1 ? `${distKm} km` : `${distMeters} m`} do pin`
+                            : alert.status}
                         </Badge>
                       </div>
                     </div>
@@ -493,7 +495,26 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                     </div>
 
                     {alert.status === 'pendente' ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {cur.lat && cur.lng && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              window.open(
+                                `https://www.google.com/maps?q=${cur.lat},${cur.lng}`,
+                                '_blank',
+                              )
+                            }}
+                            className="h-8 text-xs border-slate-300 text-slate-700 dark:text-slate-200 hover:bg-slate-100"
+                            title="Auditar endereço e pin original do cliente no Google Maps"
+                          >
+                            <MapPin className="h-3.5 w-3.5 mr-1 text-amber-500" />
+                            Auditar endereço
+                          </Button>
+                        )}
+
                         <Button
                           type="button"
                           size="sm"

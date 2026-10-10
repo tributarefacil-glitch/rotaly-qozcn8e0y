@@ -142,12 +142,105 @@ onRecordUpdateRequest((e) => {
       }
     }
 
-    // PONTO 4 — Anti-fraude geofence: se entrega for marcada como entregue fora do geofence (>500m) e liberada por admin
-    // EXIGE justificativa/motivo preenchido com pelo menos 5 caracteres e grava em audit_trail
+    // PONTO 4 — Anti-fraude geofence (Regra Nova Permanente):
+    // A confirmação delivered nunca bloqueia. Se >500m, aceita com status delivered marcando
+    // entrega_geofence_flag='pendente_aprovacao_gt_500m', gravando audit_trail e criando address_alerts.
     const targetOrder = e.record
     const newStatus = targetOrder.getString('status')
     const geofenceFlag = targetOrder.getString('entrega_geofence_flag')
-    if (newStatus === 'delivered' && geofenceFlag === 'liberado_admin') {
+    const distanceM =
+      targetOrder.getFloat('entrega_fora_pin_m') ||
+      targetOrder.getFloat('entrega_distance_to_pin_m') ||
+      0
+    const trackingCode = targetOrder.getString('tracking_code') || ''
+    const empresaId = targetOrder.getString('empresa_id') || ''
+    const courierIdVal = targetOrder.getString('courier_id') || ''
+    const customerIdVal = targetOrder.getString('customer_id') || ''
+
+    if (newStatus === 'delivered' && geofenceFlag === 'pendente_aprovacao_gt_500m') {
+      try {
+        const auditCol = $app.findCollectionByNameOrId('audit_trail')
+        if (auditCol) {
+          const auditRec = new Record(auditCol)
+          // Regra do projeto: ações automáticas usam user_id vazio + actor_name='Sistema' + metadata.system_trigger=true
+          auditRec.set('user_id', '')
+          auditRec.set('actor_name', 'Sistema')
+          auditRec.set('action', 'geofence_pending_approval')
+          auditRec.set('collection', 'orders')
+          auditRec.set('record_id', targetOrder.id)
+          auditRec.set('field', 'entrega_geofence_flag')
+          auditRec.set('old_value', 'em_transito')
+          auditRec.set('new_value', 'pendente_aprovacao_gt_500m')
+          if (courierIdVal) auditRec.set('courier_id', courierIdVal)
+          if (empresaId) auditRec.set('empresa_id', empresaId)
+          auditRec.set(
+            'metadata',
+            JSON.stringify({
+              order_id: targetOrder.id,
+              tracking_code: trackingCode,
+              distance_m: distanceM,
+              courier_id: courierIdVal,
+              customer_id: customerIdVal,
+              system_trigger: true,
+              actor_role: 'system',
+              reason: `Entrega confirmada a ${distanceM}m do pin cadastrado (>500m). Encaminhado para aprovação da central.`,
+            }),
+          )
+          $app.save(auditRec)
+          console.log(
+            '[orders_guard] audit_trail registrado com sucesso para geofence_pending_approval:',
+            targetOrder.id,
+          )
+        }
+
+        // Criar alerta em address_alerts se ainda não existir pendente para este cliente
+        const alertsCol = $app.findCollectionByNameOrId('address_alerts')
+        if (alertsCol && customerIdVal) {
+          let hasPendingAlert = false
+          try {
+            const existingAlert = $app.findFirstRecordByFilter(
+              'address_alerts',
+              `customer = '${customerIdVal}' && status = 'pendente'`,
+            )
+            if (existingAlert) {
+              hasPendingAlert = true
+            }
+          } catch (_) {
+            hasPendingAlert = false
+          }
+
+          if (!hasPendingAlert) {
+            const alertRec = new Record(alertsCol)
+            alertRec.set('customer', customerIdVal)
+            if (empresaId) alertRec.set('company', empresaId)
+            alertRec.set('origin', 'pin_entregador')
+            alertRec.set('status', 'pendente')
+            alertRec.set('distance_meters', distanceM)
+            if (courierIdVal) alertRec.set('marked_by', courierIdVal)
+            alertRec.set('marked_at', new Date().toISOString())
+            alertRec.set(
+              'suggested_address',
+              JSON.stringify({
+                address: targetOrder.getString('end_address_text') || '',
+                lat: targetOrder.getFloat('end_address_lat') || 0,
+                lng: targetOrder.getFloat('end_address_lng') || 0,
+              }),
+            )
+            alertRec.set(
+              'notes',
+              `Entrega realizada a ${(distanceM / 1000).toFixed(1)} km do pin cadastrado no pedido ${trackingCode}. Aguarda conferência da central.`,
+            )
+            $app.save(alertRec)
+            console.log(
+              '[orders_guard] address_alerts criado com sucesso para cliente:',
+              customerIdVal,
+            )
+          }
+        }
+      } catch (errHookPending) {
+        console.log('[orders_guard] Aviso ao processar geofence_pending_approval:', errHookPending)
+      }
+    } else if (newStatus === 'delivered' && geofenceFlag === 'liberado_admin') {
       const unlockReason = (targetOrder.getString('entrega_admin_unlock_reason') || '').trim()
       if (!unlockReason || unlockReason.length < 5) {
         throw new BadRequestError(
@@ -161,10 +254,6 @@ onRecordUpdateRequest((e) => {
         const adminName = authRecord
           ? authRecord.getString('name') || 'Administrador'
           : 'Administrador'
-        const distanceM = targetOrder.getFloat('entrega_distance_to_pin_m') || 0
-        const trackingCode = targetOrder.getString('tracking_code') || ''
-        const empresaId = targetOrder.getString('empresa_id') || ''
-        const courierIdVal = targetOrder.getString('courier_id') || ''
 
         const auditCol = $app.findCollectionByNameOrId('audit_trail')
         if (auditCol) {
