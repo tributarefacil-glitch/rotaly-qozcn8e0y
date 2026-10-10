@@ -1,4 +1,4 @@
-import { pb } from '@/lib/pocketbase/client'
+import pb from '@/lib/pocketbase/client'
 import { OrderRecord, AppSettingsRecord, UserRecord } from '@/types/delivery'
 import { snapRouteGpsTrack } from './snapToRoadService'
 import { fetchStreetRoute } from './osrmRoutingService'
