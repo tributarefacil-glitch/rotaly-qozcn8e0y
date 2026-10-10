@@ -753,10 +753,25 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
     const totalAdiantado = filteredAdvances.reduce((s, a) => s + (Number(a.amount) || 0), 0)
 
-    // Regra "linha = cabeçalho": soma exata das linhas da tabela do período
-    const totalKm = filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
-    const totalFuelCost = filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
-    const totalLiters = filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
+    // KM Oficial consolidado e sincronizado com o motor oficial (useCourierFuelMetrics)
+    // Quando o filtro é 'all' ou 'week', utiliza diretamente o totalOfficialKm consolidado 1x por lote do motor oficial,
+    // evitando inflação por multiplicação de pedidos dentro do mesmo lote.
+    const isFullScopePeriod = periodFilter === 'all' || periodFilter === 'week'
+    const totalKm =
+      isFullScopePeriod && consolidatedMetrics.totalOfficialKm > 0
+        ? consolidatedMetrics.totalOfficialKm
+        : filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
+
+    const totalFuelCost =
+      isFullScopePeriod && consolidatedMetrics.totalSpent > 0
+        ? consolidatedMetrics.totalSpent
+        : filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
+
+    const totalLiters =
+      isFullScopePeriod && consolidatedMetrics.totalLiters > 0
+        ? consolidatedMetrics.totalLiters
+        : filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
+
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
 

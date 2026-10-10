@@ -52,6 +52,7 @@ import {
 } from '@/types/delivery'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import {
+  deriveRouteBatchKey,
   getMergedRouteBatchKey,
   getRouteBatchDisplay,
   groupOrdersByRouteBatch,
@@ -250,7 +251,10 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     const scopedOrders = allOrdersPool.filter(
       (o) => selectedCourierId === 'all' || o.courier_id === selectedCourierId,
     )
-    const grouped = groupOrdersByRouteBatch(scopedOrders)
+    const grouped = groupOrdersByRouteBatch(
+      scopedOrders,
+      selectedCourierId !== 'all' ? selectedCourierId : undefined,
+    )
     grouped.forEach((bOrders) => {
       if (bOrders.length > 0) {
         setBatches.add(getRouteBatchDisplay(bOrders[0]))
@@ -322,7 +326,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       if (!courierObj) return
 
       // Derivação de lotes compartilhada com tolerância de 2 minutos calculada uma vez por entregador
-      const courierBatchMap = groupOrdersByRouteBatch(courierOrders)
+      const courierBatchMap = groupOrdersByRouteBatch(courierOrders, courierId)
       const orderToBatchKey = new Map<string, string>()
       courierBatchMap.forEach((bOrders, key) => {
         bOrders.forEach((bo) => {
@@ -621,9 +625,11 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     })
 
     // Agrupar linhas em escopo por lote único para somar KM viário, GPS e pós-aprovação 1x por lote
+    // Utiliza deriveRouteBatchKey diretamente para garantir integridade e unificação idêntica
     const scopeBatches = new Map<string, typeof inScopeRows>()
     inScopeRows.forEach((r) => {
-      const bKey = r.batchKey || `single_${r.order.id}`
+      const bKey =
+        r.batchKey || deriveRouteBatchKey(r.order, scopeBatches.keys(), r.order.courier_id)
       const list = scopeBatches.get(bKey) || []
       list.push(r)
       scopeBatches.set(bKey, list)
@@ -636,13 +642,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     scopeBatches.forEach((batchRows) => {
       // KM viário original do lote contado 1x:
       // Em lotes unificados ou consolidados, total_route_with_return_km representa o valor CHEIO do lote.
-      // Se definido e > 0, usa esse valor canônico 1x; caso contrário fallback para a soma de roadKm das linhas.
-      const hasCanonicalRoadKm =
-        typeof batchRows[0]?.order?.total_route_with_return_km === 'number' &&
-        batchRows[0].order.total_route_with_return_km > 0
-      const bRoad = hasCanonicalRoadKm
-        ? batchRows[0].order.total_route_with_return_km!
-        : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
+      // Busca o valor canônico de total_route_with_return_km do lote (lendo batchRows[0].order.total_route_with_return_km ou o maior valor do lote).
+      const canonicalRoadKm = batchRows.reduce((max, r) => {
+        const km =
+          typeof r.order?.total_route_with_return_km === 'number'
+            ? r.order.total_route_with_return_km
+            : 0
+        return Math.max(max, km)
+      }, 0)
+
+      const bRoad =
+        canonicalRoadKm > 0 ? canonicalRoadKm : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
 
       // Após aprovação: se alguma linha tem aprovação manual, soma officialAfterApprovalKm das linhas;
       // senão, reflete o valor canônico viário do lote (1x)
@@ -651,8 +661,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       )
       const bAfter = hasManualApproval
         ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
-        : hasCanonicalRoadKm
-          ? batchRows[0].order.total_route_with_return_km!
+        : canonicalRoadKm > 0
+          ? canonicalRoadKm
           : batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
 
       // KM GPS do lote 1x: a telemetria do lote é uma janela única, não soma das paradas.
@@ -794,7 +804,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
     const filteredBatches = new Map<string, typeof filteredRows>()
     filteredRows.forEach((r) => {
-      const bKey = r.batchKey || `single_${r.order.id}`
+      const bKey =
+        r.batchKey || deriveRouteBatchKey(r.order, filteredBatches.keys(), r.order.courier_id)
       const list = filteredBatches.get(bKey) || []
       list.push(r)
       filteredBatches.set(bKey, list)
@@ -807,13 +818,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     filteredBatches.forEach((batchRows) => {
       // KM viário original do lote contado 1x:
       // Em lotes unificados ou consolidados, total_route_with_return_km representa o valor CHEIO do lote.
-      // Se definido e > 0, usa esse valor canônico 1x; caso contrário fallback para a soma de roadKm das linhas.
-      const hasCanonicalRoadKm =
-        typeof batchRows[0]?.order?.total_route_with_return_km === 'number' &&
-        batchRows[0].order.total_route_with_return_km > 0
-      const bRoad = hasCanonicalRoadKm
-        ? batchRows[0].order.total_route_with_return_km!
-        : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
+      const canonicalRoadKm = batchRows.reduce((max, r) => {
+        const km =
+          typeof r.order?.total_route_with_return_km === 'number'
+            ? r.order.total_route_with_return_km
+            : 0
+        return Math.max(max, km)
+      }, 0)
+
+      const bRoad =
+        canonicalRoadKm > 0 ? canonicalRoadKm : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
 
       // Após aprovação: se alguma linha tem aprovação manual, soma officialAfterApprovalKm das linhas;
       // senão, reflete o valor canônico viário do lote (1x)
@@ -822,8 +836,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       )
       const bAfter = hasManualApproval
         ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
-        : hasCanonicalRoadKm
-          ? batchRows[0].order.total_route_with_return_km!
+        : canonicalRoadKm > 0
+          ? canonicalRoadKm
           : batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
 
       // KM GPS do lote 1x: a telemetria do lote é uma janela única, não soma das paradas.

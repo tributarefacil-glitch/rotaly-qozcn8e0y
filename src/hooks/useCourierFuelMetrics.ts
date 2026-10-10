@@ -17,7 +17,11 @@ import {
 } from '@/lib/telemetryKmEngine'
 import { isSuspectPin } from '@/lib/geo'
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
-import { getMergedRouteBatchKey, groupOrdersByRouteBatch } from '@/lib/routeBatchHelper'
+import {
+  deriveRouteBatchKey,
+  getMergedRouteBatchKey,
+  groupOrdersByRouteBatch,
+} from '@/lib/routeBatchHelper'
 import {
   getOperationalWindow,
   isAdvancePostCutoff,
@@ -360,7 +364,7 @@ export function calculateCourierFuelMetrics(params: {
   // O KM de combustível da rota é o percurso real completo, e para cada entrega exibimos a sua cota ou valor correspondente.
 
   // Agrupamento por lote de rota compartilhado com 2 minutos de tolerância temporal
-  const routeBatches = groupOrdersByRouteBatch(eligibleOrders)
+  const routeBatches = groupOrdersByRouteBatch(eligibleOrders, courier.id)
   // Mapa reverso para mapear cada pedido ao seu lote exato atribuído
   const orderBatchKeyMap = new Map<string, string>()
   routeBatches.forEach((bOrders, bKey) => {
@@ -635,7 +639,8 @@ export function calculateCourierFuelMetrics(params: {
   let jointSavedFuelCost = 0
 
   const orderCalculations: CourierOrderTelemetryCalculation[] = eligibleOrders.map((order) => {
-    const key = orderBatchKeyMap.get(order.id) || getMergedRouteBatchKey(order, routeBatches.keys())
+    const key =
+      orderBatchKeyMap.get(order.id) || deriveRouteBatchKey(order, routeBatches.keys(), courier.id)
 
     const batchTelemetry =
       batchTelemetryMap.get(key) ||
@@ -851,21 +856,39 @@ export function calculateCourierFuelMetrics(params: {
       aggregatedSpent += batchFuel
       aggregatedLiters += batchLit
     } else {
-      // Sem aprovações manuais: pega o valor canônico oficial do lote UMA única vez
+      // Sem aprovações manuais: pega o valor canônico oficial do lote UMA única vez.
+      // Se algum pedido do lote tiver total_route_with_return_km > 0 registrado pelo otimizador de rota,
+      // usa-o canonicamente 1x para o lote (desconsiderando soma linha a linha).
+      // Caso contrário, usa batchTelemetry.officialRealKm.
       const batchTelem = batchTelemetryMap.get(batchKey)
-      const batchOfficialKm = batchTelem ? batchTelem.officialRealKm : 0
+      const maxRoadKmInBatch = batchOrders.reduce((max, ord) => {
+        const roadKm =
+          typeof ord.total_route_with_return_km === 'number' ? ord.total_route_with_return_km : 0
+        return Math.max(max, roadKm)
+      }, 0)
+
+      const isChainedBatch = chainedPreviousBatches.has(batchKey)
+      let canonicalBatchKm = 0
+      if (isChainedBatch && batchTelem?.officialRealKm) {
+        canonicalBatchKm = batchTelem.officialRealKm
+      } else if (maxRoadKmInBatch > 0) {
+        canonicalBatchKm = Number(maxRoadKmInBatch.toFixed(1))
+      } else if (batchTelem?.officialRealKm) {
+        canonicalBatchKm = Number(batchTelem.officialRealKm.toFixed(1))
+      } else {
+        canonicalBatchKm = Number(batchCalcs.reduce((sum, c) => sum + c.officialKm, 0).toFixed(1))
+      }
+
       const batchDevKm = batchTelem ? batchTelem.deviationKm : 0
       const batchGpsKm = batchTelem ? batchTelem.totalGpsKm : 0
 
-      // Subtrai eventuais km de entregas secundárias consolidadas (mesmo cliente em <45min)
-      // No rateio normal, a soma de batchCalcs.officialKm já dedup entregas conjuntas
-      // Se não há aprovações, a soma de batchCalcs.officialKm é idêntica ao lote dedup
-      const batchKm = Number(batchCalcs.reduce((sum, c) => sum + c.officialKm, 0).toFixed(1))
       const batchLit =
-        !isBicycle && consumptionKml > 0 ? Number((batchKm / consumptionKml).toFixed(2)) : 0
+        !isBicycle && consumptionKml > 0
+          ? Number((canonicalBatchKm / consumptionKml).toFixed(2))
+          : 0
       const batchFuel = !isBicycle ? Number((batchLit * pricePerLiter).toFixed(2)) : 0
 
-      aggregatedOfficialKm += batchKm
+      aggregatedOfficialKm += canonicalBatchKm
       aggregatedDeviationKm += batchDevKm
       aggregatedGpsKm += batchGpsKm
       aggregatedSpent += batchFuel
