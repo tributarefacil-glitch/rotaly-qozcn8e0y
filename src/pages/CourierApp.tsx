@@ -133,11 +133,13 @@ export default function CourierApp() {
     // Registrar em audit_trail que o entregador foi alertado e reagiu
     try {
       if (user?.id) {
-        await deliveryService.createAuditLog({
+        await deliveryService.logAuditTrail({
           user_id: user.id,
           actor_name: user.name || user.email || 'Entregador',
           action: 'forced_presence_acknowledged',
-          category: 'safety_alert',
+          collection: 'users',
+          record_id: user.id,
+          field: 'status',
           metadata: {
             reason: forcedAlertReason,
             details: forcedAlertDetails,
