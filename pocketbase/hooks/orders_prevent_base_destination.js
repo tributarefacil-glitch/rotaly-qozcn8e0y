@@ -52,7 +52,7 @@ onRecordCreateRequest((e) => {
         bases = [
           {
             get: function (f) {
-              return f === 'lat' ? -22.6990563 : f === 'lng' ? -43.296723 : null
+              return f === 'lat' ? -23.022683 : f === 'lng' ? -43.4570039 : null
             },
             getString: function (f) {
               return f === 'name' ? 'Mais Saudavel' : ''
@@ -244,7 +244,7 @@ onRecordUpdateRequest((e) => {
         bases = [
           {
             get: function (f) {
-              return f === 'lat' ? -22.6990563 : f === 'lng' ? -43.296723 : null
+              return f === 'lat' ? -23.022683 : f === 'lng' ? -43.4570039 : null
             },
             getString: function (f) {
               return f === 'name' ? 'Mais Saudavel' : ''

@@ -88,8 +88,8 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
         {
           id: 'base_1',
           name: 'Base Matriz',
-          lat: -22.699,
-          lng: -43.296,
+          lat: -23.022683,
+          lng: -43.4570039,
           is_default: true,
           address: 'Av Base 1',
         } as any,
@@ -107,8 +107,8 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
       expect(updateOrderSpy).toHaveBeenCalled()
       const updatePayload = updateOrderSpy.mock.calls[0][1] as any
       expect(updatePayload.sequence).toBe(1)
-      expect(updatePayload.start_base_lat).toBe(-22.699)
-      expect(updatePayload.start_base_lng).toBe(-43.296)
+      expect(updatePayload.start_base_lat).toBe(-23.022683)
+      expect(updatePayload.start_base_lng).toBe(-43.4570039)
 
       getOneUserSpy.mockRestore()
       getFullListOrdersSpy.mockRestore()

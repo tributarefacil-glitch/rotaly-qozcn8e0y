@@ -953,8 +953,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       address:
         fallbackBase?.address ||
         'Rua da Prosperidade, 13 - Pilar, Duque de Caxias - RJ, 25230-085, Brasil',
-      lat: typeof fallbackBase?.lat === 'number' ? fallbackBase.lat : -22.6990563,
-      lng: typeof fallbackBase?.lng === 'number' ? fallbackBase.lng : -43.296723,
+      lat: typeof fallbackBase?.lat === 'number' ? fallbackBase.lat : -23.022683,
+      lng: typeof fallbackBase?.lng === 'number' ? fallbackBase.lng : -43.4570039,
       isDefault: true,
     }
   }, [resolveLocationEntity, selectedStartBaseId, baseAddresses])
@@ -1448,9 +1448,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     // 1. Determine Start Base and End Base coordinates (suporta tanto BaseAddressRecord quanto CustomerRecord)
     const activeDefaultBase = baseAddresses.find((b) => b.is_default) || baseAddresses[0]
     const fallbackBaseLat =
-      typeof activeDefaultBase?.lat === 'number' ? activeDefaultBase.lat : -22.6990563
+      typeof activeDefaultBase?.lat === 'number' ? activeDefaultBase.lat : -23.022683
     const fallbackBaseLng =
-      typeof activeDefaultBase?.lng === 'number' ? activeDefaultBase.lng : -43.296723
+      typeof activeDefaultBase?.lng === 'number' ? activeDefaultBase.lng : -43.4570039
 
     const startEntity = resolvedStartEntity
     const startBase = {
@@ -2044,7 +2044,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     try {
       if (!mapInstanceRef.current) {
         mapInstanceRef.current = new google.maps.Map(mapContainerRef.current, {
-          center: { lat: -22.6990563, lng: -43.296723 },
+          center: { lat: -23.022683, lng: -43.4570039 },
           zoom: 12,
           disableDefaultUI: false,
           zoomControl: true,
@@ -3926,8 +3926,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             const defaultBase =
                               baseAddresses.find((b) => b.is_default) || baseAddresses[0]
                             const fallbackBasePos = {
-                              lat: defaultBase?.lat || -22.6990563,
-                              lng: defaultBase?.lng || -43.296723,
+                              lat: defaultBase?.lat || -23.022683,
+                              lng: defaultBase?.lng || -43.4570039,
                             }
 
                             const startPos =
@@ -4769,7 +4769,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                       isFinite(minLat) && isFinite(maxLat) && isFinite(minLng) && isFinite(maxLng)
                     const centerLat = hasValidBounds
                       ? (minLat + maxLat) / 2
-                      : fallbackStartBase.lat || -22.6990563
+                      : fallbackStartBase.lat || -23.022683
                     const centerLng = hasValidBounds
                       ? (minLng + maxLng) / 2
                       : fallbackStartBase.lng || -43.2982834
@@ -5646,8 +5646,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 const primaryOrder = courierOrders[0]
                 const defaultBase = baseAddresses.find((b) => b.is_default) || baseAddresses[0]
                 const fallbackBasePos = {
-                  lat: defaultBase?.lat || -22.6990563,
-                  lng: defaultBase?.lng || -43.296723,
+                  lat: defaultBase?.lat || -23.022683,
+                  lng: defaultBase?.lng || -43.4570039,
                 }
 
                 const startPos =

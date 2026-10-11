@@ -63,8 +63,8 @@ describe('intelligentRoadRouter', () => {
   })
 
   it('guarantees unique deterministic sequences 1..N with destination as base', async () => {
-    const origin = { lat: -22.6990563, lng: -43.296723 }
-    const destination = { lat: -22.6990563, lng: -43.296723 } // base canônica
+    const origin = { lat: -23.022683, lng: -43.4570039 }
+    const destination = { lat: -23.022683, lng: -43.4570039 } // base canônica
     const stops: StopCandidate[] = [
       {
         id: 'a',

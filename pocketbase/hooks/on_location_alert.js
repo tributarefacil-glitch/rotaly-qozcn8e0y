@@ -478,12 +478,12 @@ onRecordAfterCreateSuccess((e) => {
   }
 
   // 3. CHECAGEM DE CHEGADA À BASE COM ROTA ABERTA
-  // Geofence da base Mais Saudavel (Rua da Prosperidade, 13: lat -22.6990563, lng -43.296723, raio <= 150m)
+  // Geofence da base Mais Saudavel (Rua da Prosperidade, 13: lat -23.022683, lng -43.4570039, raio <= 150m)
   // Se o entregador chegou à base e ainda tem rota aberta (route_started=true e route_finished!=true),
   // dispara notificação de tipo warning ao vendedor responsável e a todos os admins da empresa,
   // com horário de chegada (America/Sao_Paulo) e tempo de rota aberta.
-  const MAIS_SAUDAVEL_BASE_LAT = -22.6990563
-  const MAIS_SAUDAVEL_BASE_LNG = -43.296723
+  const MAIS_SAUDAVEL_BASE_LAT = -23.022683
+  const MAIS_SAUDAVEL_BASE_LNG = -43.4570039
   const BASE_GEOFENCE_RADIUS_METERS = 150
 
   const distToBaseMeters = calcHaversineMeters(
