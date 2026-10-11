@@ -378,7 +378,21 @@ class OfflineTelemetryBufferService {
           sentCount++
           sentIds.push(pt.id)
         } catch (err: any) {
-          console.warn('Falha ao enviar ponto offline para PocketBase:', err?.message || err)
+          if (err?.status === 400) {
+            // Se o backend rejeitar com 400, descarta o ponto imediatamente sem retry nem re-enfileirar
+            console.warn(
+              '[offlineTelemetryBuffer] Ponto rejeitado com HTTP 400 — descartando sem retry:',
+              pt.id,
+              err?.message || err,
+            )
+            sentIds.push(pt.id) // Inclui em sentIds para ser purgado do IndexedDB
+            continue
+          }
+
+          console.warn(
+            'Falha ao enviar ponto offline para PocketBase (erro transitório de rede/5xx):',
+            err?.message || err,
+          )
           remainingPoints.push({
             ...pt,
             error: err?.message || 'Falha de rede ao descarregar buffer',

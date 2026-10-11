@@ -888,46 +888,63 @@ export default function CourierApp() {
           retryTimeoutRef.current = null
         }
 
-        // Se houver pontos no buffer que aguardavam sinal, tenta flush agora que a rede respondeu
-        if (offlineTelemetryBuffer.size(user.id) > 0 && !isFlushingBufferRef.current) {
+        // Se houver pontos no buffer que aguardavam sinal, tenta flush agora que a rede respondeu (protegido pela trava isSendingLocationRef)
+        if (
+          offlineTelemetryBuffer.size(user.id) > 0 &&
+          !isFlushingBufferRef.current &&
+          !isSendingLocationRef.current
+        ) {
           offlineTelemetryBuffer.flush(user.id).catch(() => {})
         }
-      } catch (e) {
-        console.error(
-          'Failed to post live location (aplicando backoff exponencial máx 3 tentativas):',
-          e,
-        )
-
-        // ITEM 6: Salvar no buffer offline se em rota ativa quando falha a conexão (offline ou erro de rede)
-        if (hasActiveStartedRoute) {
-          offlineTelemetryBuffer.enqueuePoint({
-            userId: user.id,
-            lat,
-            lng,
-            speed,
-            heading: 90,
-            accuracy: accuracyVal,
-            batteryLevel: batteryLevel ?? undefined,
-            timestamp: now,
-            reason: (accuracyVal ?? 2000) >= 500 ? 'sem-fix' : 'network_offline',
-          })
-        }
-
-        // RETRY COM BACKOFF EXPONENCIAL (10s, 30s, 60s) — NO MÁXIMO 3 TENTATIVAS
-        if (retryCountRef.current < 3 && isEffectActive) {
-          retryCountRef.current += 1
-          const backoffDelays = [10000, 30000, 60000] // 10s, 30s, 60s
-          const delayMs = backoffDelays[retryCountRef.current - 1] || 60000
-
-          if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current)
-          retryTimeoutRef.current = setTimeout(() => {
-            if (isEffectActive) {
-              processAndSendGps(lat, lng, speedVal, accuracyVal, true)
-            }
-          }, delayMs)
-        } else {
-          // Atingiu o teto de 3 tentativas: encerra o ciclo de retries para nunca entrar em loop de rajada
+      } catch (e: any) {
+        // Se o erro for 400 (payload rejeitado pelo backend), descarta o ponto imediatamente sem retry nem re-enfileiramento
+        if (e?.status === 400) {
+          console.warn(
+            '[CourierApp] Ponto de telemetria rejeitado com HTTP 400 — descartando sem retry:',
+            e,
+          )
           retryCountRef.current = 0
+          if (retryTimeoutRef.current) {
+            clearTimeout(retryTimeoutRef.current)
+            retryTimeoutRef.current = null
+          }
+        } else {
+          console.error(
+            'Failed to post live location (aplicando backoff exponencial máx 3 tentativas):',
+            e,
+          )
+
+          // Salvar no buffer offline se em rota ativa quando falha a conexão (offline ou erro de rede/5xx)
+          if (hasActiveStartedRoute) {
+            offlineTelemetryBuffer.enqueuePoint({
+              userId: user.id,
+              lat,
+              lng,
+              speed,
+              heading: 90,
+              accuracy: accuracyVal,
+              batteryLevel: batteryLevel ?? undefined,
+              timestamp: now,
+              reason: (accuracyVal ?? 2000) >= 500 ? 'sem-fix' : 'network_offline',
+            })
+          }
+
+          // RETRY COM BACKOFF EXPONENCIAL (10s, 30s, 60s) — NO MÁXIMO 3 TENTATIVAS PARA REDE/5xx
+          if (retryCountRef.current < 3 && isEffectActive) {
+            retryCountRef.current += 1
+            const backoffDelays = [10000, 30000, 60000] // 10s, 30s, 60s
+            const delayMs = backoffDelays[retryCountRef.current - 1] || 60000
+
+            if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current)
+            retryTimeoutRef.current = setTimeout(() => {
+              if (isEffectActive) {
+                processAndSendGps(lat, lng, speedVal, accuracyVal, true)
+              }
+            }, delayMs)
+          } else {
+            // Atingiu o teto de 3 tentativas: encerra o ciclo de retries para nunca entrar em loop de rajada
+            retryCountRef.current = 0
+          }
         }
       } finally {
         isSendingLocationRef.current = false
@@ -1056,8 +1073,13 @@ export default function CourierApp() {
         }
       }
 
-      // 1. Flush imediato do buffer offline
-      if (user?.id && offlineTelemetryBuffer.size(user.id) > 0) {
+      // 1. Flush imediato do buffer offline (protegido contra disparos paralelos)
+      if (
+        user?.id &&
+        offlineTelemetryBuffer.size(user.id) > 0 &&
+        !isSendingLocationRef.current &&
+        !isFlushingBufferRef.current
+      ) {
         setIsFlushingBuffer(true)
         isFlushingBufferRef.current = true
         offlineTelemetryBuffer

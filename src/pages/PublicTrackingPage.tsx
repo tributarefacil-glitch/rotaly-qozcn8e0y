@@ -25,6 +25,7 @@ import { getCourierRouteColor } from '@/lib/courierRouteColors'
 import { deliveryService } from '@/services/deliveryService'
 import { useRealtime } from '@/hooks/use-realtime'
 import { fetchStreetRoute, distanceMeters, type LatLngPoint } from '@/services/osrmRoutingService'
+import { haversineDistanceMeters } from '@/lib/geo'
 import type { OrderRecord, LocationRecord, ReviewRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -125,13 +126,29 @@ export default function PublicTrackingPage() {
     setErrorMsg(null)
     try {
       // Executa as consultas com tolerância a falhas individuais
-      const [orderResult, routeResult] = await Promise.allSettled([
-        deliveryService.getOrderByTrackingCode(resolvedTrackingCode),
-        deliveryService.getPublicTrackingRoute(resolvedTrackingCode),
-      ])
+      let orderData: OrderRecord | null = null
+      let routeInfo: any = null
 
-      const orderData = orderResult.status === 'fulfilled' ? orderResult.value : null
-      const routeInfo = routeResult.status === 'fulfilled' ? routeResult.value : null
+      try {
+        const [orderResult, routeResult] = await Promise.allSettled([
+          deliveryService.getOrderByTrackingCode(resolvedTrackingCode),
+          deliveryService.getPublicTrackingRoute(resolvedTrackingCode),
+        ])
+
+        orderData = orderResult.status === 'fulfilled' ? orderResult.value : null
+        routeInfo = routeResult.status === 'fulfilled' ? routeResult.value : null
+      } catch (callErr) {
+        console.warn('Erro na consulta inicial de tracking:', callErr)
+      }
+
+      // Fallback robusto se endpoint /route falhou ou retornou nulo: busca direta por tracking code
+      if (!orderData) {
+        try {
+          orderData = await deliveryService.getOrderByTrackingCode(resolvedTrackingCode)
+        } catch (fbErr) {
+          console.warn('Fallback getOrderByTrackingCode falhou:', fbErr)
+        }
+      }
 
       if (!orderData) {
         setErrorMsg(
@@ -366,6 +383,10 @@ export default function PublicTrackingPage() {
           const diffMins = Math.max(5, Math.round(diffMs / 60000))
           setRealEtaMinutes(diffMins)
           setEstimatedArrivalDate(new Date(order.estimated_arrival))
+        } else {
+          // Estimativa base padrão de 30 min se não houver previsão nem GPS
+          setRealEtaMinutes(30)
+          setEstimatedArrivalDate(new Date(Date.now() + 30 * 60000))
         }
         return
       }
@@ -416,8 +437,10 @@ export default function PublicTrackingPage() {
             courierId: activeCourierId,
           })
         } catch (err) {
-          // Fallback por distância em linha reta caso serviço viário falhe
-          const dMeters = distanceMeters(fromPoint, toPoint)
+          // Fallback por distância geodésica caso serviço viário falhe
+          const dMeters =
+            haversineDistanceMeters(fromPoint.lat, fromPoint.lng, toPoint.lat, toPoint.lng) ||
+            distanceMeters(fromPoint, toPoint)
           totalDistanceMeters += dMeters
           // Velocidade média urbana de ~25 km/h (~6.94 m/s)
           totalDurationSeconds += dMeters / 6.94

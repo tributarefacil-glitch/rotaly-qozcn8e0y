@@ -157,14 +157,14 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           .toISOString()
           .replace('T', ' ')
           .substring(0, 19)
-        filterStr = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && (created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}')`
+        filterStr = `status != 'cancelled' && (route_started = true || actual_arrival != null) && (created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}')`
       } else if (selectedDateFilter === 'month') {
         const monthStartObj = getOperationalMonthStart(now)
         const isoStart = new Date(monthStartObj.timestamp)
           .toISOString()
           .replace('T', ' ')
           .substring(0, 19)
-        filterStr = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && (created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}')`
+        filterStr = `status != 'cancelled' && (route_started = true || actual_arrival != null) && (created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}')`
       } else if (selectedDateFilter === 'custom') {
         const custWin = getCustomOperationalWindow(
           customStartDate,
@@ -172,9 +172,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         )
         const isoStart = new Date(custWin.start).toISOString().replace('T', ' ').substring(0, 19)
         const isoEnd = new Date(custWin.end).toISOString().replace('T', ' ').substring(0, 19)
-        filterStr = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && ((created >= '${isoStart}' && created <= '${isoEnd}') || (route_started_at >= '${isoStart}' && route_started_at <= '${isoEnd}') || (route_finished_at >= '${isoStart}' && route_finished_at <= '${isoEnd}'))`
+        filterStr = `status != 'cancelled' && (route_started = true || actual_arrival != null) && ((created >= '${isoStart}' && created <= '${isoEnd}') || (route_started_at >= '${isoStart}' && route_started_at <= '${isoEnd}') || (route_finished_at >= '${isoStart}' && route_finished_at <= '${isoEnd}'))`
       } else {
-        filterStr = `status != 'cancelled' && !(route_started = false && actual_arrival = '')`
+        filterStr = `status != 'cancelled' && (route_started = true || actual_arrival != null)`
       }
 
       const res = await deliveryService.getOrdersInBatches(

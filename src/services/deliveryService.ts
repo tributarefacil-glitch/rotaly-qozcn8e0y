@@ -795,6 +795,11 @@ export const deliveryService = {
    */
   async getPublicTrackingRoute(trackingCode: string) {
     try {
+      const cleanTrackingCode = encodeURIComponent(trackingCode.trim().toUpperCase())
+      const baseApiUrl = (pb.baseUrl || '').replace(/\/+$/, '')
+      const endpointPath = `/backend/v1/public-track/${cleanTrackingCode}/route`
+      const fullUrl = baseApiUrl ? `${baseApiUrl}${endpointPath}` : endpointPath
+
       return await pb.send<{
         order_id: string
         tracking_code: string
@@ -820,13 +825,10 @@ export const deliveryService = {
         completed_stops_before: number
         queue_position: number
         total_deliveries_in_batch: number
-      }>(
-        `/backend/v1/public-track/${encodeURIComponent(trackingCode.trim().toUpperCase())}/route`,
-        {
-          method: 'GET',
-          requestKey: null,
-        },
-      )
+      }>(fullUrl, {
+        method: 'GET',
+        requestKey: null,
+      })
     } catch (err) {
       console.warn('Erro ao carregar rota pública:', err)
       return null
