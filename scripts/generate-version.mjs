@@ -19,6 +19,24 @@ try {
     2,
   )
 
+  // Executa gen-icons se os arquivos não existirem
+  const mdpiFile = path.join(
+    rootDir,
+    'android',
+    'app',
+    'src',
+    'main',
+    'res',
+    'mipmap-mdpi',
+    'ic_launcher.png',
+  )
+  if (!fs.existsSync(mdpiFile)) {
+    const genIconsScript = path.join(rootDir, 'scripts', 'gen-icons.mjs')
+    if (fs.existsSync(genIconsScript)) {
+      await import('./gen-icons.mjs')
+    }
+  }
+
   // 1. Sempre grava em public/version.json para que o Vite copie para qualquer build
   const publicDir = path.join(rootDir, 'public')
   if (!fs.existsSync(publicDir)) {
