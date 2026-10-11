@@ -65,6 +65,7 @@ import {
   getOperationalMonthStart,
   getOperationalWindow,
   isCurrentMonthInTz,
+  isOrderInPeriod,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
 
@@ -156,14 +157,14 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           .toISOString()
           .replace('T', ' ')
           .substring(0, 19)
-        filterStr = `created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}'`
+        filterStr = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && (created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}')`
       } else if (selectedDateFilter === 'month') {
         const monthStartObj = getOperationalMonthStart(now)
         const isoStart = new Date(monthStartObj.timestamp)
           .toISOString()
           .replace('T', ' ')
           .substring(0, 19)
-        filterStr = `created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}'`
+        filterStr = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && (created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}')`
       } else if (selectedDateFilter === 'custom') {
         const custWin = getCustomOperationalWindow(
           customStartDate,
@@ -171,7 +172,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         )
         const isoStart = new Date(custWin.start).toISOString().replace('T', ' ').substring(0, 19)
         const isoEnd = new Date(custWin.end).toISOString().replace('T', ' ').substring(0, 19)
-        filterStr = `(created >= '${isoStart}' && created <= '${isoEnd}') || (route_started_at >= '${isoStart}' && route_started_at <= '${isoEnd}') || (route_finished_at >= '${isoStart}' && route_finished_at <= '${isoEnd}')`
+        filterStr = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && ((created >= '${isoStart}' && created <= '${isoEnd}') || (route_started_at >= '${isoStart}' && route_started_at <= '${isoEnd}') || (route_finished_at >= '${isoStart}' && route_finished_at <= '${isoEnd}'))`
+      } else {
+        filterStr = `status != 'cancelled' && !(route_started = false && actual_arrival = '')`
       }
 
       const res = await deliveryService.getOrdersInBatches(
@@ -624,13 +627,12 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
       if (selectedDateFilter === 'custom' && customWindow) {
         if (rowTs < customWindow.start || rowTs > customWindow.end) return
-      } else if (selectedDateFilter === 'today') {
-        if (rowTs < opWindow.start || rowTs > opWindow.end) return
-      } else if (selectedDateFilter === 'week') {
-        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-        if (rowTs < sevenDaysAgoStart || rowTs > opWindow.end) return
-      } else if (selectedDateFilter === 'month') {
-        if (!isCurrentMonthInTz(rowTs, now)) return
+      } else if (
+        selectedDateFilter === 'today' ||
+        selectedDateFilter === 'week' ||
+        selectedDateFilter === 'month'
+      ) {
+        if (!isOrderInPeriod(rowTs, selectedDateFilter as 'today' | 'week' | 'month', now)) return
       }
       if (selectedBatchKey !== 'all' && r.batchDisplay !== selectedBatchKey) return
       if (searchQuery.trim()) {
@@ -753,13 +755,13 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
       if (selectedDateFilter === 'custom' && customWindow) {
         if (rowTs < customWindow.start || rowTs > customWindow.end) return false
-      } else if (selectedDateFilter === 'today') {
-        if (rowTs < opWindow.start || rowTs > opWindow.end) return false
-      } else if (selectedDateFilter === 'week') {
-        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
-        if (rowTs < sevenDaysAgoStart || rowTs > opWindow.end) return false
-      } else if (selectedDateFilter === 'month') {
-        if (!isCurrentMonthInTz(rowTs, now)) return false
+      } else if (
+        selectedDateFilter === 'today' ||
+        selectedDateFilter === 'week' ||
+        selectedDateFilter === 'month'
+      ) {
+        if (!isOrderInPeriod(rowTs, selectedDateFilter as 'today' | 'week' | 'month', now))
+          return false
       }
 
       // Filtro de lote

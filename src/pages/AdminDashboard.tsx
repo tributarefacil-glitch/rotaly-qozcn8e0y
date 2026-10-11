@@ -526,7 +526,9 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         new Date(currentOpWindow.start).toISOString().replace('T', ' ')
       const windowEnd =
         currentOpWindow.endPbString || new Date(currentOpWindow.end).toISOString().replace('T', ' ')
-      const ordersFilter = `(created >= '${windowStart}' && created <= '${windowEnd}') || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
+      // Filtro de pedidos operacionais do dia:
+      // Exclui cancelados (status != 'cancelled') e exclui pedidos com route_started=false sem actual_arrival
+      const ordersFilter = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && ((created >= '${windowStart}' && created <= '${windowEnd}') || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned')))`
 
       // ETAPA 1 (imediata): pedidos + entregadores + telemetria de locais com fallback seguro
       // Libera imediatamente a renderização dos cards do Kanban, mapa e entregadores
@@ -1264,16 +1266,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
       if (fuelPeriodFilter === 'today') {
         // Pool amplo para cobrir route_finished_at, actual_arrival e created
-        filter = `created >= '${opWindow.startPbString}' || route_finished_at >= '${opWindow.startPbString}' || actual_arrival >= '${opWindow.startPbString}'`
+        // Exclui pedidos cancelados e route_started=false sem actual_arrival
+        filter = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && (created >= '${opWindow.startPbString}' || route_finished_at >= '${opWindow.startPbString}' || actual_arrival >= '${opWindow.startPbString}')`
       } else if (fuelPeriodFilter === 'month') {
         const monthStart = getOperationalMonthStart(currentDate)
-        filter = `created >= '${monthStart.pbString}' || route_finished_at >= '${monthStart.pbString}' || actual_arrival >= '${monthStart.pbString}'`
+        filter = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && (created >= '${monthStart.pbString}' || route_finished_at >= '${monthStart.pbString}' || actual_arrival >= '${monthStart.pbString}')`
       } else if (fuelPeriodFilter === 'week') {
         const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
         const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
-        filter = `created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}'`
+        filter = `status != 'cancelled' && !(route_started = false && actual_arrival = '') && (created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}')`
       } else {
-        filter = ''
+        filter = `status != 'cancelled' && !(route_started = false && actual_arrival = '')`
       }
 
       setIsLoadingFuelOrders(true)
@@ -1288,7 +1291,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
           ),
           !cachedFull || forceRefresh
             ? deliveryService.getOrdersInBatches(
-                '', // histórico completo pós-corte
+                `status != 'cancelled' && !(route_started = false && actual_arrival = '')`, // histórico completo pós-corte sem cancelados
                 '-created',
                 'customer_id,courier_id,seller_id',
                 300,
