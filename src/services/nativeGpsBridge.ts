@@ -273,43 +273,93 @@ class NativeGpsBridgeService {
   }
 
   /**
-   * Abrir app de navegação (Waze ou Google Maps) com retorno garantido ao Rotaly
+   * Abrir app de navegação (Waze ou Google Maps) com retorno garantido ao Rotaly.
+   * Em ambiente nativo Android (Capacitor/WebView com RotalyNativeGps), chama SEMPRE
+   * a ponte nativa via Intent do Android e NUNCA cai em window.open.
+   * Quando lat/lng não forem números válidos (null, undefined, NaN ou 0), passa 0, 0
+   * e repassa o endereço/label como destino para a Intent nativa resolver.
    */
   public openNavigation(params: {
-    lat?: number
-    lng?: number
-    address?: string
+    lat?: number | string | null
+    lng?: number | string | null
+    address?: string | null
+    label?: string | null
     app: 'waze' | 'google_maps'
   }) {
-    const { lat, lng, address, app } = params
+    const { address, label, app } = params
 
-    // Se estiver em ambiente nativo Android e a interface de intent estiver disponível:
-    if (
-      this.isNativeEnvironment() &&
-      window.RotalyNativeGps?.openNavigationApp &&
-      typeof lat === 'number' &&
-      typeof lng === 'number'
-    ) {
-      try {
-        const handled = window.RotalyNativeGps.openNavigationApp(lat, lng, app, address)
-        if (handled) return
-      } catch (err) {
-        console.warn('[NativeGpsBridge] Erro ao chamar openNavigationApp nativo:', err)
+    // Sanitização e validação das coordenadas
+    const numLat =
+      params.lat !== undefined && params.lat !== null && params.lat !== ''
+        ? Number(params.lat)
+        : NaN
+    const numLng =
+      params.lng !== undefined && params.lng !== null && params.lng !== ''
+        ? Number(params.lng)
+        : NaN
+
+    const hasValidCoords =
+      !isNaN(numLat) &&
+      !isNaN(numLng) &&
+      (Math.abs(numLat) > 0.000001 || Math.abs(numLng) > 0.000001)
+
+    const finalLat = hasValidCoords ? numLat : 0
+    const finalLng = hasValidCoords ? numLng : 0
+
+    // Destino textual prioritário: address se houver, senão label
+    const trimmedAddress = (address || '').trim()
+    const trimmedLabel = (label || '').trim()
+    const destinationQuery = trimmedAddress || trimmedLabel || ''
+
+    // 1. Em ambiente nativo Android: SEMPRE usar a ponte nativa RotalyNativeGps se presente
+    if (this.isNativeEnvironment()) {
+      if (window.RotalyNativeGps?.openNavigationApp) {
+        try {
+          const handled = window.RotalyNativeGps.openNavigationApp(
+            finalLat,
+            finalLng,
+            app,
+            destinationQuery,
+          )
+          if (handled) return
+        } catch (err) {
+          console.error('[NativeGpsBridge] Erro ao chamar openNavigationApp nativo:', err)
+        }
       }
+
+      // Em ambiente nativo, NUNCA usar window.open (WebView bloqueia links externos).
+      // Se a ponte direta falhar ou window.open for ineficaz, tentar redirecionar por location.href
+      // com os esquemas diretos de intent/app como proteção adicional dentro do WebView:
+      try {
+        if (app === 'waze') {
+          const nativeUrl = hasValidCoords
+            ? `waze://?ll=${finalLat},${finalLng}&navigate=yes`
+            : `waze://?q=${encodeURIComponent(destinationQuery)}&navigate=yes`
+          window.location.href = nativeUrl
+          return
+        } else {
+          const nativeUrl = hasValidCoords
+            ? `google.navigation:q=${finalLat},${finalLng}`
+            : `geo:0,0?q=${encodeURIComponent(destinationQuery)}`
+          window.location.href = nativeUrl
+          return
+        }
+      } catch (redirErr) {
+        console.warn('[NativeGpsBridge] Falha ao despachar scheme nativo:', redirErr)
+      }
+      return
     }
 
-    // Fallback universal via links e esquemas de URL
+    // 2. Ambiente Web (navegador/PWA sem ponte nativa): mantém comportamento com window.open
     if (app === 'waze') {
-      const wazeUrl =
-        typeof lat === 'number' && typeof lng === 'number'
-          ? `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`
-          : `https://waze.com/ul?q=${encodeURIComponent(address || '')}`
+      const wazeUrl = hasValidCoords
+        ? `https://waze.com/ul?ll=${finalLat},${finalLng}&navigate=yes`
+        : `https://waze.com/ul?q=${encodeURIComponent(destinationQuery)}`
       window.open(wazeUrl, '_blank')
     } else {
-      const destination =
-        typeof lat === 'number' && typeof lng === 'number'
-          ? `${lat},${lng}`
-          : encodeURIComponent(address || '')
+      const destination = hasValidCoords
+        ? `${finalLat},${finalLng}`
+        : encodeURIComponent(destinationQuery)
       const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination}`
       window.open(mapsUrl, '_blank')
     }

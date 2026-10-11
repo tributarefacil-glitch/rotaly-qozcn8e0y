@@ -1212,24 +1212,39 @@ export default function CourierApp() {
   // Navegação externa (Google Maps / Waze) com escolha do entregador
   const openExternalNavigation = (
     address: string,
-    lat?: number,
-    lng?: number,
+    lat?: number | string | null,
+    lng?: number | string | null,
     label = 'Destino',
   ) => {
+    const parsedLat =
+      lat !== undefined && lat !== null && lat !== '' && !isNaN(Number(lat))
+        ? Number(lat)
+        : undefined
+    const parsedLng =
+      lng !== undefined && lng !== null && lng !== '' && !isNaN(Number(lng))
+        ? Number(lng)
+        : undefined
+
     setNavigationTarget({
       name: label,
       address,
-      lat,
-      lng,
+      lat: parsedLat,
+      lng: parsedLng,
     })
     setIsNavigationChoiceOpen(true)
   }
 
-  const openWazeNavigation = (lat?: number, lng?: number, address?: string) => {
+  const openWazeNavigation = (
+    lat?: number | string | null,
+    lng?: number | string | null,
+    address?: string,
+    label?: string,
+  ) => {
     nativeGpsBridge.openNavigation({
       lat,
       lng,
       address,
+      label,
       app: 'waze',
     })
   }
@@ -1508,7 +1523,27 @@ export default function CourierApp() {
       }
       toast.success(`Navegação iniciada para ${cust?.name || 'o cliente'}!`)
       // Abrir modal de escolha de navegação (Waze ou Google Maps)
-      openExternalNavigation(cust?.address || '', cust?.lat, cust?.lng, cust?.name || 'Cliente')
+      // Prioriza coordenadas do pin cadastrado no cliente; fallback para coordenadas do pedido
+      const targetLat =
+        cust?.lat !== undefined && cust?.lat !== null && cust?.lat !== ''
+          ? cust.lat
+          : order.end_address_lat
+      const targetLng =
+        cust?.lng !== undefined && cust?.lng !== null && cust?.lng !== ''
+          ? cust.lng
+          : order.end_address_lng
+      const targetAddress =
+        cust?.address ||
+        (cust?.street
+          ? `${cust.street}${cust.complement ? `, ${cust.complement}` : ''} - ${cust.neighborhood || cust.city || ''}`
+          : order.end_address_text || '')
+
+      openExternalNavigation(
+        targetAddress,
+        targetLat,
+        targetLng,
+        cust?.name || order.end_address_name || 'Cliente',
+      )
     } catch {
       toast.error('Erro ao iniciar entrega.')
     }
@@ -2268,8 +2303,12 @@ export default function CourierApp() {
                           type="button"
                           size="sm"
                           onClick={() => {
-                            const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(currentActiveDelivery.redirection_new_address!)}`
-                            window.open(url, '_blank')
+                            openExternalNavigation(
+                              currentActiveDelivery.redirection_new_address!,
+                              undefined,
+                              undefined,
+                              `Novo endereço (${currentActiveDelivery.expand?.customer_id?.name || 'Cliente'})`,
+                            )
                           }}
                           className="h-8 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[11px] rounded-lg flex items-center gap-1.5"
                         >

@@ -177,9 +177,12 @@ export const RedirectDeliveryModal: React.FC<RedirectDeliveryModalProps> = ({
       onRedirectionStarted(updatedOrder)
 
       if (openNavigation) {
-        // Abrir Waze ou Google Maps para o novo endereço
-        const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(addressTrimmed)}`
-        window.open(mapsUrl, '_blank')
+        // Abrir navegação para o novo endereço usando a ponte nativa (ou Maps/Waze no web)
+        nativeGpsBridge.openNavigation({
+          address: addressTrimmed,
+          label: `Novo endereço (${customerName})`,
+          app: 'google_maps',
+        })
       }
 
       onOpenChange(false)

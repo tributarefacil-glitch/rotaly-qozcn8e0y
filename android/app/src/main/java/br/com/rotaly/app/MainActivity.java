@@ -297,29 +297,72 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public boolean openNavigationApp(double lat, double lng, String appName, String label) {
             try {
+                boolean hasCoords = !Double.isNaN(lat) && !Double.isNaN(lng) &&
+                        (Math.abs(lat) > 0.000001 || Math.abs(lng) > 0.000001);
+                String destinationText = (label != null && !label.trim().isEmpty()) ? label.trim() : "";
+
                 if ("waze".equalsIgnoreCase(appName)) {
-                    String url = "https://waze.com/ul?ll=" + lat + "," + lng + "&navigate=yes";
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    String wazeUrl;
+                    if (hasCoords) {
+                        wazeUrl = "https://waze.com/ul?ll=" + lat + "," + lng + "&navigate=yes";
+                    } else if (!destinationText.isEmpty()) {
+                        wazeUrl = "https://waze.com/ul?q=" + Uri.encode(destinationText) + "&navigate=yes";
+                    } else {
+                        wazeUrl = "https://waze.com/ul";
+                    }
+
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(wazeUrl));
                     intent.setPackage("com.waze");
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     try {
                         startActivity(intent);
                         return true;
                     } catch (Exception fallback) {
-                        // Se app Waze não estiver instalado, abre navegador
-                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-                        return true;
+                        // Se app Waze não estiver instalado ou falhar, abre via Intent genérica com fallback no navegador externo
+                        try {
+                            Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(wazeUrl));
+                            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(browserIntent);
+                            return true;
+                        } catch (Exception ex) {
+                            Log.e(TAG, "Falha ao abrir Waze via navegador externo:", ex);
+                            return false;
+                        }
                     }
                 } else {
-                    String uriStr = "google.navigation:q=" + lat + "," + lng;
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriStr));
+                    // Google Maps / Navegação
+                    Intent intent;
+                    String mapsWeb;
+                    if (hasCoords) {
+                        String uriStr = "google.navigation:q=" + lat + "," + lng;
+                        intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriStr));
+                        mapsWeb = "https://www.google.com/maps/dir/?api=1&destination=" + lat + "," + lng;
+                    } else if (!destinationText.isEmpty()) {
+                        String uriStr = "geo:0,0?q=" + Uri.encode(destinationText);
+                        intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriStr));
+                        mapsWeb = "https://www.google.com/maps/search/?api=1&query=" + Uri.encode(destinationText);
+                    } else {
+                        String uriStr = "geo:0,0";
+                        intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriStr));
+                        mapsWeb = "https://www.google.com/maps";
+                    }
+
                     intent.setPackage("com.google.android.apps.maps");
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     try {
                         startActivity(intent);
                         return true;
                     } catch (Exception fallback) {
-                        String mapsWeb = "https://www.google.com/maps/dir/?api=1&destination=" + lat + "," + lng;
-                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(mapsWeb)));
-                        return true;
+                        // Se app Google Maps nativo não estiver disponível, abre via navegador do sistema
+                        try {
+                            Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(mapsWeb));
+                            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(browserIntent);
+                            return true;
+                        } catch (Exception ex) {
+                            Log.e(TAG, "Falha ao abrir Google Maps via navegador externo:", ex);
+                            return false;
+                        }
                     }
                 }
             } catch (Exception e) {

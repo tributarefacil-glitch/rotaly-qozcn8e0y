@@ -15,8 +15,8 @@ interface NavigationAppChoiceModalProps {
   onOpenChange: (open: boolean) => void
   destinationName?: string
   destinationAddress?: string
-  lat?: number
-  lng?: number
+  lat?: number | string | null
+  lng?: number | string | null
   onNavigateStarted?: () => void
 }
 
@@ -34,6 +34,7 @@ export const NavigationAppChoiceModal: React.FC<NavigationAppChoiceModalProps> =
       lat,
       lng,
       address: destinationAddress,
+      label: destinationName,
       app,
     })
     onNavigateStarted?.()
