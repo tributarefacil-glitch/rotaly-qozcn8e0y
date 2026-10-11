@@ -494,19 +494,47 @@ onRecordAfterCreateSuccess((e) => {
   )
 
   if (distToBaseMeters <= BASE_GEOFENCE_RADIUS_METERS && isGpsSignalFresh) {
-    // Verificar se há rota iniciada não encerrada para este courier
+    // ITEM 1: Regra do alerta "Chegou à Base com Rota Aberta"
+    // O alerta SÓ deve disparar quando:
+    // 1. O entregador TIVER FINALIZADO TODAS as paradas da rota (todos os pedidos do lote
+    //    em status final — delivered, cancelled, address_error, client_absent);
+    // 2. Estiver dentro do geofence da base (<= 150m do pin oficial);
+    // 3. A rota ainda estiver aberta (route_finished = false / null).
+    // NÃO disparar:
+    // (a) nos primeiros minutos da rota quando o entregador ainda não visitou nenhuma parada (0 entregas finalizadas);
+    // (b) em paradas intermediárias na base durante o lote quando ainda há entregas pendentes.
     let openOrdersForBaseAlert = []
     try {
       openOrdersForBaseAlert = $app.findRecordsByFilter(
         'orders',
         `courier_id = '${courierId}' && route_started = true && (route_finished = false || route_finished = null)`,
         'route_started_at,created',
-        20,
+        50,
         0,
       )
     } catch (_) {}
 
-    if (openOrdersForBaseAlert.length > 0) {
+    // Identificar se TODOS os pedidos da rota ativa já foram concluídos/finalizados individualmente
+    const totalOrdersInActiveRoute = openOrdersForBaseAlert.length
+    const pendingOrdersInActiveRoute = openOrdersForBaseAlert.filter((o) => {
+      const st = o.getString('status')
+      return (
+        st !== 'delivered' && st !== 'cancelled' && st !== 'address_error' && st !== 'client_absent'
+      )
+    })
+    const completedOrdersInActiveRoute = openOrdersForBaseAlert.filter((o) => {
+      const st = o.getString('status')
+      return (
+        st === 'delivered' || st === 'cancelled' || st === 'address_error' || st === 'client_absent'
+      )
+    })
+
+    const allStopsFinished =
+      totalOrdersInActiveRoute > 0 &&
+      pendingOrdersInActiveRoute.length === 0 &&
+      completedOrdersInActiveRoute.length > 0
+
+    if (allStopsFinished) {
       // Cooldown de 15 minutos para alertas de chegada à base sem encerrar rota
       let recentBaseAlerts = []
       try {
@@ -540,7 +568,7 @@ onRecordAfterCreateSuccess((e) => {
         const arrivalTimeBsb = `${bsbHours}:${bsbMinutes}`
 
         const warningTitle = '⚠️ Chegada à Base com Rota Aberta'
-        const warningMsg = `O entregador ${courierName} chegou à base às ${arrivalTimeBsb} com rota aberta (tempo de rota: ${durationDisplay}, ${openOrdersForBaseAlert.length} pedido(s) pendente(s) de finalização).`
+        const warningMsg = `O entregador ${courierName} concluiu todas as ${totalOrdersInActiveRoute} parada(s) da rota e chegou à base às ${arrivalTimeBsb} com a rota ainda aberta (tempo de rota: ${durationDisplay}).`
 
         // 1. Notificação para o entregador
         try {
@@ -552,7 +580,7 @@ onRecordAfterCreateSuccess((e) => {
           nCourier.set('title', warningTitle)
           nCourier.set(
             'message',
-            `Você chegou à base — finalize a rota antes de encerrar o expediente (tempo de rota: ${durationDisplay}).`,
+            `Você concluiu todas as entregas e chegou à base — finalize a rota no aplicativo para encerrar o expediente (tempo de rota: ${durationDisplay}).`,
           )
           nCourier.set('is_read', false)
           $app.save(nCourier)
