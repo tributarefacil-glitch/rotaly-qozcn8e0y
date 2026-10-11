@@ -50,6 +50,9 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="www.rotaly.com.br" />
+                <data android:scheme="https" android:host="rotaly.com.br" />
+                <data android:scheme="https" android:host="gestao-de-entregas-10f17--preview.goskip.app" />
                 <data android:scheme="https" android:host="rotaly.app" />
             </intent-filter>
         </activity>

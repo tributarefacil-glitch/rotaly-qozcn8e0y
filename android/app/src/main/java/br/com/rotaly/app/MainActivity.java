@@ -54,12 +54,14 @@ public class MainActivity extends AppCompatActivity {
         // Solicita permissões iniciais no primeiro uso
         checkAndRequestPermissions();
 
-        // Carrega o frontend (aplicativo empacotado ou URL configurada)
-        // Se houver asset index.html empacotado: file:///android_asset/public/index.html
-        // Fallback: carregar a URL da aplicação hospedada
-        String initialUrl = "https://rotaly-qozcn8e0y.skip.app/courier";
+        // Carrega o frontend: inicia na raiz de produção (https://www.rotaly.com.br) sem forçar /courier
+        String initialUrl = PRIMARY_URL;
         webView.loadUrl(initialUrl);
     }
+
+    private static final String PRIMARY_URL = "https://www.rotaly.com.br";
+    private static final String FALLBACK_PREVIEW_URL = "https://gestao-de-entregas-10f17--preview.goskip.app";
+    private boolean hasFailedOverToPreview = false;
 
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebViewSettings() {
@@ -87,6 +89,38 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
                 return false;
+            }
+
+            @Override
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                super.onReceivedError(view, errorCode, description, failingUrl);
+                handlePageLoadError(view, failingUrl, description);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, android.webkit.WebResourceRequest request, android.webkit.WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (request != null && request.isForMainFrame()) {
+                    String url = request.getUrl() != null ? request.getUrl().toString() : "";
+                    String desc = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && error != null && error.getDescription() != null)
+                            ? error.getDescription().toString()
+                            : "Erro de conexão";
+                    handlePageLoadError(view, url, desc);
+                }
+            }
+
+            private void handlePageLoadError(WebView view, String failingUrl, String description) {
+                Log.w(TAG, "Erro ao carregar URL (" + failingUrl + "): " + description);
+                // Fallback automático para o preview se o domínio principal ainda não propagou no DNS
+                if (!hasFailedOverToPreview && failingUrl != null &&
+                        (failingUrl.contains("rotaly.com.br") || failingUrl.contains("skip.app"))) {
+                    hasFailedOverToPreview = true;
+                    Log.i(TAG, "Ativando fallback para o preview: " + FALLBACK_PREVIEW_URL);
+                    view.post(() -> {
+                        Toast.makeText(MainActivity.this, "Conectando ao ambiente de contingência Rotaly...", Toast.LENGTH_SHORT).show();
+                        view.loadUrl(FALLBACK_PREVIEW_URL);
+                    });
+                }
             }
         });
 
