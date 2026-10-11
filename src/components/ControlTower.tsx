@@ -1084,7 +1084,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
   // Map couriers data with latest GPS coordinates & active route status
   // CORREÇÃO A & B:
-  // 1. Sem coordenadas inventadas: usar estritamente latestLoc.lat/lng ou start_base_lat/lng do pedido ativo
+  // 1. Sem coordenadas inventadas: usar estritamente latestLoc.lat/lng da telemetria real (nunca start_base)
   // 2. hasRouteStarted / activeInTransitOrders verificados contra a lista GLOBAL de pedidos em trânsito filtrada para o dia corrente
   const allCourierData = useMemo(() => {
     // Filtrar globalInTransitOrders estritamente pelo dia corrente (isTodayOrder) para impedir vazamento de pedidos antigos

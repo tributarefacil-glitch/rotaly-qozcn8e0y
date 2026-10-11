@@ -41,7 +41,7 @@ import { toast as sonnerToast } from 'sonner'
 import { OrderRecord, UserRecord, AppSettingsRecord, LocationRecord } from '@/types/delivery'
 import { LatLngPoint, findNearestPointOnRoute } from '@/services/osrmRoutingService'
 import { DEVIATION_THRESHOLD_METERS } from '@/lib/geo'
-import { formatTimeInTz, formatDateInTz } from '@/lib/operationalWindow'
+import { formatTimeInTz, formatDateInTz, parseSafeTimestamp } from '@/lib/operationalWindow'
 import { getVehicleEmoji } from '@/components/LiveMap'
 import { getCourierRouteColor } from '@/lib/courierRouteColors'
 import { reverseGeocodeCoordinates } from '@/lib/googleMaps'
@@ -1372,8 +1372,8 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
               const addressDisplay = isLoadingCourierAddress
                 ? 'Localizando endereço em tempo real via GPS...'
                 : resolvedCourierAddress ||
-                  (diag.lastCoords
-                    ? `${diag.lastCoords.lat.toFixed(5)}, ${diag.lastCoords.lng.toFixed(5)}`
+                  (diag.lat !== null && diag.lng !== null
+                    ? `${diag.lat.toFixed(5)}, ${diag.lng.toFixed(5)}`
                     : data?.hasValidCoords
                       ? `${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}`
                       : 'Aguardando primeiro sinal GPS do entregador')
@@ -1524,9 +1524,9 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                             <MapPin className="h-3 w-3 text-[#60A5FA]" />
                             Endereço atual em tempo real
                           </span>
-                          {diag.lastCoords ? (
+                          {diag.lat !== null && diag.lng !== null ? (
                             <span className="font-mono text-slate-400">
-                              {diag.lastCoords.lat.toFixed(4)}, {diag.lastCoords.lng.toFixed(4)}
+                              {diag.lat.toFixed(4)}, {diag.lng.toFixed(4)}
                             </span>
                           ) : data?.hasValidCoords ? (
                             <span className="font-mono text-slate-400">
