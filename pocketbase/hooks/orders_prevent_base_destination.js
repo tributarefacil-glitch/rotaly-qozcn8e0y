@@ -52,7 +52,7 @@ onRecordCreateRequest((e) => {
         bases = [
           {
             get: function (f) {
-              return f === 'lat' ? -23.022683 : f === 'lng' ? -43.4570039 : null
+              return f === 'lat' ? -22.6977499 : f === 'lng' ? -43.2936013 : null
             },
             getString: function (f) {
               return f === 'name' ? 'Mais Saudavel' : ''
@@ -93,6 +93,7 @@ onRecordCreateRequest((e) => {
         if (
           bName &&
           (endName.toLowerCase().includes(bName) ||
+            endText.toLowerCase().includes('fortuna, 13') ||
             endText.toLowerCase().includes('prosperidade, 13'))
         ) {
           matchedBase = b
@@ -244,7 +245,7 @@ onRecordUpdateRequest((e) => {
         bases = [
           {
             get: function (f) {
-              return f === 'lat' ? -23.022683 : f === 'lng' ? -43.4570039 : null
+              return f === 'lat' ? -22.6977499 : f === 'lng' ? -43.2936013 : null
             },
             getString: function (f) {
               return f === 'name' ? 'Mais Saudavel' : ''
@@ -284,6 +285,7 @@ onRecordUpdateRequest((e) => {
         if (
           bName &&
           (endName.toLowerCase().includes(bName) ||
+            endText.toLowerCase().includes('fortuna, 13') ||
             endText.toLowerCase().includes('prosperidade, 13'))
         ) {
           matchedBase = b

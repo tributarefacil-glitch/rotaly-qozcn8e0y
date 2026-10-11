@@ -1149,8 +1149,8 @@ export default function CourierApp() {
   // Identificar coordenadas da base para guiar o retorno (end_address_lat/lng ou start_base_lat/lng)
   const baseCoordinates = useMemo(() => {
     const anchor = currentRouteOrders[0] || orders[0]
-    const effectiveLat = anchor?.end_address_lat || anchor?.start_base_lat || -23.022683
-    const effectiveLng = anchor?.end_address_lng || anchor?.start_base_lng || -43.4570039
+    const effectiveLat = anchor?.end_address_lat || anchor?.start_base_lat || -22.6977499
+    const effectiveLng = anchor?.end_address_lng || anchor?.start_base_lng || -43.2936013
     return {
       name: anchor?.start_base_name || 'Base Operacional',
       address: anchor?.start_base_address || 'Base de Distribuição',

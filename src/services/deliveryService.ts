@@ -2472,14 +2472,14 @@ export const deliveryService = {
         id: '811cpvr0g77m9ue',
         name: 'Mais Saudavel',
         type: 'base',
-        address: 'Rua da Prosperidade, 13 - Pilar, Duque de Caxias - RJ, 25230-085, Brasil',
-        street: 'Rua da Prosperidade, 13',
+        address: 'Rua da Fortuna, 13 - Pilar, Duque de Caxias (ao lado do Mercado Charuto)',
+        street: 'Rua da Fortuna, 13',
         neighborhood: 'Pilar',
         city: 'Duque de Caxias',
         state: 'RJ',
         postal_code: '25230-085',
-        lat: -23.022683,
-        lng: -43.4570039,
+        lat: -22.6977499,
+        lng: -43.2936013,
         is_default: true,
         is_end_default: true,
         empresa_id: (await getMatrizCompanyId()) || '',
@@ -2881,8 +2881,8 @@ export const deliveryService = {
       const defaultBase = bases.find((b) => b.is_default) || bases[0]
       // Constante BASE oficial explícita para garantir destino = base oficial soberana
       const OFFICIAL_BASE_COORDS = {
-        lat: defaultBase?.lat || -23.022683,
-        lng: defaultBase?.lng || -43.4570039,
+        lat: defaultBase?.lat || -22.6977499,
+        lng: defaultBase?.lng || -43.2936013,
       }
       const originPoint = {
         lat: defaultBase?.lat || courierOrders[0]?.start_base_lat || OFFICIAL_BASE_COORDS.lat,

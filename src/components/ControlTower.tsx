@@ -1272,8 +1272,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           return null
         }
 
-        // Fallback oficial da base (Mais Saudável, Rua da Prosperidade, 13 — Pilar)
-        const OFFICIAL_BASE_FALLBACK: LatLngPoint = { lat: -23.022683, lng: -43.4570039 }
+        // Fallback oficial da base (Drogaria Mais Saudável, Rua da Fortuna, 13 — Pilar)
+        const OFFICIAL_BASE_FALLBACK: LatLngPoint = { lat: -22.6977499, lng: -43.2936013 }
 
         // O primeiro pedido ativo (ou o último delivered se todos já foram entregues) define a base
         const primaryOrder =
@@ -3181,8 +3181,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           ? distanceMeters(courierPoint, { lat: cust.lat, lng: cust.lng })
           : 999
       const basePoint: LatLngPoint = {
-        lat: selectedOrder.start_base_lat ? Number(selectedOrder.start_base_lat) : -23.022683,
-        lng: selectedOrder.start_base_lng ? Number(selectedOrder.start_base_lng) : -43.4570039,
+        lat: selectedOrder.start_base_lat ? Number(selectedOrder.start_base_lat) : -22.6977499,
+        lng: selectedOrder.start_base_lng ? Number(selectedOrder.start_base_lng) : -43.2936013,
       }
       const distToDrawerBase = distanceMeters(courierPoint, basePoint)
       const isSpeedZero = typeof courierData.speed === 'number' && courierData.speed <= 2
