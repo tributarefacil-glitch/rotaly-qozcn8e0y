@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-11T02:02:09.601Z",
+  "generatedAt": "2026-10-11T02:04:48.029Z",
   "collections": [
     {
       "name": "users",
@@ -262,6 +262,12 @@
         },
         {
           "name": "pending_client_pin",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "addresses",
           "type": "json",
           "required": false,
           "system": false
@@ -691,6 +697,12 @@
           "required": false,
           "system": false,
           "collectionRef": "users"
+        },
+        {
+          "name": "customer_address_id",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

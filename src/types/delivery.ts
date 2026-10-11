@@ -131,6 +131,23 @@ export interface UserRecord extends RecordModel {
   fuel_price?: number
 }
 
+export interface CustomerAddressItem {
+  id: string
+  label: string
+  address: string
+  street?: string
+  neighborhood?: string
+  city?: string
+  state?: string
+  postal_code?: string
+  complement?: string
+  reference_point?: string
+  plus_code?: string
+  lat?: number
+  lng?: number
+  is_default?: boolean
+}
+
 export interface CustomerRecord extends RecordModel {
   empresa_id?: string
   name: string
@@ -149,6 +166,7 @@ export interface CustomerRecord extends RecordModel {
   complement?: string
   reference_point?: string
   plus_code?: string
+  addresses?: CustomerAddressItem[]
   pending_client_pin?: {
     lat: number
     lng: number
@@ -291,6 +309,7 @@ export interface OrderRecord extends RecordModel {
     | string
   entrega_admin_unlock_reason?: string
   entrega_admin_unlock_by?: string
+  customer_address_id?: string
   // expanded relations
   expand?: {
     customer_id?: CustomerRecord

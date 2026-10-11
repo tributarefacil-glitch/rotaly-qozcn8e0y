@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { RotalyLogo } from '@/components/RotalyLogo'
+import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 
 export const AppDownloadPage: React.FC = () => {
   // Link padrão configurável do APK (hospedado no Skip Cloud, release do GitHub ou CDN direto)
@@ -115,30 +116,54 @@ export const AppDownloadPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Botão Principal de Download */}
+          {/* Botão Principal de Download / Badge se já estiver no app nativo */}
           <div className="pt-2 space-y-2.5">
-            <a
-              href={apkDownloadUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex w-full"
-            >
-              <Button
-                type="button"
-                className="w-full h-14 bg-gradient-to-r from-[#0052CC] via-[#0066FF] to-[#00A8E8] hover:from-[#0047B3] hover:to-[#0095d0] text-white font-black text-base rounded-2xl shadow-xl shadow-blue-500/25 flex items-center justify-center gap-3 border border-cyan-400/40 transition hover:scale-[1.01]"
-              >
-                <Download className="h-6 w-6 animate-bounce" />
-                <span>Baixar APK Rotaly (v1.0.0)</span>
-              </Button>
-            </a>
+            {nativeGpsBridge.isNativeEnvironment() ? (
+              <div className="w-full p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 flex flex-col items-center justify-center gap-2 shadow-lg">
+                <div className="flex items-center gap-2 font-bold text-sm text-emerald-300">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                  <span>Você já está usando o app nativo</span>
+                </div>
+                <p className="text-xs text-emerald-100/80 text-center">
+                  Seu aplicativo já está com suporte oficial ao GPS em 2º plano e atualizações
+                  diretas.
+                </p>
+                <a href="/app" className="mt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 px-4 border-emerald-400/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 font-bold text-xs rounded-xl"
+                  >
+                    Voltar para o Painel de Entregas
+                  </Button>
+                </a>
+              </div>
+            ) : (
+              <>
+                <a
+                  href={apkDownloadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex w-full"
+                >
+                  <Button
+                    type="button"
+                    className="w-full h-14 bg-gradient-to-r from-[#0052CC] via-[#0066FF] to-[#00A8E8] hover:from-[#0047B3] hover:to-[#0095d0] text-white font-black text-base rounded-2xl shadow-xl shadow-blue-500/25 flex items-center justify-center gap-3 border border-cyan-400/40 transition hover:scale-[1.01]"
+                  >
+                    <Download className="h-6 w-6 animate-bounce" />
+                    <span>Baixar APK Rotaly (v1.0.0)</span>
+                  </Button>
+                </a>
 
-            <div className="flex items-center justify-between gap-2 px-1 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                Compatível com Android 8 ao 14+
-              </span>
-              <span>Tamanho: ~12 MB</span>
-            </div>
+                <div className="flex items-center justify-between gap-2 px-1 text-[11px] text-slate-400">
+                  <span className="flex items-center gap-1">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                    Compatível com Android 8 ao 14+
+                  </span>
+                  <span>Tamanho: ~12 MB</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

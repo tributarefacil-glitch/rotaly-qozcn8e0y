@@ -854,6 +854,71 @@ export const deliveryService = {
     return pb.collection<OrderRecord>('orders').update(id, data)
   },
 
+  /**
+   * Atualiza o pin (lat, lng) do endereço entregue do cliente.
+   * Se o pedido estiver vinculado a um customer_address_id e o cliente tiver lista de endereços,
+   * atualiza o item correspondente em `addresses`.
+   * Se for o endereço preferencial ou único, também atualiza lat/lng na raiz do cliente.
+   */
+  async updateCustomerDeliveryPin(params: {
+    customerId: string
+    lat: number
+    lng: number
+    customerAddressId?: string | null
+  }): Promise<void> {
+    const { customerId, lat, lng, customerAddressId } = params
+    if (!customerId || !lat || !lng) return
+
+    try {
+      const customer = await pb.collection<CustomerRecord>('customers').getOne(customerId)
+      if (!customer) return
+
+      let addresses = customer.addresses ? [...customer.addresses] : []
+      let updatedAddresses = false
+      let isTargetDefault = false
+
+      if (addresses.length > 0) {
+        if (customerAddressId) {
+          addresses = addresses.map((addr) => {
+            if (addr.id === customerAddressId) {
+              if (addr.is_default) isTargetDefault = true
+              updatedAddresses = true
+              return { ...addr, lat, lng }
+            }
+            return addr
+          })
+        } else {
+          // Se não houver customerAddressId explícito, atualiza o endereço default ou o primeiro
+          addresses = addresses.map((addr, idx) => {
+            if (addr.is_default || (!isTargetDefault && idx === 0)) {
+              isTargetDefault = true
+              updatedAddresses = true
+              return { ...addr, lat, lng }
+            }
+            return addr
+          })
+        }
+      }
+
+      const updatePayload: Partial<CustomerRecord> = {}
+      if (updatedAddresses) {
+        updatePayload.addresses = addresses
+      }
+
+      // Se for o default, ou se não tinha addresses estruturados, ou se a raiz estava sem lat/lng:
+      if (isTargetDefault || addresses.length === 0 || !customer.lat || !customer.lng) {
+        updatePayload.lat = lat
+        updatePayload.lng = lng
+      }
+
+      if (Object.keys(updatePayload).length > 0) {
+        await pb.collection('customers').update(customerId, updatePayload)
+      }
+    } catch (err) {
+      console.warn('[deliveryService] Erro ao atualizar pin de entrega do cliente:', err)
+    }
+  },
+
   async deleteOrder(id: string) {
     return pb.collection<OrderRecord>('orders').delete(id)
   },

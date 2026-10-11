@@ -833,16 +833,18 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           )
         }
       }
-      // CORREÇÃO REAL DE ENDEREÇO confirmada pelo entregador
+      // CORREÇÃO REAL DE ENDEREÇO confirmada pelo entregador (atualiza pin na coleção customers e no endereço específico)
       if (isDelivered && addressCorrectionConfirmed && currentLoc && order.customer_id) {
         try {
           const oldLat = order.expand?.customer_id?.lat
           const oldLng = order.expand?.customer_id?.lng
           const oldAddress = order.expand?.customer_id?.address
 
-          await pb.collection('customers').update(order.customer_id, {
+          await deliveryService.updateCustomerDeliveryPin({
+            customerId: order.customer_id,
             lat: currentLoc.lat,
             lng: currentLoc.lng,
+            customerAddressId: order.customer_address_id,
           })
 
           await deliveryService.logAuditTrail({
@@ -861,6 +863,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               tracking_code: order.tracking_code,
               address: oldAddress,
               real_gps: currentLoc,
+              customer_address_id: order.customer_address_id,
             },
           })
           toast.success('Ponto do cliente corrigido para sua localização real!')

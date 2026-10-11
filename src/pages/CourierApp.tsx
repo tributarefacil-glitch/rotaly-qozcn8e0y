@@ -2496,13 +2496,20 @@ export default function CourierApp() {
       {/* Links de suporte e download do APK Nativo no rodapé */}
       <div className="max-w-xl mx-auto w-full px-4 pt-1 pb-2 flex flex-col items-center justify-center gap-1.5 text-center">
         <div className="flex items-center justify-center gap-3 flex-wrap">
-          <a
-            href="/app-download"
-            className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-semibold underline decoration-dotted"
-          >
-            <Smartphone className="h-3.5 w-3.5" />
-            <span>Baixar APK Nativo (GPS em 2º plano)</span>
-          </a>
+          {nativeGpsBridge.isNativeEnvironment() ? (
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+              <span>Você já está usando o app nativo</span>
+            </span>
+          ) : (
+            <a
+              href="/app-download"
+              className="text-[11px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-semibold underline decoration-dotted"
+            >
+              <Smartphone className="h-3.5 w-3.5" />
+              <span>Baixar APK Nativo (GPS em 2º plano)</span>
+            </a>
+          )}
 
           <span className="text-slate-600">•</span>
 

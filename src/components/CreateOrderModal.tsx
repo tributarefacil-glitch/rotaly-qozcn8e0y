@@ -42,6 +42,7 @@ import {
 import { deliveryService } from '@/services/deliveryService'
 import type {
   CustomerRecord,
+  CustomerAddressItem,
   UserRecord,
   OrderPriority,
   OrderItem,
@@ -94,6 +95,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [localCustomers, setLocalCustomers] = useState<CustomerRecord[]>(initialCustomers)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [customerId, setCustomerId] = useState<string>('')
+  const [selectedCustomerAddressId, setSelectedCustomerAddressId] = useState<string | null>(null)
   const [courierId, setCourierId] = useState<string>('unassigned')
   const [priority, setPriority] = useState<OrderPriority>('normal')
   const [notes, setNotes] = useState<string>('')
@@ -667,26 +669,75 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     }
   }, [open, isMapsLoaded, isAddingCustomer, initMap])
 
+  // Handler para trocar endereço selecionado de um cliente com múltiplos endereços
+  const handleSelectCustomerAddress = (addressItem: CustomerAddressItem) => {
+    setSelectedCustomerAddressId(addressItem.id)
+    const addrText = addressItem.address || addressItem.street || ''
+    setAddressSearchQuery(addrText)
+    setStreetAndNumber(addressItem.street || addrText)
+    setNeighborhood(addressItem.neighborhood || '')
+    setCity(addressItem.city || '')
+    setPostalCode(addressItem.postal_code || '')
+    setComplement(addressItem.complement || '')
+    setReferencePoint(addressItem.reference_point || '')
+    if (addressItem.lat && addressItem.lng) {
+      setSelectedCoords({ lat: addressItem.lat, lng: addressItem.lng })
+      setHasLocationPinned(true)
+      setIsPinManuallyAdjusted(true)
+      isSelectedFromAutocompleteRef.current = true
+      updateMapPosition(addressItem.lat, addressItem.lng, 16, false)
+    }
+    toast.info(`Endereço "${addressItem.label}" selecionado para a entrega.`)
+  }
+
   // When selecting existing customer
   const handleSelectExistingCustomer = async (id: string) => {
     setCustomerId(id)
     setIgnoredRecentOrderWarning(false)
     const cust = localCustomers.find((c) => c.id === id)
-    if (cust && cust.lat && cust.lng) {
-      setSelectedCoords({ lat: cust.lat, lng: cust.lng })
-      setHasLocationPinned(true)
-      setIsPinManuallyAdjusted(true)
-      isSelectedFromAutocompleteRef.current = true
+
+    // Se cliente tiver lista de endereços, escolhe o default ou o primeiro
+    if (cust && Array.isArray(cust.addresses) && cust.addresses.length > 0) {
+      const defaultAddr = cust.addresses.find((a) => a.is_default) || cust.addresses[0]
+      setSelectedCustomerAddressId(defaultAddr.id)
+      const custAddr = defaultAddr.address || defaultAddr.street || ''
+      setAddressSearchQuery(custAddr)
+      setStreetAndNumber(defaultAddr.street || custAddr)
+      setNeighborhood(defaultAddr.neighborhood || '')
+      setCity(defaultAddr.city || '')
+      setPostalCode(defaultAddr.postal_code || '')
+      setComplement(defaultAddr.complement || '')
+      setReferencePoint(defaultAddr.reference_point || '')
+      if (defaultAddr.lat && defaultAddr.lng) {
+        setSelectedCoords({ lat: defaultAddr.lat, lng: defaultAddr.lng })
+        setHasLocationPinned(true)
+        setIsPinManuallyAdjusted(true)
+        isSelectedFromAutocompleteRef.current = true
+        updateMapPosition(defaultAddr.lat, defaultAddr.lng, 16, false)
+      }
+    } else {
+      setSelectedCustomerAddressId(null)
+      if (cust && cust.lat && cust.lng) {
+        setSelectedCoords({ lat: cust.lat, lng: cust.lng })
+        setHasLocationPinned(true)
+        setIsPinManuallyAdjusted(true)
+        isSelectedFromAutocompleteRef.current = true
+        updateMapPosition(cust.lat, cust.lng, 16, false)
+      }
+
+      if (cust) {
+        const custAddr = cust.address || cust.street || ''
+        setAddressSearchQuery(custAddr)
+        setStreetAndNumber(cust.street || custAddr)
+        setNeighborhood(cust.neighborhood || '')
+        setCity(cust.city || '')
+        setPostalCode(cust.postal_code || '')
+        setComplement(cust.complement || '')
+        setReferencePoint(cust.reference_point || '')
+      }
     }
 
     if (cust) {
-      const custAddr = cust.address || cust.street || ''
-      setAddressSearchQuery(custAddr)
-      setStreetAndNumber(cust.street || custAddr)
-      setNeighborhood(cust.neighborhood || '')
-      setCity(cust.city || '')
-      setPostalCode(cust.postal_code || '')
-      setComplement(cust.complement || '')
       if (cust.name) setNewCustName(cust.name)
       if (cust.phone) setNewCustPhone(cust.phone)
       if (cust.phone2) setNewCustPhone2(cust.phone2)
@@ -1261,6 +1312,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             tracking_code: usedTrackingCode,
             seller_id: user?.id,
             customer_id: finalCustomerId,
+            customer_address_id: selectedCustomerAddressId || undefined,
             courier_id: assignedCourier,
             status: 'pending',
             sequence: null as any,
@@ -1410,44 +1462,92 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   />
 
                   {customerId && (
-                    <div className="rounded-lg bg-white p-3 border border-slate-200 text-xs dark:bg-slate-800 dark:border-slate-700 flex items-start justify-between">
+                    <div className="rounded-lg bg-white p-3 border border-slate-200 text-xs dark:bg-slate-800 dark:border-slate-700 flex flex-col gap-2.5">
                       {(() => {
                         const sel = localCustomers.find((c) => c.id === customerId)
                         if (!sel) return null
+                        const hasMultiple = Array.isArray(sel.addresses) && sel.addresses.length > 0
                         return (
-                          <div className="space-y-1">
-                            <p className="font-bold text-slate-900 dark:text-white">{sel.name}</p>
-                            <p className="text-slate-600 dark:text-slate-300">
-                              📞 {sel.phone} {sel.phone2 ? `| 2: ${sel.phone2}` : ''}{' '}
-                              {sel.phone3 ? `| 3: ${sel.phone3}` : ''}
-                            </p>
-                            <p className="text-slate-600 dark:text-slate-300">📍 {sel.address}</p>
-                            {sel.lat && sel.lng && (
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200"
+                          <>
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-1">
+                                <p className="font-bold text-slate-900 dark:text-white">
+                                  {sel.name}
+                                </p>
+                                <p className="text-slate-600 dark:text-slate-300">
+                                  📞 {sel.phone} {sel.phone2 ? `| 2: ${sel.phone2}` : ''}{' '}
+                                  {sel.phone3 ? `| 3: ${sel.phone3}` : ''}
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  populateCustomerForm(sel)
+                                  setIsAddingCustomer(true)
+                                }}
+                                className="h-7 text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
                               >
-                                ✓ Coordenadas GPS Fixadas
-                              </Badge>
+                                <Edit3 className="h-3.5 w-3.5" /> Editar Dados
+                              </Button>
+                            </div>
+
+                            {/* Seletor de Endereço quando cliente tiver múltiplos endereços cadastrados */}
+                            {hasMultiple && (
+                              <div className="pt-2 border-t border-slate-200 dark:border-slate-700 space-y-1.5">
+                                <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                                  <MapPin className="h-3 w-3 text-blue-600" /> Escolha o Endereço
+                                  para esta Entrega:
+                                </Label>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                  {sel.addresses!.map((addr) => {
+                                    const isSelected = selectedCustomerAddressId === addr.id
+                                    return (
+                                      <div
+                                        key={addr.id}
+                                        onClick={() => handleSelectCustomerAddress(addr)}
+                                        className={`p-2 rounded-lg border text-[11px] cursor-pointer transition ${
+                                          isSelected
+                                            ? 'bg-blue-50 border-blue-500 text-blue-900 font-semibold dark:bg-blue-950/40 dark:text-blue-200'
+                                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-400 dark:bg-slate-900/40 dark:border-slate-700 dark:text-slate-300'
+                                        }`}
+                                      >
+                                        <div className="flex items-center justify-between gap-1">
+                                          <span className="font-bold">{addr.label}</span>
+                                          {addr.is_default && (
+                                            <span className="text-[9px] text-emerald-600 font-normal">
+                                              ★ Padrão
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="line-clamp-2 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                          {addr.address || addr.street}
+                                        </p>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
                             )}
-                          </div>
+
+                            {/* Detalhes do Endereço Ativo */}
+                            <div className="pt-1 flex items-center justify-between gap-2 flex-wrap">
+                              <p className="text-slate-600 dark:text-slate-300">
+                                📍 {streetAndNumber || sel.address}
+                              </p>
+                              {selectedCoords.lat && selectedCoords.lng && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200 shrink-0"
+                                >
+                                  ✓ Coordenadas GPS Fixadas
+                                </Badge>
+                              )}
+                            </div>
+                          </>
                         )
                       })()}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          const sel = localCustomers.find((c) => c.id === customerId)
-                          if (sel) {
-                            populateCustomerForm(sel)
-                            setIsAddingCustomer(true)
-                          }
-                        }}
-                        className="h-7 text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                      >
-                        <Edit3 className="h-3.5 w-3.5" /> Editar Dados
-                      </Button>
                     </div>
                   )}
                 </div>

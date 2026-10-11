@@ -34,7 +34,7 @@ import {
   type BaseAddressResult,
 } from '@/components/BaseAddressAutocomplete'
 import { FormErrorBoundary } from '@/components/FormErrorBoundary'
-import type { CustomerRecord } from '@/types/delivery'
+import type { CustomerRecord, CustomerAddressItem } from '@/types/delivery'
 import {
   UserPlus,
   Phone,
@@ -92,6 +92,9 @@ export function CreateCustomerModal({
   const [precisionWarningText, setPrecisionWarningText] = useState('')
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
   const [isLoadingViaCep, setIsLoadingViaCep] = useState(false)
+  // Gerenciamento de até 3 endereços por cliente
+  const [addressesList, setAddressesList] = useState<CustomerAddressItem[]>([])
+  const [activeAddressTab, setActiveAddressTab] = useState<number>(0)
   const [isSearchingPhone, setIsSearchingPhone] = useState(false)
   const [isLoadingLocationLink, setIsLoadingLocationLink] = useState(false)
   const [isGeocodingAddress, setIsGeocodingAddress] = useState(false)
@@ -168,6 +171,34 @@ export function CreateCustomerModal({
       setAddressSearchQuery(customerToEdit.address || '')
       setMatchedExistingCustomer(customerToEdit)
       setLocationLinkInput('')
+
+      // Carregar lista de endereços se existir
+      if (Array.isArray(customerToEdit.addresses) && customerToEdit.addresses.length > 0) {
+        setAddressesList(customerToEdit.addresses)
+        // Encontra o default ou seleciona a aba 0
+        const defIdx = customerToEdit.addresses.findIndex((a) => a.is_default)
+        setActiveAddressTab(defIdx >= 0 ? defIdx : 0)
+      } else {
+        // Inicializa com o endereço existente como primeiro da lista
+        const initialAddr: CustomerAddressItem = {
+          id: 'addr_1',
+          label: 'Principal',
+          address: customerToEdit.address || '',
+          street: customerToEdit.street || customerToEdit.address?.split(',')[0] || '',
+          neighborhood: customerToEdit.neighborhood || '',
+          city: customerToEdit.city || '',
+          state: customerToEdit.state || 'RJ',
+          postal_code: customerToEdit.postal_code || '',
+          complement: customerToEdit.complement || '',
+          reference_point: customerToEdit.reference_point || '',
+          plus_code: customerToEdit.plus_code || '',
+          lat: customerToEdit.lat,
+          lng: customerToEdit.lng,
+          is_default: true,
+        }
+        setAddressesList([initialAddr])
+        setActiveAddressTab(0)
+      }
     } else if (open && !customerToEdit) {
       resetForm()
     }
@@ -204,6 +235,15 @@ export function CreateCustomerModal({
     setAddressSearchQuery('')
     setMatchedExistingCustomer(null)
     setLocationLinkInput('')
+    setAddressesList([
+      {
+        id: 'addr_1',
+        label: 'Principal',
+        address: '',
+        is_default: true,
+      },
+    ])
+    setActiveAddressTab(0)
   }
 
   // Auto-lookup existing customer by typed phone
@@ -238,6 +278,33 @@ export function CreateCustomerModal({
           setLat(found.lat)
           setLng(found.lng)
         }
+
+        if (Array.isArray(found.addresses) && found.addresses.length > 0) {
+          setAddressesList(found.addresses)
+          const defIdx = found.addresses.findIndex((a) => a.is_default)
+          setActiveAddressTab(defIdx >= 0 ? defIdx : 0)
+        } else {
+          setAddressesList([
+            {
+              id: 'addr_1',
+              label: 'Principal',
+              address: found.address || '',
+              street: found.street || found.address?.split(',')[0] || '',
+              neighborhood: found.neighborhood || '',
+              city: found.city || '',
+              state: found.state || 'RJ',
+              postal_code: found.postal_code || '',
+              complement: found.complement || '',
+              reference_point: found.reference_point || '',
+              plus_code: found.plus_code || '',
+              lat: found.lat,
+              lng: found.lng,
+              is_default: true,
+            },
+          ])
+          setActiveAddressTab(0)
+        }
+
         toast.info(
           `Cliente "${found.name}" localizado pelo telefone. O cadastro será atualizado sem duplicidade!`,
         )
@@ -250,6 +317,116 @@ export function CreateCustomerModal({
       setIsSearchingPhone(false)
     }
   }, [])
+
+  // Carrega os dados de um endereço selecionado na lista para os campos do formulário
+  const loadAddressIntoForm = useCallback((addr: CustomerAddressItem) => {
+    isProgrammaticUpdateRef.current = true
+    isSelectedFromAutocompleteRef.current = Boolean(addr.lat && addr.lng)
+    setStreetAndNumber(addr.street || addr.address?.split(',')[0] || '')
+    setNeighborhood(addr.neighborhood || '')
+    setCity(addr.city || '')
+    if (addr.state) {
+      const uf = normalizeBrazilianUF(addr.state)
+      if (uf && BRAZILIAN_STATES.includes(uf)) setUfState(uf)
+    }
+    setPostalCode(addr.postal_code || '')
+    setComplement(addr.complement || '')
+    setReferencePoint(addr.reference_point || '')
+    setPlusCode(addr.plus_code || '')
+    setLat(addr.lat)
+    setLng(addr.lng)
+    setAddressSearchQuery(addr.address || '')
+    setGoogleNormalizedAddress(addr.address || '')
+    lastGeocodedAddressRef.current = addr.address || ''
+    setIsPinManuallyAdjusted(false)
+  }, [])
+
+  // Salva o formulário atual no item de endereço da aba ativa antes de trocar de aba
+  const saveCurrentFormIntoAddressTab = (tabIndex: number) => {
+    const full = getFullFormattedAddress() || streetAndNumber.trim()
+    setAddressesList((prev) => {
+      const copy = [...prev]
+      if (copy[tabIndex]) {
+        copy[tabIndex] = {
+          ...copy[tabIndex],
+          address: full,
+          street: streetAndNumber.trim(),
+          neighborhood: neighborhood.trim(),
+          city: city.trim(),
+          state: ufState.trim(),
+          postal_code: postalCode.trim(),
+          complement: complement.trim(),
+          reference_point: referencePoint.trim(),
+          plus_code: plusCode.trim() || undefined,
+          lat,
+          lng,
+        }
+      }
+      return copy
+    })
+  }
+
+  const handleSelectAddressTab = (idx: number) => {
+    if (idx === activeAddressTab) return
+    saveCurrentFormIntoAddressTab(activeAddressTab)
+    setActiveAddressTab(idx)
+    const target = addressesList[idx]
+    if (target) {
+      loadAddressIntoForm(target)
+    }
+  }
+
+  const handleAddNewAddress = () => {
+    if (addressesList.length >= 3) {
+      toast.warning('Limite de 3 endereços por cliente atingido.')
+      return
+    }
+    saveCurrentFormIntoAddressTab(activeAddressTab)
+    const newId = `addr_${Date.now()}`
+    const newIdx = addressesList.length
+    const defaultLabels = ['Principal', 'Trabalho', 'Outro']
+    const newAddr: CustomerAddressItem = {
+      id: newId,
+      label: defaultLabels[newIdx] || `Endereço ${newIdx + 1}`,
+      address: '',
+      is_default: false,
+    }
+    setAddressesList((prev) => [...prev, newAddr])
+    setActiveAddressTab(newIdx)
+    loadAddressIntoForm(newAddr)
+  }
+
+  const handleRemoveAddress = (idxToRemove: number) => {
+    if (addressesList.length <= 1) {
+      toast.warning('O cliente precisa ter ao menos um endereço cadastrado.')
+      return
+    }
+    const isRemovingDefault = addressesList[idxToRemove]?.is_default
+    const nextList = addressesList.filter((_, idx) => idx !== idxToRemove)
+    if (isRemovingDefault && nextList.length > 0) {
+      nextList[0].is_default = true
+    }
+    setAddressesList(nextList)
+    const nextActive = Math.max(0, idxToRemove - 1)
+    setActiveAddressTab(nextActive)
+    if (nextList[nextActive]) {
+      loadAddressIntoForm(nextList[nextActive])
+    }
+  }
+
+  const handleSetDefaultAddress = (idx: number) => {
+    setAddressesList((prev) =>
+      prev.map((a, i) => ({
+        ...a,
+        is_default: i === idx,
+      })),
+    )
+    toast.success(`Endereço "${addressesList[idx]?.label || idx + 1}" definido como preferencial!`)
+  }
+
+  const handleUpdateAddressLabel = (idx: number, newLabel: string) => {
+    setAddressesList((prev) => prev.map((a, i) => (i === idx ? { ...a, label: newLabel } : a)))
+  }
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
@@ -1015,13 +1192,10 @@ export function CreateCustomerModal({
       }
     }
 
-    const payload: Partial<CustomerRecord> = {
-      name: trimmedName,
-      document: document.trim() || undefined,
-      phone: mainPhone,
-      email: email.trim() || undefined,
-      phone2: phone2.trim() || undefined,
-      phone3: phone3.trim() || undefined,
+    // Atualiza o endereço da aba ativa na lista antes de salvar
+    const currentActiveAddress: CustomerAddressItem = {
+      id: addressesList[activeAddressTab]?.id || `addr_${Date.now()}`,
+      label: addressesList[activeAddressTab]?.label || `Endereço ${activeAddressTab + 1}`,
       address: fullAddress,
       street: streetAndNumber.trim(),
       neighborhood: neighborhood.trim(),
@@ -1034,6 +1208,46 @@ export function CreateCustomerModal({
         (finalLat && finalLng ? encodePlusCode(finalLat, finalLng) : plusCode) || undefined,
       lat: finalLat,
       lng: finalLng,
+      is_default: addressesList[activeAddressTab]?.is_default ?? activeAddressTab === 0,
+    }
+
+    const updatedAddresses = [...addressesList]
+    if (updatedAddresses.length === 0) {
+      updatedAddresses.push(currentActiveAddress)
+    } else {
+      updatedAddresses[activeAddressTab] = currentActiveAddress
+    }
+
+    // Garante que exista exatamente um default
+    let defaultIndex = updatedAddresses.findIndex((a) => a.is_default)
+    if (defaultIndex === -1) {
+      updatedAddresses[0].is_default = true
+      defaultIndex = 0
+    }
+    const defaultAddress = updatedAddresses[defaultIndex] || currentActiveAddress
+
+    const payload: Partial<CustomerRecord> = {
+      name: trimmedName,
+      document: document.trim() || undefined,
+      phone: mainPhone,
+      email: email.trim() || undefined,
+      phone2: phone2.trim() || undefined,
+      phone3: phone3.trim() || undefined,
+      address: defaultAddress.address || fullAddress,
+      street: defaultAddress.street || streetAndNumber.trim(),
+      neighborhood: defaultAddress.neighborhood || neighborhood.trim(),
+      city: defaultAddress.city || city.trim(),
+      state: defaultAddress.state || ufState.trim(),
+      postal_code: defaultAddress.postal_code || postalCode.trim(),
+      complement: defaultAddress.complement || complement.trim(),
+      reference_point: defaultAddress.reference_point || referencePoint.trim(),
+      plus_code:
+        defaultAddress.plus_code ||
+        (finalLat && finalLng ? encodePlusCode(finalLat, finalLng) : plusCode) ||
+        undefined,
+      lat: defaultAddress.lat ?? finalLat,
+      lng: defaultAddress.lng ?? finalLng,
+      addresses: updatedAddresses,
     }
 
     setIsSubmitting(true)
@@ -1315,6 +1529,96 @@ export function CreateCustomerModal({
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* GERENCIAMENTO DE ATÉ 3 ENDEREÇOS DO CLIENTE */}
+            <div className="p-3.5 rounded-xl bg-[#080E24] border border-[#1E2B58] space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-4 w-4 text-[#FF6B35]" />
+                  <span className="text-xs font-bold text-white uppercase tracking-wider font-heading">
+                    Endereços do Cliente (até 3 endereços com preferencial)
+                  </span>
+                </div>
+                {addressesList.length < 3 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddNewAddress}
+                    className="h-7 text-xs border-[#1E2B58] bg-[#0A1128] hover:bg-[#1E2B58] text-[#60A5FA] hover:text-white"
+                  >
+                    + Adicionar Outro Endereço ({addressesList.length}/3)
+                  </Button>
+                )}
+              </div>
+
+              {/* Abas dos Endereços */}
+              <div className="flex items-center gap-2 flex-wrap pt-1 border-b border-[#1E2B58]/60 pb-2.5">
+                {addressesList.map((addr, idx) => (
+                  <div
+                    key={addr.id || idx}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs cursor-pointer transition ${
+                      activeAddressTab === idx
+                        ? 'bg-[#0052CC]/25 border-[#0066FF] text-white font-bold shadow-md shadow-blue-500/10'
+                        : 'bg-[#0A1128] border-[#1E2B58] text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                    }`}
+                    onClick={() => handleSelectAddressTab(idx)}
+                  >
+                    <span>{addr.label || `Endereço ${idx + 1}`}</span>
+                    {addr.is_default && (
+                      <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[9px] px-1.5 py-0 h-4">
+                        ★ Preferencial
+                      </Badge>
+                    )}
+                    {addressesList.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleRemoveAddress(idx)
+                        }}
+                        className="text-slate-500 hover:text-red-400 ml-1 text-xs"
+                        title="Remover este endereço"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Configurações do Endereço Ativo (Rótulo e Definir como Preferencial) */}
+              <div className="flex items-center justify-between gap-3 bg-[#0A1128] p-2 rounded-lg border border-[#1E2B58]/60">
+                <div className="flex items-center gap-2 flex-1 max-w-xs">
+                  <Label className="text-[11px] text-slate-400 whitespace-nowrap">
+                    Rótulo / Apelido:
+                  </Label>
+                  <Input
+                    value={addressesList[activeAddressTab]?.label || ''}
+                    onChange={(e) => handleUpdateAddressLabel(activeAddressTab, e.target.value)}
+                    placeholder="Ex: Casa, Trabalho, Galpão..."
+                    className="h-7 text-xs bg-[#070D1E] border-[#1E2B58] text-white"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  {!addressesList[activeAddressTab]?.is_default ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleSetDefaultAddress(activeAddressTab)}
+                      className="h-7 text-[11px] text-[#60A5FA] hover:text-white hover:bg-[#1E2B58]"
+                    >
+                      ★ Marcar como Preferencial
+                    </Button>
+                  ) : (
+                    <span className="text-[11px] text-emerald-400 flex items-center gap-1 font-semibold">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Endereço Padrão deste Cliente
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Busca Rápida por Endereço ou CEP com Google Maps Autocomplete */}

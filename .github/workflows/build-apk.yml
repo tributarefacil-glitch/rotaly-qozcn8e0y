@@ -138,6 +138,42 @@ jobs:
               echo "::warning::Para fixar a chave permanentemente e evitar nova chave no próximo runner, adicione os 4 secrets nas Configurações do Repositório (Settings > Secrets and variables > Actions)."
               echo "::notice title=Rotaly Keystore Gerado::Adicione os secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD no repositório para garantir identidade imutável."
             fi
+
+            # 3. Empacota o release.keystore gerado e um arquivo de instruções em release-keystore.zip
+            mkdir -p keystore-artifact
+            cp android/release.keystore keystore-artifact/release.keystore
+            echo "===================================================================" > keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "ROTALY - INSTRUÇÕES PARA FIXAR A CHAVE DE ASSINATURA (SECRETS)" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "===================================================================" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Este arquivo zip contém a chave de assinatura gerada (release.keystore)." >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Para que todos os próximos builds usem exatamente a mesma chave e os" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "entregadores possam atualizar o aplicativo sem desinstalar, configure" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "os 4 secrets abaixo no GitHub do repositório:" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "1. Acesse: GitHub > Repositório > Settings > Secrets and variables > Actions" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "2. Clique em 'New repository secret' e adicione os seguintes 4 secrets:" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Nome: KEYSTORE_BASE64" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Valor: ${GENERATED_BASE64}" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Nome: KEYSTORE_PASSWORD" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Valor: ${AUTO_PASS}" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Nome: KEY_ALIAS" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Valor: ${AUTO_KEY_ALIAS}" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Nome: KEY_PASSWORD" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Valor: ${AUTO_PASS}" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "===================================================================" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Guarde o arquivo release.keystore em local seguro." >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "===================================================================" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            cd keystore-artifact
+            zip -r ../release-keystore.zip release.keystore SECRETS_INSTRUCTIONS.txt
+            cd ..
+            echo "has_keystore_zip=true" >> $GITHUB_OUTPUT
+            echo "Keystore compactado em release-keystore.zip com sucesso!"
           fi
 
       - name: Preparar Gradle Wrapper do Repositório
@@ -197,3 +233,12 @@ jobs:
           path: build-output/*
           retention-days: 30
           if-no-files-found: error
+
+      - name: Publicar Artifact do Keystore Gerado (release-keystore)
+        if: steps.setup_keystore.outputs.has_keystore_zip == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-keystore
+          path: release-keystore.zip
+          retention-days: 30
+          if-no-files-found: warn
