@@ -4,6 +4,7 @@ export interface CapacitorConfig {
   webDir: string
   bundledWebRuntime?: boolean
   server?: {
+    url?: string
     androidScheme?: string
     cleartext?: boolean
     hostname?: string
@@ -23,6 +24,7 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   bundledWebRuntime: false,
   server: {
+    url: 'https://www.rotaly.com.br',
     androidScheme: 'https',
     cleartext: false,
   },
