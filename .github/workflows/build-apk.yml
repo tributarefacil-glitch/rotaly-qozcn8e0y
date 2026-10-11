@@ -84,11 +84,14 @@ jobs:
             echo "::warning::Secrets de assinatura ausentes (KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD). O APK será gerado em modo DEBUG/UNSIGNED como fallback."
           fi
 
-      - name: Dar permissão de execução ao Gradle Wrapper
+      - name: Preparar Gradle Wrapper do Repositório
         run: |
           cd android
-          if [ ! -f "gradlew" ]; then
-            gradle wrapper
+          # Se o jar do wrapper não estiver presente no repositório, baixa a versão correspondente fixada
+          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            mkdir -p gradle/wrapper
+            echo "Baixando gradle-wrapper.jar correspondente ao Gradle 8.2.1..."
+            curl -sSL -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.2.1/gradle/wrapper/gradle-wrapper.jar
           fi
           chmod +x gradlew
 
