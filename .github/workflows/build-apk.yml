@@ -107,12 +107,23 @@ jobs:
           if [ "${{ steps.check_keystore.outputs.has_keystore }}" = "true" ] && [ "${{ github.event.inputs.build_type || 'release' }}" = "release" ]; then
             echo "Compilando APK Release Assinado..."
             ./gradlew assembleRelease --no-daemon --stacktrace
-            echo "apk_path=android/app/build/outputs/apk/release/app-release.apk" >> $GITHUB_ENV
+            # Suporta variações comuns de saída do AGP (app-release.apk ou app-release-unsigned.apk)
+            if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
+              echo "apk_path=android/app/build/outputs/apk/release/app-release.apk" >> $GITHUB_ENV
+            else
+              RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n 1)
+              echo "apk_path=android/${RELEASE_APK}" >> $GITHUB_ENV
+            fi
             echo "artifact_name=rotaly-app-v1.0.0-release.apk" >> $GITHUB_ENV
           else
             echo "Compilando APK Debug (Fallback sem segredos de keystore)..."
             ./gradlew assembleDebug --no-daemon --stacktrace
-            echo "apk_path=android/app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_ENV
+            if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
+              echo "apk_path=android/app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_ENV
+            else
+              DEBUG_APK=$(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1)
+              echo "apk_path=android/${DEBUG_APK}" >> $GITHUB_ENV
+            fi
             echo "artifact_name=rotaly-app-v1.0.0-debug.apk" >> $GITHUB_ENV
           fi
 
