@@ -146,7 +146,8 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
   const [resolvedCourierAddress, setResolvedCourierAddress] = React.useState<string | null>(null)
   const [isLoadingCourierAddress, setIsLoadingCourierAddress] = React.useState<boolean>(false)
 
-  // Disparar geocodificação reversa sempre que o entregador selecionado mudar ou sua coordenada atualizar
+  // Disparar geocodificação reversa EXCLUSIVAMENTE da última posição GPS real do entregador
+  // (obtida da collection locations daquele courier). Nunca da base de partida nem endereço fictício.
   React.useEffect(() => {
     if (!selectedCourier) {
       setResolvedCourierAddress(null)
@@ -154,13 +155,34 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
       return
     }
 
-    const courierData = allCourierData.find((c) => c.courier.id === selectedCourier.id)
-    if (
-      !courierData ||
-      !courierData.hasValidCoords ||
-      typeof courierData.lat !== 'number' ||
-      typeof courierData.lng !== 'number'
-    ) {
+    // Busca estritamente a última location real do entregador na collection locations
+    const courierLocs = (locations || []).filter(
+      (l) =>
+        l.user_id === selectedCourier.id && typeof l.lat === 'number' && typeof l.lng === 'number',
+    )
+    const latestCourierLocation =
+      courierLocs.length > 0
+        ? [...courierLocs].sort(
+            (a, b) =>
+              parseSafeTimestamp(b.updated || b.created) -
+              parseSafeTimestamp(a.updated || a.created),
+          )[0]
+        : null
+
+    const realGpsLat =
+      latestCourierLocation &&
+      typeof latestCourierLocation.lat === 'number' &&
+      !isNaN(latestCourierLocation.lat)
+        ? latestCourierLocation.lat
+        : null
+    const realGpsLng =
+      latestCourierLocation &&
+      typeof latestCourierLocation.lng === 'number' &&
+      !isNaN(latestCourierLocation.lng)
+        ? latestCourierLocation.lng
+        : null
+
+    if (realGpsLat === null || realGpsLng === null) {
       setResolvedCourierAddress(null)
       setIsLoadingCourierAddress(false)
       return
@@ -169,20 +191,17 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
     let isCurrent = true
     setIsLoadingCourierAddress(true)
 
-    reverseGeocodeCoordinates(courierData.lat, courierData.lng, { toleranceMeters: 50 })
+    reverseGeocodeCoordinates(realGpsLat, realGpsLng, { toleranceMeters: 50 })
       .then((res) => {
         if (!isCurrent) return
         const formatted = res?.streetAndNumber
           ? `${res.streetAndNumber}${res.neighborhood ? ` - ${res.neighborhood}` : ''}${res.city ? `, ${res.city}` : ''}`
-          : res?.formattedAddress ||
-            `Lat: ${courierData.lat.toFixed(5)}, Lng: ${courierData.lng.toFixed(5)}`
+          : res?.formattedAddress || `Lat: ${realGpsLat.toFixed(5)}, Lng: ${realGpsLng.toFixed(5)}`
         setResolvedCourierAddress(formatted)
       })
       .catch(() => {
         if (!isCurrent) return
-        setResolvedCourierAddress(
-          `Lat: ${courierData.lat.toFixed(5)}, Lng: ${courierData.lng.toFixed(5)}`,
-        )
+        setResolvedCourierAddress(`Lat: ${realGpsLat.toFixed(5)}, Lng: ${realGpsLng.toFixed(5)}`)
       })
       .finally(() => {
         if (isCurrent) setIsLoadingCourierAddress(false)
@@ -191,7 +210,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
     return () => {
       isCurrent = false
     }
-  }, [selectedCourier?.id, allCourierData])
+  }, [selectedCourier?.id, locations])
 
   return (
     <>
@@ -1349,13 +1368,15 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                 data?.offline_buffered,
               )
 
-              // Endereço display
+              // Endereço display: estritamente da última posição GPS real do entregador
               const addressDisplay = isLoadingCourierAddress
-                ? 'Localizando endereço via GPS...'
+                ? 'Localizando endereço em tempo real via GPS...'
                 : resolvedCourierAddress ||
-                  (data?.hasValidCoords
-                    ? `${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}`
-                    : 'Aguardando primeiro sinal GPS')
+                  (diag.lastCoords
+                    ? `${diag.lastCoords.lat.toFixed(5)}, ${diag.lastCoords.lng.toFixed(5)}`
+                    : data?.hasValidCoords
+                      ? `${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}`
+                      : 'Aguardando primeiro sinal GPS do entregador')
 
               return (
                 <>
@@ -1501,13 +1522,17 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                         <div className="flex items-center justify-between text-[10px]">
                           <span className="font-bold text-[#60A5FA] uppercase tracking-wider flex items-center gap-1 font-sans">
                             <MapPin className="h-3 w-3 text-[#60A5FA]" />
-                            Endereço da Última Posição Conhecida
+                            Endereço atual em tempo real
                           </span>
-                          {data?.hasValidCoords && (
+                          {diag.lastCoords ? (
+                            <span className="font-mono text-slate-400">
+                              {diag.lastCoords.lat.toFixed(4)}, {diag.lastCoords.lng.toFixed(4)}
+                            </span>
+                          ) : data?.hasValidCoords ? (
                             <span className="font-mono text-slate-400">
                               {data.lat.toFixed(4)}, {data.lng.toFixed(4)}
                             </span>
-                          )}
+                          ) : null}
                         </div>
                         <p className="text-white text-xs leading-relaxed font-sans font-medium break-words">
                           {addressDisplay}

@@ -89,6 +89,7 @@ import { asyncPool } from '@/lib/promisePool'
 import { playRouteAlertSound, playOffRouteWarningSound } from '@/lib/notificationSound'
 import { DEVIATION_THRESHOLD_METERS, UNEXPECTED_STOP_THRESHOLD_METERS } from '@/lib/geo'
 import { formatTimeInTz, formatDateInTz } from '@/lib/operationalWindow'
+import { diagnoseCourierTelemetry } from '@/lib/courierTelemetryDiagnostics'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
 import { getMyCompany } from '@/lib/companyResolver'
@@ -1119,22 +1120,17 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       )
 
       // Coordenadas válidas: estritamente telemetria real do entregador.
-      // Se ainda não houver telemetria, fallback para a base de partida do pedido ativo.
-      // Se nenhum existir, lat/lng ficam undefined (não renderiza marcador com coordenada inventada).
-      const firstActiveOrder = uniqueActiveTransitOrders[0]
+      // NUNCA fazer fallback para a base: se não houver telemetria válida do entregador,
+      // lat e lng ficam undefined (não recebe pin posicionado no mapa).
       let lat: number | undefined =
-        typeof latestLoc?.lat === 'number' && !isNaN(latestLoc.lat)
+        latestLoc && typeof latestLoc.lat === 'number' && !isNaN(latestLoc.lat)
           ? latestLoc.lat
-          : firstActiveOrder?.start_base_lat
-            ? Number(firstActiveOrder.start_base_lat)
-            : undefined
+          : undefined
 
       let lng: number | undefined =
-        typeof latestLoc?.lng === 'number' && !isNaN(latestLoc.lng)
+        latestLoc && typeof latestLoc.lng === 'number' && !isNaN(latestLoc.lng)
           ? latestLoc.lng
-          : firstActiveOrder?.start_base_lng
-            ? Number(firstActiveOrder.start_base_lng)
-            : undefined
+          : undefined
 
       const speed = latestLoc?.speed ?? 0
 
@@ -1235,12 +1231,35 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
   // REQUISITO: No mapa aparecem entregadores com rota iniciada e coordenadas válidas
   // Mantém ativo se há pedidos em trânsito (inTransitCount > 0) OU se está retornando à base (hasPendingReturnToBase)
+  // REGRA DE TELEMETRIA: entregadores cuja última location tenha mais de 10 minutos são considerados "GPS desatualizado".
+  // Enquanto desatualizado, não posicionar o pin em coordenada nenhuma (nunca na base nem coordenadas antigas/inventadas).
   const activeRouteCouriers = useMemo(() => {
-    return allCourierData.filter(
-      (c) =>
-        c.hasRouteStarted && c.hasValidCoords && (c.inTransitCount > 0 || c.hasPendingReturnToBase),
-    )
-  }, [allCourierData])
+    return allCourierData.filter((c) => {
+      if (!c.hasRouteStarted || !c.hasValidCoords) return false
+      if (c.inTransitCount <= 0 && !c.hasPendingReturnToBase) return false
+
+      const diag = diagnoseCourierTelemetry(
+        c.courier.id,
+        locations,
+        c.lat,
+        c.lng,
+        c.speed,
+        c.gps_status,
+        c.gps_reason,
+        c.location_timestamp,
+        c.accuracy,
+        c.offline_buffered,
+      )
+
+      // Se a última location tiver mais de 10 minutos (diag.minutesSinceLastPing > 10 ou diag.gpsState === 'no_signal'),
+      // suprime a exibição de pin no mapa (não posicionar em coordenada nenhuma).
+      if (diag.minutesSinceLastPing > 10 || diag.gpsState === 'no_signal') {
+        return false
+      }
+
+      return true
+    })
+  }, [allCourierData, locations])
 
   // Entregadores disponíveis (mantido para cálculos internos se necessário)
   const availableCouriers = useMemo(() => {
