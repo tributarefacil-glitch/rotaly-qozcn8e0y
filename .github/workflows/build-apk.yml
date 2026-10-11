@@ -36,19 +36,26 @@ jobs:
       - name: Checkout repositório
         uses: actions/checkout@v4
 
-      - name: Configurar Node.js 20
-        uses: actions/setup-node@v4
+      - name: Configurar Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20
-          cache: 'npm'
+          bun-version: latest
+
+      - name: Cache de dependências do Bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb', '**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
 
       - name: Instalar dependências Web
         run: |
-          npm ci --prefer-offline --no-audit
+          bun install
 
       - name: Build do frontend Web (Vite)
         run: |
-          npm run build
+          bun run build
 
       - name: Copiar assets Web para o Android
         run: |
@@ -63,7 +70,7 @@ jobs:
           cache: 'gradle'
 
       - name: Configurar Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Verificar Keystore de Produção nos Secrets
         id: check_keystore
