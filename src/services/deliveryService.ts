@@ -4756,11 +4756,30 @@ export const deliveryService = {
   },
 
   /**
-   * Buscar aprovações de KM de rota por empresa ou geral
+   * Buscar aprovações de KM de rota por empresa ou geral,
+   * parametrizada opcionalmente com startDate/endDate gerados a partir de getOperationalWindow()
+   * (janela operacional de Brasília 05h–23h59, madrugada = dia anterior),
+   * garantindo que as telas de auditoria nunca consultem por meia-noite UTC.
    */
-  async getRouteKmApprovals(empresaId?: string): Promise<RouteKmApprovalRecord[]> {
+  async getRouteKmApprovals(
+    empresaId?: string,
+    options?: { startDate?: string; endDate?: string },
+  ): Promise<RouteKmApprovalRecord[]> {
     try {
-      const filter = empresaId && empresaId !== 'ALL' ? `empresa_id = '${empresaId}'` : ''
+      const clauses: string[] = []
+      if (empresaId && empresaId !== 'ALL') {
+        clauses.push(`empresa_id = '${empresaId}'`)
+      }
+
+      // Se fornecido startDate/endDate explícito, respeita
+      if (options?.startDate) {
+        clauses.push(`created >= '${options.startDate}'`)
+      }
+      if (options?.endDate) {
+        clauses.push(`created <= '${options.endDate}'`)
+      }
+
+      const filter = clauses.join(' && ')
       return await pb.collection<RouteKmApprovalRecord>('route_km_approvals').getFullList({
         filter,
         sort: '-approved_at,-created',

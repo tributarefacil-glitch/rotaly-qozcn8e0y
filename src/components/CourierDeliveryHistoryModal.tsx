@@ -295,11 +295,20 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   }, [courier?.empresa_id])
 
   // Carregar aprovações via deliveryService.getRouteKmApprovals (paridade com KmAuditReport)
+  // Parametrizado com a janela operacional de Brasília (05h–23h59) quando disponível
   React.useEffect(() => {
     if (!isOpen) return
     let isMounted = true
+
+    const options = activeOperationalWindow
+      ? {
+          startDate: activeOperationalWindow.startPbString,
+          endDate: activeOperationalWindow.endPbString,
+        }
+      : undefined
+
     deliveryService
-      .getRouteKmApprovals(courier?.empresa_id)
+      .getRouteKmApprovals(courier?.empresa_id, options)
       .then((data) => {
         if (isMounted) setApprovalsList(data || [])
       })
@@ -309,7 +318,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     return () => {
       isMounted = false
     }
-  }, [isOpen, courier?.empresa_id])
+  }, [isOpen, courier?.empresa_id, activeOperationalWindow])
 
   const approvalsMap = useMemo(() => {
     const map = new Map<
@@ -681,6 +690,11 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         }
       }
 
+      // Trava de cancelados sem visita: descartar pedido cancelado se não foi iniciado e sem visita registrada
+      if (item.status === 'cancelled' && !item.order.route_started && !item.order.actual_arrival) {
+        return false
+      }
+
       // Filtro de status
       if (statusFilter !== 'all') {
         if (statusFilter === 'partial') {
@@ -753,24 +767,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
     const totalAdiantado = filteredAdvances.reduce((s, a) => s + (Number(a.amount) || 0), 0)
 
-    // KM Oficial consolidado e sincronizado com o motor oficial (useCourierFuelMetrics)
-    // Quando o filtro é 'all' ou 'week', utiliza diretamente o totalOfficialKm consolidado 1x por lote do motor oficial,
-    // evitando inflação por multiplicação de pedidos dentro do mesmo lote.
-    const isFullScopePeriod = periodFilter === 'all' || periodFilter === 'week'
-    const totalKm =
-      isFullScopePeriod && consolidatedMetrics && consolidatedMetrics.totalOfficialKm > 0
-        ? consolidatedMetrics.totalOfficialKm
-        : filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
-
-    const totalFuelCost =
-      isFullScopePeriod && consolidatedMetrics && consolidatedMetrics.totalSpent > 0
-        ? consolidatedMetrics.totalSpent
-        : filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
-
-    const totalLiters =
-      isFullScopePeriod && consolidatedMetrics && consolidatedMetrics.totalLiters > 0
-        ? consolidatedMetrics.totalLiters
-        : filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
+    // KM Oficial e Combustível totalizadores derivados ESTRITAMENTE de filteredItems
+    // respeitando a janela civil de Brasília (activeOperationalWindow), somando os valores
+    // já rateados/calculados pelo motor oficial para as entregas visíveis.
+    const totalKm = filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
+    const totalFuelCost = filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
+    const totalLiters = filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
 
     const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)

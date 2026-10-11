@@ -60,6 +60,7 @@ import {
 import { haversineDistanceMeters } from '@/lib/geo'
 import {
   formatDateInTz,
+  formatPbTimestamp,
   getCustomOperationalWindow,
   getOperationalMonthStart,
   getOperationalWindow,
@@ -212,7 +213,27 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   const loadApprovals = async () => {
     setIsLoadingApprovals(true)
     try {
-      const data = await deliveryService.getRouteKmApprovals(currentCompanyId)
+      let options: { startDate?: string; endDate?: string } | undefined
+      const now = new Date()
+      if (selectedDateFilter === 'today') {
+        const opWindow = getOperationalWindow(now)
+        options = { startDate: opWindow.startPbString, endDate: opWindow.endPbString }
+      } else if (selectedDateFilter === 'week') {
+        const opWindow = getOperationalWindow(now)
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        options = { startDate: formatPbTimestamp(new Date(sevenDaysAgoStart)) }
+      } else if (selectedDateFilter === 'custom' && customStartDate) {
+        const customWindow = getCustomOperationalWindow(
+          customStartDate,
+          customEndDate || customStartDate,
+        )
+        options = {
+          startDate: formatPbTimestamp(new Date(customWindow.start)),
+          endDate: formatPbTimestamp(new Date(customWindow.end)),
+        }
+      }
+
+      const data = await deliveryService.getRouteKmApprovals(currentCompanyId, options)
       setApprovals(data)
       await fetchPeriodOrders()
     } catch (err) {
@@ -224,7 +245,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
   useEffect(() => {
     loadApprovals()
-  }, [currentCompanyId])
+  }, [currentCompanyId, selectedDateFilter, customStartDate, customEndDate])
 
   // Map de aprovações por order_id
   const approvalsMap = useMemo(() => {
@@ -299,9 +320,18 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       odometerKm: number
     }> = []
 
-    // Agrupa pedidos por entregador a partir do pool completo (allOrdersPool)
+    // Filtrar pedidos elegíveis ANTES de agrupar por entregador:
+    // Excluir pedidos cancelados (status === 'cancelled') e pedidos com route_started === false sem chegada/visita registrada,
+    // para que calculateCourierFuelMetrics e as linhas do relatório nunca os recebam.
+    const eligibleOrdersPool = allOrdersPool.filter((ord) => {
+      if (ord.status === 'cancelled') return false
+      if (ord.route_started === false && !ord.actual_arrival) return false
+      return true
+    })
+
+    // Agrupa pedidos por entregador a partir do pool filtrado
     const ordersByCourier = new Map<string, OrderRecord[]>()
-    allOrdersPool.forEach((ord) => {
+    eligibleOrdersPool.forEach((ord) => {
       if (!ord.courier_id) return
       const list = ordersByCourier.get(ord.courier_id) || []
       list.push(ord)
