@@ -15,6 +15,7 @@ import { MapPin, Navigation, ArrowRight, Compass, AlertCircle, CheckCircle2 } fr
 import { toast } from 'sonner'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
+import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 import type { OrderRecord } from '@/types/delivery'
 
 interface RedirectDeliveryModalProps {

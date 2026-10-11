@@ -1525,11 +1525,11 @@ export default function CourierApp() {
       // Abrir modal de escolha de navegação (Waze ou Google Maps)
       // Prioriza coordenadas do pin cadastrado no cliente; fallback para coordenadas do pedido
       const targetLat =
-        cust?.lat !== undefined && cust?.lat !== null && cust?.lat !== ''
+        cust?.lat !== undefined && cust?.lat !== null && !isNaN(Number(cust.lat))
           ? cust.lat
           : order.end_address_lat
       const targetLng =
-        cust?.lng !== undefined && cust?.lng !== null && cust?.lng !== ''
+        cust?.lng !== undefined && cust?.lng !== null && !isNaN(Number(cust.lng))
           ? cust.lng
           : order.end_address_lng
       const targetAddress =
