@@ -1,10 +1,14 @@
 // Fonte única de versão do Rotaly (alimentada em sincronia com public/version.json e package.json)
 import versionData from '../../public/version.json'
 
-export const APP_VERSION: string = (versionData?.version || '0.0.395').trim()
+export const APP_VERSION: string = (versionData?.version || '0.0.400').trim()
 export const APP_VERSION_LABEL: string = APP_VERSION.startsWith('v')
   ? APP_VERSION
   : `v${APP_VERSION}`
+
+export const APP_BUILD_ID: string = (
+  (versionData as { build?: string })?.build || '2026-10-11.01'
+).trim()
 
 export const APP_BUILD_DATE: string = (() => {
   const timeStr = versionData?.buildTime

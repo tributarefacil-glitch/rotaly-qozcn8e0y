@@ -10,10 +10,18 @@ try {
   const pkgPath = path.join(rootDir, 'package.json')
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
   const version = pkg.version || '0.0.350'
+  const now = new Date()
+  const yyyy = now.getUTCFullYear()
+  const mm = String(now.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(now.getUTCDate()).padStart(2, '0')
+  const buildDateStr = `${yyyy}-${mm}-${dd}`
+  const buildIdentifier = `${buildDateStr}.01`
+
   const versionPayload = JSON.stringify(
     {
       version,
-      buildTime: new Date().toISOString(),
+      build: buildIdentifier,
+      buildTime: now.toISOString(),
     },
     null,
     2,

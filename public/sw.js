@@ -10,7 +10,14 @@
  * - Background Sync para notificar o cliente via postMessage sobre retomada de conexão.
  */
 
-const CACHE_NAME = 'rotaly-pwa-v4'
+// Versão/Build injetada e dinâmica do cache.
+// Base padrão sincronizada com public/version.json.
+// Em runtime, o SW tenta resolver dinamicamente a versão/build atual via /version.json
+// para que qualquer deploy gere um cache novo automaticamente e purgue o anterior.
+const DEFAULT_BUILD = '2026-10-11.01'
+const CACHE_PREFIX = 'rotaly-cache-'
+let CURRENT_CACHE_NAME = `${CACHE_PREFIX}${DEFAULT_BUILD}`
+
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -20,32 +27,62 @@ const STATIC_ASSETS = [
   '/placeholder.svg',
 ]
 
-// Install event - Cache core application shell
+// Função auxiliar para obter o nome do cache atualizado a partir de /version.json
+async function resolveCurrentCacheName() {
+  try {
+    const res = await fetch('/version.json', { cache: 'no-store' })
+    if (res.ok) {
+      const data = await res.json()
+      const build = (data?.build || data?.version || DEFAULT_BUILD).toString().trim()
+      if (build) {
+        CURRENT_CACHE_NAME = `${CACHE_PREFIX}${build}`
+      }
+    }
+  } catch {
+    // Se estiver offline ou rede instável, mantém CURRENT_CACHE_NAME atual
+  }
+  return CURRENT_CACHE_NAME
+}
+
+// Install event - Força ativação imediata (skipWaiting) e pré-cacheia o app shell
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS).catch((err) => {
-        console.warn('[SW] Cache addAll asset warning:', err)
-      })
-    }),
-  )
+  // Regra 1: Sempre pular espera imediatamente, sem aguardar fechamento de abas antigas
   self.skipWaiting()
+
+  event.waitUntil(
+    (async () => {
+      try {
+        const cacheName = await resolveCurrentCacheName()
+        const cache = await caches.open(cacheName)
+        await cache.addAll(STATIC_ASSETS).catch((err) => {
+          console.warn('[SW] Cache addAll asset warning:', err)
+        })
+      } catch (err) {
+        console.warn('[SW] Falha no install pre-cache:', err)
+      }
+    })(),
+  )
 })
 
-// Activate event - Clean up obsolete caches & take control immediately
+// Activate event - Reivindica clientes imediatamente (claim) e limpa TODOS os caches obsoletos
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((name) => {
-          if (name !== CACHE_NAME) {
-            return caches.delete(name)
+    (async () => {
+      const cacheName = await resolveCurrentCacheName()
+      const keys = await caches.keys()
+      await Promise.all(
+        keys.map((key) => {
+          // Deleta qualquer cache que não seja exatamente o cache da versão/build atual
+          if (key !== cacheName) {
+            console.log(`[SW] Deletando cache obsoleto de build anterior: ${key}`)
+            return caches.delete(key)
           }
         }),
       )
-    }),
+      // Regra 2: Reivindica controle imediato de todos os clientes abertos
+      await self.clients.claim()
+    })(),
   )
-  self.clients.claim()
 })
 
 // Fetch event - Cache-First para recursos estáticos da aplicação; Network-First para navegação e HTML; skip APIs
@@ -79,17 +116,17 @@ self.addEventListener('fetch', (event) => {
   if (isHtmlNavigation) {
     event.respondWith(
       fetch(request)
-        .then((response) => {
+        .then(async (response) => {
           if (response && response.status === 200) {
             const copy = response.clone()
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, copy)
-              // Também atualiza / e /index.html para sincronizar o app shell offline
-              if (url.pathname === '/' || url.pathname === '/index.html') {
-                cache.put('/index.html', response.clone())
-                cache.put('/', response.clone())
-              }
-            })
+            const cacheName = await resolveCurrentCacheName()
+            const cache = await caches.open(cacheName)
+            cache.put(request, copy)
+            // Também atualiza / e /index.html para sincronizar o app shell offline
+            if (url.pathname === '/' || url.pathname === '/index.html') {
+              cache.put('/index.html', response.clone())
+              cache.put('/', response.clone())
+            }
           }
           return response
         })
@@ -120,13 +157,15 @@ self.addEventListener('fetch', (event) => {
 
   if (isStaticAsset) {
     event.respondWith(
-      caches.match(request).then((cachedResponse) => {
+      caches.match(request).then(async (cachedResponse) => {
         if (cachedResponse) {
           // Atualiza em background para a próxima carga
           fetch(request)
-            .then((networkResponse) => {
+            .then(async (networkResponse) => {
               if (networkResponse && networkResponse.status === 200) {
-                caches.open(CACHE_NAME).then((cache) => cache.put(request, networkResponse))
+                const cacheName = await resolveCurrentCacheName()
+                const cache = await caches.open(cacheName)
+                cache.put(request, networkResponse)
               }
             })
             .catch(() => {
@@ -136,14 +175,16 @@ self.addEventListener('fetch', (event) => {
         }
 
         // Não estava no cache ainda, busca na rede e guarda
-        return fetch(request).then((networkResponse) => {
+        return fetch(request).then(async (networkResponse) => {
           if (
             networkResponse &&
             networkResponse.status === 200 &&
             networkResponse.type === 'basic'
           ) {
             const copy = networkResponse.clone()
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
+            const cacheName = await resolveCurrentCacheName()
+            const cache = await caches.open(cacheName)
+            cache.put(request, copy)
           }
           return networkResponse
         })
@@ -155,10 +196,12 @@ self.addEventListener('fetch', (event) => {
   // 4. Default: busca na rede com fallback de cache se falhar
   event.respondWith(
     fetch(request)
-      .then((networkResponse) => {
+      .then(async (networkResponse) => {
         if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const copy = networkResponse.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
+          const cacheName = await resolveCurrentCacheName()
+          const cache = await caches.open(cacheName)
+          cache.put(request, copy)
         }
         return networkResponse
       })

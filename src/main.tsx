@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import './main.css'
 import { toast } from 'sonner'
-import { APP_VERSION } from './lib/version'
+import { APP_VERSION, APP_BUILD_ID } from './lib/version'
 
 // Blindagem defensiva anti-crash para extensões de tradução (ex: Google Translate)
 // Extensões envolvem nós de texto em <font> e alteram a hierarquia do DOM; quando o React tenta
@@ -184,17 +184,25 @@ if (typeof window !== 'undefined') {
   // 1. Verificação no boot via /version.json (com bypass de cache e tolerância offline)
   const checkVersionJson = async () => {
     try {
-      const res = await fetch('/version.json', { cache: 'no-store' })
+      const res = await fetch(`/version.json?_t=${Date.now()}`, { cache: 'no-store' })
       if (!res.ok) return
       const data = await res.json()
-      if (data && typeof data.version === 'string' && data.version.trim()) {
-        const remoteVersion = data.version.trim()
+      if (data) {
+        const remoteVersion = (data.version || '').toString().trim()
         const localVersion = (APP_VERSION || '').trim()
-        if (remoteVersion !== localVersion) {
+        const remoteBuild = (data.build || '').toString().trim()
+        const localBuild = (APP_BUILD_ID || '').trim()
+
+        const versionDiffers = remoteVersion && localVersion && remoteVersion !== localVersion
+        const buildDiffers = remoteBuild && localBuild && remoteBuild !== localBuild
+
+        if (versionDiffers || buildDiffers) {
           console.log(
-            `[VersionManager] Nova versão detectada via version.json: servidor=${remoteVersion} local=${localVersion}`,
+            `[VersionManager] Nova versão/build detectada via version.json: servidor=${remoteVersion} (build ${remoteBuild}) vs local=${localVersion} (build ${localBuild})`,
           )
-          triggerAppReload(`remote ${remoteVersion} != local ${localVersion}`)
+          triggerAppReload(
+            `remote v=${remoteVersion}/b=${remoteBuild} != local v=${localVersion}/b=${localBuild}`,
+          )
         }
       }
     } catch {
@@ -227,7 +235,7 @@ if (typeof window !== 'undefined') {
 
     window.addEventListener('load', () => {
       navigator.serviceWorker
-        .register('/sw.js')
+        .register('/sw.js', { updateViaCache: 'none' })
         .then((reg) => {
           console.log('[PWA] Service Worker registrado com sucesso no escopo:', reg.scope)
 
@@ -243,22 +251,33 @@ if (typeof window !== 'undefined') {
             })
           })
 
-          // Força verificação imediata
+          // Força verificação imediata no boot (garante que reload simples F5 já cheque o servidor)
           try {
             reg.update()
           } catch {
             /* noop */
           }
 
-          // Polling periódico a cada 60s para verificar nova versão do sw.js e version.json
-          setInterval(() => {
+          // Verificação periódica leve (a cada 30 segundos) e no retorno de visibilidade/foco da aba
+          const performPeriodicCheck = () => {
             try {
               reg.update()
               checkVersionJson()
             } catch {
               /* noop */
             }
-          }, 60000)
+          }
+
+          setInterval(performPeriodicCheck, 30000)
+
+          // Sempre que o usuário voltar para a aba ou recuperar conexão, verifica imediatamente
+          window.addEventListener('focus', performPeriodicCheck)
+          window.addEventListener('online', performPeriodicCheck)
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+              performPeriodicCheck()
+            }
+          })
         })
         .catch((err) => {
           console.warn('[PWA] Falha ao registrar Service Worker:', err)
