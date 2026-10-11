@@ -221,6 +221,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       if (selectedDateFilter === 'today') {
         const opWindow = getOperationalWindow(now)
         options = { startDate: opWindow.startPbString, endDate: opWindow.endPbString }
+      } else if (selectedDateFilter === 'month') {
+        const monthStartObj = getOperationalMonthStart(now)
+        options = { startDate: monthStartObj.pbString }
       } else if (selectedDateFilter === 'week') {
         const opWindow = getOperationalWindow(now)
         const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000

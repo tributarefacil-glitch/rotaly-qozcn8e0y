@@ -612,7 +612,25 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               })
           : Promise.resolve(propOffRouteEvents || []),
         needSettings
-          ? deliveryService.getSettings().catch(() => null)
+          ? deliveryService.getSettings().catch(
+              () =>
+                ({
+                  id: 'default',
+                  key: 'global_settings',
+                  fuel_price_per_liter: 6.49,
+                  fuel_consumption_kml: 35.0,
+                  moto_fuel_price: 6.49,
+                  moto_consumption_kml: 35.0,
+                  carro_fuel_price: 6.49,
+                  carro_consumption_kml: 12.0,
+                  caminhao_fuel_price: 6.49,
+                  caminhao_consumption_kml: 7.0,
+                  work_start_time: '08:00',
+                  lunch_start_time: '12:00',
+                  lunch_end_time: '13:00',
+                  work_end_time: '18:30',
+                }) as unknown as AppSettingsRecord,
+            )
           : Promise.resolve(propSettings || null),
       ])
 
@@ -2380,7 +2398,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                     </div>
                     <div style="font-size: 10px; color: #15803d; font-weight: 700; margin-bottom: 3px;">✓ Entregue (${order.tracking_code})</div>
                     <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                      📍 ${cust.address || cust.street || `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}`}
+                      📍 ${cust.address || cust.street || (typeof cust.lat === 'number' && typeof cust.lng === 'number' ? `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}` : 'Coordenadas não disponíveis')}
                     </div>
                   </div>
                 `
@@ -2524,7 +2542,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
         // Tooltip com Local + Bateria + GPS + Desvio ao passar o mouse no entregador
         courierMarker.addListener('mouseover', async () => {
-          const fallbackCoords = `${item.lat.toFixed(4)}, ${item.lng.toFixed(4)}`
+          const fallbackCoords =
+            typeof item.lat === 'number' && typeof item.lng === 'number'
+              ? `${item.lat.toFixed(4)}, ${item.lng.toFixed(4)}`
+              : ''
 
           // Status do GPS por idade do ponto (> 5 minutos = off/sem sinal)
           // Pings com gps_status 'active' e offline_buffered false = sinal vivo
@@ -2763,7 +2784,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                       ${isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
                     </div>
                     <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                      📍 ${cust.address || cust.street || `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}`}
+                      📍 ${cust.address || cust.street || (typeof cust.lat === 'number' && typeof cust.lng === 'number' ? `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}` : 'Coordenadas não disponíveis')}
                     </div>
                     ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
                   </div>

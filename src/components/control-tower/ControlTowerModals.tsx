@@ -568,7 +568,10 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                       Posição no Mapa &amp; Trajeto
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono">
-                      {orderCourierInfo?.lat.toFixed(4)}, {orderCourierInfo?.lng.toFixed(4)}
+                      {typeof orderCourierInfo?.lat === 'number' &&
+                      typeof orderCourierInfo?.lng === 'number'
+                        ? `${orderCourierInfo.lat.toFixed(4)}, ${orderCourierInfo.lng.toFixed(4)}`
+                        : '—'}
                     </span>
                   </div>
 

@@ -3,6 +3,7 @@ import { getMatrizCompanyId, resolveMatrizCompany } from '@/lib/companyResolver'
 import { haversineDistanceMeters } from '@/lib/geo'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { recalcularLote, RecalcularLoteResult } from '@/services/recalcularLoteHelper'
+import { getOperationalWindow } from '../lib/operationalWindow'
 import type {
   OrderRecord,
   CustomerRecord,
@@ -4772,9 +4773,15 @@ export const deliveryService = {
       // Se fornecido startDate/endDate explícito, respeita
       if (options?.startDate) {
         clauses.push(`created >= '${options.startDate}'`)
+      } else {
+        const opWindow = getOperationalWindow(new Date())
+        clauses.push(`created >= '${opWindow.startPbString}'`)
       }
       if (options?.endDate) {
         clauses.push(`created <= '${options.endDate}'`)
+      } else {
+        const opWindow = getOperationalWindow(new Date())
+        clauses.push(`created <= '${opWindow.endPbString}'`)
       }
 
       const filter = clauses.join(' && ')

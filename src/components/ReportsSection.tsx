@@ -166,8 +166,9 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
   // Carregar aprovações via deliveryService.getRouteKmApprovals
   React.useEffect(() => {
     let isMounted = true
+    const opWindow = getOperationalWindow(new Date())
     deliveryService
-      .getRouteKmApprovals()
+      .getRouteKmApprovals(undefined, { startDate: opWindow.startPbString })
       .then((data) => {
         if (isMounted) setApprovalsList(data || [])
       })
