@@ -79,7 +79,7 @@ import type {
 } from '@/types/delivery'
 import { playOffRouteWarningSound, sendBrowserPushNotification } from '@/lib/notificationSound'
 import { shouldDisplayToast } from '@/lib/notificationDedupe'
-import { APP_VERSION_LABEL } from '@/lib/version'
+import { APP_VERSION_LABEL, APP_BUILD_DATE } from '@/lib/version'
 import {
   DEVIATION_THRESHOLD_METERS,
   UNEXPECTED_STOP_THRESHOLD_METERS,
@@ -2545,7 +2545,7 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-mono text-[11px] text-slate-500">
               Rotaly {APP_VERSION_LABEL} • Build:{' '}
-              <strong className="text-slate-700">2026-10-06.01</strong>
+              <strong className="text-slate-400">{APP_BUILD_DATE}.01</strong>
             </span>
           </div>
 
