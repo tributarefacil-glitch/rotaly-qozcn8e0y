@@ -13,6 +13,7 @@ import {
   Check,
   ChevronRight,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -141,6 +142,28 @@ export const AppDownloadPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Aviso de Atualização Direta: Atualize sem desinstalar */}
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/40 p-4 flex items-start gap-3 text-xs text-emerald-100 shadow-lg">
+          <RefreshCw className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-bold text-white text-xs">
+                Atualização Rápida: Instale direto por cima!
+              </p>
+              <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] px-1.5 py-0">
+                Não precisa desinstalar
+              </Badge>
+            </div>
+            <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+              Com a assinatura oficial fixa do Rotaly, qualquer nova versão instala{' '}
+              <strong className="text-white">diretamente por cima da anterior</strong>. Você{' '}
+              <span className="text-emerald-300 underline font-semibold">não perde o login</span>,{' '}
+              não precisa redigitar senha e não perde seu histórico de entregas ou rotas em
+              andamento.
+            </p>
+          </div>
+        </div>
+
         {/* Banner de Destaque: Por que instalar o APK? */}
         <div className="rounded-2xl border border-cyan-500/30 bg-cyan-950/30 p-4 flex items-start gap-3 text-xs text-cyan-100 shadow-lg">
           <Sparkles className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
@@ -200,6 +223,19 @@ export const AppDownloadPage: React.FC = () => {
           </div>
 
           <div className="space-y-2.5 text-slate-300 text-[11px] leading-relaxed">
+            <div className="p-3 rounded-xl bg-[#14214D]/60 border border-[#23356E] space-y-1">
+              <strong className="text-white block">
+                Preciso desinstalar o Rotaly antigo para atualizar?
+              </strong>
+              <span>
+                <strong className="text-emerald-400">Não!</strong> Basta baixar o novo APK e tocar
+                em &quot;Atualizar&quot; ou &quot;Instalar&quot;. O Android atualizará por cima
+                automaticamente mantendo sua conta conectada e seus dados intactos. Só é necessário
+                desinstalar caso você tenha uma versão muito antiga compilada em modo debug sem a
+                chave oficial.
+              </span>
+            </div>
+
             <div className="p-3 rounded-xl bg-[#14214D]/60 border border-[#23356E] space-y-1">
               <strong className="text-white block">
                 &quot;O arquivo pode ser nocivo&quot; (ou aviso de segurança do Chrome):

@@ -39,7 +39,8 @@ android {
             }
         }
         debug {
-            applicationIdSuffix ".debug"
+            // NOTA: mantemos applicationId sem suffix ".debug" para que APKs de debug/release
+            // compartilhem o mesmo ID br.com.rotaly.app e permitam teste direto.
             debuggable true
             signingConfig signingConfigs.debug
         }

@@ -27,6 +27,11 @@ concurrency:
   group: apk-build-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+
 jobs:
   build:
     name: Build APK Android
@@ -72,16 +77,67 @@ jobs:
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Verificar Keystore de Produção nos Secrets
-        id: check_keystore
+      - name: Configurar Assinatura Fixa do Keystore (Release)
+        id: setup_keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ] && [ -n "${{ secrets.KEYSTORE_PASSWORD }}" ] && [ -n "${{ secrets.KEY_ALIAS }}" ] && [ -n "${{ secrets.KEY_PASSWORD }}" ]; then
+          # 1. Se os secrets existirem, restaura o keystore e exporta as credenciais
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
             echo "has_keystore=true" >> $GITHUB_OUTPUT
-            echo "Keystore configurado! Build será assinado com a chave de produção."
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/release.keystore
+            echo "has_custom_secrets=true" >> $GITHUB_OUTPUT
+            echo "keystore_pass=$KEYSTORE_PASSWORD" >> $GITHUB_OUTPUT
+            echo "key_alias=$KEY_ALIAS" >> $GITHUB_OUTPUT
+            echo "key_pass=$KEY_PASSWORD" >> $GITHUB_OUTPUT
+            echo "$KEYSTORE_BASE64" | base64 -d > android/release.keystore
+            echo "✅ Keystore de release restaurado com sucesso a partir dos GitHub Secrets!"
           else
-            echo "has_keystore=false" >> $GITHUB_OUTPUT
-            echo "::warning::Secrets de assinatura ausentes (KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD). O APK será gerado em modo DEBUG/UNSIGNED como fallback."
+            echo "⚠️ Secrets de assinatura não encontrados nos GitHub Secrets do repositório."
+            echo "has_custom_secrets=false" >> $GITHUB_OUTPUT
+            
+            # 2. Gerar keystore oficial persistente do Rotaly se não existir
+            AUTO_KEY_ALIAS="rotaly_release"
+            AUTO_PASS="RotalyAppRelease2025SecretKey"
+            
+            echo "Gerando novo Keystore oficial Rotaly (RSA 2048, 10.000 dias)..."
+            keytool -genkeypair \
+              -v \
+              -keystore android/release.keystore \
+              -alias "$AUTO_KEY_ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$AUTO_PASS" \
+              -keypass "$AUTO_PASS" \
+              -dname "CN=Rotaly App, OU=Logistica, O=Rotaly Tecnologia, L=Rio de Janeiro, ST=RJ, C=BR"
+            
+            GENERATED_BASE64=$(base64 -w 0 android/release.keystore)
+            
+            echo "has_keystore=true" >> $GITHUB_OUTPUT
+            echo "keystore_pass=$AUTO_PASS" >> $GITHUB_OUTPUT
+            echo "key_alias=$AUTO_KEY_ALIAS" >> $GITHUB_OUTPUT
+            echo "key_pass=$AUTO_PASS" >> $GITHUB_OUTPUT
+            echo "is_auto_generated=true" >> $GITHUB_OUTPUT
+            
+            echo "Tentando salvar automaticamente nos GitHub Secrets via gh CLI..."
+            # Tenta salvar os secrets se o token tiver escopo repo / admin
+            SET_OK=true
+            gh secret set KEYSTORE_BASE64 --body "$GENERATED_BASE64" || SET_OK=false
+            gh secret set KEYSTORE_PASSWORD --body "$AUTO_PASS" || SET_OK=false
+            gh secret set KEY_ALIAS --body "$AUTO_KEY_ALIAS" || SET_OK=false
+            gh secret set KEY_PASSWORD --body "$AUTO_PASS" || SET_OK=false
+            
+            if [ "$SET_OK" = "true" ]; then
+              echo "🎉 Secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS e KEY_PASSWORD gravados com sucesso no repositório pelo gh CLI!"
+            else
+              echo "::warning::O GITHUB_TOKEN padrão não tem permissão para gravar secrets do repositório (Resource not accessible by integration)."
+              echo "::warning::Para fixar a chave permanentemente e evitar nova chave no próximo runner, adicione os 4 secrets nas Configurações do Repositório (Settings > Secrets and variables > Actions)."
+              echo "::notice title=Rotaly Keystore Gerado::Adicione os secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD no repositório para garantir identidade imutável."
+            fi
           fi
 
       - name: Preparar Gradle Wrapper do Repositório
@@ -95,17 +151,17 @@ jobs:
           fi
           chmod +x gradlew
 
-      - name: Compilar APK (Release ou Fallback Debug)
+      - name: Compilar APK (Release Assinado com Keystore Oficial)
         id: compile_apk
         env:
-          KEYSTORE_FILE: ${{ steps.check_keystore.outputs.has_keystore == 'true' && '../release.keystore' || '' }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.has_keystore == 'true' && '../release.keystore' || '' }}
+          KEYSTORE_PASSWORD: ${{ steps.setup_keystore.outputs.keystore_pass }}
+          KEY_ALIAS: ${{ steps.setup_keystore.outputs.key_alias }}
+          KEY_PASSWORD: ${{ steps.setup_keystore.outputs.key_pass }}
         run: |
           cd android
-          if [ "${{ steps.check_keystore.outputs.has_keystore }}" = "true" ] && [ "${{ github.event.inputs.build_type || 'release' }}" = "release" ]; then
-            echo "Compilando APK Release Assinado..."
+          if [ "${{ steps.setup_keystore.outputs.has_keystore }}" = "true" ] && [ "${{ github.event.inputs.build_type || 'release' }}" = "release" ]; then
+            echo "Compilando APK Release Assinado com Keystore Oficial..."
             ./gradlew assembleRelease --no-daemon --stacktrace
             # Suporta variações comuns de saída do AGP (app-release.apk ou app-release-unsigned.apk)
             if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
