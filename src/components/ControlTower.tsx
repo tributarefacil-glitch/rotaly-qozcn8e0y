@@ -3505,6 +3505,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           couriers={couriers}
           orders={orders}
           handleOpenOrderDetails={handleOpenOrderDetails}
+          locations={locations}
         />
       )}
 

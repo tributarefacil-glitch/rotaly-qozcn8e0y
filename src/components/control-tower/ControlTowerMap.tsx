@@ -5,6 +5,8 @@ import { LiveMap, MapMarkerItem, getVehicleEmoji } from '@/components/LiveMap'
 import { getCourierRouteColor } from '@/lib/courierRouteColors'
 import { UserRecord, OrderRecord } from '@/types/delivery'
 import { parseSafeTimestamp, formatTimeInTz } from '@/lib/operationalWindow'
+import { LocationRecord } from '@/types/delivery'
+import { diagnoseCourierTelemetry } from '@/lib/courierTelemetryDiagnostics'
 import { ActiveRouteCourierData, ActiveRouteCalculatedItem, ControlTowerMetrics } from './utils'
 
 export type MapDisplayMode = 'in_transit' | 'delivered'
@@ -32,6 +34,7 @@ interface ControlTowerMapProps {
   couriers: UserRecord[]
   orders: OrderRecord[]
   handleOpenOrderDetails: (order: OrderRecord) => void
+  locations?: LocationRecord[]
 }
 
 export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
@@ -57,6 +60,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
   couriers,
   orders,
   handleOpenOrderDetails,
+  locations = [],
 }) => {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
@@ -184,6 +188,33 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
 
                             <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
                               {(() => {
+                                const diag = diagnoseCourierTelemetry(
+                                  item.courier.id,
+                                  locations,
+                                  item.lat,
+                                  item.lng,
+                                  item.speed,
+                                  item.gps_status,
+                                  item.gps_reason,
+                                  item.location_timestamp,
+                                  item.accuracy,
+                                  item.offline_buffered,
+                                )
+                                const isOutdated =
+                                  diag.minutesSinceLastPing > 10 || diag.gpsState === 'no_signal'
+
+                                if (isOutdated) {
+                                  const minText =
+                                    diag.minutesSinceLastPing < 999
+                                      ? `${diag.minutesSinceLastPing} min`
+                                      : '>10 min'
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
+                                      ⚠️ GPS desatualizado ({minText})
+                                    </span>
+                                  )
+                                }
+
                                 const lTime = parseSafeTimestamp(item.location_timestamp)
                                 const isFrozen =
                                   item.gps_status === 'offline' ||
@@ -528,6 +559,33 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
 
                             <div className="text-[10.5px] text-blue-300 font-mono flex items-center justify-between gap-1">
                               {(() => {
+                                const diag = diagnoseCourierTelemetry(
+                                  item.courier.id,
+                                  locations,
+                                  item.lat,
+                                  item.lng,
+                                  item.speed,
+                                  item.gps_status,
+                                  item.gps_reason,
+                                  item.location_timestamp,
+                                  item.accuracy,
+                                  item.offline_buffered,
+                                )
+                                const isOutdated =
+                                  diag.minutesSinceLastPing > 10 || diag.gpsState === 'no_signal'
+
+                                if (isOutdated) {
+                                  const minText =
+                                    diag.minutesSinceLastPing < 999
+                                      ? `${diag.minutesSinceLastPing} min`
+                                      : '>10 min'
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
+                                      ⚠️ GPS desatualizado ({minText})
+                                    </span>
+                                  )
+                                }
+
                                 const lTime = parseSafeTimestamp(item.location_timestamp)
                                 const isFrozen =
                                   item.gps_status === 'offline' ||
