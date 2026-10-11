@@ -228,24 +228,50 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
       total_deliveries_in_batch: 1,
     }
 
-    // Buscar pedidos anteriores do mesmo entregador que ainda estão pendentes/em trânsito
-    // na mesma remessa/dia, além de contar paradas já concluídas
+    // Delimitar pedidos ao MESMO lote da rota do pedido-alvo
+    // Se route_started_at estiver preenchido, filtrar dentro de ±3 minutos (mesmo padrão de deriveRouteBatchKey)
+    // Se route_started_at vier vazio, manter o comportamento como fallback
     let stopsBefore = []
     let completedStopsBefore = 0
     let totalInBatch = 1
 
+    const targetRouteStartedAtStr = targetOrder.getString('route_started_at')
+    const targetRouteStartedTs = targetRouteStartedAtStr
+      ? new Date(targetRouteStartedAtStr).getTime()
+      : 0
+    const THREE_MINUTES_MS = 3 * 60 * 1000
+
     try {
-      const allBatchOrders = $app.findRecordsByFilter(
-        'orders',
-        `courier_id = '${courierId}' && status != 'cancelled'`,
-        'sequence',
-        100,
-        0,
-      )
+      let filterQuery = `courier_id = '${courierId}' && status != 'cancelled'`
 
-      totalInBatch = allBatchOrders.length || 1
+      // Se houver route_started_at válido, filtramos no banco pela janela de ±3 minutos (convertida em strings UTC)
+      if (targetRouteStartedTs && !isNaN(targetRouteStartedTs)) {
+        const minDateStr = new Date(targetRouteStartedTs - THREE_MINUTES_MS)
+          .toISOString()
+          .replace('T', ' ')
+        const maxDateStr = new Date(targetRouteStartedTs + THREE_MINUTES_MS)
+          .toISOString()
+          .replace('T', ' ')
+        filterQuery += ` && route_started_at >= '${minDateStr}' && route_started_at <= '${maxDateStr}'`
+      }
 
-      for (const ord of allBatchOrders) {
+      const candidateOrders = $app.findRecordsByFilter('orders', filterQuery, 'sequence', 100, 0)
+
+      // Filtrar em memória garantindo conformidade estrita com ±3 minutos de route_started_at caso haja fallback
+      const batchOrders = []
+      for (const candidate of candidateOrders) {
+        if (targetRouteStartedTs && !isNaN(targetRouteStartedTs)) {
+          const candStartStr = candidate.getString('route_started_at')
+          const candStartTs = candStartStr ? new Date(candStartStr).getTime() : 0
+          if (!candStartTs || isNaN(candStartTs)) continue
+          if (Math.abs(candStartTs - targetRouteStartedTs) > THREE_MINUTES_MS) continue
+        }
+        batchOrders.push(candidate)
+      }
+
+      totalInBatch = batchOrders.length || 1
+
+      for (const ord of batchOrders) {
         if (ord.id === targetOrder.id) continue
 
         const ordSeq = ord.getInt('sequence') || 0
@@ -287,8 +313,9 @@ routerAdd('GET', '/backend/v1/public-track/{tracking_code}/route', (e) => {
     // Ordenar paradas anteriores por sequência crescente
     stopsBefore.sort((a, b) => a.sequence - b.sequence)
 
-    // Posição na fila: paradas concluídas antes + paradas pendentes antes + 1
-    const queuePosition = completedStopsBefore + stopsBefore.length + 1
+    // Posição no lote = campo sequence do pedido (se sequence > 0), ou fallback (concluídas antes + pendentes antes + 1)
+    const queuePosition =
+      targetSequence > 0 ? targetSequence : completedStopsBefore + stopsBefore.length + 1
 
     const finalResponse = Object.assign({}, baseResponse, {
       stops_before: stopsBefore,
