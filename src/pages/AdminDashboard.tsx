@@ -60,6 +60,7 @@ import { EditSellerModal } from '@/components/EditSellerModal'
 import { EditUserModal } from '@/components/EditUserModal'
 import { SiteContentManager } from '@/components/SiteContentManager'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
+import { CustomerSearchModal } from '@/components/CustomerSearchModal'
 
 // Lazy loading das seções pesadas com named exports
 const ControlTower = lazy(() =>
@@ -479,6 +480,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   // New user modal state
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false)
   const [isCustomerAddressAuditModalOpen, setIsCustomerAddressAuditModalOpen] = useState(false)
+  const [isCustomerSearchModalOpen, setIsCustomerSearchModalOpen] = useState(false)
   const [isCreateCustomerModalOpen, setIsCreateCustomerModalOpen] = useState(false)
   const [customerToEdit, setCustomerToEdit] = useState<CustomerRecord | null>(null)
   const [customers, setCustomers] = useState<CustomerRecord[]>([])
@@ -1527,6 +1529,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 >
                   <MapPin className="h-4 w-4 text-amber-600" />
                   Verificar Endereços no Mapa
+                </Button>
+                <Button
+                  onClick={() => setIsCustomerSearchModalOpen(true)}
+                  variant="outline"
+                  className="h-9 gap-2 text-xs border-[#1E2B58] bg-[#0A1128] hover:bg-[#1E2B58] text-[#60A5FA] hover:text-white rounded-xl font-semibold"
+                >
+                  <Search className="h-4 w-4 text-[#60A5FA]" />
+                  Buscar Cadastrado
                 </Button>
                 <Button
                   onClick={() => {
@@ -3863,6 +3873,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                         </Button>
                         <Button
                           type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setIsCustomerSearchModalOpen(true)}
+                          className="h-8 gap-1.5 text-xs border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold"
+                        >
+                          <Search className="h-3.5 w-3.5 text-blue-600" />
+                          Buscar Cadastrado
+                        </Button>
+                        <Button
+                          type="button"
                           size="sm"
                           onClick={() => {
                             setCustomerToEdit(null)
@@ -4143,6 +4163,32 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
           loadData()
           setIsCreateCustomerModalOpen(false)
           setCustomerToEdit(null)
+        }}
+        onOpenSearch={() => {
+          setIsCreateCustomerModalOpen(false)
+          setIsCustomerSearchModalOpen(true)
+        }}
+        onOpenCustomerSearch={() => {
+          setIsCreateCustomerModalOpen(false)
+          setIsCustomerSearchModalOpen(true)
+        }}
+      />
+
+      {/* Modal para Busca Inteligente de Clientes por Nome, CPF, CNPJ e Telefone */}
+      <CustomerSearchModal
+        open={isCustomerSearchModalOpen}
+        onOpenChange={setIsCustomerSearchModalOpen}
+        customers={customers}
+        isLoading={isLoading}
+        onSelectCustomerToEdit={(c) => {
+          setCustomerToEdit(c)
+          setIsCustomerSearchModalOpen(false)
+          setIsCreateCustomerModalOpen(true)
+        }}
+        onOpenCreateNew={() => {
+          setCustomerToEdit(null)
+          setIsCustomerSearchModalOpen(false)
+          setIsCreateCustomerModalOpen(true)
         }}
       />
 

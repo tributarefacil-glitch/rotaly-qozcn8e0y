@@ -578,21 +578,38 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         fetchedSettings,
       ] = await Promise.all([
         needOrders
-          ? deliveryService.getOrders(
-              fallbackOrdersFilter,
-              '-created',
-              'customer_id,courier_id,seller_id',
-            )
+          ? deliveryService
+              .getOrders(fallbackOrdersFilter, '-created', 'customer_id,courier_id,seller_id')
+              .catch((err) => {
+                console.warn('Torre de Controle: falha ao buscar pedidos primários:', err)
+                return []
+              })
           : Promise.resolve(orders),
-        deliveryService.getOrders(
-          globalTransitFilter,
-          '-created',
-          'customer_id,courier_id,seller_id',
-        ),
-        needCouriers ? deliveryService.getCouriers() : Promise.resolve(couriers),
-        needLocations ? deliveryService.getLatestLocations() : Promise.resolve(locations),
+        deliveryService
+          .getOrders(globalTransitFilter, '-created', 'customer_id,courier_id,seller_id')
+          .catch((err) => {
+            console.warn('Torre de Controle: falha ao buscar pedidos em trânsito global:', err)
+            return []
+          }),
+        needCouriers
+          ? deliveryService.getCouriers().catch((err) => {
+              console.warn('Torre de Controle: falha ao buscar entregadores:', err)
+              return []
+            })
+          : Promise.resolve(couriers),
+        needLocations
+          ? deliveryService.getLatestLocations().catch((err) => {
+              console.warn('Torre de Controle: falha ao buscar localizações recentes:', err)
+              return []
+            })
+          : Promise.resolve(locations),
         needDeviations
-          ? deliveryService.getOffRouteEvents('', '-created', 'courier_id,order_id').catch(() => [])
+          ? deliveryService
+              .getOffRouteEvents('', '-created', 'courier_id,order_id')
+              .catch((err) => {
+                console.warn('Torre de Controle: falha ao buscar desvios de rota:', err)
+                return []
+              })
           : Promise.resolve(propOffRouteEvents || []),
         needSettings
           ? deliveryService.getSettings().catch(() => null)

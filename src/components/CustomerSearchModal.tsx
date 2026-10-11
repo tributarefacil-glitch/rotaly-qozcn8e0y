@@ -9,7 +9,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { CustomerRecord } from '@/types/delivery'
-import { Search, User, Phone, FileText, MapPin, Edit, UserPlus, X, Building } from 'lucide-react'
+import {
+  Search,
+  User,
+  Phone,
+  FileText,
+  MapPin,
+  Edit,
+  UserPlus,
+  X,
+  Building,
+  Loader2,
+} from 'lucide-react'
 
 interface CustomerSearchModalProps {
   open: boolean
@@ -17,6 +28,7 @@ interface CustomerSearchModalProps {
   customers: CustomerRecord[]
   onSelectCustomerToEdit: (customer: CustomerRecord) => void
   onOpenCreateNew: () => void
+  isLoading?: boolean
 }
 
 export function CustomerSearchModal({
@@ -25,6 +37,7 @@ export function CustomerSearchModal({
   customers,
   onSelectCustomerToEdit,
   onOpenCreateNew,
+  isLoading = false,
 }: CustomerSearchModalProps) {
   const [searchTerm, setSearchTerm] = useState('')
 
@@ -128,7 +141,11 @@ export function CustomerSearchModal({
         {/* Contador de resultados */}
         <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 px-1">
           <span>
-            {searchTerm ? (
+            {isLoading ? (
+              <span className="flex items-center gap-1.5 text-[#60A5FA]">
+                <Loader2 className="h-3 w-3 animate-spin" /> Carregando clientes...
+              </span>
+            ) : searchTerm ? (
               <>
                 Resultados para &quot;<strong className="text-white">{searchTerm}</strong>&quot;:
               </>
@@ -137,14 +154,28 @@ export function CustomerSearchModal({
             )}
           </span>
           <span className="font-semibold text-slate-300">
-            {filteredCustomers.length}{' '}
-            {filteredCustomers.length === 1 ? 'cliente encontrado' : 'clientes encontrados'}
+            {isLoading ? (
+              '...'
+            ) : (
+              <>
+                {filteredCustomers.length}{' '}
+                {filteredCustomers.length === 1 ? 'cliente encontrado' : 'clientes encontrados'}
+              </>
+            )}
           </span>
         </div>
 
         {/* Lista de clientes com scroll */}
         <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 scrollbar-thin">
-          {filteredCustomers.length === 0 ? (
+          {isLoading ? (
+            <div className="text-center py-12 px-4 rounded-xl bg-[#0A1128] border border-[#1E2B58] text-slate-400">
+              <Loader2 className="h-8 w-8 mx-auto text-[#60A5FA] animate-spin mb-3" />
+              <p className="text-sm font-semibold text-slate-200">Carregando...</p>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Buscando lista de clientes cadastrados...
+              </p>
+            </div>
+          ) : filteredCustomers.length === 0 ? (
             <div className="text-center py-10 px-4 rounded-xl bg-[#0A1128] border border-[#1E2B58] text-slate-400">
               <User className="h-10 w-10 mx-auto text-slate-600 mb-2" />
               <p className="text-xs font-semibold text-slate-300">Nenhum cliente encontrado</p>

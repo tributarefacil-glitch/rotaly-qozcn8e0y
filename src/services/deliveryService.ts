@@ -2014,11 +2014,13 @@ export const deliveryService = {
 
   // Locations
   async getLatestLocations(filter = '', sort = '-created', minutesWindow = 60) {
-    let finalFilter = filter
+    // Sanitização técnica: a coleção PocketBase 'locations' usa 'user_id', NÃO 'courier_id'
+    const sanitizedFilter = (filter || '').replace(/\bcourier_id\b/g, 'user_id')
+    let finalFilter = sanitizedFilter
     if (minutesWindow && minutesWindow > 0) {
       const windowStartIso = new Date(Date.now() - minutesWindow * 60 * 1000).toISOString()
       const timeFilter = `created >= '${windowStartIso}'`
-      finalFilter = filter ? `(${filter}) && (${timeFilter})` : timeFilter
+      finalFilter = sanitizedFilter ? `(${sanitizedFilter}) && (${timeFilter})` : timeFilter
     }
 
     return pb.collection<LocationRecord>('locations').getFullList({
@@ -2030,7 +2032,8 @@ export const deliveryService = {
   },
 
   async getCourierLocations(courierId: string, startDate?: string | Date, endDate?: string | Date) {
-    const filters: string[] = [`user_id = '${courierId}'`]
+    const cleanCourierId = courierId ? String(courierId).trim() : ''
+    const filters: string[] = [`user_id = '${cleanCourierId}'`]
     if (startDate) {
       const startIso = typeof startDate === 'string' ? startDate : startDate.toISOString()
       filters.push(`created >= '${startIso}'`)
@@ -2040,8 +2043,10 @@ export const deliveryService = {
       filters.push(`created <= '${endIso}'`)
     }
 
+    const combinedFilter = filters.join(' && ').replace(/\bcourier_id\b/g, 'user_id')
+
     return pb.collection<LocationRecord>('locations').getFullList({
-      filter: filters.join(' && '),
+      filter: combinedFilter,
       sort: '+created',
       requestKey: null,
     })
@@ -4012,13 +4017,9 @@ export const deliveryService = {
     expand = 'courier_id,order_id',
     limit = 50,
   ) {
-    let finalFilter = filter
-    if (!filter.includes('empresa_id')) {
-      const companyClause = this.getCompanyFilterClause('empresa_id')
-      if (companyClause) {
-        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
-      }
-    }
+    // A coleção off_route_events NÃO possui o campo empresa_id.
+    // Nenhuma injeção de cláusula empresa_id deve ser feita aqui, sob pena de erro 400.
+    const finalFilter = filter || ''
 
     const res = await pb.collection<OffRouteEventRecord>('off_route_events').getList(1, limit, {
       filter: finalFilter,
@@ -4030,12 +4031,9 @@ export const deliveryService = {
   },
 
   async createOffRouteEvent(data: Partial<OffRouteEventRecord>) {
-    const activeCompanyId = this.getActiveCompanyId()
-    const payload = {
-      ...data,
-      ...(activeCompanyId && !data.empresa_id ? { empresa_id: activeCompanyId } : {}),
-    }
-    return pb.collection<OffRouteEventRecord>('off_route_events').create(payload)
+    // A coleção off_route_events não possui o campo empresa_id no schema do PocketBase
+    const { empresa_id: _ignoredEmpresaId, ...payloadWithoutEmpresa } = data as any
+    return pb.collection<OffRouteEventRecord>('off_route_events').create(payloadWithoutEmpresa)
   },
 
   // Route optimization with Google Maps Traffic or fallback

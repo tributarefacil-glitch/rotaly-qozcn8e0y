@@ -61,6 +61,7 @@ interface CreateCustomerModalProps {
   onCustomerCreated: (customer: CustomerRecord) => void
   customerToEdit?: CustomerRecord | null
   onOpenSearch?: () => void
+  onOpenCustomerSearch?: () => void
 }
 
 export function CreateCustomerModal({
@@ -69,7 +70,9 @@ export function CreateCustomerModal({
   onCustomerCreated,
   customerToEdit = null,
   onOpenSearch,
+  onOpenCustomerSearch,
 }: CreateCustomerModalProps) {
+  const triggerSearch = onOpenSearch || onOpenCustomerSearch
   const [name, setName] = useState('')
   const [document, setDocument] = useState('')
   const [phone, setPhone] = useState('')
@@ -96,6 +99,7 @@ export function CreateCustomerModal({
   const [addressesList, setAddressesList] = useState<CustomerAddressItem[]>([])
   const [activeAddressTab, setActiveAddressTab] = useState<number>(0)
   const [isSearchingPhone, setIsSearchingPhone] = useState(false)
+  const [isSearchingName, setIsSearchingName] = useState(false)
   const [isLoadingLocationLink, setIsLoadingLocationLink] = useState(false)
   const [isGeocodingAddress, setIsGeocodingAddress] = useState(false)
   const [googleNormalizedAddress, setGoogleNormalizedAddress] = useState<string>('')
@@ -111,6 +115,7 @@ export function CreateCustomerModal({
   const isAddressManuallyEditedRef = useRef<boolean>(false)
   const isSelectedFromAutocompleteRef = useRef<boolean>(false)
   const phoneDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const nameDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const addressDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastGeocodedAddressRef = useRef<string>('')
   const isProgrammaticUpdateRef = useRef<boolean>(false)
@@ -246,77 +251,113 @@ export function CreateCustomerModal({
     setActiveAddressTab(0)
   }
 
-  // Auto-lookup existing customer by typed phone
-  const checkCustomerByPhone = useCallback(async (phoneInput: string) => {
-    const cleanDigits = phoneInput.replace(/\D/g, '')
-    if (cleanDigits.length < 8) return
-
-    setIsSearchingPhone(true)
-    try {
-      const found = await deliveryService.findCustomerByPhone(phoneInput)
-      if (found) {
-        setMatchedExistingCustomer(found)
-        setName(found.name || '')
-        setDocument(found.document || '')
-        setPhone(found.phone || '')
-        setPhone2(found.phone2 || '')
-        setPhone3(found.phone3 || '')
-        setEmail(found.email || '')
-        if (found.phone2 || found.phone3) setShowExtraPhones(true)
-        setStreetAndNumber(found.street || found.address?.split(',')[0] || '')
-        setNeighborhood(found.neighborhood || '')
-        setCity(found.city || '')
-        if (found.state) {
-          const uf = normalizeBrazilianUF(found.state)
-          if (uf && BRAZILIAN_STATES.includes(uf)) setUfState(uf)
-        }
-        setPostalCode(found.postal_code || '')
-        setComplement(found.complement || '')
-        setReferencePoint(found.reference_point || '')
-        setPlusCode(found.plus_code || '')
-        if (found.lat && found.lng) {
-          setLat(found.lat)
-          setLng(found.lng)
-        }
-
-        if (Array.isArray(found.addresses) && found.addresses.length > 0) {
-          setAddressesList(found.addresses)
-          const defIdx = found.addresses.findIndex((a) => a.is_default)
-          setActiveAddressTab(defIdx >= 0 ? defIdx : 0)
-        } else {
-          setAddressesList([
-            {
-              id: 'addr_1',
-              label: 'Principal',
-              address: found.address || '',
-              street: found.street || found.address?.split(',')[0] || '',
-              neighborhood: found.neighborhood || '',
-              city: found.city || '',
-              state: found.state || 'RJ',
-              postal_code: found.postal_code || '',
-              complement: found.complement || '',
-              reference_point: found.reference_point || '',
-              plus_code: found.plus_code || '',
-              lat: found.lat,
-              lng: found.lng,
-              is_default: true,
-            },
-          ])
-          setActiveAddressTab(0)
-        }
-
-        toast.info(
-          `Cliente "${found.name}" localizado pelo telefone. O cadastro será atualizado sem duplicidade!`,
-        )
-      } else {
-        setMatchedExistingCustomer(null)
-      }
-    } catch (e) {
-      console.warn('Erro ao verificar cliente por telefone:', e)
-    } finally {
-      setIsSearchingPhone(false)
+  // Preenche o formulário a partir de um cliente já cadastrado encontrado (por telefone ou nome)
+  const applyFoundCustomerData = useCallback((found: CustomerRecord, source: 'phone' | 'name') => {
+    setMatchedExistingCustomer(found)
+    setName(found.name || '')
+    setDocument(found.document || '')
+    setPhone(found.phone || '')
+    setPhone2(found.phone2 || '')
+    setPhone3(found.phone3 || '')
+    setEmail(found.email || '')
+    if (found.phone2 || found.phone3) setShowExtraPhones(true)
+    setStreetAndNumber(found.street || found.address?.split(',')[0] || '')
+    setNeighborhood(found.neighborhood || '')
+    setCity(found.city || '')
+    if (found.state) {
+      const uf = normalizeBrazilianUF(found.state)
+      if (uf && BRAZILIAN_STATES.includes(uf)) setUfState(uf)
     }
+    setPostalCode(found.postal_code || '')
+    setComplement(found.complement || '')
+    setReferencePoint(found.reference_point || '')
+    setPlusCode(found.plus_code || '')
+    if (found.lat && found.lng) {
+      setLat(found.lat)
+      setLng(found.lng)
+    }
+
+    if (Array.isArray(found.addresses) && found.addresses.length > 0) {
+      setAddressesList(found.addresses)
+      const defIdx = found.addresses.findIndex((a) => a.is_default)
+      setActiveAddressTab(defIdx >= 0 ? defIdx : 0)
+    } else {
+      setAddressesList([
+        {
+          id: 'addr_1',
+          label: 'Principal',
+          address: found.address || '',
+          street: found.street || found.address?.split(',')[0] || '',
+          neighborhood: found.neighborhood || '',
+          city: found.city || '',
+          state: found.state || 'RJ',
+          postal_code: found.postal_code || '',
+          complement: found.complement || '',
+          reference_point: found.reference_point || '',
+          plus_code: found.plus_code || '',
+          lat: found.lat,
+          lng: found.lng,
+          is_default: true,
+        },
+      ])
+      setActiveAddressTab(0)
+    }
+
+    const sourceLabel = source === 'name' ? 'pelo nome' : 'pelo telefone'
+    toast.info(
+      `Cliente "${found.name}" localizado ${sourceLabel}. O cadastro será atualizado sem duplicidade!`,
+    )
   }, [])
+
+  // Auto-lookup existing customer by typed phone
+  const checkCustomerByPhone = useCallback(
+    async (phoneInput: string) => {
+      const cleanDigits = phoneInput.replace(/\D/g, '')
+      if (cleanDigits.length < 8) return
+
+      setIsSearchingPhone(true)
+      try {
+        const found = await deliveryService.findCustomerByPhone(phoneInput)
+        if (found) {
+          applyFoundCustomerData(found, 'phone')
+        } else {
+          setMatchedExistingCustomer(null)
+        }
+      } catch (e) {
+        console.warn('Erro ao verificar cliente por telefone:', e)
+      } finally {
+        setIsSearchingPhone(false)
+      }
+    },
+    [applyFoundCustomerData],
+  )
+
+  // Auto-lookup existing customer by typed name (debounce 350ms, min 3 letras)
+  const checkCustomerByName = useCallback(
+    async (nameInput: string) => {
+      const trimmed = nameInput.trim()
+      if (trimmed.length < 3) return
+
+      setIsSearchingName(true)
+      try {
+        const results = await deliveryService.searchCustomers(trimmed)
+        if (results && results.length > 0) {
+          // Encontrar o melhor match exato ou por prefixo/inclusão
+          const lower = trimmed.toLowerCase()
+          const exactMatch = results.find((c) => c.name && c.name.trim().toLowerCase() === lower)
+          const bestMatch = exactMatch || results[0]
+          if (bestMatch) {
+            applyFoundCustomerData(bestMatch, 'name')
+          }
+        }
+      } catch (e) {
+        console.warn('Erro ao verificar cliente por nome:', e)
+      } finally {
+        setIsSearchingName(false)
+      }
+    },
+    [applyFoundCustomerData],
+  )
 
   // Carrega os dados de um endereço selecionado na lista para os campos do formulário
   const loadAddressIntoForm = useCallback((addr: CustomerAddressItem) => {
@@ -437,6 +478,17 @@ export function CreateCustomerModal({
       phoneDebounceRef.current = setTimeout(() => {
         checkCustomerByPhone(val)
       }, 500)
+    }
+  }
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value
+    setName(val)
+    if (nameDebounceRef.current) clearTimeout(nameDebounceRef.current)
+    if (!isEditMode && val.trim().length >= 3) {
+      nameDebounceRef.current = setTimeout(() => {
+        checkCustomerByName(val)
+      }, 350)
     }
   }
 
@@ -1345,12 +1397,12 @@ export function CreateCustomerModal({
                 </div>
               </div>
 
-              {onOpenSearch && !isEditMode && (
+              {triggerSearch && !isEditMode && (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={onOpenSearch}
+                  onClick={triggerSearch}
                   className="shrink-0 h-8 text-xs gap-1.5 border-[#1E2B58] bg-[#0A1128] hover:bg-[#1E2B58] text-[#60A5FA] hover:text-white"
                 >
                   <Search className="h-3.5 w-3.5 text-[#60A5FA]" />
@@ -1430,13 +1482,20 @@ export function CreateCustomerModal({
             {/* Nome, Documento (CPF/CNPJ), Telefone Principal e E-mail */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="sm:col-span-1">
-                <Label className="text-xs font-semibold text-slate-300">
-                  Nome / Empresa <span className="text-[#FF6B35]">*</span>
-                </Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-slate-300">
+                    Nome / Empresa <span className="text-[#FF6B35]">*</span>
+                  </Label>
+                  {isSearchingName && (
+                    <span className="text-[10px] text-[#60A5FA] flex items-center gap-1">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> buscando...
+                    </span>
+                  )}
+                </div>
                 <Input
                   placeholder="Ex: Ana Maria Silva"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={handleNameChange}
                   className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
                   required
                 />
