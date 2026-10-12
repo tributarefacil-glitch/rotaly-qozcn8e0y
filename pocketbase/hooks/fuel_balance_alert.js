@@ -582,11 +582,14 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       )
     } catch (_) {}
 
+    // Carrega aprovações em route_km_approvals: aprovadas (para substituição de km) e completas (para auditoria de lotes)
     var approvalsMap = {}
+    var approvalsByOrder = {}
+    var approvalsByBatch = {}
     try {
       var allApprovals = $app.findRecordsByFilter(
         'route_km_approvals',
-        "status = 'approved'",
+        'id != ""',
         '-created',
         5000,
         0,
@@ -594,14 +597,28 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       for (var ap = 0; ap < allApprovals.length; ap++) {
         var aRec = allApprovals[ap]
         var aOrderId = aRec.getString('order_id')
-        if (aOrderId && approvalsMap[aOrderId] === undefined) {
-          approvalsMap[aOrderId] = Number(aRec.getFloat('approved_km')) || 0
+        var aBatchKey = aRec.getString('route_batch_key')
+        var aStatus = aRec.getString('status') || 'pending'
+        var aKm = Number(aRec.getFloat('approved_km')) || 0
+
+        if (aOrderId) {
+          if (!approvalsByOrder[aOrderId]) {
+            approvalsByOrder[aOrderId] = { status: aStatus, approvedKm: aKm, batchKey: aBatchKey }
+          }
+          if (aStatus === 'approved' && approvalsMap[aOrderId] === undefined) {
+            approvalsMap[aOrderId] = aKm
+          }
+        }
+        if (aBatchKey) {
+          if (!approvalsByBatch[aBatchKey]) {
+            approvalsByBatch[aBatchKey] = []
+          }
+          approvalsByBatch[aBatchKey].push({ orderId: aOrderId, status: aStatus, approvedKm: aKm })
         }
       }
     } catch (errAp) {
       console.log('[daily_fuel_balance_check] Aviso ao carregar route_km_approvals:', errAp)
     }
-
     // Cálculo do calendário civil do mês corrente (fuso America/Sao_Paulo)
     // Janela deslizante de 30 dias operacionais: de (today - 30 dias) às 05:00 até hoje às 23:59:59.999
     var nowParts = getBrazilParts(now)
@@ -794,8 +811,16 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         }
       }
 
+      // FÓRMULA OFICIAL DE RECARGA SUGERIDA:
+      // recarga = media - consumo_do_periodo
+      // Com teto: se resultado < 0 -> 0; se resultado > media -> media.
+      // media = dailyAverage
+      // consumo_do_periodo = postCutoffSpent
+      var rawRecharge = Number((dailyAverage - postCutoffSpent).toFixed(2))
+      var suggestedRecharge =
+        rawRecharge < 0 ? 0 : rawRecharge > dailyAverage ? dailyAverage : rawRecharge
+      suggestedRecharge = Number(suggestedRecharge.toFixed(2))
       var projection = Number((dailyAverage * remainingDays).toFixed(2))
-      var suggestedRecharge = Math.max(0, Number((projection - currentBalance).toFixed(2)))
 
       // 5. FRENTE 3: Disparo do alerta (gasto atingiu limiar de app_settings ou saldo negativo)
       var thresholdPct = fuelSettings.alertThresholdPct || 80
@@ -1549,10 +1574,12 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
     } catch (_) {}
 
     var approvalsMapCheck = {}
+    var approvalsByOrderCheck = {}
+    var approvalsByBatchCheck = {}
     try {
       var allApprovalsCheck = $app.findRecordsByFilter(
         'route_km_approvals',
-        "status = 'approved'",
+        'id != ""',
         '-created',
         5000,
         0,
@@ -1560,12 +1587,34 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       for (var apc = 0; apc < allApprovalsCheck.length; apc++) {
         var aRecC = allApprovalsCheck[apc]
         var aOrderIdC = aRecC.getString('order_id')
-        if (aOrderIdC && approvalsMapCheck[aOrderIdC] === undefined) {
-          approvalsMapCheck[aOrderIdC] = Number(aRecC.getFloat('approved_km')) || 0
+        var aBatchKeyC = aRecC.getString('route_batch_key')
+        var aStatusC = aRecC.getString('status') || 'pending'
+        var aKmC = Number(aRecC.getFloat('approved_km')) || 0
+
+        if (aOrderIdC) {
+          if (!approvalsByOrderCheck[aOrderIdC]) {
+            approvalsByOrderCheck[aOrderIdC] = {
+              status: aStatusC,
+              approvedKm: aKmC,
+              batchKey: aBatchKeyC,
+            }
+          }
+          if (aStatusC === 'approved' && approvalsMapCheck[aOrderIdC] === undefined) {
+            approvalsMapCheck[aOrderIdC] = aKmC
+          }
+        }
+        if (aBatchKeyC) {
+          if (!approvalsByBatchCheck[aBatchKeyC]) {
+            approvalsByBatchCheck[aBatchKeyC] = []
+          }
+          approvalsByBatchCheck[aBatchKeyC].push({
+            orderId: aOrderIdC,
+            status: aStatusC,
+            approvedKm: aKmC,
+          })
         }
       }
     } catch (_) {}
-
     // Parâmetros de data para sugestão 30d
     var nowParts = getBrazilParts(now)
     var todayOperationalDay = nowParts.day
@@ -1715,50 +1764,9 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         availableBalance = Number((carryOver + currentMonthAdvTotal).toFixed(2))
       }
 
-      // FRENTE 2: Média com janela real e sugestão (alinhada 100% com o painel)
-      var ordersLast30d = courierOrders.filter(function (ord) {
-        var oDateVal =
-          ord.getString('route_finished_at') ||
-          ord.getString('actual_arrival') ||
-          ord.getString('created')
-        var ts = parseSafeTimestamp(oDateVal)
-        return ts >= window30dStartTs
-      })
-
-      var spent30d = computeOrdersOfficialSpent(
-        ordersLast30d,
-        courier,
-        fuelSettings,
-        approvalsMapCheck,
-      )
-      var dailyAverage = 0
-      var averageLabel = 'Média 30d'
-
-      if (ordersLast30d.length > 0) {
-        var oldestOrderTs = ordersLast30d.reduce(function (minTs, o) {
-          var oDateVal =
-            o.getString('route_finished_at') ||
-            o.getString('actual_arrival') ||
-            o.getString('created')
-          var t = parseSafeTimestamp(oDateVal)
-          return t > 0 && t < minTs ? t : minTs
-        }, now.getTime())
-
-        var elapsedDays = Math.max(1, Math.ceil((now.getTime() - oldestOrderTs) / (24 * 3600000)))
-        var windowDays = Math.min(30, elapsedDays)
-
-        if (windowDays < 28) {
-          dailyAverage = Number((spent30d / windowDays).toFixed(2))
-          averageLabel = 'Média ' + windowDays + 'd'
-        } else {
-          dailyAverage = Number((spent30d / 30).toFixed(2))
-          averageLabel = 'Média 30d'
-        }
-      }
-
-      var projection = Number((dailyAverage * remainingDays).toFixed(2))
-      var suggestedRecharge = Math.max(0, Number((projection - currentBalance).toFixed(2)))
-
+      // FRENTE 2: Média de DIAS TRABALHADOS com KM AUDITADO e sugestão com teto na média (v0.0.405)
+      // Regra 1: Sugestão = média − consumo do período, com TETO na média (nunca negativa, nunca > média).
+      // Regra 2: Média usa só dias TRABALHADOS (escala 12x36, folga fora) e km AUDITADO (exclui desvio >30% e aprovações pendentes/rejeitadas).
       // FRENTE 3: Gatilho com limiar configurável de app_settings
       var thresholdPct = fuelSettings.alertThresholdPct || 80
       var triggerHighRatio = thresholdPct / 100
