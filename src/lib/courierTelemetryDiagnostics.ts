@@ -159,8 +159,8 @@ export function diagnoseCourierTelemetry(
     movementBadgeLabel = 'Aguardando coordenadas'
   } else {
     // Determinar se está parado:
-    // Regra canônica: speed < 2 km/h E deslocamento < 50m desde o ping de referência
-    const isInstantSpeedZero = speedKmh < 2
+    // Regra canônica: speed < 5 km/h E deslocamento < 50m desde o ping de referência
+    const isInstantStopped = speedKmh < 5
 
     // Investigar histórico consecutivo de pontos para calcular tempo parado contínuo
     // Ponto mais recente de referência
@@ -170,7 +170,6 @@ export function diagnoseCourierTelemetry(
 
     // Percorrer pontos consecutivos mais antigos para encontrar o primeiro momento em que parou no raio < 50m
     let consecutiveStopStartTime = refTime
-    let isContinuousStop = true
 
     for (let i = 0; i < sortedLocs.length; i++) {
       const loc = sortedLocs[i]
@@ -180,12 +179,11 @@ export function diagnoseCourierTelemetry(
       const distM = haversineDistanceMeters(refLat, refLng, loc.lat, loc.lng)
       const locSpeed = typeof loc.speed === 'number' ? loc.speed : 0
 
-      // Entregador PARADO quando speed < 2 km/h E deslocamento < 50 m desde o ping de referência
-      if (distM < 50 && locSpeed < 2) {
+      // Entregador PARADO quando speed < 5 km/h E deslocamento < 50 m desde o ping de referência
+      if (distM < 50 && locSpeed < 5) {
         consecutiveStopStartTime = locTime
       } else {
-        // Encontrou um ponto em que estava fora do raio ou com velocidade >= 2 km/h
-        isContinuousStop = i === 0 ? false : true
+        // Encontrou um ponto em que estava fora do raio ou com velocidade >= 5 km/h
         break
       }
     }
@@ -193,26 +191,23 @@ export function diagnoseCourierTelemetry(
     const elapsedStoppedMs = Math.max(0, now - consecutiveStopStartTime)
     const calculatedStoppedMin = Math.floor(elapsedStoppedMs / 60000)
 
-    if (isInstantSpeedZero && calculatedStoppedMin >= 1) {
+    if (isInstantStopped) {
       isStopped = true
       stoppedMinutes = calculatedStoppedMin
+      stoppedSinceFormatted = formatTimestampInTz(consecutiveStopStartTime)
       movementBadgeVariant = 'stopped'
-      if (stoppedMinutes < 60) {
-        movementBadgeLabel = `Parado há ${stoppedMinutes} min · 0 km/h`
-      } else {
-        const hrs = Math.floor(stoppedMinutes / 60)
-        const remMin = stoppedMinutes % 60
-        movementBadgeLabel = `Parado há ${hrs}h ${remMin > 0 ? `${remMin}min` : ''} · 0 km/h`
-      }
-    } else if (isInstantSpeedZero) {
-      isStopped = true
-      stoppedMinutes = 0
-      movementBadgeVariant = 'stopped'
-      movementBadgeLabel = 'Parado há 0 min · 0 km/h'
+
+      const stopDurationText =
+        stoppedMinutes < 60
+          ? `Parado há ${stoppedMinutes} min`
+          : `Parado há ${Math.floor(stoppedMinutes / 60)}h ${stoppedMinutes % 60 > 0 ? `${stoppedMinutes % 60}min` : ''}`.trim()
+
+      movementBadgeLabel = `🛑 Parado · ${speedKmh} km/h · ${stopDurationText}`
     } else {
       isStopped = false
+      stoppedMinutes = 0
       movementBadgeVariant = 'moving'
-      movementBadgeLabel = `Em movimento · ${speedKmh} km/h`
+      movementBadgeLabel = `🟢 Em movimento · ${speedKmh} km/h`
     }
   }
 

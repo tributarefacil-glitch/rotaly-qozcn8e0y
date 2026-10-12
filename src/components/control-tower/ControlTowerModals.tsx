@@ -1466,7 +1466,9 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                         <div
                           className={`p-2.5 rounded-lg border flex flex-col justify-between ${
                             diag.movementBadgeVariant === 'stopped'
-                              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                              ? diag.stoppedMinutes >= 5
+                                ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
+                                : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
                               : diag.movementBadgeVariant === 'moving'
                                 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
                                 : 'bg-slate-800/40 border-slate-700 text-slate-400'
@@ -1479,7 +1481,9 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                             <span
                               className={`h-2.5 w-2.5 rounded-full shrink-0 ${
                                 diag.movementBadgeVariant === 'stopped'
-                                  ? 'bg-amber-400'
+                                  ? diag.stoppedMinutes >= 5
+                                    ? 'bg-rose-400 animate-pulse'
+                                    : 'bg-amber-400'
                                   : diag.movementBadgeVariant === 'moving'
                                     ? 'bg-emerald-400 animate-pulse'
                                     : 'bg-slate-500'

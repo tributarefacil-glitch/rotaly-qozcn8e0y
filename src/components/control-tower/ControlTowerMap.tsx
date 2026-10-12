@@ -3,6 +3,7 @@ import { Activity, RefreshCw, AlertOctagon, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { LiveMap, MapMarkerItem, getVehicleEmoji } from '@/components/LiveMap'
 import { getCourierRouteColor } from '@/lib/courierRouteColors'
+import { MapDataService } from '@/lib/mapDataService'
 import { UserRecord, OrderRecord } from '@/types/delivery'
 import { parseSafeTimestamp, formatTimeInTz } from '@/lib/operationalWindow'
 import { LocationRecord } from '@/types/delivery'
@@ -257,7 +258,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                       </span>
                                     )
                                   }
-                                  // Alerta / Indicador visual de parada em tempo real
+                                  // Alerta / Indicador visual de movimento/parada em tempo real
                                   if (diag.isStopped) {
                                     return (
                                       <span
@@ -267,7 +268,13 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                             : 'bg-amber-500/20 text-amber-300 border-amber-500/50'
                                         }`}
                                       >
-                                        🛑 {diag.movementBadgeLabel}
+                                        {diag.movementBadgeLabel}
+                                      </span>
+                                    )
+                                  } else {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold border bg-emerald-500/20 text-emerald-300 border-emerald-500/50">
+                                        {diag.movementBadgeLabel}
                                       </span>
                                     )
                                   }
@@ -684,7 +691,13 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                             : 'bg-amber-500/20 text-amber-300 border-amber-500/50'
                                         }`}
                                       >
-                                        🛑 {diag.movementBadgeLabel}
+                                        {diag.movementBadgeLabel}
+                                      </span>
+                                    )
+                                  } else {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold border bg-emerald-500/20 text-emerald-300 border-emerald-500/50">
+                                        {diag.movementBadgeLabel}
                                       </span>
                                     )
                                   }
@@ -876,57 +889,134 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                 routeLines={
                   mapDisplayMode === 'delivered'
                     ? []
-                    : activeRoutesData
-                        .filter((routeData) => {
-                          // B2: Usar routeData.allOrders / courierId em vez de apenas routeData.order
-                          const hasActiveInAll = (routeData as any).allOrders?.some(
-                            (o: any) => Boolean(o.route_started) && o.route_finished !== true,
-                          )
-                          const hasActiveInOrder =
-                            Boolean(routeData.order?.route_started) &&
-                            routeData.order?.route_finished !== true
-                          const hasActiveCourier =
-                            Boolean(routeData.courierId) &&
-                            activeRouteCouriers.some(
-                              (c) => c.courier.id === routeData.courierId && c.hasRouteStarted,
+                    : (() => {
+                        const directLines = activeRoutesData
+                          .filter((routeData) => {
+                            // B2: Usar routeData.allOrders / courierId em vez de apenas routeData.order
+                            // Não suprimir pernas de ida E volta quando resta 1 pedido no lote ou o entregador está retornando
+                            const hasActiveInAll = (routeData as any).allOrders?.some(
+                              (o: any) => Boolean(o.route_started) && o.route_finished !== true,
                             )
-                          return hasActiveInAll || hasActiveInOrder || hasActiveCourier
-                        })
-                        .flatMap((routeData) => {
-                          const lines: any[] = []
-                          const fPoints = routeData.forwardPoints || routeData.points
-                          if (fPoints && fPoints.length >= 2) {
-                            lines.push({
-                              origin: fPoints[0] || routeData.courierPos,
-                              destination: routeData.custPos,
-                              courierPosition: routeData.courierPos,
-                              streetCoordinates: fPoints,
-                              isDeviated: Boolean(
-                                routeData.order?.route_started &&
-                                routeData.order?.route_finished !== true &&
-                                routeData.isDeviated,
-                              ),
-                              isReturnLeg: false,
-                            })
-                          }
-                          const retPoints = routeData.returnPoints
-                          if (retPoints && retPoints.length >= 2) {
-                            lines.push({
-                              origin: retPoints[0],
-                              destination: retPoints[retPoints.length - 1],
-                              courierPosition: routeData.courierPos,
-                              streetCoordinates: retPoints,
-                              isDeviated: Boolean(
-                                (!fPoints || fPoints.length < 2) &&
-                                routeData.order?.route_started &&
-                                routeData.order?.route_finished !== true &&
-                                routeData.isDeviated,
-                              ),
-                              isReturnLeg: true,
-                            })
-                          }
-                          return lines
-                        })
+                            const hasActiveInOrder =
+                              Boolean(routeData.order?.route_started) &&
+                              routeData.order?.route_finished !== true
+                            const hasActiveCourier =
+                              Boolean(routeData.courierId) &&
+                              activeRouteCouriers.some(
+                                (c) =>
+                                  c.courier.id === routeData.courierId &&
+                                  (c.hasRouteStarted || c.activeOrdersCount > 0),
+                              )
+                            return (
+                              hasActiveInAll ||
+                              hasActiveInOrder ||
+                              hasActiveCourier ||
+                              Boolean(routeData.returnPoints?.length)
+                            )
+                          })
+                          .flatMap((routeData) => {
+                            const lines: any[] = []
+                            const fPoints = routeData.forwardPoints || routeData.points
+                            if (fPoints && fPoints.length >= 2) {
+                              lines.push({
+                                origin: fPoints[0] || routeData.courierPos,
+                                destination: routeData.custPos,
+                                courierPosition: routeData.courierPos,
+                                streetCoordinates: fPoints,
+                                isDeviated: Boolean(
+                                  routeData.order?.route_started &&
+                                  routeData.order?.route_finished !== true &&
+                                  routeData.isDeviated,
+                                ),
+                                isReturnLeg: false,
+                              })
+                            }
+                            const retPoints = routeData.returnPoints
+                            if (retPoints && retPoints.length >= 2) {
+                              lines.push({
+                                origin: retPoints[0],
+                                destination: retPoints[retPoints.length - 1],
+                                courierPosition: routeData.courierPos,
+                                streetCoordinates: retPoints,
+                                isDeviated: Boolean(
+                                  (!fPoints || fPoints.length < 2) &&
+                                  routeData.order?.route_started &&
+                                  routeData.order?.route_finished !== true &&
+                                  routeData.isDeviated,
+                                ),
+                                isReturnLeg: true,
+                              })
+                            }
+                            return lines
+                          })
+
+                        // Fallback quando não há geometria OSRM: desenhar pernas de ida e volta diretamente
+                        if (directLines.length === 0 && activeRouteCouriers.length > 0) {
+                          const fallbackLines: any[] = []
+                          activeRouteCouriers.forEach((courierItem) => {
+                            try {
+                              const courierOrders = courierItem.allAssignedOrders || []
+                              const sortedOrders = [...courierOrders]
+                                .filter(
+                                  (o) =>
+                                    o.status !== 'cancelled' &&
+                                    o.route_started === true &&
+                                    o.route_finished !== true,
+                                )
+                                .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+                              if (sortedOrders.length === 0) return
+
+                              const points: { lat: number; lng: number }[] = []
+                              const firstOrder = sortedOrders[0]
+                              const startBase =
+                                MapDataService.cleanCoords(
+                                  firstOrder.start_base_lat,
+                                  firstOrder.start_base_lng,
+                                ) || MapDataService.getOfficialBaseCoords()
+                              if (startBase) points.push(startBase)
+
+                              sortedOrders.forEach((o) => {
+                                const dest = MapDataService.getOrderDestination(o)
+                                if (dest) points.push(dest)
+                              })
+
+                              if (points.length >= 2) {
+                                fallbackLines.push({
+                                  origin: points[0],
+                                  destination: points[points.length - 1],
+                                  courierPosition: { lat: courierItem.lat, lng: courierItem.lng },
+                                  streetCoordinates: points,
+                                  isDeviated: false,
+                                  isReturnLeg: false,
+                                })
+                              }
+
+                              const lastStop = points[points.length - 1]
+                              const officialBase = MapDataService.getOfficialBaseCoords()
+                              if (
+                                lastStop &&
+                                officialBase &&
+                                (lastStop.lat !== officialBase.lat ||
+                                  lastStop.lng !== officialBase.lng)
+                              ) {
+                                fallbackLines.push({
+                                  origin: lastStop,
+                                  destination: officialBase,
+                                  courierPosition: { lat: courierItem.lat, lng: courierItem.lng },
+                                  streetCoordinates: [lastStop, officialBase],
+                                  isDeviated: false,
+                                  isReturnLeg: true,
+                                })
+                              }
+                            } catch (e) {
+                              console.warn('[ControlTowerMap] Fallback routeLines error:', e)
+                            }
+                          })
+                          return fallbackLines
+                        }
+
+                        return directLines
+                      })()
                 }
                 onSelectMarker={(m) => {
                   if (m.type === 'courier') {

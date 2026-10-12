@@ -417,6 +417,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const [drawerUnexpectedStop, setDrawerUnexpectedStop] = useState(false)
   const drawerMarkersRef = useRef<any[]>([])
   const drawerPolylineRef = useRef<any>(null)
+  const drawerReturnPolylineRef = useRef<any>(null)
   const drawerDeviationPolylineRef = useRef<any>(null)
   const drawerBoundsRef = useRef<any>(null)
   const drawerCenterRef = useRef<{ lat: number; lng: number } | null>(null)
@@ -1180,7 +1181,21 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       // Pedidos locais da loja do dia (para métricas e kanban da loja)
       const courierLocalOrders = todayOrders.filter((o) => o.courier_id === courier.id)
 
-      // Rota ativa do entregador considerada tanto globalmente quanto localmente (estritamente do dia)
+      // Rota ativa do entregador: TODAS as ordens do lote ativo
+      // (route_started === true && route_finished !== true && status !== 'cancelled'),
+      // incluindo 'pending', 'in_transit' e 'delivered' para exibir todos os pins do lote
+      const activeBatchOrders = [
+        ...globalCourierTransit.filter(
+          (o) => o.route_started === true && o.route_finished !== true && o.status !== 'cancelled',
+        ),
+        ...courierLocalOrders.filter(
+          (o) => o.route_started === true && o.route_finished !== true && o.status !== 'cancelled',
+        ),
+      ]
+      const uniqueActiveBatchOrders = Array.from(
+        new Map(activeBatchOrders.map((o) => [o.id, o])).values(),
+      )
+
       const allTransitOrders = [
         ...globalCourierTransit,
         ...courierLocalOrders.filter((o) => o.status === 'in_transit' && o.route_started === true),
@@ -1294,7 +1309,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         lastDelivered,
         vehicle: courier.vehicle_type || 'moto',
         allAssignedOrders:
-          uniqueActiveTransitOrders.length > 0 ? uniqueActiveTransitOrders : courierLocalOrders,
+          uniqueActiveBatchOrders.length > 0
+            ? uniqueActiveBatchOrders
+            : uniqueActiveTransitOrders.length > 0
+              ? uniqueActiveTransitOrders
+              : courierLocalOrders,
       }
     })
   }, [couriers, locations, todayOrders, globalInTransitOrders])
@@ -1971,55 +1990,60 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     activeRouteCouriers.forEach((courierItem) => {
       const courierOrders = courierItem.allAssignedOrders || []
       courierOrders.forEach((order) => {
-        if (
-          order.status === 'cancelled' ||
-          order.route_finished === true ||
-          !order.route_started ||
-          seenOrderIds.has(order.id)
-        ) {
-          return
+        try {
+          if (
+            order.status === 'cancelled' ||
+            order.route_finished === true ||
+            !order.route_started ||
+            seenOrderIds.has(order.id)
+          ) {
+            return
+          }
+          seenOrderIds.add(order.id)
+
+          const cleanDest = MapDataService.getOrderDestination(order)
+          if (!cleanDest) {
+            console.warn(
+              '[ControlTower] Cliente sem coordenada válida no pedido:',
+              order.tracking_code,
+              order.id,
+            )
+            return
+          }
+
+          const cust = order.expand?.customer_id
+          const courier = order.expand?.courier_id || courierItem.courier
+          const isDelivered = order.status === 'delivered'
+          const isTransit = order.status === 'in_transit' || order.route_started
+          const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
+          const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
+          const seqText = order.sequence ? `[#${order.sequence}] ` : ''
+          const courierId = order.courier_id || courier?.id
+          const courierColor = getCourierRouteColor(courierId)
+          // Cor do pin: entregue = verde #10B981 com tag ✓ [#seq], trânsito/pendente = laranja #FF6B35 ou cor do entregador
+          const pinColor = isDelivered ? '#10B981' : courierColor.stroke || '#FF6B35'
+          const titlePrefix = isDelivered ? `✓ ${seqText}` : seqText
+
+          list.push({
+            id: `order-${order.id}`,
+            title: `${titlePrefix}${cust?.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
+            subtitle: `${cust?.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
+            lat: cleanDest.lat,
+            lng: cleanDest.lng,
+            type: isDelivered ? 'order_delivered' : isTransit ? 'order_transit' : 'order_pending',
+            tracking_code: order.tracking_code,
+            customer_name: cust?.name,
+            customer_address: cust?.address,
+            total_price: Number(order.total_price || 0),
+            estimated_arrival: order.estimated_arrival,
+            courier_name: courier?.name,
+            courier_id: courierId,
+            pinColorOverride: pinColor,
+            delivery_sequence: order.sequence,
+          })
+        } catch (err) {
+          console.warn('[ControlTower] Erro ao processar pin do pedido:', order?.id, err)
         }
-        seenOrderIds.add(order.id)
-
-        const cleanDest = MapDataService.getOrderDestination(order)
-        if (!cleanDest) {
-          console.warn(
-            '[ControlTower] Cliente sem coordenada válida no pedido:',
-            order.tracking_code,
-            order.id,
-          )
-          return
-        }
-
-        const cust = order.expand?.customer_id
-        const courier = order.expand?.courier_id || courierItem.courier
-        const isDelivered = order.status === 'delivered'
-        const isTransit = order.status === 'in_transit' || order.route_started
-        const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
-        const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
-        const seqText = order.sequence ? `[#${order.sequence}] ` : ''
-        const courierId = order.courier_id || courier?.id
-        const courierColor = getCourierRouteColor(courierId)
-        // Cor do pin: entregue = verde #10B981, trânsito/pendente = laranja #FF6B35 ou cor do entregador
-        const pinColor = isDelivered ? '#10B981' : courierColor.stroke || '#FF6B35'
-
-        list.push({
-          id: `order-${order.id}`,
-          title: `${seqText}${cust?.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
-          subtitle: `${cust?.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
-          lat: cleanDest.lat,
-          lng: cleanDest.lng,
-          type: isDelivered ? 'order_delivered' : isTransit ? 'order_transit' : 'order_pending',
-          tracking_code: order.tracking_code,
-          customer_name: cust?.name,
-          customer_address: cust?.address,
-          total_price: Number(order.total_price || 0),
-          estimated_arrival: order.estimated_arrival,
-          courier_name: courier?.name,
-          courier_id: courierId,
-          pinColorOverride: pinColor,
-          delivery_sequence: order.sequence,
-        })
       })
     })
 
@@ -2881,7 +2905,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 : ''
           }
 
-          ${item.speed ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${item.speed} km/h</p>` : ''}
+          <div style="background-color: ${courierDiag.movementBadgeVariant === 'stopped' ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${courierDiag.movementBadgeVariant === 'stopped' ? '#fde68a' : '#bbf7d0'}; border-radius: 6px; padding: 4px 6px; margin-top: 4px; font-size: 10.5px; font-weight: 700; color: ${courierDiag.movementBadgeVariant === 'stopped' ? '#b45309' : '#15803d'};">
+            ${courierDiag.movementBadgeLabel}
+          </div>
         </div>
       `
           // Exibe inicialmente com carregando/fallback se demorar
@@ -2942,104 +2968,108 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       })
 
       transitOrders.forEach((order) => {
-        const cust = order.expand?.customer_id
-        const cleanDest = MapDataService.getOrderDestination(order)
-        if (!cleanDest) {
-          console.warn(
-            '[ControlTower] Cliente sem coordenada válida no pedido:',
-            order.tracking_code,
-            order.id,
-          )
-          return
-        }
-
-        const bucketKey = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
-        const bucket = coordBuckets.get(bucketKey) || []
-        let finalLat = cleanDest.lat
-        let finalLng = cleanDest.lng
-        if (bucket.length > 1) {
-          const idx = bucket.findIndex((b) => b.id === order.id)
-          if (idx > 0) {
-            const r = 0.00015
-            const theta = (idx * 2 * Math.PI) / bucket.length
-            finalLat = cleanDest.lat + r * Math.sin(theta)
-            finalLng = cleanDest.lng + r * Math.cos(theta)
+        try {
+          const cust = order.expand?.customer_id
+          const cleanDest = MapDataService.getOrderDestination(order)
+          if (!cleanDest) {
+            console.warn(
+              '[ControlTower] Cliente sem coordenada válida no pedido:',
+              order.tracking_code,
+              order.id,
+            )
+            return
           }
-        }
-        const destPos = MapDataService.cleanCoords(finalLat, finalLng) || cleanDest
-        if (safeExtendBounds(bounds, destPos)) {
-          hasCoords = true
-        }
-        activeTransitOrderIds.add(order.id)
 
-        const isDelivered = order.status === 'delivered'
-        const isTransit = order.status === 'in_transit' || order.route_started
-        const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
-        const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
-        const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
-        const courierId = order.courier_id || order.expand?.courier_id?.id
-        const courierColor = getCourierRouteColor(courierId)
-        // B3: entregue = verde #10B981, trânsito/pendente = laranja #FF6B35 ou cor do entregador
-        const pinColor = isDelivered ? '#10B981' : courierColor.stroke || '#FF6B35'
-        const markerTitle = `${isDelivered ? '✓ Entregue' : '🏁 Destino'}: ${seqText}${cust?.name || 'Cliente'} (${order.tracking_code})${etaText}`
-        const markerIcon = makeNativeCustomerSvg(
-          cust?.name,
-          order.sequence,
-          !isDelivered && isTransit,
-          pinColor,
-        )
+          const bucketKey = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
+          const bucket = coordBuckets.get(bucketKey) || []
+          let finalLat = cleanDest.lat
+          let finalLng = cleanDest.lng
+          if (bucket.length > 1) {
+            const idx = bucket.findIndex((b) => b.id === order.id)
+            if (idx > 0) {
+              const r = 0.00015
+              const theta = (idx * 2 * Math.PI) / bucket.length
+              finalLat = cleanDest.lat + r * Math.sin(theta)
+              finalLng = cleanDest.lng + r * Math.cos(theta)
+            }
+          }
+          const destPos = MapDataService.cleanCoords(finalLat, finalLng) || cleanDest
+          if (safeExtendBounds(bounds, destPos)) {
+            hasCoords = true
+          }
+          activeTransitOrderIds.add(order.id)
 
-        let destMarker = customerMarkersMapRef.current.get(order.id)
-        if (destMarker) {
-          destMarker.setMap(map)
-          destMarker.setPosition(destPos)
-          destMarker.setTitle(markerTitle)
-          destMarker.setIcon(markerIcon)
-          destMarker.setZIndex?.(100 + (order.sequence || 0))
-        } else {
-          destMarker = new win.google.maps.Marker({
-            position: destPos,
-            map,
-            title: markerTitle,
-            icon: markerIcon,
-            zIndex: 100 + (order.sequence || 0),
-          })
-          destMarker.setZIndex?.(100 + (order.sequence || 0))
+          const isDelivered = order.status === 'delivered'
+          const isTransit = order.status === 'in_transit' || order.route_started
+          const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
+          const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
+          const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
+          const courierId = order.courier_id || order.expand?.courier_id?.id
+          const courierColor = getCourierRouteColor(courierId)
+          // B3: entregue = verde #10B981, trânsito/pendente = laranja #FF6B35 ou cor do entregador
+          const pinColor = isDelivered ? '#10B981' : courierColor.stroke || '#FF6B35'
+          const markerTitle = `${isDelivered ? '✓ Entregue' : '🏁 Destino'}: ${seqText}${cust?.name || 'Cliente'} (${order.tracking_code})${etaText}`
+          const markerIcon = makeNativeCustomerSvg(
+            cust?.name,
+            order.sequence,
+            !isDelivered && isTransit,
+            pinColor,
+          )
 
-          // Hover: tooltip compacto de cliente
-          destMarker.addListener('mouseover', () => {
-            const html = `
-                <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
-                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
-                    <strong style="font-size: 11.5px; color: #0f172a;">${cust?.name || 'Cliente'}</strong>
-                    ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: ${isDelivered ? '#dcfce7' : '#ffedd5'}; color: ${isDelivered ? '#15803d' : '#c2410c'}; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+          let destMarker = customerMarkersMapRef.current.get(order.id)
+          if (destMarker) {
+            destMarker.setMap(map)
+            destMarker.setPosition(destPos)
+            destMarker.setTitle(markerTitle)
+            destMarker.setIcon(markerIcon)
+            destMarker.setZIndex?.(100 + (order.sequence || 0))
+          } else {
+            destMarker = new win.google.maps.Marker({
+              position: destPos,
+              map,
+              title: markerTitle,
+              icon: markerIcon,
+              zIndex: 100 + (order.sequence || 0),
+            })
+            destMarker.setZIndex?.(100 + (order.sequence || 0))
+
+            // Hover: tooltip compacto de cliente
+            destMarker.addListener('mouseover', () => {
+              const html = `
+                  <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
+                      <strong style="font-size: 11.5px; color: #0f172a;">${cust?.name || 'Cliente'}</strong>
+                      ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: ${isDelivered ? '#dcfce7' : '#ffedd5'}; color: ${isDelivered ? '#15803d' : '#c2410c'}; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+                    </div>
+                    <div style="font-size: 10px; color: ${isDelivered ? '#15803d' : isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
+                      ${isDelivered ? '✓ Concluído' : isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
+                    </div>
+                    <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                      📍 ${cust?.address || cust?.street || (typeof cust?.lat === 'number' && typeof cust?.lng === 'number' ? `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}` : 'Coordenadas não disponíveis')}
+                    </div>
+                    ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
                   </div>
-                  <div style="font-size: 10px; color: ${isDelivered ? '#15803d' : isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
-                    ${isDelivered ? '✓ Concluído' : isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
-                  </div>
-                  <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                    📍 ${cust?.address || cust?.street || (typeof cust?.lat === 'number' && typeof cust?.lng === 'number' ? `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}` : 'Coordenadas não disponíveis')}
-                  </div>
-                  ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
-                </div>
-              `
-            hoverInfoWindow.setContent(html)
-            hoverInfoWindow.open(map, destMarker)
-          })
+                `
+              hoverInfoWindow.setContent(html)
+              hoverInfoWindow.open(map, destMarker)
+            })
 
-          destMarker.addListener('mouseout', () => {
-            hoverInfoWindow.close()
-          })
+            destMarker.addListener('mouseout', () => {
+              hoverInfoWindow.close()
+            })
 
-          destMarker.addListener('click', () => {
-            hoverInfoWindow.close()
-            handleOpenOrderDetails(order)
-          })
+            destMarker.addListener('click', () => {
+              hoverInfoWindow.close()
+              handleOpenOrderDetails(order)
+            })
 
-          customerMarkersMapRef.current.set(order.id, destMarker)
+            customerMarkersMapRef.current.set(order.id, destMarker)
+          }
+
+          newMarkers.push(destMarker)
+        } catch (err) {
+          console.warn('[ControlTower] Erro no marcador do pedido:', order?.id, err)
         }
-
-        newMarkers.push(destMarker)
       })
 
       // Limpar marcadores de destinos que não estão mais nesta exibição
@@ -3308,6 +3338,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       drawerPolylineRef.current.setMap(null)
       drawerPolylineRef.current = null
     }
+    if (drawerReturnPolylineRef.current) {
+      drawerReturnPolylineRef.current.setMap(null)
+      drawerReturnPolylineRef.current = null
+    }
 
     const bounds = new win.google.maps.LatLngBounds()
     const pathCoordinates: any[] = []
@@ -3444,13 +3478,51 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           geodesic: true,
           strokeColor: courierDrawerColor.stroke,
           strokeOpacity: 0.85,
-          strokeWeight: 4,
+          strokeWeight: 5,
           map: miniMap,
         })
         drawerPolylineRef.current = polyline
       } catch (err) {
         console.warn('[ControlTower Drawer] Erro ao desenhar polyline:', err)
       }
+    }
+
+    // Desenhar perna de retorno à base oficial no mini-mapa do Drawer (tracejada, azul #60A5FA)
+    try {
+      const activeRouteInfo = courierData?.courier?.id
+        ? activeRoutesData.find((r) => r.courierId === courierData.courier.id)
+        : undefined
+      const officialBase = MapDataService.getOfficialBaseCoords()
+      let returnPath: { lat: number; lng: number }[] = []
+
+      if (activeRouteInfo?.returnPoints && activeRouteInfo.returnPoints.length >= 2) {
+        returnPath = activeRouteInfo.returnPoints
+          .map((p: any) => MapDataService.cleanCoords(p?.lat, p?.lng))
+          .filter(Boolean) as { lat: number; lng: number }[]
+      } else if (safeClientPos && officialBase) {
+        returnPath = [safeClientPos, officialBase]
+      }
+
+      if (returnPath.length >= 2) {
+        returnPath.forEach((p) => safeExtendBounds(bounds, p))
+        const returnPolyline = new win.google.maps.Polyline({
+          path: returnPath,
+          geodesic: true,
+          strokeColor: '#60A5FA',
+          strokeOpacity: 0.9,
+          strokeWeight: 5,
+          icons: [
+            {
+              icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+              repeat: '10px',
+            },
+          ],
+          map: miniMap,
+        })
+        drawerReturnPolylineRef.current = returnPolyline
+      }
+    } catch (err) {
+      console.warn('[ControlTower Drawer] Erro ao desenhar volta à base:', err)
     }
     // Verificar se o entregador está em desvio de rota e desenhar LINHA VERMELHA
     // REQUISITO ESTRITO: Linha vermelha apenas quando hasActiveRouteStarted && isDeviated

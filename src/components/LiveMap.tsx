@@ -656,13 +656,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           : defaultPinColor
       return makeCourierSvgIcon(item.vehicle_type, pinColor)
     } else if (item.type === 'order_delivered') {
+      const pinColor = item.pinColorOverride || '#10B981'
       return makeCustomerSvgIcon(
         item.customer_name,
         item.delivery_sequence,
         false,
         110,
         46,
-        '#10B981',
+        pinColor,
         true,
       )
     } else {
@@ -760,12 +761,12 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             strokeColor:
               r.strokeColor ||
               (r.courierId ? getCourierRouteColor(r.courierId).returnLeg : '#60A5FA'),
-            strokeOpacity: 0,
-            strokeWeight: 4,
+            strokeOpacity: 0.9,
+            strokeWeight: 5,
             icons: [
               {
-                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
-                repeat: '8px',
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                repeat: '10px',
               },
             ],
             map: mapInstanceRef.current,
@@ -917,237 +918,247 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     })
 
     visibleMarkers.forEach((item) => {
-      const cleanItemCoords = MapDataService.cleanCoords(item.lat, item.lng)
-      if (!cleanItemCoords) {
-        return
-      }
-
-      let adjustedLat = cleanItemCoords.lat
-      let adjustedLng = cleanItemCoords.lng
-      if (item.type !== 'courier' && item.type !== 'base') {
-        const k = `${cleanItemCoords.lat.toFixed(5)}_${cleanItemCoords.lng.toFixed(5)}`
-        const bucket = markerBuckets.get(k) || []
-        if (bucket.length > 1) {
-          const idx = bucket.findIndex((b) => b.id === item.id)
-          if (idx > 0) {
-            const r = 0.00015
-            const theta = (idx * 2 * Math.PI) / bucket.length
-            adjustedLat = cleanItemCoords.lat + r * Math.sin(theta)
-            adjustedLng = cleanItemCoords.lng + r * Math.cos(theta)
-          }
+      try {
+        const cleanItemCoords = MapDataService.cleanCoords(item.lat, item.lng)
+        if (!cleanItemCoords) {
+          console.warn('[LiveMap] Ponto de marcador ignorado por coordenadas inválidas:', item?.id)
+          return
         }
-      }
 
-      const cleanAdjusted = MapDataService.cleanCoords(adjustedLat, adjustedLng) || cleanItemCoords
-      currentMarkerIds.add(item.id)
-      const targetPos = cleanAdjusted
-      const markerIcon = getMarkerIcon(item)
-      const isSelected = item.id === selectedMarkerId
-
-      const entry = googleMarkerMapRef.current.get(item.id)
-
-      if (entry) {
-        // Marcador já existe: atualizar apenas propriedades modificadas (sem recriar nem piscar)
-        const marker = entry.marker
-        if (marker && typeof marker.setMap === 'function') {
-          try {
-            marker.setMap(mapInstanceRef.current)
-          } catch {
-            /* safe ignore */
+        let adjustedLat = cleanItemCoords.lat
+        let adjustedLng = cleanItemCoords.lng
+        if (item.type !== 'courier' && item.type !== 'base') {
+          const k = `${cleanItemCoords.lat.toFixed(5)}_${cleanItemCoords.lng.toFixed(5)}`
+          const bucket = markerBuckets.get(k) || []
+          if (bucket.length > 1) {
+            const idx = bucket.findIndex((b) => b.id === item.id)
+            if (idx > 0) {
+              const r = 0.00015
+              const theta = (idx * 2 * Math.PI) / bucket.length
+              adjustedLat = cleanItemCoords.lat + r * Math.sin(theta)
+              adjustedLng = cleanItemCoords.lng + r * Math.cos(theta)
+            }
           }
         }
 
-        // Se for entregador: interpolação suave se moveu
-        if (item.type === 'courier') {
-          const courierId = item.id
-          const prevPos = marker.getPosition()
-          if (prevPos) {
-            const startLat = prevPos.lat()
-            const startLng = prevPos.lng()
-            const deltaLat = targetPos.lat - startLat
-            const deltaLng = targetPos.lng - startLng
+        const cleanAdjusted =
+          MapDataService.cleanCoords(adjustedLat, adjustedLng) || cleanItemCoords
+        currentMarkerIds.add(item.id)
+        const targetPos = cleanAdjusted
+        const markerIcon = getMarkerIcon(item)
+        const isSelected = item.id === selectedMarkerId
 
-            if (Math.abs(deltaLat) > 0.00001 || Math.abs(deltaLng) > 0.00001) {
-              const prevAnim = liveCourierAnimFramesRef.current.get(courierId)
-              if (prevAnim) cancelAnimationFrame(prevAnim)
+        const entry = googleMarkerMapRef.current.get(item.id)
 
-              const animStartTime = performance.now()
-              const duration = 700 // Animação rápida de 700ms para movimento em tempo real
+        if (entry) {
+          // Marcador já existe: atualizar apenas propriedades modificadas (sem recriar nem piscar)
+          const marker = entry.marker
+          if (marker && typeof marker.setMap === 'function') {
+            try {
+              marker.setMap(mapInstanceRef.current)
+            } catch {
+              /* safe ignore */
+            }
+          }
 
-              const step = (now: number) => {
-                const elapsed = now - animStartTime
-                const progress = Math.min(1, elapsed / duration)
-                // Interpolação suave e ágil
-                const ease = progress
+          // Se for entregador: interpolação suave se moveu
+          if (item.type === 'courier') {
+            const courierId = item.id
+            const prevPos = marker.getPosition()
+            if (prevPos) {
+              const startLat = prevPos.lat()
+              const startLng = prevPos.lng()
+              const deltaLat = targetPos.lat - startLat
+              const deltaLng = targetPos.lng - startLng
 
-                const curLat = startLat + deltaLat * ease
-                const curLng = startLng + deltaLng * ease
-                marker.setPosition({ lat: curLat, lng: curLng })
+              if (Math.abs(deltaLat) > 0.00001 || Math.abs(deltaLng) > 0.00001) {
+                const prevAnim = liveCourierAnimFramesRef.current.get(courierId)
+                if (prevAnim) cancelAnimationFrame(prevAnim)
 
-                if (progress < 1) {
-                  const reqId = requestAnimationFrame(step)
-                  liveCourierAnimFramesRef.current.set(courierId, reqId)
-                } else {
-                  marker.setPosition(targetPos)
-                  liveCourierAnimFramesRef.current.delete(courierId)
+                const animStartTime = performance.now()
+                const duration = 700 // Animação rápida de 700ms para movimento em tempo real
+
+                const step = (now: number) => {
+                  const elapsed = now - animStartTime
+                  const progress = Math.min(1, elapsed / duration)
+                  // Interpolação suave e ágil
+                  const ease = progress
+
+                  const curLat = startLat + deltaLat * ease
+                  const curLng = startLng + deltaLng * ease
+                  marker.setPosition({ lat: curLat, lng: curLng })
+
+                  if (progress < 1) {
+                    const reqId = requestAnimationFrame(step)
+                    liveCourierAnimFramesRef.current.set(courierId, reqId)
+                  } else {
+                    marker.setPosition(targetPos)
+                    liveCourierAnimFramesRef.current.delete(courierId)
+                  }
                 }
-              }
 
-              const reqId = requestAnimationFrame(step)
-              liveCourierAnimFramesRef.current.set(courierId, reqId)
+                const reqId = requestAnimationFrame(step)
+                liveCourierAnimFramesRef.current.set(courierId, reqId)
+              } else {
+                marker.setPosition(targetPos)
+              }
             } else {
               marker.setPosition(targetPos)
             }
           } else {
-            marker.setPosition(targetPos)
+            // Marcador de cliente/pedido: atualizar posição apenas se mudou
+            if (
+              Math.abs(entry.prevLat - item.lat) > 0.00001 ||
+              Math.abs(entry.prevLng - item.lng) > 0.00001
+            ) {
+              marker.setPosition(targetPos)
+            }
           }
-        } else {
-          // Marcador de cliente/pedido: atualizar posição apenas se mudou
+
+          // Atualizar ícone caso status, desvio, tipo, sequência ou cor do pin tenham mudado
           if (
-            Math.abs(entry.prevLat - item.lat) > 0.00001 ||
-            Math.abs(entry.prevLng - item.lng) > 0.00001
+            entry.prevType !== item.type ||
+            entry.prevDev !== item.isDeviated ||
+            entry.prevSeq !== item.delivery_sequence ||
+            entry.prevName !== item.customer_name ||
+            entry.prevPinColor !== item.pinColorOverride
           ) {
-            marker.setPosition(targetPos)
+            marker.setIcon(markerIcon)
           }
-        }
 
-        // Atualizar ícone caso status, desvio, tipo, sequência ou cor do pin tenham mudado
-        if (
-          entry.prevType !== item.type ||
-          entry.prevDev !== item.isDeviated ||
-          entry.prevSeq !== item.delivery_sequence ||
-          entry.prevName !== item.customer_name ||
-          entry.prevPinColor !== item.pinColorOverride
-        ) {
-          marker.setIcon(markerIcon)
-        }
+          if (entry.prevTitle !== item.title) {
+            marker.setTitle(item.title)
+          }
 
-        if (entry.prevTitle !== item.title) {
-          marker.setTitle(item.title)
-        }
+          // zIndex relativo estrito:
+          // courierMarker = 1000, baseMarker = 500, customerMarker = 100 + sequence
+          if (item.type === 'courier') {
+            marker.setZIndex?.(1000)
+          } else if (item.type === 'base') {
+            marker.setZIndex?.(500)
+          } else {
+            marker.setZIndex?.(100 + (item.delivery_sequence || 0))
+          }
 
-        // zIndex relativo estrito:
-        // courierMarker = 1000, baseMarker = 500, customerMarker = 100 + sequence
-        if (item.type === 'courier') {
-          marker.setZIndex?.(1000)
-        } else if (item.type === 'base') {
-          marker.setZIndex?.(500)
+          // Animação de seleção (bounce)
+          if (item.type !== 'courier') {
+            marker.setAnimation(isSelected ? google.maps.Animation.BOUNCE : null)
+          }
+
+          // Atualizar conteúdo da clickInfoWindow
+          if (entry.clickInfoWindow) {
+            entry.clickInfoWindow.setContent(buildInfoWindowHtml(item))
+          }
+
+          // Atualizar cache de estado do marcador
+          entry.prevLat = item.lat
+          entry.prevLng = item.lng
+          entry.prevType = item.type
+          entry.prevSeq = item.delivery_sequence
+          entry.prevTitle = item.title
+          entry.prevName = item.customer_name
+          entry.prevDev = item.isDeviated
+          entry.prevPinColor = item.pinColorOverride
         } else {
-          marker.setZIndex?.(100 + (item.delivery_sequence || 0))
-        }
-
-        // Animação de seleção (bounce)
-        if (item.type !== 'courier') {
-          marker.setAnimation(isSelected ? google.maps.Animation.BOUNCE : null)
-        }
-
-        // Atualizar conteúdo da clickInfoWindow
-        if (entry.clickInfoWindow) {
-          entry.clickInfoWindow.setContent(buildInfoWindowHtml(item))
-        }
-
-        // Atualizar cache de estado do marcador
-        entry.prevLat = item.lat
-        entry.prevLng = item.lng
-        entry.prevType = item.type
-        entry.prevSeq = item.delivery_sequence
-        entry.prevTitle = item.title
-        entry.prevName = item.customer_name
-        entry.prevDev = item.isDeviated
-        entry.prevPinColor = item.pinColorOverride
-      } else {
-        // Criar NOVO marcador apenas se não existir ainda no mapa
-        const marker = new google.maps.Marker({
-          position: targetPos,
-          map: mapInstanceRef.current,
-          title: item.title,
-          icon: markerIcon,
-          animation:
-            isSelected && item.type !== 'courier' ? google.maps.Animation.BOUNCE : undefined,
-        })
-
-        // zIndex relativo estrito:
-        // courierMarker = 1000, baseMarker = 500, customerMarker = 100 + sequence
-        if (item.type === 'courier') {
-          marker.setZIndex?.(1000)
-        } else if (item.type === 'base') {
-          marker.setZIndex?.(500)
-        } else {
-          marker.setZIndex?.(100 + (item.delivery_sequence || 0))
-        }
-
-        if (item.type === 'courier') {
-          liveCourierMarkersRef.current.set(item.id, marker)
-        }
-
-        const clickInfoWindow = new google.maps.InfoWindow({
-          content: buildInfoWindowHtml(item),
-        })
-
-        // Hover handlers
-        marker.addListener('mouseover', () => {
-          handleMarkerHover(item)
-          const currentAddr = getMarkerAddress(item)
-          if (hoverInfoWindowRef.current) {
-            hoverInfoWindowRef.current.setContent(buildInfoWindowHtml(item, currentAddr))
-            hoverInfoWindowRef.current.open(mapInstanceRef.current, marker)
-          }
-
-          if (!currentAddr || currentAddr === 'Localizando endereço...') {
-            const checkTimer = setTimeout(() => {
-              const updatedAddr = getMarkerAddress(item)
-              if (hoverInfoWindowRef.current) {
-                hoverInfoWindowRef.current.setContent(buildInfoWindowHtml(item, updatedAddr))
-              }
-            }, 600)
-            ;(marker as any).__hoverTimer = checkTimer
-          }
-        })
-
-        marker.addListener('mouseout', () => {
-          if ((marker as any).__hoverTimer) clearTimeout((marker as any).__hoverTimer)
-          if (hoverInfoWindowRef.current) {
-            hoverInfoWindowRef.current.close()
-          }
-        })
-
-        marker.addListener('click', () => {
-          if (hoverInfoWindowRef.current) {
-            hoverInfoWindowRef.current.close()
-          }
-          const markerPos = marker.getPosition ? marker.getPosition() : null
-          const currentLat = markerPos ? markerPos.lat() : item.lat
-          const currentLng = markerPos ? markerPos.lng() : item.lng
-
-          const currentExactItem: MapMarkerItem = {
-            ...item,
-            lat: currentLat,
-            lng: currentLng,
-          }
-
-          const currentAddr = getMarkerAddress(currentExactItem)
-          clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, currentAddr))
-          clickInfoWindow.open(mapInstanceRef.current, marker)
-          setActivePopupMarker(currentExactItem)
-          if (onSelectMarker) onSelectMarker(currentExactItem)
-
-          handleMarkerHover(currentExactItem, (freshAddr) => {
-            clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, freshAddr))
+          // Criar NOVO marcador apenas se não existir ainda no mapa
+          const marker = new google.maps.Marker({
+            position: targetPos,
+            map: mapInstanceRef.current,
+            title: item.title,
+            icon: markerIcon,
+            animation:
+              isSelected && item.type !== 'courier' ? google.maps.Animation.BOUNCE : undefined,
           })
-        })
 
-        googleMarkerMapRef.current.set(item.id, {
-          marker,
-          clickInfoWindow,
-          prevLat: item.lat,
-          prevLng: item.lng,
-          prevType: item.type,
-          prevSeq: item.delivery_sequence,
-          prevTitle: item.title,
-          prevName: item.customer_name,
-          prevDev: item.isDeviated,
-          prevPinColor: item.pinColorOverride,
-        })
+          // zIndex relativo estrito:
+          // courierMarker = 1000, baseMarker = 500, customerMarker = 100 + sequence
+          if (item.type === 'courier') {
+            marker.setZIndex?.(1000)
+          } else if (item.type === 'base') {
+            marker.setZIndex?.(500)
+          } else {
+            marker.setZIndex?.(100 + (item.delivery_sequence || 0))
+          }
+
+          if (item.type === 'courier') {
+            liveCourierMarkersRef.current.set(item.id, marker)
+          }
+
+          const clickInfoWindow = new google.maps.InfoWindow({
+            content: buildInfoWindowHtml(item),
+          })
+
+          // Hover handlers
+          marker.addListener('mouseover', () => {
+            handleMarkerHover(item)
+            const currentAddr = getMarkerAddress(item)
+            if (hoverInfoWindowRef.current) {
+              hoverInfoWindowRef.current.setContent(buildInfoWindowHtml(item, currentAddr))
+              hoverInfoWindowRef.current.open(mapInstanceRef.current, marker)
+            }
+
+            if (!currentAddr || currentAddr === 'Localizando endereço...') {
+              const checkTimer = setTimeout(() => {
+                const updatedAddr = getMarkerAddress(item)
+                if (hoverInfoWindowRef.current) {
+                  hoverInfoWindowRef.current.setContent(buildInfoWindowHtml(item, updatedAddr))
+                }
+              }, 600)
+              ;(marker as any).__hoverTimer = checkTimer
+            }
+          })
+
+          marker.addListener('mouseout', () => {
+            if ((marker as any).__hoverTimer) clearTimeout((marker as any).__hoverTimer)
+            if (hoverInfoWindowRef.current) {
+              hoverInfoWindowRef.current.close()
+            }
+          })
+
+          marker.addListener('click', () => {
+            if (hoverInfoWindowRef.current) {
+              hoverInfoWindowRef.current.close()
+            }
+            const markerPos = marker.getPosition ? marker.getPosition() : null
+            const currentLat = markerPos ? markerPos.lat() : item.lat
+            const currentLng = markerPos ? markerPos.lng() : item.lng
+
+            const currentExactItem: MapMarkerItem = {
+              ...item,
+              lat: currentLat,
+              lng: currentLng,
+            }
+
+            const currentAddr = getMarkerAddress(currentExactItem)
+            clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, currentAddr))
+            clickInfoWindow.open(mapInstanceRef.current, marker)
+            setActivePopupMarker(currentExactItem)
+            if (onSelectMarker) onSelectMarker(currentExactItem)
+
+            handleMarkerHover(currentExactItem, (freshAddr) => {
+              clickInfoWindow.setContent(buildInfoWindowHtml(currentExactItem, freshAddr))
+            })
+          })
+
+          googleMarkerMapRef.current.set(item.id, {
+            marker,
+            clickInfoWindow,
+            prevLat: item.lat,
+            prevLng: item.lng,
+            prevType: item.type,
+            prevSeq: item.delivery_sequence,
+            prevTitle: item.title,
+            prevName: item.customer_name,
+            prevDev: item.isDeviated,
+            prevPinColor: item.pinColorOverride,
+          })
+        }
+      } catch (err) {
+        console.warn(
+          '[LiveMap] Erro individual ao processar elemento do Google Maps:',
+          item?.id,
+          err,
+        )
       }
     })
 

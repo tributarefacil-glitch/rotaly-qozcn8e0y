@@ -23,6 +23,12 @@ export const OFFICIAL_FALLBACK_BASE_COORDS: CleanCoords = {
 
 export const MapDataService = {
   /**
+   * Retorna as coordenadas oficiais da base matriz Rotaly (Drogaria Mais Saudável Pilar)
+   */
+  getOfficialBaseCoords(): CleanCoords {
+    return { ...OFFICIAL_FALLBACK_BASE_COORDS }
+  },
+  /**
    * Valida e converte latitude e longitude para coordenadas seguras { lat, lng }.
    * Aceita strings numéricas (converte com parseFloat), números finitos.
    * Rejeita NaN, null, undefined, (0,0) e coordenadas fora dos limites geográficos.
