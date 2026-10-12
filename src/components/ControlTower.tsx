@@ -829,10 +829,13 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
             // (1) Auto-follow suave se entregador ativo em rota estiver fora do campo de visão
             if (mapInstance && isAutoFollow && !isDraggingRef.current && !isDrawerOpen) {
-              const courierLatLng = new win.google.maps.LatLng(newLoc.lat, newLoc.lng)
-              const bounds = mapInstance.getBounds?.()
-              if (bounds && !bounds.contains(courierLatLng)) {
-                mapInstance.panTo(courierLatLng)
+              const winGoogle = typeof window !== 'undefined' ? (window as any).google : null
+              if (winGoogle?.maps?.LatLng) {
+                const courierLatLng = new winGoogle.maps.LatLng(newLoc.lat, newLoc.lng)
+                const bounds = mapInstance.getBounds?.()
+                if (bounds && !bounds.contains(courierLatLng)) {
+                  mapInstance.panTo(courierLatLng)
+                }
               }
             }
           }

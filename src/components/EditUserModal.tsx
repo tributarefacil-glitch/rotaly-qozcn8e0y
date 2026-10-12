@@ -152,8 +152,8 @@ export function EditUserModal({
 
     // Validação de senha: só valida se informou nova senha
     if (trimmedPassword || trimmedConfirmPassword) {
-      if (trimmedPassword.length < 6) {
-        toast.error('A nova senha deve ter no mínimo 6 caracteres.')
+      if (trimmedPassword.length < 8) {
+        toast.error('A nova senha deve ter no mínimo 8 caracteres.')
         return
       }
       if (trimmedPassword !== trimmedConfirmPassword) {
@@ -216,10 +216,11 @@ export function EditUserModal({
         }
       }
 
-      // Senha é opcional: só envia se o admin digitou uma nova senha
-      if (trimmedPassword && trimmedPassword.length >= 6) {
+      // Senha é opcional: só envia password se o admin digitou com >= 8 caracteres (omitir chaves quando vazio; NUNCA incluir verified)
+      if (trimmedPassword && trimmedPassword.length >= 8) {
         payload.password = trimmedPassword
       }
+      delete (payload as any).verified
 
       // Se nenhum campo foi alterado e nenhuma nova senha foi digitada
       if (Object.keys(payload).length === 0) {
@@ -519,12 +520,12 @@ export function EditUserModal({
                   <div className="relative">
                     <Input
                       type={showPassword ? 'text' : 'password'}
-                      placeholder="Mínimo 6 caracteres"
+                      placeholder="Mínimo 8 caracteres"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       autoComplete="new-password"
                       className="h-9 text-xs pr-8 bg-[#0E1738] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
-                      minLength={6}
+                      minLength={8}
                     />
                     <button
                       type="button"
@@ -553,7 +554,7 @@ export function EditUserModal({
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       autoComplete="new-password"
                       className="h-9 text-xs pr-8 bg-[#0E1738] border-[#1E2B58] text-white placeholder:text-slate-500 focus:border-[#60A5FA]"
-                      minLength={6}
+                      minLength={8}
                     />
                     <button
                       type="button"

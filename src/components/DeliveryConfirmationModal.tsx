@@ -127,6 +127,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                 timestampA: order.redirection_point_a_at,
                 timestampB: pB.at,
                 courierLocations: locations,
+                pernaJaContadaKm: typeof order.distance_km === 'number' ? order.distance_km : 0,
               })
               setCalculatedExtraKm(res.extraKm)
             }
@@ -398,24 +399,48 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       if (!hasClientCoords) {
         // CLIENTE SEM COORDENADAS NUNCA BLOQUEIA
         geofenceFlag = 'sem_coordenadas'
-        // Criar alerta de pin_entregador automaticamente na coleção address_alerts
+        // Criar/atualizar alerta de pin_entregador automaticamente na coleção address_alerts (DEDUP)
         if (currentLoc) {
           try {
-            await pb.collection('address_alerts').create({
-              customer: order.customer_id || '',
-              company: order.empresa_id || undefined,
-              origin: 'pin_entregador',
-              status: 'pendente',
-              distance_meters: 0,
-              marked_by: courierId || pb.authStore.record?.id || '',
-              marked_at: new Date().toISOString(),
-              suggested_address: {
-                address: order.expand?.customer_id?.address || order.end_address_text || '',
-                lat: currentLoc.lat,
-                lng: currentLoc.lng,
-              },
-              notes: `Pin capturado automaticamente pelo entregador na entrega do pedido ${order.tracking_code}`,
-            })
+            const customerId = order.customer_id || ''
+            const suggestedObj = {
+              address: order.expand?.customer_id?.address || order.end_address_text || '',
+              lat: currentLoc.lat,
+              lng: currentLoc.lng,
+            }
+            const noteText = `Pin capturado automaticamente pelo entregador na entrega do pedido ${order.tracking_code}`
+            const markedAtIso = new Date().toISOString()
+
+            let existingAlert = null
+            if (customerId) {
+              const existingList = await pb.collection('address_alerts').getList(1, 1, {
+                filter: `customer = '${customerId}' && status = 'pendente'`,
+                sort: '-created',
+                requestKey: null,
+              })
+              existingAlert = existingList.items[0] || null
+            }
+
+            if (existingAlert) {
+              await pb.collection('address_alerts').update(existingAlert.id, {
+                suggested_address: suggestedObj,
+                distance_meters: 0,
+                marked_at: markedAtIso,
+                notes: noteText,
+              })
+            } else {
+              await pb.collection('address_alerts').create({
+                customer: customerId,
+                company: order.empresa_id || undefined,
+                origin: 'pin_entregador',
+                status: 'pendente',
+                distance_meters: 0,
+                marked_by: courierId || pb.authStore.record?.id || '',
+                marked_at: markedAtIso,
+                suggested_address: suggestedObj,
+                notes: noteText,
+              })
+            }
           } catch (alertErr) {
             console.warn(
               '[DeliveryConfirmationModal] Aviso ao registrar address_alerts pin_entregador:',
@@ -438,26 +463,50 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           // Distância > 500m: marca pendente_aprovacao_gt_500m e encaminha para aprovação da central
           geofenceFlag = 'pendente_aprovacao_gt_500m'
 
-          // Registrar alerta em address_alerts para a central de auditoria
+          // Registrar alerta em address_alerts para a central de auditoria (DEDUP: se já existe pendente, faz UPDATE)
           try {
-            await pb.collection('address_alerts').create({
-              customer: order.customer_id || '',
-              company: order.empresa_id || undefined,
-              origin: 'pin_entregador',
-              status: 'pendente',
-              distance_meters: distanceToPinM,
-              marked_by: courierId || pb.authStore.record?.id || '',
-              marked_at: new Date().toISOString(),
-              suggested_address: {
-                address: order.expand?.customer_id?.address || order.end_address_text || '',
-                lat: currentLoc.lat,
-                lng: currentLoc.lng,
-              },
-              notes: `Entrega realizada a ${(distanceToPinM / 1000).toFixed(1)} km do pin cadastrado no pedido ${order.tracking_code}. Aguarda conferência da central.`,
-            })
+            const customerId = order.customer_id || ''
+            const suggestedObj = {
+              address: order.expand?.customer_id?.address || order.end_address_text || '',
+              lat: currentLoc.lat,
+              lng: currentLoc.lng,
+            }
+            const noteText = `Entrega realizada a ${(distanceToPinM / 1000).toFixed(1)} km do pin cadastrado no pedido ${order.tracking_code}. Aguarda conferência da central.`
+            const markedAtIso = new Date().toISOString()
+
+            let existingAlert = null
+            if (customerId) {
+              const existingList = await pb.collection('address_alerts').getList(1, 1, {
+                filter: `customer = '${customerId}' && status = 'pendente'`,
+                sort: '-created',
+                requestKey: null,
+              })
+              existingAlert = existingList.items[0] || null
+            }
+
+            if (existingAlert) {
+              await pb.collection('address_alerts').update(existingAlert.id, {
+                suggested_address: suggestedObj,
+                distance_meters: distanceToPinM,
+                marked_at: markedAtIso,
+                notes: noteText,
+              })
+            } else {
+              await pb.collection('address_alerts').create({
+                customer: customerId,
+                company: order.empresa_id || undefined,
+                origin: 'pin_entregador',
+                status: 'pendente',
+                distance_meters: distanceToPinM,
+                marked_by: courierId || pb.authStore.record?.id || '',
+                marked_at: markedAtIso,
+                suggested_address: suggestedObj,
+                notes: noteText,
+              })
+            }
           } catch (alertErr) {
             console.warn(
-              '[DeliveryConfirmationModal] Aviso ao criar address_alerts para >500m:',
+              '[DeliveryConfirmationModal] Aviso ao criar/atualizar address_alerts para >500m:',
               alertErr,
             )
           }
@@ -566,7 +615,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           order.expand?.customer_id?.lng ||
           pointBLng
 
-        // Cálculo do KM Extra
+        // Cálculo do KM Extra Líquido
         const calcRes = calculateRedirectionExtraKm({
           pointALat,
           pointALng,
@@ -575,6 +624,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           timestampA: order.redirection_point_a_at,
           timestampB: redirectionPointB?.at || now,
           courierLocations: locations,
+          pernaJaContadaKm: typeof order.distance_km === 'number' ? order.distance_km : 0,
         })
 
         const newAddressText =

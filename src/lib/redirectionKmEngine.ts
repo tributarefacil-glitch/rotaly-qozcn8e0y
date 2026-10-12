@@ -21,12 +21,18 @@ export interface RedirectionCalculationResult {
   isAutoApproved: boolean
   pointsCount: number
   directDistanceKm: number
+  trechoRealKm: number
+  pernaContadaKm: number
+  displayLabel: string
 }
 
 /**
- * Calcula o KM extra percorrido entre o Ponto A e o Ponto B.
- * Se houver pontos de telemetria GPS do entregador entre timestampA e timestampB, calcula a soma
- * real dos passos percorridos. Caso contrário, aplica fallback de linha reta + fator viário.
+ * Calcula o extra líquido de redirecionamento:
+ * extra_líquido = max(0, trecho_real_percorrido − perna_já_contada)
+ *
+ * Avalia o limiar de aprovação automática (<= 3.0 km) pelo extra líquido.
+ * Gera o rótulo descritivo oficial para notas/painel:
+ * "Redirecionamento: perna X → Y km (economia de Z km)"
  */
 export function calculateRedirectionExtraKm(params: {
   pointALat: number
@@ -36,6 +42,7 @@ export function calculateRedirectionExtraKm(params: {
   timestampA?: string | number
   timestampB?: string | number
   courierLocations?: LocationRecord[]
+  pernaJaContadaKm?: number
 }): RedirectionCalculationResult {
   const {
     pointALat,
@@ -45,6 +52,7 @@ export function calculateRedirectionExtraKm(params: {
     timestampA,
     timestampB,
     courierLocations = [],
+    pernaJaContadaKm = 0,
   } = params
 
   // 1. Distância direta em linha reta (Haversine)
@@ -87,20 +95,35 @@ export function calculateRedirectionExtraKm(params: {
     }
   }
 
-  // 3. Decidir se usa telemetria real ou fallback viário urbano (1.3x)
-  let extraKm = 0
+  // 3. Trecho real percorrido
+  let trechoRealKm = 0
   let method: 'telemetry_gps' | 'haversine_road_factor' = 'haversine_road_factor'
 
   if (telemetryKm !== null && telemetryKm > 0) {
-    extraKm = telemetryKm
+    trechoRealKm = telemetryKm
     method = 'telemetry_gps'
   } else {
     // Fallback: Haversine linha reta convertida com fator viário (1.3x)
-    extraKm = Number((directDistanceKm * 1.3).toFixed(1))
+    trechoRealKm = Number((directDistanceKm * 1.3).toFixed(1))
     method = 'haversine_road_factor'
   }
 
-  // 4. Regra de corte dos 3 km para aprovação automática
+  // 4. Cálculo do extra líquido: max(0, trecho_real − perna_já_contada)
+  const safePernaJaContada = Math.max(0, Number(pernaJaContadaKm || 0))
+  const rawExtra = safePernaJaContada > 0 ? trechoRealKm - safePernaJaContada : trechoRealKm
+  const extraKm = Number(Math.max(0, rawExtra).toFixed(1))
+
+  // 5. Rótulo descritivo oficial
+  // "Redirecionamento: perna X → Y km (economia de Z km)"
+  const diffKm = Number((safePernaJaContada - trechoRealKm).toFixed(1))
+  const displayLabel =
+    safePernaJaContada > 0
+      ? diffKm > 0
+        ? `Redirecionamento: perna ${safePernaJaContada.toFixed(1)} → ${trechoRealKm.toFixed(1)} km (economia de ${diffKm.toFixed(1)} km)`
+        : `Redirecionamento: perna ${safePernaJaContada.toFixed(1)} → ${trechoRealKm.toFixed(1)} km (+${extraKm.toFixed(1)} km extra líquido)`
+      : `Redirecionamento: ${trechoRealKm.toFixed(1)} km (+${extraKm.toFixed(1)} km)`
+
+  // 6. Regra de corte dos 3 km para aprovação automática avaliada no EXTRA LÍQUIDO
   const isAutoApproved = extraKm <= 3.0
 
   return {
@@ -109,5 +132,8 @@ export function calculateRedirectionExtraKm(params: {
     isAutoApproved,
     pointsCount: validPointsCount,
     directDistanceKm,
+    trechoRealKm,
+    pernaContadaKm: safePernaJaContada,
+    displayLabel,
   }
 }

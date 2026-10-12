@@ -125,20 +125,21 @@ routerAdd(
         }
       }
 
-      // Redefine password if provided (min 6 chars, recomendada 6-8+)
+      // Redefine password if provided (só chamar user.setPassword se senha válida com length >= 8)
       if (
         body.password !== undefined &&
         body.password !== null &&
         String(body.password).trim() !== ''
       ) {
-        const newPassword = String(body.password)
-        if (newPassword.length < 6) {
+        const newPassword = String(body.password).trim()
+        if (newPassword.length >= 8) {
+          targetRecord.setPassword(newPassword)
+        } else {
           return e.json(400, {
-            message: 'A nova senha deve ter no mínimo 6 caracteres.',
-            data: { password: { message: 'A nova senha deve ter no mínimo 6 caracteres.' } },
+            message: 'A nova senha deve ter no mínimo 8 caracteres.',
+            data: { password: { message: 'A nova senha deve ter no mínimo 8 caracteres.' } },
           })
         }
-        targetRecord.setPassword(newPassword)
       }
 
       // Save changes

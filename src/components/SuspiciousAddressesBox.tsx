@@ -333,18 +333,114 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                           mantendo o pin intacto no local real.
                         </span>
                       </div>
-                    ) : distMeters > 0 ? (
+                    ) : (
                       <div className="space-y-1.5">
-                        <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-100/60 dark:bg-amber-950/40 border border-amber-300/80 text-amber-950 dark:text-amber-200 text-xs font-semibold">
-                          <Navigation className="h-4 w-4 text-amber-600 shrink-0" />
-                          <span>
-                            Divergência detectada:{' '}
-                            <strong className="text-rose-600 font-bold">
-                              {distMeters >= 1000 ? `${distKm} km` : `${distMeters} metros`}
-                            </strong>{' '}
-                            de distância entre o pin do cadastro e a posição GPS do entregador.
-                          </span>
+                        {/* Linha canônica de comparação de pins e distância */}
+                        <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-amber-100/70 dark:bg-amber-950/50 border border-amber-300 text-amber-950 dark:text-amber-100 text-xs font-mono">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <MapPin className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                            <span className="truncate">
+                              Pin antigo:{' '}
+                              {cur.lat !== undefined && cur.lat !== null
+                                ? `${Number(cur.lat).toFixed(4)},${Number(cur.lng).toFixed(4)}`
+                                : cust?.lat
+                                  ? `${Number(cust.lat).toFixed(4)},${Number(cust.lng).toFixed(4)}`
+                                  : 'N/A'}{' '}
+                              → Pin novo:{' '}
+                              {sug.lat !== undefined && sug.lat !== null
+                                ? `${Number(sug.lat).toFixed(4)},${Number(sug.lng).toFixed(4)}`
+                                : 'N/A'}{' '}
+                              ({distMeters >= 1000 ? `${distKm} km` : `${distMeters} m`})
+                            </span>
+                          </div>
                         </div>
+
+                        {/* Legenda mandatória */}
+                        <p className="text-[11px] text-amber-800 dark:text-amber-300 italic px-1">
+                          ℹ️ O endereço textual permanece — o que está sendo corrigido é a posição
+                          do pin no mapa.
+                        </p>
+
+                        {/* Mini-mapa SVG com 2 marcadores + polyline (sem API paga) */}
+                        {(cur.lat || cust?.lat) && (cur.lng || cust?.lng) && sug.lat && sug.lng && (
+                          <div className="p-2 rounded-lg bg-slate-900 border border-slate-700 text-white">
+                            <div className="flex items-center justify-between text-[10px] text-slate-300 mb-1">
+                              <span className="flex items-center gap-1">
+                                <span className="inline-block w-2 h-2 rounded-full bg-rose-500"></span>{' '}
+                                Pin antigo
+                              </span>
+                              <span className="text-slate-400 font-sans">
+                                Distância: {distMeters >= 1000 ? `${distKm} km` : `${distMeters} m`}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>{' '}
+                                Pin novo
+                              </span>
+                            </div>
+                            <svg
+                              viewBox="0 0 300 80"
+                              className="w-full h-16 rounded bg-slate-950/80"
+                            >
+                              {/* Linha tracejada conectando os dois pins */}
+                              <line
+                                x1="45"
+                                y1="40"
+                                x2="255"
+                                y2="40"
+                                stroke="#38bdf8"
+                                strokeWidth="2.5"
+                                strokeDasharray="5,4"
+                              />
+                              {/* Marcador Pin Antigo */}
+                              <circle cx="45" cy="40" r="9" fill="#f43f5e" />
+                              <circle cx="45" cy="40" r="4" fill="#ffffff" />
+                              <text
+                                x="45"
+                                y="65"
+                                textAnchor="middle"
+                                fill="#fda4af"
+                                fontSize="9"
+                                fontFamily="monospace"
+                              >
+                                Antigo
+                              </text>
+                              {/* Marcador Pin Novo */}
+                              <circle cx="255" cy="40" r="9" fill="#10b981" />
+                              <circle cx="255" cy="40" r="4" fill="#ffffff" />
+                              <text
+                                x="255"
+                                y="65"
+                                textAnchor="middle"
+                                fill="#6ee7b7"
+                                fontSize="9"
+                                fontFamily="monospace"
+                              >
+                                Novo GPS
+                              </text>
+                              {/* Rótulo de distância no centro */}
+                              <rect
+                                x="110"
+                                y="27"
+                                width="80"
+                                height="18"
+                                rx="4"
+                                fill="#1e293b"
+                                stroke="#475569"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x="150"
+                                y="39"
+                                textAnchor="middle"
+                                fill="#38bdf8"
+                                fontSize="10"
+                                fontWeight="bold"
+                              >
+                                {distMeters >= 1000 ? `${distKm} km` : `${distMeters} m`}
+                              </text>
+                            </svg>
+                          </div>
+                        )}
 
                         {/* Aviso prescritivo quando o desvio for menor que a precisão do GPS capturado */}
                         {sug.accuracy_meters !== undefined &&
@@ -364,7 +460,7 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                             </div>
                           )}
                       </div>
-                    ) : null}
+                    )}
 
                     {/* Comparação: Endereço Cadastrado vs Correção Sugerida */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">

@@ -391,15 +391,18 @@ export function TeamUserManagementModal({
             : {}),
         }
 
-        // Se optou por redefinir senha
-        if (isResettingPassword && newPasswordForEdit.trim()) {
-          if (newPasswordForEdit.length < 8) {
+        // Se optou por redefinir senha (só incluir se digitado com >= 8 caracteres; omitir chaves quando vazio)
+        const trimmedResetPass = newPasswordForEdit.trim()
+        if (isResettingPassword && trimmedResetPass) {
+          if (trimmedResetPass.length < 8) {
             toast.error('A nova senha deve ter no mínimo 8 caracteres.')
             setIsSubmitting(false)
             return
           }
-          updatePayload.password = newPasswordForEdit
+          updatePayload.password = trimmedResetPass
         }
+        delete (updatePayload as any).verified
+        delete (updatePayload as any).passwordConfirm
 
         // Se for admin editando outro usuário, podemos tentar adminUpdateUser (que permite alterar senha sem senha antiga)
         // Se for o próprio usuário ou falhar a rota custom, fallback para updateUser
@@ -407,8 +410,8 @@ export function TeamUserManagementModal({
           if (editingUser.id !== currentUserId) {
             await deliveryService.adminUpdateUser(editingUser.id, updatePayload)
           } else {
-            // Edição direta de si mesmo (sem alterar role)
-            await deliveryService.updateUser(editingUser.id, {
+            // Edição direta de si mesmo (sem alterar role e sem verified)
+            const selfPayload: any = {
               name: trimmedName,
               email: trimmedEmail,
               phone: cleanPhone || formPhone.trim(),
@@ -420,12 +423,18 @@ export function TeamUserManagementModal({
                     vehicle_plate: formVehiclePlate.trim().toUpperCase(),
                   }
                 : {}),
-            })
+            }
+            if (updatePayload.password && updatePayload.password.length >= 8) {
+              selfPayload.password = updatePayload.password
+              selfPayload.passwordConfirm = updatePayload.password
+            }
+            delete selfPayload.verified
+            await deliveryService.updateUser(editingUser.id, selfPayload)
           }
         } catch (apiErr: unknown) {
           console.warn('adminUpdateUser failed, trying standard updateUser:', apiErr)
-          // Fallback para updateUser nativo do SDK
-          await deliveryService.updateUser(editingUser.id, {
+          // Fallback para updateUser nativo do SDK (sem verified)
+          const fallbackPayload: any = {
             name: trimmedName,
             email: trimmedEmail,
             phone: cleanPhone || formPhone.trim(),
@@ -439,7 +448,13 @@ export function TeamUserManagementModal({
                   vehicle_plate: formVehiclePlate.trim().toUpperCase(),
                 }
               : {}),
-          })
+          }
+          if (updatePayload.password && updatePayload.password.length >= 8) {
+            fallbackPayload.password = updatePayload.password
+            fallbackPayload.passwordConfirm = updatePayload.password
+          }
+          delete fallbackPayload.verified
+          await deliveryService.updateUser(editingUser.id, fallbackPayload)
         }
 
         toast.success(`Usuário "${trimmedName}" atualizado com sucesso!`)

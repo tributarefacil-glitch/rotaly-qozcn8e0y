@@ -4556,6 +4556,32 @@ export const deliveryService = {
     const activeCompanyId =
       data.company || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
 
+    // DEDUPLICAÇÃO DE ALERTA PIN_ENTREGADOR:
+    // Antes do create, consultar se já existe alerta com status='pendente' para o mesmo customer.
+    // Se existir, fazer UPDATE do existente (suggested_address, distance_meters, marked_at, notes)
+    if (data.customer && data.origin === 'pin_entregador') {
+      try {
+        const existingList = await pb
+          .collection<AddressAlertRecord>('address_alerts')
+          .getList(1, 1, {
+            filter: `customer = '${data.customer}' && status = 'pendente'`,
+            sort: '-created',
+            requestKey: null,
+          })
+        const existing = existingList.items[0]
+        if (existing) {
+          return await pb.collection<AddressAlertRecord>('address_alerts').update(existing.id, {
+            suggested_address: data.suggested_address,
+            distance_meters: data.distance_meters ?? existing.distance_meters,
+            marked_at: new Date().toISOString(),
+            notes: data.notes || existing.notes,
+          })
+        }
+      } catch (dedupErr) {
+        console.warn('[deliveryService] Erro ao verificar duplicata de alerta pendente:', dedupErr)
+      }
+    }
+
     const payload: Partial<AddressAlertRecord> = {
       customer: data.customer,
       company: activeCompanyId,
@@ -4693,14 +4719,41 @@ export const deliveryService = {
     }
 
     // 2. Atualizar o alerta para aprovado
+    const reviewedAtIso = new Date().toISOString()
+    const reviewedByUserId = authUser?.id || undefined
+    const finalReviewNotes = customNotes
+      ? `${alert.notes ? alert.notes + ' | ' : ''}Revisão: ${customNotes}`
+      : alert.notes
+
     const updatedAlert = await pb.collection<AddressAlertRecord>('address_alerts').update(alertId, {
       status: 'aprovado',
-      reviewed_by: authUser?.id || undefined,
-      reviewed_at: new Date().toISOString(),
-      notes: customNotes
-        ? `${alert.notes ? alert.notes + ' | ' : ''}Revisão: ${customNotes}`
-        : alert.notes,
+      reviewed_by: reviewedByUserId,
+      reviewed_at: reviewedAtIso,
+      notes: finalReviewNotes,
     })
+
+    // Sincronizar outros alertas pendentes do mesmo customer aplicando o mesmo status/reviewed_by/reviewed_at
+    if (customerId) {
+      try {
+        const otherPending = await pb.collection<AddressAlertRecord>('address_alerts').getFullList({
+          filter: `customer = '${customerId}' && status = 'pendente' && id != '${alertId}'`,
+          requestKey: null,
+        })
+        for (const other of otherPending) {
+          await pb.collection<AddressAlertRecord>('address_alerts').update(other.id, {
+            status: 'aprovado',
+            reviewed_by: reviewedByUserId,
+            reviewed_at: reviewedAtIso,
+            notes: `${other.notes ? other.notes + ' | ' : ''}Aprovado em conjunto via alerta #${alertId}`,
+          })
+        }
+      } catch (syncErr) {
+        console.warn(
+          '[deliveryService] Erro ao sincronizar outros alertas pendentes do cliente:',
+          syncErr,
+        )
+      }
+    }
 
     return { success: true, alert: updatedAlert }
   },
@@ -4841,16 +4894,57 @@ export const deliveryService = {
       requestKey: null,
     })
 
+    const reviewedAtIso = new Date().toISOString()
+    const reviewedByUserId = authUser?.id || undefined
+    const finalRejectNotes = reason
+      ? `${alert.notes ? alert.notes + ' | ' : ''}Reprovação: ${reason}`
+      : alert.notes
+
     const updatedAlert = await pb.collection<AddressAlertRecord>('address_alerts').update(alertId, {
       status: 'reprovado',
-      reviewed_by: authUser?.id || undefined,
-      reviewed_at: new Date().toISOString(),
-      notes: reason
-        ? `${alert.notes ? alert.notes + ' | ' : ''}Reprovação: ${reason}`
-        : alert.notes,
+      reviewed_by: reviewedByUserId,
+      reviewed_at: reviewedAtIso,
+      notes: finalRejectNotes,
     })
 
+    // Sincronizar outros alertas pendentes do mesmo customer aplicando o mesmo status reprovado
+    if (alert.customer) {
+      try {
+        const otherPending = await pb.collection<AddressAlertRecord>('address_alerts').getFullList({
+          filter: `customer = '${alert.customer}' && status = 'pendente' && id != '${alertId}'`,
+          requestKey: null,
+        })
+        for (const other of otherPending) {
+          await pb.collection<AddressAlertRecord>('address_alerts').update(other.id, {
+            status: 'reprovado',
+            reviewed_by: reviewedByUserId,
+            reviewed_at: reviewedAtIso,
+            notes: `${other.notes ? other.notes + ' | ' : ''}Reprovado em conjunto via alerta #${alertId}`,
+          })
+        }
+      } catch (syncErr) {
+        console.warn(
+          '[deliveryService] Erro ao sincronizar outros alertas pendentes na reprovação:',
+          syncErr,
+        )
+      }
+    }
+
     return { success: true, alert: updatedAlert }
+  },
+
+  /**
+   * Alias de compatibilidade para revisão unificada de endereço suspeito
+   */
+  async reviewAddressAlert(
+    alertId: string,
+    action: 'approve' | 'reject',
+    notesOrReason?: string,
+  ): Promise<{ success: boolean; alert: AddressAlertRecord }> {
+    if (action === 'approve') {
+      return this.approveAddressAlert(alertId, notesOrReason)
+    }
+    return this.rejectAddressAlert(alertId, notesOrReason)
   },
 
   /**
@@ -5140,7 +5234,14 @@ export const deliveryService = {
     const pointBLat = params.pointBLat
     const pointBLng = params.pointBLng
 
-    // 1. Calcular KM Extra se não veio pré-calculado
+    // 1. Calcular KM Extra Líquido: max(0, trecho_real_percorrido − perna_já_contada)
+    const pernaJaContada = Number(
+      (typeof order.distance_km === 'number' && order.distance_km > 0
+        ? order.distance_km
+        : 0
+      ).toFixed(1),
+    )
+
     let extraKm = params.extraKmCalculated
     let method = params.calculationMethod || 'haversine_road_factor'
 
@@ -5157,15 +5258,18 @@ export const deliveryService = {
           Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
         const distDirect = R * c
-        extraKm = Number((distDirect * 1.3).toFixed(1))
+        const trechoReal = Number((distDirect * 1.3).toFixed(1))
+        // Extra líquido: trecho real percorrido menos a perna já contada no pedido
+        extraKm = Number(Math.max(0, trechoReal - pernaJaContada).toFixed(1))
         method = 'haversine_road_factor'
       } else {
         extraKm = 0
       }
+    } else {
+      extraKm = Number(extraKm.toFixed(1))
     }
-    extraKm = Number(extraKm.toFixed(1))
 
-    // 2. Determinar status de aprovação: <= 3.0 km = automatic approved; > 3.0 km = pending
+    // 2. Determinar status de aprovação avaliado no EXTRA LÍQUIDO: <= 3.0 km = automatic approved; > 3.0 km = pending
     const isAutoApproved = extraKm <= 3.0
     const approvalStatus: RouteKmApprovalStatus = isAutoApproved ? 'approved' : 'pending'
     const approvalType: RouteKmApprovalType = isAutoApproved
