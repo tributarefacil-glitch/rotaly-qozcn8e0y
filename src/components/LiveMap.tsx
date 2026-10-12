@@ -127,42 +127,43 @@ export function makeCustomerSvgIcon(
   customerName?: string,
   seq?: number,
   isTransit = false,
-  width = 72,
-  height = 42,
+  width = 96,
+  height = 46,
   pinColorOverride?: string,
-  showNameLabel = false,
+  showNameLabel = true,
 ) {
   const cleanName = (customerName || '').trim()
-  const displayName = cleanName.length > 12 ? cleanName.slice(0, 11) + '…' : cleanName
-  const cacheKey = `${showNameLabel ? displayName : ''}_${seq ?? ''}_${isTransit}_${width}_${height}_${pinColorOverride || ''}_${showNameLabel}`
+  const shortName = cleanName.length > 14 ? cleanName.slice(0, 13) + '…' : cleanName
+  const labelText = seq ? `[#${seq}] ${shortName || 'Cliente'}` : shortName || 'Cliente'
+  const cacheKey = `${showNameLabel ? labelText : ''}_${seq ?? ''}_${isTransit}_${width}_${height}_${pinColorOverride || ''}_${showNameLabel}`
   const cached = customerSvgIconCache.get(cacheKey)
   if (cached) return cached
 
   const pinColor = pinColorOverride || (isTransit ? '#FF6B35' : '#475569')
-  const hasName = showNameLabel && cleanName.length > 0
+  const hasLabel = showNameLabel && labelText.length > 0
   const hasSeq = typeof seq === 'number' && seq > 0
-  const effectiveWidth = hasName ? Math.max(width, 96) : 34
-  const effectiveHeight = hasName ? height : 34
+  const effectiveWidth = hasLabel ? Math.max(width, 110) : 34
+  const effectiveHeight = hasLabel ? Math.max(height, 46) : 34
   const centerX = Math.round(effectiveWidth / 2)
   const pinLeft = centerX - 11 // pin is 22px wide
 
-  // SVG compacto com tipografia reduzida e pin focado no badge numérico da sequência
+  // SVG de alto contraste com fundo branco para o rótulo "[#seq] Nome curto"
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${effectiveWidth}" height="${effectiveHeight}" viewBox="0 0 ${effectiveWidth} ${effectiveHeight}">
       <defs>
         <filter id="pin-shadow-${effectiveWidth}" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-color="#000" flood-opacity="0.6"/>
+          <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.45"/>
         </filter>
       </defs>
 
-      <!-- Label de Nome do Cliente no topo compacta (apenas quando solicitado/hover) -->
+      <!-- Rótulo "[#seq] Nome curto" no topo com fundo branco de alto contraste -->
       ${
-        hasName
+        hasLabel
           ? `
         <g filter="url(#pin-shadow-${effectiveWidth})">
-          <rect x="2" y="1" width="${effectiveWidth - 4}" height="12" rx="3" fill="#0A1128" fill-opacity="0.95" stroke="#1E2B58" stroke-width="0.8"/>
-          <text x="${centerX}" y="9.5" font-size="7.5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="700" fill="#FFFFFF" text-anchor="middle">
-            ${displayName}
+          <rect x="2" y="1" width="${effectiveWidth - 4}" height="15" rx="3.5" fill="#FFFFFF" stroke="#0F172A" stroke-width="1.2"/>
+          <text x="${centerX}" y="11.5" font-size="8.5" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" font-weight="800" fill="#0F172A" text-anchor="middle">
+            ${labelText}
           </text>
         </g>
       `
@@ -170,7 +171,7 @@ export function makeCustomerSvgIcon(
       }
 
       <!-- Pin corpo centralizado em X=${centerX} (escala 22x28) -->
-      <g transform="translate(${pinLeft}, ${hasName ? 14 : 2})" filter="url(#pin-shadow-${effectiveWidth})">
+      <g transform="translate(${pinLeft}, ${hasLabel ? 16 : 2})" filter="url(#pin-shadow-${effectiveWidth})">
         <path d="M11 0 C4.92 0 0 4.92 0 11 C0 19.25 11 28 11 28 C11 28 22 19.25 22 11 C22 4.92 17.08 0 11 0 Z" fill="${pinColor}" stroke="#FFFFFF" stroke-width="1.5"/>
         
         <!-- Círculo interno com número da sequência sempre em destaque -->
@@ -191,7 +192,7 @@ export function makeCustomerSvgIcon(
   const result = {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
     scaledSize: { width: effectiveWidth, height: effectiveHeight },
-    anchor: { x: centerX, y: hasName ? effectiveHeight - 2 : effectiveHeight - 4 },
+    anchor: { x: centerX, y: hasLabel ? effectiveHeight - 2 : effectiveHeight - 4 },
   }
   customerSvgIconCache.set(cacheKey, result)
   return result
@@ -246,6 +247,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const liveCourierMarkersRef = useRef<Map<string, any>>(new Map())
   const hasInitialFitRef = useRef<boolean>(false)
+  const hasUserInteractedRef = useRef<boolean>(false)
   const liveCourierAnimFramesRef = useRef<Map<string, number>>(new Map())
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const googleAccuracyCircleRef = useRef<any>(null)
@@ -427,6 +429,12 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           mapTypeControl: false,
           fullscreenControl: true,
           styles: [],
+        })
+        mapInstanceRef.current.addListener('dragstart', () => {
+          hasUserInteractedRef.current = true
+        })
+        mapInstanceRef.current.addListener('zoom_changed', () => {
+          hasUserInteractedRef.current = true
         })
         if (onMapReady) {
           onMapReady(mapInstanceRef.current)
@@ -651,10 +659,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         item.customer_name,
         item.delivery_sequence,
         false,
-        72,
-        42,
+        110,
+        46,
         '#10B981',
-        false,
+        true,
       )
     } else {
       const isTransit = item.type === 'order_transit'
@@ -671,10 +679,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         item.customer_name,
         item.delivery_sequence,
         isTransit,
-        72,
-        42,
+        110,
+        46,
         pinColor,
-        false,
+        true,
       )
     }
   }
@@ -879,6 +887,24 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     // --- 3. KEYED DIFFING DE MARCADORES (markerMapRef por ID) ---
     const currentMarkerIds = new Set<string>()
 
+    // Detecção de marcadores com coordenadas idênticas (clientes) para aplicar offset polar (r≈0,00015°, θ=i·2π/N)
+    const markerBuckets = new Map<string, typeof visibleMarkers>()
+    visibleMarkers.forEach((m) => {
+      if (
+        typeof m.lat === 'number' &&
+        typeof m.lng === 'number' &&
+        !isNaN(m.lat) &&
+        !isNaN(m.lng)
+      ) {
+        if (m.type !== 'courier' && m.type !== 'base') {
+          const k = `${m.lat.toFixed(5)}_${m.lng.toFixed(5)}`
+          const arr = markerBuckets.get(k) || []
+          arr.push(m)
+          markerBuckets.set(k, arr)
+        }
+      }
+    })
+
     visibleMarkers.forEach((item) => {
       if (
         typeof item.lat !== 'number' ||
@@ -889,8 +915,24 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         return
       }
 
+      let adjustedLat = item.lat
+      let adjustedLng = item.lng
+      if (item.type !== 'courier' && item.type !== 'base') {
+        const k = `${item.lat.toFixed(5)}_${item.lng.toFixed(5)}`
+        const bucket = markerBuckets.get(k) || []
+        if (bucket.length > 1) {
+          const idx = bucket.findIndex((b) => b.id === item.id)
+          if (idx > 0) {
+            const r = 0.00015
+            const theta = (idx * 2 * Math.PI) / bucket.length
+            adjustedLat = item.lat + r * Math.sin(theta)
+            adjustedLng = item.lng + r * Math.cos(theta)
+          }
+        }
+      }
+
       currentMarkerIds.add(item.id)
-      const targetPos = { lat: item.lat, lng: item.lng }
+      const targetPos = { lat: adjustedLat, lng: adjustedLng }
       const markerIcon = getMarkerIcon(item)
       const isSelected = item.id === selectedMarkerId
 
@@ -976,6 +1018,16 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           marker.setTitle(item.title)
         }
 
+        // zIndex relativo estrito:
+        // courierMarker = 1000, baseMarker = 500, customerMarker = 100 + sequence
+        if (item.type === 'courier') {
+          marker.setZIndex?.(1000)
+        } else if (item.type === 'base') {
+          marker.setZIndex?.(500)
+        } else {
+          marker.setZIndex?.(100 + (item.delivery_sequence || 0))
+        }
+
         // Animação de seleção (bounce)
         if (item.type !== 'courier') {
           marker.setAnimation(isSelected ? google.maps.Animation.BOUNCE : null)
@@ -1005,6 +1057,16 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           animation:
             isSelected && item.type !== 'courier' ? google.maps.Animation.BOUNCE : undefined,
         })
+
+        // zIndex relativo estrito:
+        // courierMarker = 1000, baseMarker = 500, customerMarker = 100 + sequence
+        if (item.type === 'courier') {
+          marker.setZIndex?.(1000)
+        } else if (item.type === 'base') {
+          marker.setZIndex?.(500)
+        } else {
+          marker.setZIndex?.(100 + (item.delivery_sequence || 0))
+        }
 
         if (item.type === 'courier') {
           liveCourierMarkersRef.current.set(item.id, marker)
@@ -1101,8 +1163,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         googleMarkerMapRef.current.delete(id)
       }
     }
-    // (a) fitBounds apenas no primeiro carregamento, nunca a cada ping
-    if (!hasInitialFitRef.current && visibleMarkers.length > 0) {
+    // (a) fitBounds apenas no primeiro carregamento/otimização, englobando base+pins
+    // APENAS se !hasUserInteractedRef.current com padding {top:60,right:60,bottom:60,left:60}
+    if (!hasInitialFitRef.current && !hasUserInteractedRef.current && visibleMarkers.length > 0) {
       const bounds = new google.maps.LatLngBounds()
       let hasCoords = false
       visibleMarkers.forEach((m) => {
@@ -1118,7 +1181,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       })
       if (hasCoords) {
         hasInitialFitRef.current = true
-        mapInstanceRef.current.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 })
+        mapInstanceRef.current.fitBounds(bounds, { top: 60, right: 60, bottom: 60, left: 60 })
         const listener = google.maps.event.addListener(mapInstanceRef.current, 'idle', () => {
           if (mapInstanceRef.current.getZoom() > 15) {
             mapInstanceRef.current.setZoom(15)

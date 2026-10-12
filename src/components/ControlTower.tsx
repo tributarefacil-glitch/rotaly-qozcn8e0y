@@ -308,6 +308,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const [mapInstance, setMapInstance] = useState<any>(null)
   const [markersRef, setMarkersRef] = useState<any[]>([])
   const hasInitialFitRef = useRef(false)
+  const hasUserInteractedRef = useRef(false)
   const courierMarkersMapRef = useRef<Map<string, any>>(new Map())
   const customerMarkersMapRef = useRef<Map<string, any>>(new Map())
   const baseMarkersMapRef = useRef<Map<string, any>>(new Map())
@@ -2041,6 +2042,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           fullscreenControl: true,
           styles: [],
         })
+        map.addListener('dragstart', () => {
+          hasUserInteractedRef.current = true
+        })
+        map.addListener('zoom_changed', () => {
+          hasUserInteractedRef.current = true
+        })
         setMapInstance(map)
       } catch (err) {
         console.warn('Erro ao instanciar Google Maps na Torre:', err)
@@ -2276,6 +2283,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             baseMarker.setMap(map)
             baseMarker.setPosition(routeData.basePos)
             baseMarker.setTitle(baseTitle)
+            baseMarker.setZIndex?.(500)
           } else {
             baseMarker = new win.google.maps.Marker({
               position: routeData.basePos,
@@ -2289,7 +2297,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 strokeWeight: 2,
                 strokeColor: '#FFFFFF',
               },
+              zIndex: 500,
             })
+            baseMarker.setZIndex?.(500)
             baseMarkersMapRef.current.set(baseKey, baseMarker)
           }
           newMarkers.push(baseMarker)
@@ -2312,15 +2322,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       isTransit = false,
       pinColorOverride?: string,
     ) => {
-      // Pin compacto sem texto aberto para evitar sobreposição caótica de etiquetas
+      // Rótulo "[#seq] Nome curto" no pin de entrega, showNameLabel=true por padrão, fundo branco alto contraste
       const generated = makeCustomerSvgIcon(
         customerName,
         seq,
         isTransit,
-        72,
-        42,
+        110,
+        46,
         pinColorOverride,
-        false,
+        true,
       )
       return {
         url: generated.url,
@@ -2341,56 +2351,83 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       // Pins: Apenas entregas concluídas ('order_delivered') com pin verde
       // Atualizar marcadores existentes no lugar em vez de destruir/recriar
       const activeDeliveredOrderIds = new Set<string>()
+      const deliveredOrders = todayOrders.filter((o) => o.status === 'delivered')
 
-      todayOrders
-        .filter((o) => o.status === 'delivered')
-        .forEach((order) => {
-          const cust = order.expand?.customer_id
-          if (cust?.lat && cust?.lng) {
-            const destPos = { lat: cust.lat, lng: cust.lng }
-            bounds.extend(destPos)
-            hasCoords = true
-            activeDeliveredOrderIds.add(order.id)
+      // Detecção de clientes com lat/lng idênticas para aplicar offset polar (r≈0,00015°, θ=i·2π/N)
+      const coordBuckets = new Map<string, typeof deliveredOrders>()
+      deliveredOrders.forEach((o) => {
+        const c = o.expand?.customer_id
+        if (c?.lat && c?.lng) {
+          const key = `${c.lat.toFixed(5)}_${c.lng.toFixed(5)}`
+          const arr = coordBuckets.get(key) || []
+          arr.push(o)
+          coordBuckets.set(key, arr)
+        }
+      })
 
-            const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
-            const markerTitle = `✓ ${seqText}Entregue: ${cust.name || 'Cliente'} (${order.tracking_code})`
-            const markerIcon = (() => {
-              const generated = makeCustomerSvgIcon(
-                cust.name,
-                order.sequence,
-                false,
-                72,
-                42,
-                '#10B981',
-                false,
-              )
-              return {
-                url: generated.url,
-                scaledSize: new win.google.maps.Size(
-                  generated.scaledSize.width,
-                  generated.scaledSize.height,
-                ),
-                anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
-              }
-            })()
+      deliveredOrders.forEach((order) => {
+        const cust = order.expand?.customer_id
+        if (cust?.lat && cust?.lng) {
+          const bucketKey = `${cust.lat.toFixed(5)}_${cust.lng.toFixed(5)}`
+          const bucket = coordBuckets.get(bucketKey) || []
+          let finalLat = cust.lat
+          let finalLng = cust.lng
+          if (bucket.length > 1) {
+            const idx = bucket.findIndex((b) => b.id === order.id)
+            if (idx > 0) {
+              const r = 0.00015
+              const theta = (idx * 2 * Math.PI) / bucket.length
+              finalLat = cust.lat + r * Math.sin(theta)
+              finalLng = cust.lng + r * Math.cos(theta)
+            }
+          }
+          const destPos = { lat: finalLat, lng: finalLng }
+          bounds.extend(destPos)
+          hasCoords = true
+          activeDeliveredOrderIds.add(order.id)
 
-            let destMarker = customerMarkersMapRef.current.get(order.id)
-            if (destMarker) {
-              destMarker.setMap(map)
-              destMarker.setPosition(destPos)
-              destMarker.setTitle(markerTitle)
-              destMarker.setIcon(markerIcon)
-            } else {
-              destMarker = new win.google.maps.Marker({
-                position: destPos,
-                map,
-                title: markerTitle,
-                icon: markerIcon,
-              })
+          const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
+          const markerTitle = `✓ ${seqText}Entregue: ${cust.name || 'Cliente'} (${order.tracking_code})`
+          const markerIcon = (() => {
+            const generated = makeCustomerSvgIcon(
+              cust.name,
+              order.sequence,
+              false,
+              110,
+              46,
+              '#10B981',
+              true,
+            )
+            return {
+              url: generated.url,
+              scaledSize: new win.google.maps.Size(
+                generated.scaledSize.width,
+                generated.scaledSize.height,
+              ),
+              anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
+            }
+          })()
 
-              // Hover: exibir tooltip compacto com endereço de entrega e status
-              destMarker.addListener('mouseover', () => {
-                const html = `
+          let destMarker = customerMarkersMapRef.current.get(order.id)
+          if (destMarker) {
+            destMarker.setMap(map)
+            destMarker.setPosition(destPos)
+            destMarker.setTitle(markerTitle)
+            destMarker.setIcon(markerIcon)
+            destMarker.setZIndex?.(100 + (order.sequence || 0))
+          } else {
+            destMarker = new win.google.maps.Marker({
+              position: destPos,
+              map,
+              title: markerTitle,
+              icon: markerIcon,
+              zIndex: 100 + (order.sequence || 0),
+            })
+            destMarker.setZIndex?.(100 + (order.sequence || 0))
+
+            // Hover: exibir tooltip compacto com endereço de entrega e status
+            destMarker.addListener('mouseover', () => {
+              const html = `
                   <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
                       <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
@@ -2402,25 +2439,25 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                     </div>
                   </div>
                 `
-                hoverInfoWindow.setContent(html)
-                hoverInfoWindow.open(map, destMarker)
-              })
+              hoverInfoWindow.setContent(html)
+              hoverInfoWindow.open(map, destMarker)
+            })
 
-              destMarker.addListener('mouseout', () => {
-                hoverInfoWindow.close()
-              })
+            destMarker.addListener('mouseout', () => {
+              hoverInfoWindow.close()
+            })
 
-              destMarker.addListener('click', () => {
-                hoverInfoWindow.close()
-                handleOpenOrderDetails(order)
-              })
+            destMarker.addListener('click', () => {
+              hoverInfoWindow.close()
+              handleOpenOrderDetails(order)
+            })
 
-              customerMarkersMapRef.current.set(order.id, destMarker)
-            }
-
-            newMarkers.push(destMarker)
+            customerMarkersMapRef.current.set(order.id, destMarker)
           }
-        })
+
+          newMarkers.push(destMarker)
+        }
+      })
 
       // Limpar marcadores de clientes que não estão mais nesta exibição
       customerMarkersMapRef.current.forEach((marker, oId) => {
@@ -2475,7 +2512,33 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         const vehicleLabel = getVehicleLabel(item.vehicle)
         const vehicleEmoji = getVehicleEmoji(item.vehicle)
         const courierName = item.courier.name || item.courier.email
-        const markerTitle = `${vehicleEmoji} ${statusTag} ${courierName} (${vehicleLabel})`
+
+        // Badge GPS via minutesSinceLastPing / diag.gpsState
+        const courierDiag = diagnoseCourierTelemetry(
+          item.courier.id,
+          locations,
+          item.lat,
+          item.lng,
+          item.speed,
+          item.gps_status,
+          item.gps_reason,
+          item.location_timestamp,
+          item.accuracy,
+          item.offline_buffered,
+        )
+        let gpsPinBadge = ''
+        if (item.hasRouteStarted) {
+          if (courierDiag.minutesSinceLastPing > 10 || courierDiag.gpsState === 'no_signal') {
+            gpsPinBadge = ' [🔴 GPS sem sinal]'
+          } else if (
+            courierDiag.minutesSinceLastPing > 3 &&
+            courierDiag.minutesSinceLastPing <= 10
+          ) {
+            gpsPinBadge = ` [⚠️ GPS desatualizado (${courierDiag.minutesSinceLastPing}min)]`
+          }
+        }
+
+        const markerTitle = `${vehicleEmoji} ${statusTag}${gpsPinBadge} ${courierName} (${vehicleLabel})`
         const markerIcon = makeNativeCourierSvg(item.vehicle, pinColor)
 
         let courierMarker = courierMarkersMapRef.current.get(item.courier.id)
@@ -2485,6 +2548,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           courierMarker.setMap(map)
           courierMarker.setTitle(markerTitle)
           courierMarker.setIcon(markerIcon)
+          courierMarker.setZIndex?.(1000)
 
           // Interpolação e animação suave do marcador da posição antiga para a nova (~2.5s)
           const prevPosition = courierMarker.getPosition()
@@ -2536,7 +2600,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             map,
             title: markerTitle,
             icon: markerIcon,
+            zIndex: 1000,
           })
+          courierMarker.setZIndex?.(1000)
           courierMarkersMapRef.current.set(item.courier.id, courierMarker)
         }
 
@@ -2725,56 +2791,83 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       const nativeActiveCourierIds = new Set(activeRouteCouriers.map((c) => c.courier.id))
 
       const activeTransitOrderIds = new Set<string>()
+      const transitOrders = todayOrders.filter((o) => {
+        return (
+          o.status !== 'delivered' &&
+          o.status !== 'cancelled' &&
+          o.route_started === true &&
+          o.route_finished !== true &&
+          Boolean(o.courier_id && nativeActiveCourierIds.has(o.courier_id))
+        )
+      })
 
-      todayOrders
-        .filter((o) => {
-          return (
-            o.status !== 'delivered' &&
-            o.status !== 'cancelled' &&
-            o.route_started === true &&
-            o.route_finished !== true &&
-            Boolean(o.courier_id && nativeActiveCourierIds.has(o.courier_id))
+      // Detecção de clientes com lat/lng idênticas para aplicar offset polar (r≈0,00015°, θ=i·2π/N)
+      const coordBuckets = new Map<string, typeof transitOrders>()
+      transitOrders.forEach((o) => {
+        const c = o.expand?.customer_id
+        if (c?.lat && c?.lng) {
+          const key = `${c.lat.toFixed(5)}_${c.lng.toFixed(5)}`
+          const arr = coordBuckets.get(key) || []
+          arr.push(o)
+          coordBuckets.set(key, arr)
+        }
+      })
+
+      transitOrders.forEach((order) => {
+        const cust = order.expand?.customer_id
+        if (cust?.lat && cust?.lng) {
+          const bucketKey = `${cust.lat.toFixed(5)}_${cust.lng.toFixed(5)}`
+          const bucket = coordBuckets.get(bucketKey) || []
+          let finalLat = cust.lat
+          let finalLng = cust.lng
+          if (bucket.length > 1) {
+            const idx = bucket.findIndex((b) => b.id === order.id)
+            if (idx > 0) {
+              const r = 0.00015
+              const theta = (idx * 2 * Math.PI) / bucket.length
+              finalLat = cust.lat + r * Math.sin(theta)
+              finalLng = cust.lng + r * Math.cos(theta)
+            }
+          }
+          const destPos = { lat: finalLat, lng: finalLng }
+          bounds.extend(destPos)
+          hasCoords = true
+          activeTransitOrderIds.add(order.id)
+
+          const isTransit = order.status === 'in_transit' || order.route_started
+          const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
+          const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
+          const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
+          const courierId = order.courier_id || order.expand?.courier_id?.id
+          const courierColor = getCourierRouteColor(courierId)
+          const markerTitle = `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`
+          const markerIcon = makeNativeCustomerSvg(
+            cust.name,
+            order.sequence,
+            isTransit,
+            courierColor.stroke,
           )
-        })
-        .forEach((order) => {
-          const cust = order.expand?.customer_id
-          if (cust?.lat && cust?.lng) {
-            const destPos = { lat: cust.lat, lng: cust.lng }
-            bounds.extend(destPos)
-            hasCoords = true
-            activeTransitOrderIds.add(order.id)
 
-            const isTransit = order.status === 'in_transit' || order.route_started
-            const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
-            const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
-            const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
-            const courierId = order.courier_id || order.expand?.courier_id?.id
-            const courierColor = getCourierRouteColor(courierId)
-            const markerTitle = `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`
-            const markerIcon = makeNativeCustomerSvg(
-              cust.name,
-              order.sequence,
-              isTransit,
-              courierColor.stroke,
-            )
+          let destMarker = customerMarkersMapRef.current.get(order.id)
+          if (destMarker) {
+            destMarker.setMap(map)
+            destMarker.setPosition(destPos)
+            destMarker.setTitle(markerTitle)
+            destMarker.setIcon(markerIcon)
+            destMarker.setZIndex?.(100 + (order.sequence || 0))
+          } else {
+            destMarker = new win.google.maps.Marker({
+              position: destPos,
+              map,
+              title: markerTitle,
+              icon: markerIcon,
+              zIndex: 100 + (order.sequence || 0),
+            })
+            destMarker.setZIndex?.(100 + (order.sequence || 0))
 
-            let destMarker = customerMarkersMapRef.current.get(order.id)
-            if (destMarker) {
-              destMarker.setMap(map)
-              destMarker.setPosition(destPos)
-              destMarker.setTitle(markerTitle)
-              destMarker.setIcon(markerIcon)
-            } else {
-              destMarker = new win.google.maps.Marker({
-                position: destPos,
-                map,
-                title: markerTitle,
-                icon: markerIcon,
-              })
-
-              // Hover: tooltip compacto de cliente
-              destMarker.addListener('mouseover', () => {
-                const html = `
+            // Hover: tooltip compacto de cliente
+            destMarker.addListener('mouseover', () => {
+              const html = `
                   <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
                       <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
@@ -2789,25 +2882,25 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                     ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
                   </div>
                 `
-                hoverInfoWindow.setContent(html)
-                hoverInfoWindow.open(map, destMarker)
-              })
+              hoverInfoWindow.setContent(html)
+              hoverInfoWindow.open(map, destMarker)
+            })
 
-              destMarker.addListener('mouseout', () => {
-                hoverInfoWindow.close()
-              })
+            destMarker.addListener('mouseout', () => {
+              hoverInfoWindow.close()
+            })
 
-              destMarker.addListener('click', () => {
-                hoverInfoWindow.close()
-                handleOpenOrderDetails(order)
-              })
+            destMarker.addListener('click', () => {
+              hoverInfoWindow.close()
+              handleOpenOrderDetails(order)
+            })
 
-              customerMarkersMapRef.current.set(order.id, destMarker)
-            }
-
-            newMarkers.push(destMarker)
+            customerMarkersMapRef.current.set(order.id, destMarker)
           }
-        })
+
+          newMarkers.push(destMarker)
+        }
+      })
 
       // Limpar marcadores de destinos que não estão mais nesta exibição
       customerMarkersMapRef.current.forEach((marker, oId) => {
@@ -2831,10 +2924,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     setMarkersRef(newMarkers)
 
-    // (a) fitBounds apenas no primeiro carregamento, nunca a cada ping subsequente
-    if (hasCoords && newMarkers.length > 0 && !hasInitialFitRef.current) {
+    // (a) fitBounds apenas no primeiro carregamento/otimização, englobando base+pins
+    // APENAS se !hasUserInteractedRef.current com padding {top:60,right:60,bottom:60,left:60}
+    if (
+      hasCoords &&
+      newMarkers.length > 0 &&
+      !hasInitialFitRef.current &&
+      !hasUserInteractedRef.current
+    ) {
       hasInitialFitRef.current = true
-      map.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 })
+      map.fitBounds(bounds, { top: 60, right: 60, bottom: 60, left: 60 })
       const listener = win.google.maps.event.addListener(map, 'idle', () => {
         if (map.getZoom() > 15) map.setZoom(15)
         win.google.maps.event.removeListener(listener)

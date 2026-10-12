@@ -16,11 +16,13 @@ import {
 import { deliveryService } from '@/services/deliveryService'
 import { getMatrizCompanyId } from '@/lib/companyResolver'
 import {
+  getCivilDateKeyInTz,
   isAdvancePostCutoff,
   isBeforeCurrentMonthInTz,
   isCurrentMonthInTz,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
+import { groupOrdersByRouteBatch } from '@/lib/routeBatchHelper'
 
 export interface UnifiedCourierFuelAccount {
   courier: UserRecord
@@ -427,11 +429,68 @@ export class FuelAccountService {
         return orderTs >= window30dStartTs
       })
 
-      if (orders30d.length > 0) {
+      // Filtragem de lotes dos últimos 30 dias:
+      // Excluir:
+      // 1. Pedidos com aprovação pending/rejected em route_km_approvals (approvalsMap).
+      // 2. Lotes com reconciliation_diff_pct > 30 (entre telemetria GPS e trajeto viário).
+      const batches30d = groupOrdersByRouteBatch(orders30d, courier.id)
+      let excludedBatchesDiff30 = 0
+      let excludedOrdersApprovalPendingOrRejected = 0
+      const eligibleOrders30d: OrderRecord[] = []
+
+      batches30d.forEach((batchOrders) => {
+        // Filtrar pedidos do lote que possuem aprovação pendente ou rejeitada
+        const validBatchOrders: OrderRecord[] = []
+        for (const ord of batchOrders) {
+          const app = approvalsMap?.get(ord.id)
+          if (app && (app.status === 'pending' || app.status === 'rejected')) {
+            excludedOrdersApprovalPendingOrRejected++
+            continue
+          }
+          validBatchOrders.push(ord)
+        }
+
+        if (validBatchOrders.length === 0) {
+          return
+        }
+
+        // Checar desvio do lote (reconciliation_diff_pct > 30):
+        // Trajeto viário vs Telemetria GPS (se disponível)
+        const maxRoadKmInBatch = validBatchOrders.reduce((max, ord) => {
+          const roadKm =
+            typeof ord.total_route_with_return_km === 'number' ? ord.total_route_with_return_km : 0
+          return Math.max(max, roadKm)
+        }, 0)
+
+        // Odômetro ou GPS no lote
+        let batchGpsKm = 0
+        validBatchOrders.forEach((ord) => {
+          if (typeof ord.km_real_rodado === 'number' && ord.km_real_rodado > 0) {
+            batchGpsKm = Math.max(batchGpsKm, ord.km_real_rodado)
+          } else if (typeof ord.km_odometro === 'number' && ord.km_odometro > 0) {
+            batchGpsKm += ord.km_odometro
+          }
+        })
+
+        // Se há trajeto viário e telemetria GPS, computa a divergência percentual
+        if (maxRoadKmInBatch > 0 && batchGpsKm > 0) {
+          const diffPct = Math.round(
+            (Math.abs(batchGpsKm - maxRoadKmInBatch) / maxRoadKmInBatch) * 100,
+          )
+          if (diffPct > 30) {
+            excludedBatchesDiff30++
+            return // Exclui o lote da média
+          }
+        }
+
+        validBatchOrders.forEach((vo) => eligibleOrders30d.push(vo))
+      })
+
+      if (eligibleOrders30d.length > 0) {
         const metrics30d = calculateCourierFuelMetrics({
           courier,
           advances: postCutoffAdvances,
-          orders: orders30d,
+          orders: eligibleOrders30d,
           locations,
           offRouteEvents,
           settings,
@@ -443,23 +502,61 @@ export class FuelAccountService {
         })
         spent30d = metrics30d.totalSpent
 
-        // Determinar a amplitude da janela disponível em dias
-        const oldestOrderTs = orders30d.reduce((minTs, o) => {
+        // Denominador: apenas dias civis de Brasília (getCivilDateKeyInTz) com pelo menos 1 lote auditado elegível.
+        // Dias com 0 km são folga da escala 12x36 e ficam FORA da média.
+        const workedCivilDaysSet = new Set<string>()
+        eligibleOrders30d.forEach((o) => {
+          const oDateVal = o.route_finished_at || o.actual_arrival || o.created
+          const civilKey = getCivilDateKeyInTz(oDateVal)
+          if (civilKey) {
+            workedCivilDaysSet.add(civilKey)
+          }
+        })
+
+        const workedDaysCount = workedCivilDaysSet.size
+
+        // Amplitude total da janela observada em dias civis (máx 30)
+        const oldestOrderTs = eligibleOrders30d.reduce((minTs, o) => {
           const t = new Date(o.route_finished_at || o.actual_arrival || o.created).getTime()
           return t < minTs ? t : minTs
         }, now.getTime())
+        const elapsedCalendarDays = Math.min(
+          30,
+          Math.max(1, Math.ceil((now.getTime() - oldestOrderTs) / (24 * 3600000))),
+        )
+        const daysOff12x36 = Math.max(0, elapsedCalendarDays - workedDaysCount)
 
-        const elapsedDays = Math.max(1, Math.ceil((now.getTime() - oldestOrderTs) / (24 * 3600000)))
-        const windowDays = Math.min(30, elapsedDays)
+        if (workedDaysCount > 0 && spent30d > 0) {
+          dailyAverage30d = Number((spent30d / workedDaysCount).toFixed(2))
 
-        if (windowDays < 28) {
-          // Janela menor que 30 dias (ex: 7 dias) -> divide pelos dias reais e rotula conforme
-          dailyAverage30d = Number((spent30d / windowDays).toFixed(2))
-          averageLabel = `Média ${windowDays}d`
+          const exclusionNotes: string[] = []
+          if (daysOff12x36 > 0) {
+            exclusionNotes.push(`${daysOff12x36} folga${daysOff12x36 > 1 ? 's' : ''} 12x36`)
+          }
+          if (excludedBatchesDiff30 > 0) {
+            exclusionNotes.push(
+              `${excludedBatchesDiff30} lote${excludedBatchesDiff30 > 1 ? 's' : ''} desvio >30% excluído${excludedBatchesDiff30 > 1 ? 's' : ''}`,
+            )
+          }
+          if (excludedOrdersApprovalPendingOrRejected > 0) {
+            exclusionNotes.push(
+              `${excludedOrdersApprovalPendingOrRejected} pedido${excludedOrdersApprovalPendingOrRejected > 1 ? 's' : ''} pend/rejeit`,
+            )
+          }
+
+          if (exclusionNotes.length > 0) {
+            averageLabel = `Média ${workedDaysCount}d trab (${exclusionNotes.join(', ')})`
+          } else {
+            averageLabel = `Média ${workedDaysCount}d trab`
+          }
         } else {
-          dailyAverage30d = Number((spent30d / 30).toFixed(2))
-          averageLabel = 'Média 30d'
+          // Se não sobrar dia elegível, dailyAverage = 0 (não dispara)
+          dailyAverage30d = 0
+          averageLabel = 'Média 0d (sem dias elegíveis)'
         }
+      } else {
+        dailyAverage30d = 0
+        averageLabel = 'Média 0d (sem pedidos elegíveis)'
       }
 
       // Calendário operacional civil (America/Sao_Paulo)
@@ -501,7 +598,13 @@ export class FuelAccountService {
       remainingIntervalLabel = `${nextDayStr} a ${lastDayStr} • ${remainingDays} dia${remainingDays === 1 ? '' : 's'}`
 
       projectionRemainingMonth = Number((dailyAverage30d * remainingDays).toFixed(2))
-      suggestedRecharge = Math.max(0, Number((projectionRemainingMonth - finalBalance).toFixed(2)))
+      // Fórmula canônica do hook pocketbase/hooks/fuel_balance_alert.js:
+      // const rawRecharge = Number((dailyAverage - periodSpent).toFixed(2));
+      // const suggestedRecharge = rawRecharge < 0 ? 0 : (rawRecharge > dailyAverage ? dailyAverage : rawRecharge)
+      const rawRecharge = Number((dailyAverage30d - periodSpent).toFixed(2))
+      suggestedRecharge =
+        rawRecharge < 0 ? 0 : rawRecharge > dailyAverage30d ? dailyAverage30d : rawRecharge
+      suggestedRecharge = Number(suggestedRecharge.toFixed(2))
     }
 
     // Gatilho do alerta: configurável via app_settings.extra.fuel_alert_threshold_pct (padrão 80)
@@ -824,7 +927,9 @@ export class FuelAccountService {
     const { companyId, ordersPool, periodFilter = 'month' } = params || {}
     const targetCompanyId = await this.resolveActiveCompanyId(companyId)
 
-    const couriers = await this.getCouriers(targetCompanyId)
+    const allCouriers = await this.getCouriers(targetCompanyId)
+    // Filtrar fora couriers com status 'inactive'
+    const couriers = allCouriers.filter((c) => c.status !== 'inactive')
     if (couriers.length === 0) {
       return []
     }

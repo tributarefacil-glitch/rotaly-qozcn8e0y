@@ -200,19 +200,32 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                   item.accuracy,
                                   item.offline_buffered,
                                 )
-                                const isOutdated =
-                                  diag.minutesSinceLastPing > 10 || diag.gpsState === 'no_signal'
 
-                                if (isOutdated) {
-                                  const minText =
-                                    diag.minutesSinceLastPing < 999
-                                      ? `${diag.minutesSinceLastPing} min`
-                                      : '>10 min'
-                                  return (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
-                                      ⚠️ GPS desatualizado ({minText})
-                                    </span>
-                                  )
+                                // Badge GPS via minutesSinceLastPing / diag.gpsState:
+                                // se hasRouteStarted=false, suprimir badge;
+                                // >3 min e <=10 min = badge âmbar "GPS desatualizado (Xmin)";
+                                // >10 min ou no_signal = vermelho "GPS sem sinal".
+                                if (item.hasRouteStarted) {
+                                  if (
+                                    diag.minutesSinceLastPing > 10 ||
+                                    diag.gpsState === 'no_signal'
+                                  ) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
+                                        🔴 GPS sem sinal
+                                      </span>
+                                    )
+                                  }
+                                  if (
+                                    diag.minutesSinceLastPing > 3 &&
+                                    diag.minutesSinceLastPing <= 10
+                                  ) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
+                                        ⚠️ GPS desatualizado ({diag.minutesSinceLastPing}min)
+                                      </span>
+                                    )
+                                  }
                                 }
 
                                 const lTime = parseSafeTimestamp(item.location_timestamp)
@@ -571,19 +584,28 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                   item.accuracy,
                                   item.offline_buffered,
                                 )
-                                const isOutdated =
-                                  diag.minutesSinceLastPing > 10 || diag.gpsState === 'no_signal'
 
-                                if (isOutdated) {
-                                  const minText =
-                                    diag.minutesSinceLastPing < 999
-                                      ? `${diag.minutesSinceLastPing} min`
-                                      : '>10 min'
-                                  return (
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
-                                      ⚠️ GPS desatualizado ({minText})
-                                    </span>
-                                  )
+                                if (item.hasRouteStarted) {
+                                  if (
+                                    diag.minutesSinceLastPing > 10 ||
+                                    diag.gpsState === 'no_signal'
+                                  ) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
+                                        🔴 GPS sem sinal
+                                      </span>
+                                    )
+                                  }
+                                  if (
+                                    diag.minutesSinceLastPing > 3 &&
+                                    diag.minutesSinceLastPing <= 10
+                                  ) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
+                                        ⚠️ GPS desatualizado ({diag.minutesSinceLastPing}min)
+                                      </span>
+                                    )
+                                  }
                                 }
 
                                 const lTime = parseSafeTimestamp(item.location_timestamp)
