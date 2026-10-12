@@ -309,6 +309,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const [markersRef, setMarkersRef] = useState<any[]>([])
   const hasInitialFitRef = useRef(false)
   const hasUserInteractedRef = useRef(false)
+  const [isAutoFollow, setIsAutoFollow] = useState(true)
+  const isDraggingRef = useRef(false)
   const courierMarkersMapRef = useRef<Map<string, any>>(new Map())
   const customerMarkersMapRef = useRef<Map<string, any>>(new Map())
   const baseMarkersMapRef = useRef<Map<string, any>>(new Map())
@@ -822,6 +824,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 }
               } else {
                 existingMarker.setPosition({ lat: newLoc.lat, lng: newLoc.lng })
+              }
+            }
+
+            // (1) Auto-follow suave se entregador ativo em rota estiver fora do campo de visão
+            if (mapInstance && isAutoFollow && !isDraggingRef.current && !isDrawerOpen) {
+              const courierLatLng = new win.google.maps.LatLng(newLoc.lat, newLoc.lng)
+              const bounds = mapInstance.getBounds?.()
+              if (bounds && !bounds.contains(courierLatLng)) {
+                mapInstance.panTo(courierLatLng)
               }
             }
           }
@@ -2044,6 +2055,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         })
         map.addListener('dragstart', () => {
           hasUserInteractedRef.current = true
+          isDraggingRef.current = true
+        })
+        map.addListener('dragend', () => {
+          isDraggingRef.current = false
         })
         map.addListener('zoom_changed', () => {
           hasUserInteractedRef.current = true
@@ -2589,6 +2604,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               courierAnimFramesRef.current.set(item.courier.id, reqId)
             } else {
               courierMarker.setPosition(targetPos)
+            }
+
+            // (1) Auto-follow suave na atualização de telemetria do entregador ativo em rota
+            if (isAutoFollow && !isDraggingRef.current && item.hasRouteStarted && map?.getBounds) {
+              const courierLatLng = new win.google.maps.LatLng(targetPos.lat, targetPos.lng)
+              const curBounds = map.getBounds()
+              if (curBounds && !curBounds.contains(courierLatLng)) {
+                map.panTo(courierLatLng)
+              }
             }
           } else {
             courierMarker.setPosition(targetPos)
@@ -3643,6 +3667,23 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           orders={orders}
           handleOpenOrderDetails={handleOpenOrderDetails}
           locations={locations}
+          isAutoFollow={isAutoFollow}
+          setIsAutoFollow={setIsAutoFollow}
+          onRecenterAutoFollow={() => {
+            const firstActive = activeRouteCouriers[0]
+            if (
+              firstActive &&
+              typeof firstActive.lat === 'number' &&
+              typeof firstActive.lng === 'number'
+            ) {
+              if (mapInstance && typeof window !== 'undefined') {
+                const win = window as any
+                if (win.google?.maps?.LatLng) {
+                  mapInstance.panTo(new win.google.maps.LatLng(firstActive.lat, firstActive.lng))
+                }
+              }
+            }
+          }}
         />
       )}
 

@@ -35,6 +35,9 @@ interface ControlTowerMapProps {
   orders: OrderRecord[]
   handleOpenOrderDetails: (order: OrderRecord) => void
   locations?: LocationRecord[]
+  isAutoFollow?: boolean
+  setIsAutoFollow?: (val: boolean) => void
+  onRecenterAutoFollow?: () => void
 }
 
 export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
@@ -61,6 +64,9 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
   orders,
   handleOpenOrderDetails,
   locations = [],
+  isAutoFollow = true,
+  setIsAutoFollow,
+  onRecenterAutoFollow,
 }) => {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
@@ -94,30 +100,55 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
             <>
               <div ref={mapContainerRef} className="w-full h-full" />
 
-              {/* Abas sobre o mapa no canto superior direito */}
-              <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-[#0A1128]/90 backdrop-blur-md p-1 rounded-xl border border-[#1E2B58] shadow-lg">
+              {/* Abas e botão Auto-Follow sobre o mapa no canto superior direito */}
+              <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setMapDisplayMode('in_transit')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                    mapDisplayMode === 'in_transit'
-                      ? 'bg-blue-600 text-white shadow'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                  onClick={() => {
+                    setIsAutoFollow?.(true)
+                    onRecenterAutoFollow?.()
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-lg border backdrop-blur-md ${
+                    isAutoFollow
+                      ? 'bg-emerald-600 text-white border-emerald-400/50 hover:bg-emerald-500 ring-2 ring-emerald-400/40'
+                      : 'bg-[#0A1128]/90 text-slate-300 border-[#1E2B58] hover:text-white hover:bg-slate-800/80'
                   }`}
+                  title={
+                    isAutoFollow
+                      ? 'Auto-follow ativo (acompanhando entregador)'
+                      : 'Clique para seguir entregador em rota'
+                  }
                 >
-                  <span>🛵 Em Rota ({activeRouteCouriers.length})</span>
+                  <span>🎯 Seguir</span>
+                  {isAutoFollow && (
+                    <span className="flex h-2 w-2 rounded-full bg-white animate-pulse" />
+                  )}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setMapDisplayMode('delivered')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                    mapDisplayMode === 'delivered'
-                      ? 'bg-emerald-600 text-white shadow'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                  }`}
-                >
-                  <span>✓ Entregues ({metrics.delivered})</span>
-                </button>
+
+                <div className="flex items-center gap-1.5 bg-[#0A1128]/90 backdrop-blur-md p-1 rounded-xl border border-[#1E2B58] shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => setMapDisplayMode('in_transit')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                      mapDisplayMode === 'in_transit'
+                        ? 'bg-blue-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <span>🛵 Em Rota ({activeRouteCouriers.length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMapDisplayMode('delivered')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                      mapDisplayMode === 'delivered'
+                        ? 'bg-emerald-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <span>✓ Entregues ({metrics.delivered})</span>
+                  </button>
+                </div>
               </div>
 
               {/* Painel de status no canto superior esquerdo do Google Maps */}
@@ -465,8 +496,31 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
             </>
           ) : (
             <div className="relative w-full h-full flex flex-col">
-              {/* Abas sobre o mapa e botão Retry no canto superior direito do mapa vetorial */}
+              {/* Abas sobre o mapa e botões no canto superior direito do mapa vetorial */}
               <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAutoFollow?.(true)
+                    onRecenterAutoFollow?.()
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-lg border backdrop-blur-md ${
+                    isAutoFollow
+                      ? 'bg-emerald-600 text-white border-emerald-400/50 hover:bg-emerald-500 ring-2 ring-emerald-400/40'
+                      : 'bg-[#0A1128]/90 text-slate-300 border-[#1E2B58] hover:text-white hover:bg-slate-800/80'
+                  }`}
+                  title={
+                    isAutoFollow
+                      ? 'Auto-follow ativo (acompanhando entregador)'
+                      : 'Clique para seguir entregador em rota'
+                  }
+                >
+                  <span>🎯 Seguir</span>
+                  {isAutoFollow && (
+                    <span className="flex h-2 w-2 rounded-full bg-white animate-pulse" />
+                  )}
+                </button>
+
                 <div className="flex items-center gap-1.5 bg-[#0A1128]/90 backdrop-blur-md p-1 rounded-xl border border-[#1E2B58] shadow-lg">
                   <button
                     type="button"

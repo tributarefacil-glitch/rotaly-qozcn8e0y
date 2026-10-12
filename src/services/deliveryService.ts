@@ -4103,9 +4103,44 @@ export const deliveryService = {
     expand = 'order_id,courier_id,seller_id',
     limit = 50,
   ) {
-    // Sanitizar removendo qualquer cláusula indevida com empresa_id
-    const sanitizedFilter = (filter || '').replace(/\bempresa_id\s*=\s*'[^']*'\s*(&&)?/g, '').trim()
-    const cleanFilter = sanitizedFilter.replace(/^(&&|\s)+|(&&|\s)+$/g, '')
+    // Sanitizar removendo qualquer cláusula empresa_id (a coleção reviews NÃO tem esse campo — causa 400).
+    // Se havia cláusula empresa_id = 'XYZ', isolar por empresa via seller_id in (...) || courier_id in (...)
+    let extractedEmpresaId: string | null = null
+    const match = (filter || '').match(/\bempresa_id\s*=\s*'([^']+)'/)
+    if (match) {
+      extractedEmpresaId = match[1]
+    }
+
+    // Remove qualquer variação de empresa_id do filtro
+    let sanitizedFilter = (filter || '')
+      .replace(/\(?\bempresa_id\s*=\s*'[^']*'\s*(&&|\|\|)?\)?/g, '')
+      .trim()
+      .replace(/^(&&|\|\|\s)+|(&&|\|\|\s)+$/g, '')
+      .trim()
+
+    // Se havia empresa_id ou se o contexto atual tem empresa ativa, aplicar isolamento via sellers/couriers da empresa
+    const targetEmpresaId = extractedEmpresaId || this.getActiveCompanyId()
+    if (targetEmpresaId) {
+      try {
+        const isMatriz = await this.isMatrizCompany(targetEmpresaId)
+        if (!isMatriz) {
+          const companyUsers = await this.getAllUsers(targetEmpresaId)
+          const userIds = companyUsers.map((u) => u.id).filter(Boolean)
+          if (userIds.length === 0) {
+            return []
+          }
+          const userClauses = userIds.map((id) => `'${id}'`).join(',')
+          const companyFilter = `(seller_id ?= [${userClauses}] || courier_id ?= [${userClauses}])`
+          sanitizedFilter = sanitizedFilter
+            ? `(${sanitizedFilter}) && ${companyFilter}`
+            : companyFilter
+        }
+      } catch (err) {
+        console.warn('Erro ao resolver isolamento de empresa em getReviews:', err)
+      }
+    }
+
+    const cleanFilter = sanitizedFilter.replace(/^(&&|\s)+|(&&|\s)+$/g, '').trim()
 
     const res = await pb.collection<ReviewRecord>('reviews').getList(1, limit, {
       filter: cleanFilter || undefined,
@@ -4139,12 +4174,47 @@ export const deliveryService = {
     expand = 'courier_id,order_id',
     limit = 50,
   ) {
-    // A coleção off_route_events NÃO possui o campo empresa_id.
-    // Nenhuma injeção de cláusula empresa_id deve ser feita aqui, sob pena de erro 400.
-    const finalFilter = filter || ''
+    // A coleção off_route_events só tem courier_id (sem empresa_id/user_id).
+    // Se o filtro contiver empresa_id, converter para courier_id in (ids dos entregadores role=courier da empresa, consultados em users).
+    // Se a empresa não tiver entregadores, retornar [] sem chamar a API.
+    let extractedEmpresaId: string | null = null
+    const match = (filter || '').match(/\bempresa_id\s*=\s*'([^']+)'/)
+    if (match) {
+      extractedEmpresaId = match[1]
+    }
+
+    // Remover qualquer cláusula empresa_id do filtro existente
+    let sanitizedFilter = (filter || '')
+      .replace(/\(?\bempresa_id\s*=\s*'[^']*'\s*(&&|\|\|)?\)?/g, '')
+      .trim()
+      .replace(/^(&&|\|\|\s)+|(&&|\|\|\s)+$/g, '')
+      .trim()
+
+    if (extractedEmpresaId) {
+      try {
+        const isMatriz = await this.isMatrizCompany(extractedEmpresaId)
+        if (!isMatriz) {
+          const couriers = await this.getCouriers(extractedEmpresaId)
+          const courierIds = couriers.map((c) => c.id).filter(Boolean)
+          if (courierIds.length === 0) {
+            // Se a empresa não tiver entregadores, retornar [] sem chamar a API
+            return []
+          }
+          const courierList = courierIds.map((id) => `'${id}'`).join(',')
+          const courierFilter = `courier_id ?= [${courierList}]`
+          sanitizedFilter = sanitizedFilter
+            ? `(${sanitizedFilter}) && ${courierFilter}`
+            : courierFilter
+        }
+      } catch (err) {
+        console.warn('Erro ao converter empresa_id em couriers na getOffRouteEvents:', err)
+      }
+    }
+
+    const cleanFilter = sanitizedFilter.replace(/^(&&|\s)+|(&&|\s)+$/g, '').trim()
 
     const res = await pb.collection<OffRouteEventRecord>('off_route_events').getList(1, limit, {
-      filter: finalFilter,
+      filter: cleanFilter || undefined,
       sort,
       expand,
       requestKey: null,
