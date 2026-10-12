@@ -87,7 +87,7 @@ export const AppDownloadPage: React.FC = () => {
             <RotalyLogo className="h-8 w-auto" />
           </div>
           <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold">
-            Versão Oficial CLT 1.0.0
+            Versão Oficial CLT 1.0.1
           </Badge>
         </div>
       </header>
@@ -151,7 +151,7 @@ export const AppDownloadPage: React.FC = () => {
                     className="w-full h-14 bg-gradient-to-r from-[#0052CC] via-[#0066FF] to-[#00A8E8] hover:from-[#0047B3] hover:to-[#0095d0] text-white font-black text-base rounded-2xl shadow-xl shadow-blue-500/25 flex items-center justify-center gap-3 border border-cyan-400/40 transition hover:scale-[1.01]"
                   >
                     <Download className="h-6 w-6 animate-bounce" />
-                    <span>Baixar APK Rotaly (v1.0.0)</span>
+                    <span>Baixar APK Rotaly (v1.0.1)</span>
                   </Button>
                 </a>
 

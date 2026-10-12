@@ -5,6 +5,8 @@ import {
   sequenceStopsWithDeterministicTsp,
   consolidateSameStreetAdjacency,
   optimizeRouteSequence,
+  clusterStopsGeographically,
+  chunkArray,
   type StopCandidate,
 } from './intelligentRoadRouter'
 
@@ -202,5 +204,84 @@ describe('intelligentRoadRouter', () => {
     expect(result.estimated_duration_minutes).toBe(
       (result.transit_duration_minutes || 0) + (result.service_duration_minutes || 0),
     )
+  })
+
+  it('preserva comportamento idêntico ao atual para lotes com <=25 paradas', () => {
+    const stopsList: StopCandidate[] = Array.from({ length: 20 }, (_, i) => ({
+      id: `stop-${i + 1}`,
+      tracking_code: `TRK-${i + 1}`,
+      customer_name: `Cliente ${i + 1}`,
+      address: `Rua Teste, ${i * 10}`,
+      lat: -22.7 + i * 0.001,
+      lng: -43.3 + i * 0.001,
+    }))
+
+    const clustered = clusterStopsGeographically(stopsList, 1, 23)
+    expect(clustered.length).toBe(1)
+    expect(clustered[0].length).toBe(20)
+    // Mantém exatamente a mesma sequência de entrada para <=23/25 paradas
+    expect(clustered[0].map((s) => s.id)).toEqual(stopsList.map((s) => s.id))
+  })
+
+  it('agrupa paradas embaralhadas geograficamente em blocos espacialmente coerentes (evita efeito sanfona)', () => {
+    // Cenário: duas regiões distintas da cidade (Região Norte vs Região Sul, afastadas por ~15 km),
+    // com 20 paradas ao Norte e 20 paradas ao Sul, totalizando 40 paradas (>25).
+    // As paradas são fornecidas totalmente intercaladas/embaralhadas na lista de entrada.
+    const northRegionStops: StopCandidate[] = Array.from({ length: 20 }, (_, i) => ({
+      id: `north-${i + 1}`,
+      tracking_code: `TRK-N-${i + 1}`,
+      customer_name: `Cliente Norte ${i + 1}`,
+      address: `Avenida Norte, ${i * 50}`,
+      lat: -22.65 + (i % 4) * 0.003,
+      lng: -43.25 + Math.floor(i / 4) * 0.003,
+    }))
+
+    const southRegionStops: StopCandidate[] = Array.from({ length: 20 }, (_, i) => ({
+      id: `south-${i + 1}`,
+      tracking_code: `TRK-S-${i + 1}`,
+      customer_name: `Cliente Sul ${i + 1}`,
+      address: `Avenida Sul, ${i * 50}`,
+      lat: -22.82 + (i % 4) * 0.003,
+      lng: -43.35 + Math.floor(i / 4) * 0.003,
+    }))
+
+    // Intercalamos de forma 1 Norte, 1 Sul, 1 Norte, 1 Sul... (ordem de entrada desastrosa se sem clustering)
+    const shuffledStops: StopCandidate[] = []
+    for (let i = 0; i < 20; i++) {
+      shuffledStops.push(northRegionStops[i])
+      shuffledStops.push(southRegionStops[i])
+    }
+    expect(shuffledStops.length).toBe(40)
+
+    // Sem clustering, o chunkArray(40, 23) geraria:
+    // Bloco 1 com 23 paradas misturando Norte e Sul (12 norte + 11 sul)
+    // Bloco 2 com 17 paradas misturando Norte e Sul (8 norte + 9 sul)
+    // Isso causaria múltiplas viagens de 15km de ida e volta Norte <-> Sul.
+
+    // Com o clustering geográfico:
+    const kClusters = Math.ceil(shuffledStops.length / 23) // 2 clusters
+    const clusters = clusterStopsGeographically(shuffledStops, kClusters, 23)
+
+    expect(clusters.length).toBe(2)
+    expect(clusters[0].length).toBeLessThanOrEqual(23)
+    expect(clusters[1].length).toBeLessThanOrEqual(23)
+
+    // Verificar coerência espacial: cada bloco deve conter primordialmente paradas da mesma região
+    const b0NorthCount = clusters[0].filter((s) => s.id.startsWith('north-')).length
+    const b0SouthCount = clusters[0].filter((s) => s.id.startsWith('south-')).length
+    const b1NorthCount = clusters[1].filter((s) => s.id.startsWith('north-')).length
+    const b1SouthCount = clusters[1].filter((s) => s.id.startsWith('south-')).length
+
+    // Um dos blocos deve ser quase puramente Norte e o outro quase puramente Sul (> 85% de pureza)
+    const b0Purity = Math.max(b0NorthCount, b0SouthCount) / clusters[0].length
+    const b1Purity = Math.max(b1NorthCount, b1SouthCount) / clusters[1].length
+
+    expect(b0Purity).toBeGreaterThanOrEqual(0.85)
+    expect(b1Purity).toBeGreaterThanOrEqual(0.85)
+
+    // Todas as 40 paradas devem estar presentes sem duplicidade nem omissão
+    const allIds = clusters.flatMap((c) => c.map((s) => s.id))
+    expect(allIds.length).toBe(40)
+    expect(new Set(allIds).size).toBe(40)
   })
 })

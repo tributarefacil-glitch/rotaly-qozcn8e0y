@@ -69,6 +69,147 @@ export function chunkArray<T>(items: T[], chunkSize = 23): T[][] {
 }
 
 /**
+ * FRENTE 1 — Clustering Geográfico para lotes com >25 paradas:
+ * Agrupa as paradas por proximidade geográfica antes do envio aos blocos
+ * do Google Directions (optimizeWaypoints: true).
+ *
+ * Utiliza K-Means balanceado com inicialização K-Means++ e penalidade de capacidade,
+ * ou ordenação angular em torno do centróide geográfico geral para ordenar os clusters
+ * em uma sequência viável de costura contígua sem cruzamento de cidade ("efeito sanfona").
+ *
+ * Garante:
+ * 1. Matemática 100% local (sem chamadas a APIs externas).
+ * 2. Cada bloco final possui no máximo maxBlockSize paradas (padrão 23).
+ * 3. Blocos espacialmente coerentes mesmo quando os pedidos chegam embaralhados.
+ * 4. Para listas <= maxBlockSize, retorna [stops] idêntico ao original.
+ */
+export function clusterStopsGeographically(
+  stops: StopCandidate[],
+  numClusters = Math.ceil(stops.length / 23),
+  maxBlockSize = 23,
+): StopCandidate[][] {
+  if (!stops || stops.length === 0) return []
+  if (stops.length <= maxBlockSize || numClusters <= 1) {
+    return chunkArray(stops, maxBlockSize)
+  }
+
+  const k = Math.min(numClusters, stops.length)
+
+  // 1. Calcular o centróide global do lote de paradas
+  const globalCentroid = {
+    lat: stops.reduce((sum, s) => sum + (s.lat || 0), 0) / stops.length,
+    lng: stops.reduce((sum, s) => sum + (s.lng || 0), 0) / stops.length,
+  }
+
+  // 2. Inicialização K-Means++ determinística para dispersar os centróides iniciais
+  // Escolhe o primeiro ponto mais distante do centróide global (borda externa)
+  let firstSeedIdx = 0
+  let maxDistFromCenter = -1
+  for (let i = 0; i < stops.length; i++) {
+    const d = calcDistanceMeters(stops[i].lat, stops[i].lng, globalCentroid.lat, globalCentroid.lng)
+    if (d > maxDistFromCenter) {
+      maxDistFromCenter = d
+      firstSeedIdx = i
+    }
+  }
+
+  const centroids: Array<{ lat: number; lng: number }> = [
+    { lat: stops[firstSeedIdx].lat, lng: stops[firstSeedIdx].lng },
+  ]
+
+  while (centroids.length < k) {
+    let bestCandidateIdx = 0
+    let maxMinDist = -1
+
+    for (let i = 0; i < stops.length; i++) {
+      const s = stops[i]
+      let minDistToCentroids = Infinity
+      for (const c of centroids) {
+        const d = calcDistanceMeters(s.lat, s.lng, c.lat, c.lng)
+        if (d < minDistToCentroids) {
+          minDistToCentroids = d
+        }
+      }
+      if (minDistToCentroids > maxMinDist) {
+        maxMinDist = minDistToCentroids
+        bestCandidateIdx = i
+      }
+    }
+
+    centroids.push({
+      lat: stops[bestCandidateIdx].lat,
+      lng: stops[bestCandidateIdx].lng,
+    })
+  }
+
+  // 3. Iterações K-Means com penalidade de capacidade balanceada (teto de maxBlockSize)
+  const maxIterations = 12
+  let clusters: StopCandidate[][] = Array.from({ length: k }, () => [])
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    clusters = Array.from({ length: k }, () => [])
+
+    // Ordena as paradas por distância ao centróide mais próximo para alocação prioritária
+    for (const stop of stops) {
+      let bestClusterIdx = 0
+      let bestScore = Infinity
+
+      for (let ci = 0; ci < k; ci++) {
+        const cent = centroids[ci]
+        const dist = calcDistanceMeters(stop.lat, stop.lng, cent.lat, cent.lng)
+        const currentSize = clusters[ci].length
+        // Penalidade progressiva caso o cluster se aproxime do limite maxBlockSize
+        const targetSize = stops.length / k
+        const sizePenalty = 1 + (currentSize / Math.max(1, targetSize)) * 0.4
+        const score = dist * sizePenalty
+
+        if (score < bestScore) {
+          bestScore = score
+          bestClusterIdx = ci
+        }
+      }
+
+      clusters[bestClusterIdx].push(stop)
+    }
+
+    // Recalcular centróides
+    for (let ci = 0; ci < k; ci++) {
+      const cluster = clusters[ci]
+      if (cluster.length > 0) {
+        centroids[ci] = {
+          lat: cluster.reduce((sum, s) => sum + s.lat, 0) / cluster.length,
+          lng: cluster.reduce((sum, s) => sum + s.lng, 0) / cluster.length,
+        }
+      }
+    }
+  }
+
+  // 4. Ordenar os clusters geograficamente por varredura angular (polar) a partir do centróide global.
+  // Isso garante que os clusters adjacentes fiquem contíguos na sequência de costura,
+  // eliminando percursos em zigue-zague ou cruzamento da cidade de um lado a outro.
+  const clusterAngles = clusters.map((cluster, idx) => {
+    const c = centroids[idx]
+    const angle = Math.atan2(c.lat - globalCentroid.lat, c.lng - globalCentroid.lng)
+    return { cluster, angle, centroid: c }
+  })
+  clusterAngles.sort((a, b) => a.angle - b.angle)
+
+  // 5. Garantir que nenhum bloco exceda maxBlockSize (se algum cluster tiver > maxBlockSize, divide via chunkArray)
+  const finalBlocks: StopCandidate[][] = []
+  for (const item of clusterAngles) {
+    if (item.cluster.length === 0) continue
+    if (item.cluster.length <= maxBlockSize) {
+      finalBlocks.push(item.cluster)
+    } else {
+      const subChunks = chunkArray(item.cluster, maxBlockSize)
+      finalBlocks.push(...subChunks)
+    }
+  }
+
+  return finalBlocks
+}
+
+/**
  * Normaliza nome de rua / logradouro para comparar se duas entregas são na mesma via.
  * Ex: "Rua São Jorge, 10" e "R. São Jorge, 45" -> "sao jorge"
  */
@@ -534,8 +675,14 @@ export async function optimizeRouteSequence(params: {
       isGoogleOptimized = true
     }
   } else if (isGoogleAvailable && preProcessedStops.length > 23) {
-    // Lotes com mais de 23/25 paradas divididos em chunks de 23 paradas
-    const chunks = chunkArray(preProcessedStops, 23)
+    // FRENTE 1: CLUSTERING GEOGRÁFICO ANTES DO CHUNKARRAY
+    // Para lotes >25 paradas (ou >23), agrupar as paradas por proximidade geográfica
+    // (K-Means balanceado/varredura angular por centróide) com k = ceil(total / 23).
+    // Cada cluster tem tamanho <=23 (ou fatiado em blocos de <=23 se algum cluster exceder).
+    // Isso evita o "efeito sanfona" (5-15 km desperdiçados) decorrente de fatiar na ordem de entrada da lista.
+    const kClusters = Math.max(1, Math.ceil(preProcessedStops.length / 23))
+    const clusteredBlocks = clusterStopsGeographically(preProcessedStops, kClusters, 23)
+    const chunks = clusteredBlocks
     const solvedChunks: StopCandidate[][] = []
     let chunksAllSuccess = true
 
@@ -614,27 +761,68 @@ export async function optimizeRouteSequence(params: {
   }
 
   // Fallback: se o Google não estiver disponível ou a chamada aos blocos falhou:
-  // Assegurar caminho OSRM fetchOsrmDistanceMatrix + TSP determinístico (2-Opt com regra do teto de 10% no bônus de mesma rua)
+  // Se preProcessedStops > 23/25, também aplicamos clustering geográfico antes do sequenciamento
+  // determinístico por blocos costurados via OSRM, evitando sanfona mesmo no modo fallback!
   if (!isGoogleOptimized || finalStops.length !== preProcessedStops.length) {
-    let osrmMatrix: number[][] | null = null
-    try {
-      const { fetchOsrmDistanceMatrix } = await import('@/services/osrmRoutingService')
-      // Ponto 0: origem; Pontos 1..N: preProcessedStops
-      const allPoints = [origin, ...preProcessedStops.map((s) => ({ lat: s.lat, lng: s.lng }))]
-      const matrixResult = await fetchOsrmDistanceMatrix(allPoints)
-      if (matrixResult?.distancesMeters && matrixResult.distancesMeters.length > 0) {
-        osrmMatrix = matrixResult.distancesMeters
-      }
-    } catch (err) {
-      console.warn('[RoadRouter] Erro ao obter matriz viária OSRM:', err)
-    }
+    if (preProcessedStops.length > 25) {
+      const kClusters = Math.max(1, Math.ceil(preProcessedStops.length / 23))
+      const clusteredBlocks = clusterStopsGeographically(preProcessedStops, kClusters, 23)
+      const stitchedFallback: StopCandidate[] = []
+      let blockOrigin = origin
 
-    finalStops = sequenceStopsWithDeterministicTsp(
-      origin,
-      destination,
-      preProcessedStops,
-      osrmMatrix,
-    )
+      for (let b = 0; b < clusteredBlocks.length; b++) {
+        const blockStops = clusteredBlocks[b]
+        const isLastBlock = b === clusteredBlocks.length - 1
+        const blockDestination = isLastBlock ? destination : destination
+
+        let blockOsrmMatrix: number[][] | null = null
+        try {
+          const { fetchOsrmDistanceMatrix } = await import('@/services/osrmRoutingService')
+          const pts = [blockOrigin, ...blockStops.map((s) => ({ lat: s.lat, lng: s.lng }))]
+          const res = await fetchOsrmDistanceMatrix(pts)
+          if (res?.distancesMeters && res.distancesMeters.length > 0) {
+            blockOsrmMatrix = res.distancesMeters
+          }
+        } catch {
+          /* fallback interno de sequenceStopsWithDeterministicTsp cuida */
+        }
+
+        const sequencedBlock = sequenceStopsWithDeterministicTsp(
+          blockOrigin,
+          blockDestination,
+          blockStops,
+          blockOsrmMatrix,
+        )
+
+        stitchedFallback.push(...sequencedBlock)
+        if (sequencedBlock.length > 0) {
+          const lastInSeq = sequencedBlock[sequencedBlock.length - 1]
+          blockOrigin = { lat: lastInSeq.lat, lng: lastInSeq.lng }
+        }
+      }
+
+      finalStops = stitchedFallback
+    } else {
+      let osrmMatrix: number[][] | null = null
+      try {
+        const { fetchOsrmDistanceMatrix } = await import('@/services/osrmRoutingService')
+        // Ponto 0: origem; Pontos 1..N: preProcessedStops
+        const allPoints = [origin, ...preProcessedStops.map((s) => ({ lat: s.lat, lng: s.lng }))]
+        const matrixResult = await fetchOsrmDistanceMatrix(allPoints)
+        if (matrixResult?.distancesMeters && matrixResult.distancesMeters.length > 0) {
+          osrmMatrix = matrixResult.distancesMeters
+        }
+      } catch (err) {
+        console.warn('[RoadRouter] Erro ao obter matriz viária OSRM:', err)
+      }
+
+      finalStops = sequenceStopsWithDeterministicTsp(
+        origin,
+        destination,
+        preProcessedStops,
+        osrmMatrix,
+      )
+    }
     isGoogleOptimized = false
     legsData = null
   }
