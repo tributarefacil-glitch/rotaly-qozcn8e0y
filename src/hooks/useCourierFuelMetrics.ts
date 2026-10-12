@@ -35,6 +35,7 @@ export interface CourierOrderTelemetryCalculation {
   officialKm: number
   deviationKm: number
   totalGpsKm: number
+  km_real_perna?: number
   discardedNoiseKm: number
   isRealTelemetry: boolean
   hasReturnKm: boolean
@@ -186,16 +187,31 @@ export function calculateCourierFuelMetrics(params: {
   }
 
   const defaultFuelParams = deliveryService.getVehicleFuelParams(settings, courier.vehicle_type)
-  // Prioridade consumo: consumo da moto cadastrada no entregador (consumption_kml) -> app_settings -> fallback 40 km/L
-  // Preço: override de preço do entregador se houver -> app_settings -> fallback R$ 6,09
-  const courierConsumption =
-    typeof courier.consumption_kml === 'number' && courier.consumption_kml > 0
+  // Combustível por escopo: moto 40 km/L e R$ 6,49 (taxa do app_settings), bicicleta R$ 0
+  const isBicycleCourier = defaultFuelParams.category === 'bicicleta'
+  const fallbackMotoConsumption = 40.0
+  const fallbackMotoPrice = 6.49
+
+  const courierConsumption = isBicycleCourier
+    ? 0
+    : typeof courier.consumption_kml === 'number' && courier.consumption_kml > 0
       ? courier.consumption_kml
-      : defaultFuelParams.consumptionKml
-  const pricePerLiter =
-    typeof courier.fuel_price === 'number' && courier.fuel_price > 0
+      : typeof settings?.moto_consumption_kml === 'number' && settings.moto_consumption_kml > 0
+        ? settings.moto_consumption_kml
+        : typeof settings?.fuel_consumption_kml === 'number' && settings.fuel_consumption_kml > 0
+          ? settings.fuel_consumption_kml
+          : fallbackMotoConsumption
+
+  const pricePerLiter = isBicycleCourier
+    ? 0
+    : typeof courier.fuel_price === 'number' && courier.fuel_price > 0
       ? courier.fuel_price
-      : defaultFuelParams.pricePerLiter
+      : typeof settings?.moto_fuel_price === 'number' && settings.moto_fuel_price > 0
+        ? settings.moto_fuel_price
+        : typeof settings?.fuel_price_per_liter === 'number' && settings.fuel_price_per_liter > 0
+          ? settings.fuel_price_per_liter
+          : fallbackMotoPrice
+
   const consumptionKml = courierConsumption
   const category = defaultFuelParams.category
 
@@ -793,11 +809,19 @@ export function calculateCourierFuelMetrics(params: {
       }
     }
 
+    const kmRealPernaVal =
+      typeof order.km_real_perna === 'number' &&
+      Number.isFinite(order.km_real_perna) &&
+      order.km_real_perna > 0
+        ? Number(order.km_real_perna.toFixed(1))
+        : undefined
+
     return {
       order,
       officialKm,
       deviationKm: Number(deviationKm.toFixed(1)),
       totalGpsKm: Number(totalGpsKm.toFixed(1)),
+      km_real_perna: kmRealPernaVal,
       discardedNoiseKm: batchTelemetry.discardedNoiseKm,
       isRealTelemetry: batchTelemetry.isRealTelemetry,
       hasReturnKm: batchTelemetry.hasReturnKm,

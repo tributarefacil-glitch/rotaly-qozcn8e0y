@@ -58,6 +58,7 @@ import {
   groupOrdersByRouteBatch,
 } from '@/lib/routeBatchHelper'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { compararKm, getLoteCanonico } from '@/utils/kmAudit'
 import {
   formatDateInTz,
   formatPbTimestamp,
@@ -318,6 +319,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       isRedirected: boolean
       isRedirectionPending: boolean
       hasKmDivergence: boolean
+      divergenciaInfo?: { valido: boolean; diferenca: number; alertaSanidade?: string }
       isDivergent: boolean
       isAutoApproved: boolean
       isPendingDecision: boolean
@@ -504,19 +506,26 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         // 2. Entrega conjunta secundária (isJointSecondary):
         //    - Viagem já inclusa na 1ª entrega (viário 0,0 por deduplicação).
         //    - Auto-aprovada automaticamente, fora da fila de divergência/decisão do admin.
-        // 3. Entrega com divergência:
-        //    - Diferença absoluta entre KM Viário e KM GPS > 0.1 km (com telemetria GPS disponível > 0), EXCETO entrega conjunta secundária
-        //    - OU desvio de rota físico registrado (ex: off-route > 500m)
-        //    - OU paradas fora do local (> 300m do cliente)
-        //    - OU redirecionamento de entrega (ex: > 3 km ou pendente de aprovação)
-        // 4. Entrega sem divergência:
-        //    - Considerada "Aprovada automaticamente" (sem necessidade de clique manual).
-        //    - Se já tiver aprovação manual no banco, respeita o status manual gravado.
+        // 3. Entrega com divergência (avaliada estritamente no mesmo escopo: perna x perna via compararKm):
         const isJointSecondary = Boolean(calc.isJointSecondary)
-        const hasKmDivergence =
-          !isJointSecondary &&
-          calc.totalGpsKm > 0 &&
-          Math.abs(calc.totalGpsKm - roadKmOriginal) > 0.1001
+        const pernaKmReal =
+          typeof order.km_real_perna === 'number' &&
+          Number.isFinite(order.km_real_perna) &&
+          order.km_real_perna > 0
+            ? order.km_real_perna
+            : undefined
+
+        let divergenciaInfo:
+          | { valido: boolean; diferenca: number; alertaSanidade?: string }
+          | undefined
+        let hasKmDivergence = false
+
+        if (!isJointSecondary && typeof pernaKmReal === 'number') {
+          divergenciaInfo = compararKm('perna', roadKmOriginal, 'perna', pernaKmReal)
+          if (divergenciaInfo.valido && divergenciaInfo.diferenca > 0.1001) {
+            hasKmDivergence = true
+          }
+        }
 
         const isDivergent =
           !isJointSecondary &&
@@ -569,6 +578,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           isRedirected,
           isRedirectionPending,
           hasKmDivergence,
+          divergenciaInfo,
           isDivergent,
           isAutoApproved,
           isPendingDecision,
@@ -1328,6 +1338,92 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             </CardDescription>
           </div>
         </CardHeader>
+
+        {/* SEÇÃO SEPARADA [LOTE COMPLETO]: Total viário do lote x GPS do lote usando getLoteCanonico */}
+        <div className="p-4 border-b border-slate-200 bg-slate-50/70">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Badge className="bg-[#0052CC] text-white font-bold text-xs uppercase px-2 py-0.5">
+                [Lote Completo]
+              </Badge>
+              <h4 className="text-xs font-bold text-slate-800">
+                Reconciliação Canônica por Lote de Rota (Viário Total 1x × GPS da Janela)
+              </h4>
+            </div>
+            <span className="text-[11px] text-slate-500 font-medium">
+              Comparação no mesmo escopo (lote × lote) via <code>getLoteCanonico()</code>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {Array.from(
+              auditRows.reduce((acc, r) => {
+                const bKey = r.batchKey || 'lote_avulso'
+                if (!acc.has(bKey)) acc.set(bKey, [])
+                acc.get(bKey)!.push(r)
+                return acc
+              }, new Map<string, typeof auditRows>()),
+            )
+              .slice(0, 6)
+              .map(([bKey, bRows]) => {
+                const batchOrders = bRows.map((r) => r.order)
+                const loteCanonico = getLoteCanonico(batchOrders)
+                // Maior GPS entre as ordens do lote
+                const maxGps = bRows.reduce((max, r) => Math.max(max, r.gpsKm || 0), 0)
+                const loteComp = compararKm('lote', loteCanonico, 'lote', maxGps)
+                const courierName = bRows[0].courier?.name || 'Entregador'
+
+                return (
+                  <div
+                    key={bKey}
+                    className="p-3 bg-white rounded-lg border border-slate-200 shadow-xs space-y-2 text-xs"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900 truncate max-w-[140px]">
+                        {courierName}
+                      </span>
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        {bRows[0].batchDisplay || bKey.slice(0, 10)}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+                      <div className="bg-blue-50/50 p-1.5 rounded border border-blue-100">
+                        <span className="text-[10px] text-slate-500 block">Viário Lote (1x)</span>
+                        <strong className="text-blue-900 text-xs">
+                          {loteCanonico.toFixed(1)} km
+                        </strong>
+                      </div>
+                      <div className="bg-purple-50/50 p-1.5 rounded border border-purple-100">
+                        <span className="text-[10px] text-purple-700 block">GPS Lote (Janela)</span>
+                        <strong className="text-purple-900 text-xs">
+                          {maxGps > 0 ? `${maxGps.toFixed(1)} km` : '—'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px]">
+                      <span className="text-slate-500">{bRows.length} entregas</span>
+                      {maxGps > 0 && loteComp.valido && (
+                        <span
+                          className={`font-mono font-bold ${
+                            loteComp.diferenca <= 0.5
+                              ? 'text-emerald-600'
+                              : loteComp.diferenca <= 2.0
+                                ? 'text-amber-600'
+                                : 'text-rose-600'
+                          }`}
+                        >
+                          Divergência: {loteComp.diferenca.toFixed(1)} km
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+          </div>
+        </div>
+
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -1477,32 +1573,43 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                         {/* Coluna c: Km telemetria (real na rua) */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
-                            <span
-                              className={`font-mono text-sm font-black ${
-                                Math.abs(row.gpsKm - row.roadKm) >= 2.0 && row.gpsKm > 0
-                                  ? 'text-amber-700 dark:text-amber-400'
-                                  : 'text-purple-700 dark:text-purple-300'
-                              }`}
-                            >
-                              {row.gpsKm > 0 ? `${row.gpsKm.toFixed(1)} km` : '-'}
-                            </span>
-                            <span className="text-[10px] text-slate-400 block">
-                              Km telemetria (real na rua)
-                            </span>
-                            <span className="text-[9px] text-slate-500 block">
-                              Fonte: telemetria na rua, conciliada com viário • {row.dateStr}
-                            </span>
-                            {row.gpsKm > 0 && Math.abs(row.gpsKm - row.roadKm) >= 0.5 && (
-                              <span
-                                className={`text-[9px] block font-mono font-bold ${
-                                  row.gpsKm > row.roadKm ? 'text-rose-600' : 'text-emerald-600'
-                                }`}
-                              >
-                                {row.gpsKm > row.roadKm
-                                  ? `+${(row.gpsKm - row.roadKm).toFixed(1)} km`
-                                  : `${(row.gpsKm - row.roadKm).toFixed(1)} km`}
-                              </span>
+                            {typeof row.order.km_real_perna === 'number' &&
+                            Number.isFinite(row.order.km_real_perna) &&
+                            row.order.km_real_perna > 0 ? (
+                              <>
+                                <div className="flex items-center justify-center gap-1">
+                                  <span className="font-mono text-sm font-black text-purple-700 dark:text-purple-300">
+                                    {row.order.km_real_perna.toFixed(1)} km
+                                  </span>
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
+                                  >
+                                    [Perna]
+                                  </Badge>
+                                </div>
+                                <span className="text-[10px] text-slate-400 block">
+                                  Telemetria da perna
+                                </span>
+                                {row.divergenciaInfo?.valido &&
+                                  row.divergenciaInfo.diferenca >= 0.5 && (
+                                    <span
+                                      className={`text-[9px] block font-mono font-bold ${
+                                        row.order.km_real_perna > row.roadKm
+                                          ? 'text-rose-600'
+                                          : 'text-emerald-600'
+                                      }`}
+                                    >
+                                      {row.order.km_real_perna > row.roadKm
+                                        ? `+${row.divergenciaInfo.diferenca.toFixed(1)} km`
+                                        : `-${row.divergenciaInfo.diferenca.toFixed(1)} km`}
+                                    </span>
+                                  )}
+                              </>
+                            ) : (
+                              <span className="font-mono text-sm font-bold text-slate-400">—</span>
                             )}
+                            <span className="text-[9px] text-slate-400 block">{row.dateStr}</span>
                           </div>
                         </td>
 
@@ -1645,11 +1752,18 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                       : '⚠️ Desvio >3km Requer Revisão'}
                                   </Badge>
                                 )}
-                                {row.hasKmDivergence && !row.isRedirected && (
-                                  <Badge className="bg-rose-50 text-rose-700 border-rose-200 font-bold text-[9px] mb-0.5">
-                                    Divergência Viário x GPS (
-                                    {Math.abs(row.gpsKm - row.roadKm).toFixed(1)} km)
-                                  </Badge>
+                                {row.divergenciaInfo?.valido && !row.isRedirected && (
+                                  <div className="space-y-0.5">
+                                    <Badge className="bg-rose-50 text-rose-700 border-rose-200 font-bold text-[9px] mb-0.5">
+                                      Divergência Perna ({row.divergenciaInfo.diferenca.toFixed(1)}{' '}
+                                      km)
+                                    </Badge>
+                                    {row.divergenciaInfo.alertaSanidade && (
+                                      <span className="text-[9px] font-bold text-amber-700 block">
+                                        {row.divergenciaInfo.alertaSanidade}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                                 <div className="flex items-center justify-end gap-1.5">
                                   <Button

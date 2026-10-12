@@ -69,6 +69,7 @@ import {
   makeCustomerSvgIcon,
 } from '@/components/LiveMap'
 import { getCourierRouteColor } from '@/lib/courierRouteColors'
+import { toLatLngSegura } from '@/lib/safeMapOps'
 import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
 import {
@@ -3093,14 +3094,20 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     const courierData = orderCourierInfo
 
     // Coordinates for center: courier lat/lng or customer lat/lng
-    const centerLat =
+    const rawCenterLat =
       courierData?.lat ||
       cust?.lat ||
-      (selectedOrder.start_base_lat ? Number(selectedOrder.start_base_lat) : -22.906847)
-    const centerLng =
+      (selectedOrder.start_base_lat ? Number(selectedOrder.start_base_lat) : -22.6977499)
+    const rawCenterLng =
       courierData?.lng ||
       cust?.lng ||
-      (selectedOrder.start_base_lng ? Number(selectedOrder.start_base_lng) : -43.172896)
+      (selectedOrder.start_base_lng ? Number(selectedOrder.start_base_lng) : -43.2936013)
+    const safeCenter = toLatLngSegura(rawCenterLat, rawCenterLng) || {
+      lat: -22.6977499,
+      lng: -43.2936013,
+    }
+    const centerLat = safeCenter.lat
+    const centerLng = safeCenter.lng
     drawerCenterRef.current = { lat: centerLat, lng: centerLng }
 
     let miniMap = drawerMapInstance
@@ -3194,13 +3201,13 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     const pathCoordinates: any[] = []
 
     // 1. Base / Partida pin if available
-    if (selectedOrder.start_base_lat && selectedOrder.start_base_lng) {
-      const basePos = { lat: selectedOrder.start_base_lat, lng: selectedOrder.start_base_lng }
-      bounds.extend(basePos)
-      pathCoordinates.push(basePos)
+    const safeBasePos = toLatLngSegura(selectedOrder.start_base_lat, selectedOrder.start_base_lng)
+    if (safeBasePos) {
+      bounds.extend(safeBasePos)
+      pathCoordinates.push(safeBasePos)
 
       const baseMarker = new win.google.maps.Marker({
-        position: basePos,
+        position: safeBasePos,
         map: miniMap,
         title: `Partida / Base: ${selectedOrder.start_base_name || 'Base Central'}`,
         icon: {
@@ -3213,6 +3220,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         },
       })
       drawerMarkersRef.current.push(baseMarker)
+    } else if (selectedOrder.start_base_lat || selectedOrder.start_base_lng) {
+      console.warn(
+        '[ControlTower Drawer] Base pin ignorado por coordenadas inválidas:',
+        selectedOrder.start_base_lat,
+        selectedOrder.start_base_lng,
+      )
     }
 
     // Helpers de SVG para o mini mapa do Drawer (reaproveita os geradores de LiveMap)
@@ -3244,32 +3257,46 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     // 2. Entregador pin
     if (courierData && courierData.hasRouteStarted) {
-      const courierPos = { lat: courierData.lat, lng: courierData.lng }
-      bounds.extend(courierPos)
-      pathCoordinates.push(courierPos)
+      const safeCourierPos = toLatLngSegura(courierData.lat, courierData.lng)
+      if (safeCourierPos) {
+        bounds.extend(safeCourierPos)
+        pathCoordinates.push(safeCourierPos)
 
-      const courierMarker = new win.google.maps.Marker({
-        position: courierPos,
-        map: miniMap,
-        title: `Entregador: ${courierData.courier.name} (${formatVehicle(courierData.courier.vehicle_type)})`,
-        icon: makeMiniCourierSvg(courierData.courier.vehicle_type, courierDrawerColor.stroke),
-      })
-      drawerMarkersRef.current.push(courierMarker)
+        const courierMarker = new win.google.maps.Marker({
+          position: safeCourierPos,
+          map: miniMap,
+          title: `Entregador: ${courierData.courier.name} (${formatVehicle(courierData.courier.vehicle_type)})`,
+          icon: makeMiniCourierSvg(courierData.courier.vehicle_type, courierDrawerColor.stroke),
+        })
+        drawerMarkersRef.current.push(courierMarker)
+      } else {
+        console.warn(
+          '[ControlTower Drawer] Courier pin ignorado por coordenadas inválidas:',
+          courierData.lat,
+          courierData.lng,
+        )
+      }
     }
 
     // 3. Cliente destino pin (highlighted com nome visível e número de sequência na mesma cor do entregador)
-    if (cust?.lat && cust?.lng) {
-      const clientPos = { lat: cust.lat, lng: cust.lng }
-      bounds.extend(clientPos)
-      pathCoordinates.push(clientPos)
+    const safeClientPos = toLatLngSegura(cust?.lat, cust?.lng)
+    if (safeClientPos) {
+      bounds.extend(safeClientPos)
+      pathCoordinates.push(safeClientPos)
 
       const clientMarker = new win.google.maps.Marker({
-        position: clientPos,
+        position: safeClientPos,
         map: miniMap,
-        title: `Cliente: ${cust.name}`,
-        icon: makeMiniCustomerSvg(cust.name, selectedOrder.sequence, courierDrawerColor.stroke),
+        title: `Cliente: ${cust?.name || 'Cliente'}`,
+        icon: makeMiniCustomerSvg(cust?.name, selectedOrder.sequence, courierDrawerColor.stroke),
       })
       drawerMarkersRef.current.push(clientMarker)
+    } else if (cust?.lat || cust?.lng) {
+      console.warn(
+        '[ControlTower Drawer] Cliente pin ignorado por coordenadas inválidas:',
+        cust?.lat,
+        cust?.lng,
+      )
     }
 
     // Limpar polilinhas antigas de desvio
@@ -3282,8 +3309,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     // Se temos a geometria de ruas do OSRM, usamos a sequência completa de ruas; caso contrário os pontos chave
     const blueLinePoints =
       streetRoute && streetRoute.coordinates.length >= 2
-        ? streetRoute.coordinates.map((c) => ({ lat: c.lat, lng: c.lng }))
-        : pathCoordinates
+        ? (streetRoute.coordinates.map((c) => toLatLngSegura(c.lat, c.lng)).filter(Boolean) as {
+            lat: number
+            lng: number
+          }[])
+        : (pathCoordinates.map((p) => toLatLngSegura(p.lat, p.lng)).filter(Boolean) as {
+            lat: number
+            lng: number
+          }[])
 
     if (blueLinePoints.length >= 2) {
       blueLinePoints.forEach((p) => bounds.extend(p))
@@ -3397,24 +3430,29 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
       if (isDeviatedStrict) {
         // LINHA VERMELHA do desvio: liga a posição atual do entregador ao ponto correspondente na rota azul
-        const deviationPath = [courierPoint, nearest.nearestPoint]
+        const rawDeviationPath = [courierPoint, nearest.nearestPoint]
+        const deviationPath = rawDeviationPath
+          .map((p) => toLatLngSegura(p.lat, p.lng))
+          .filter(Boolean) as { lat: number; lng: number }[]
 
-        const deviationPolyline = new win.google.maps.Polyline({
-          path: deviationPath,
-          geodesic: true,
-          strokeColor: '#EF4444', // LINHA VERMELHA DE DESVIO
-          strokeOpacity: 1,
-          strokeWeight: 4,
-          icons: [
-            {
-              icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-              offset: '0',
-              repeat: '10px',
-            },
-          ],
-        })
-        deviationPolyline.setMap(miniMap)
-        drawerDeviationPolylineRef.current = deviationPolyline
+        if (deviationPath.length >= 2) {
+          const deviationPolyline = new win.google.maps.Polyline({
+            path: deviationPath,
+            geodesic: true,
+            strokeColor: '#EF4444', // LINHA VERMELHA DE DESVIO
+            strokeOpacity: 1,
+            strokeWeight: 4,
+            icons: [
+              {
+                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                offset: '0',
+                repeat: '10px',
+              },
+            ],
+          })
+          deviationPolyline.setMap(miniMap)
+          drawerDeviationPolylineRef.current = deviationPolyline
+        }
       }
     } else {
       setDrawerDeviationInfo(null)
@@ -3477,7 +3515,21 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     window.location.href = `tel:${phone.replace(/\D/g, '')}`
   }
 
-  const copyTracking = (code: string) => {
+  const copyTracking = (code: string, order?: OrderRecord) => {
+    // Validar pin do cliente se order foi fornecido ou a partir do selectedOrder
+    const targetOrder = order || (selectedOrder?.tracking_code === code ? selectedOrder : undefined)
+    const custLat = targetOrder?.expand?.customer_id?.lat ?? targetOrder?.end_address_lat
+    const custLng = targetOrder?.expand?.customer_id?.lng ?? targetOrder?.end_address_lng
+
+    if (targetOrder && !toLatLngSegura(custLat, custLng)) {
+      toast({
+        title: 'Cliente sem pin válido',
+        description: 'O cliente não possui coordenadas geográficas válidas cadastradas.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const url = `${origin}/track/${code}`
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -3493,6 +3545,17 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
   // Compartilhamento com o cliente via WhatsApp com mensagem pronta
   const shareTrackingViaWhatsApp = (order: OrderRecord) => {
+    const custLat = order.expand?.customer_id?.lat ?? order.end_address_lat
+    const custLng = order.expand?.customer_id?.lng ?? order.end_address_lng
+    if (!toLatLngSegura(custLat, custLng)) {
+      toast({
+        title: 'Cliente sem pin válido',
+        description: 'O cliente não possui coordenadas geográficas válidas cadastradas.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const url = `${origin}/track/${order.tracking_code}`
     const custName = order.expand?.customer_id?.name || 'Cliente'
