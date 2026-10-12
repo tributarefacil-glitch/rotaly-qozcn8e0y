@@ -1569,9 +1569,17 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             : false
 
           const isStopped = typeof item.speed === 'number' && item.speed <= 2
+          // FRENTE 1: Suprimir parada fora do local quando a rota estiver encerrada,
+          // todas as entregas concluídas, ou dentro da janela de graça de 5 min pós-entrega
+          const isGracePeriodOrRouteEnded = isCourierRecentlyFinished(item.courier.id)
+          const allOrdersCompleted =
+            uniqueCourierRouteOrders.length > 0 && pendingStopsList.length === 0
+
           const isUnexpectedStop =
             !isGpsFrozen &&
             hasActiveRouteStarted &&
+            !isGracePeriodOrRouteEnded &&
+            !allOrdersCompleted &&
             isStopped &&
             !isNearBase &&
             !isNearNextTarget &&
