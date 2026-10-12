@@ -106,7 +106,7 @@ import {
   isOrderIssueToday,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
-import { isOrderInActiveRoute } from '@/lib/activeRouteHelper'
+import { isOrderInActiveRoute, isCourierRecentlyFinished } from '@/lib/activeRouteHelper'
 import type { AppSettingsRecord } from '@/types/delivery'
 import {
   ControlTowerDeliveredNotice,
@@ -1571,31 +1571,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const isStopped = typeof item.speed === 'number' && item.speed <= 2
           // FRENTE 1: Suprimir parada fora do local quando a rota estiver encerrada,
           // todas as entregas concluídas, ou dentro da janela de graça de 5 min pós-entrega
-          // Helper local de verificação de encerramento recente
-          const isGracePeriodOrRouteEnded = (() => {
-            const now = Date.now()
-            const gracePeriodMs = 5 * 60 * 1000 // 5 min de tolerância após última entrega
-            // Se algum pedido ativo tem route_finished = true, rota foi encerrada
-            const anyFinished = activeRouteOrders.some((o) => o.route_finished === true)
-            if (anyFinished) return true
-
-            // Se não há pedidos pendentes, verificar se a última entrega foi há menos de 5 min
-            if (pendingStopsList.length === 0 && activeRouteOrders.length > 0) {
-              const deliveredOrders = activeRouteOrders.filter((o) => o.status === 'delivered')
-              if (deliveredOrders.length > 0) {
-                const lastDeliveredOrder = deliveredOrders[deliveredOrders.length - 1]
-                const delivTs = parseSafeTimestamp(
-                  (lastDeliveredOrder as any)?.delivery_timestamp ||
-                    lastDeliveredOrder.updated ||
-                    lastDeliveredOrder.created,
-                )
-                if (delivTs > 0 && now - delivTs <= gracePeriodMs) {
-                  return true
-                }
-              }
-            }
-            return false
-          })()
+          // Helper canônico compartilhado com o backend e o CourierApp
+          const isGracePeriodOrRouteEnded = isCourierRecentlyFinished(
+            item.courier.id,
+            activeRouteOrders.length > 0 ? activeRouteOrders : todayOrders,
+          )
 
           const allOrdersCompleted = activeRouteOrders.length > 0 && pendingStopsList.length === 0
 

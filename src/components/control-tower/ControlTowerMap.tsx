@@ -257,6 +257,20 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                       </span>
                                     )
                                   }
+                                  // Alerta / Indicador visual de parada em tempo real
+                                  if (diag.isStopped) {
+                                    return (
+                                      <span
+                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold border ${
+                                          diag.stoppedMinutes >= 5
+                                            ? 'bg-rose-500/25 text-rose-300 border-rose-500/60 animate-pulse'
+                                            : 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                        }`}
+                                      >
+                                        🛑 {diag.movementBadgeLabel}
+                                      </span>
+                                    )
+                                  }
                                 }
 
                                 const lTime = parseSafeTimestamp(item.location_timestamp)
@@ -657,6 +671,20 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                     return (
                                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
                                         ⚠️ GPS desatualizado ({diag.minutesSinceLastPing}min)
+                                      </span>
+                                    )
+                                  }
+                                  // Alerta / Indicador visual de parada em tempo real
+                                  if (diag.isStopped) {
+                                    return (
+                                      <span
+                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold border ${
+                                          diag.stoppedMinutes >= 5
+                                            ? 'bg-rose-500/25 text-rose-300 border-rose-500/60 animate-pulse'
+                                            : 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                                        }`}
+                                      >
+                                        🛑 {diag.movementBadgeLabel}
                                       </span>
                                     )
                                   }

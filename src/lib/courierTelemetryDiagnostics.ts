@@ -159,18 +159,18 @@ export function diagnoseCourierTelemetry(
     movementBadgeLabel = 'Aguardando coordenadas'
   } else {
     // Determinar se está parado:
-    // Se a velocidade atual é < 3 km/h ou se os pontos recentes não mudaram mais que ~30 metros
-    const isInstantSpeedZero = speedKmh <= 2
+    // Regra canônica: speed < 2 km/h E deslocamento < 50m desde o ping de referência
+    const isInstantSpeedZero = speedKmh < 2
 
-    // Investigar histórico consecutivo de pontos para calcular tempo parado
+    // Investigar histórico consecutivo de pontos para calcular tempo parado contínuo
     // Ponto mais recente de referência
     const refLat = finalLat
     const refLng = finalLng
     const refTime = lastSignalTimestamp || now
 
-    // Percorrer pontos consecutivos mais antigos para encontrar o primeiro momento em que parou nesse raio de ~30m
+    // Percorrer pontos consecutivos mais antigos para encontrar o primeiro momento em que parou no raio < 50m
     let consecutiveStopStartTime = refTime
-    let consecutivePointsCount = 0
+    let isContinuousStop = true
 
     for (let i = 0; i < sortedLocs.length; i++) {
       const loc = sortedLocs[i]
@@ -178,14 +178,14 @@ export function diagnoseCourierTelemetry(
       if (!locTime) break
 
       const distM = haversineDistanceMeters(refLat, refLng, loc.lat, loc.lng)
-      const locSpeed = Math.round(loc.speed || 0)
+      const locSpeed = typeof loc.speed === 'number' ? loc.speed : 0
 
-      // Se deslocamento < 35 metros (tolerância de precisão GPS) ou velocidade quase zero
-      if (distM <= 35 || locSpeed <= 2) {
+      // Entregador PARADO quando speed < 2 km/h E deslocamento < 50 m desde o ping de referência
+      if (distM < 50 && locSpeed < 2) {
         consecutiveStopStartTime = locTime
-        consecutivePointsCount++
       } else {
-        // Encontrou um ponto em que ele estava fora desse raio (estava em movimento)
+        // Encontrou um ponto em que estava fora do raio ou com velocidade >= 2 km/h
+        isContinuousStop = i === 0 ? false : true
         break
       }
     }
@@ -198,21 +198,21 @@ export function diagnoseCourierTelemetry(
       stoppedMinutes = calculatedStoppedMin
       movementBadgeVariant = 'stopped'
       if (stoppedMinutes < 60) {
-        movementBadgeLabel = `Parado há ${stoppedMinutes} min`
+        movementBadgeLabel = `Parado há ${stoppedMinutes} min · 0 km/h`
       } else {
         const hrs = Math.floor(stoppedMinutes / 60)
         const remMin = stoppedMinutes % 60
-        movementBadgeLabel = `Parado há ${hrs}h ${remMin > 0 ? `${remMin}min` : ''}`
+        movementBadgeLabel = `Parado há ${hrs}h ${remMin > 0 ? `${remMin}min` : ''} · 0 km/h`
       }
     } else if (isInstantSpeedZero) {
       isStopped = true
       stoppedMinutes = 0
       movementBadgeVariant = 'stopped'
-      movementBadgeLabel = 'Parado recentemente (< 1 min)'
+      movementBadgeLabel = 'Parado há 0 min · 0 km/h'
     } else {
       isStopped = false
       movementBadgeVariant = 'moving'
-      movementBadgeLabel = `Em movimento • ${speedKmh} km/h`
+      movementBadgeLabel = `Em movimento · ${speedKmh} km/h`
     }
   }
 

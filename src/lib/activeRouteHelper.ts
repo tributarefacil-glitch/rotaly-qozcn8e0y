@@ -58,3 +58,66 @@ export function hasCourierActiveRoute(
 ): boolean {
   return getActiveRouteOrdersForCourier(courierId, allOrders, options).length > 0
 }
+
+/**
+ * Retorna true quando:
+ * - route_finished = true no lote vigente do courier OU
+ * - todas as entregas do lote estão concluídas (status final) OU
+ * - dentro da janela de graça de 5 min após a última entrega concluída.
+ *
+ * Previne falsos positivos de parada/desvio após o término da rota ou enquanto o entregador
+ * acabou de entregar o último cliente (ex.: caso ANDREIA CRISTINA).
+ */
+export function isCourierRecentlyFinished(
+  courierId: string,
+  allOrders: OrderRecord[],
+  nowMs: number = Date.now(),
+  gracePeriodMs: number = 5 * 60 * 1000,
+): boolean {
+  if (!courierId) return false
+
+  // Obter pedidos do courier que pertençam ao lote do dia ou tenham sido iniciados
+  const courierOrders = allOrders.filter(
+    (o) => o.courier_id === courierId && (o.route_started === true || o.route_finished === true),
+  )
+
+  if (courierOrders.length === 0) return false
+
+  // Se qualquer pedido do lote está marcado como route_finished === true
+  const anyRouteFinished = courierOrders.some((o) => o.route_finished === true)
+  if (anyRouteFinished) return true
+
+  // Verificar se há paradas pendentes no lote
+  const pendingOrders = courierOrders.filter(
+    (o) =>
+      o.status !== 'delivered' &&
+      o.status !== 'cancelled' &&
+      o.status !== 'address_error' &&
+      o.status !== 'client_absent',
+  )
+
+  const deliveredOrders = courierOrders.filter((o) => o.status === 'delivered')
+
+  // Se todas as paradas do lote foram concluídas
+  if (pendingOrders.length === 0 && deliveredOrders.length > 0) {
+    return true
+  }
+
+  // Janela de graça de 5 minutos após a última entrega realizada
+  if (deliveredOrders.length > 0) {
+    let latestDeliveryTs = 0
+    for (const d of deliveredOrders) {
+      const raw = (d as any).delivery_timestamp || d.actual_arrival || d.updated || d.created
+      const ts = raw ? new Date(raw).getTime() : 0
+      if (!isNaN(ts) && ts > latestDeliveryTs) {
+        latestDeliveryTs = ts
+      }
+    }
+
+    if (latestDeliveryTs > 0 && nowMs - latestDeliveryTs <= gracePeriodMs) {
+      return true
+    }
+  }
+
+  return false
+}
