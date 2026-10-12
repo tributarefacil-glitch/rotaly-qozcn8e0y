@@ -98,6 +98,10 @@ export interface ActiveRouteCourierData {
   problemCount: number
   finishedCount: number
   hasPendingReturnToBase: boolean
+  isReturnedToBase?: boolean
+  returnedToBaseLabel?: string
+  routeFinishedAtFormatted?: string
+  deliveredTotalRatio?: string
   nextOrder: OrderRecord | null
   lastDelivered: OrderRecord | null
   vehicle: string

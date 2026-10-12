@@ -1441,88 +1441,109 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                         </span>
                       </div>
 
-                      {/* BADGES DESTACADOS: ESTADO DO GPS E SITUAÇÃO DE MOVIMENTO */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {/* Estado do GPS */}
-                        <div
-                          className={`p-2.5 rounded-lg border ${diag.gpsBadgeColor.bg} ${diag.gpsBadgeColor.border} flex flex-col justify-between`}
-                        >
-                          <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                            Sinal do GPS
-                          </span>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span
-                              className={`h-2.5 w-2.5 rounded-full shrink-0 ${diag.gpsBadgeColor.dot}`}
-                            />
-                            <span
-                              className={`font-bold text-xs leading-snug ${diag.gpsBadgeColor.text}`}
-                            >
-                              {diag.gpsBadgeLabel}
+                      {/* SITUAÇÃO EM TEMPO REAL: SE RETORNOU À BASE, EXIBIR ESTADO DE RETORNO SEM BADGES DE MOVIMENTO/VELOCIDADE */}
+                      {data?.isReturnedToBase ? (
+                        <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-emerald-300">
+                          <div className="flex items-center gap-2">
+                            <span className="h-3 w-3 rounded-full bg-emerald-400 shrink-0" />
+                            <span className="font-bold text-sm text-emerald-200">
+                              {data.returnedToBaseLabel || '✅ Retornou à base — rota finalizada'}
                             </span>
                           </div>
+                          <p className="text-emerald-400/80 text-xs mt-1">
+                            Lote concluído ({data.deliveredTotalRatio || 'todas as entregas'}).
+                          </p>
                         </div>
+                      ) : (
+                        <>
+                          {/* BADGES DESTACADOS: ESTADO DO GPS E SITUAÇÃO DE MOVIMENTO */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {/* Estado do GPS */}
+                            <div
+                              className={`p-2.5 rounded-lg border ${diag.gpsBadgeColor.bg} ${diag.gpsBadgeColor.border} flex flex-col justify-between`}
+                            >
+                              <span className="text-[10px] text-slate-400 block uppercase font-bold">
+                                Sinal do GPS
+                              </span>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span
+                                  className={`h-2.5 w-2.5 rounded-full shrink-0 ${diag.gpsBadgeColor.dot}`}
+                                />
+                                <span
+                                  className={`font-bold text-xs leading-snug ${diag.gpsBadgeColor.text}`}
+                                >
+                                  {diag.gpsBadgeLabel}
+                                </span>
+                              </div>
+                            </div>
 
-                        {/* Movimento vs Parado */}
-                        <div
-                          className={`p-2.5 rounded-lg border flex flex-col justify-between ${
-                            diag.movementBadgeVariant === 'stopped'
-                              ? diag.stoppedMinutes >= 5
-                                ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
-                                : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
-                              : diag.movementBadgeVariant === 'moving'
-                                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
-                                : 'bg-slate-800/40 border-slate-700 text-slate-400'
-                          }`}
-                        >
-                          <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                            Deslocamento
-                          </span>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span
-                              className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                            {/* Movimento vs Parado */}
+                            <div
+                              className={`p-2.5 rounded-lg border flex flex-col justify-between ${
                                 diag.movementBadgeVariant === 'stopped'
                                   ? diag.stoppedMinutes >= 5
-                                    ? 'bg-rose-400 animate-pulse'
-                                    : 'bg-amber-400'
+                                    ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
+                                    : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
                                   : diag.movementBadgeVariant === 'moving'
-                                    ? 'bg-emerald-400 animate-pulse'
-                                    : 'bg-slate-500'
+                                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                                    : 'bg-slate-800/40 border-slate-700 text-slate-400'
                               }`}
-                            />
-                            <span className="font-bold text-xs leading-snug">
-                              {diag.movementBadgeLabel}
-                            </span>
+                            >
+                              <span className="text-[10px] text-slate-400 block uppercase font-bold">
+                                Deslocamento
+                              </span>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span
+                                  className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                                    diag.movementBadgeVariant === 'stopped'
+                                      ? diag.stoppedMinutes >= 5
+                                        ? 'bg-rose-400 animate-pulse'
+                                        : 'bg-amber-400'
+                                      : diag.movementBadgeVariant === 'moving'
+                                        ? 'bg-emerald-400 animate-pulse'
+                                        : 'bg-slate-500'
+                                  }`}
+                                />
+                                <span className="font-bold text-xs leading-snug">
+                                  {diag.movementBadgeLabel}
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
 
-                      {/* Informações adicionais do sinal (Velocidade, Bateria, Acurácia) */}
-                      <div className="grid grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
-                        <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
-                          <span className="text-[9.5px] text-slate-400 block font-sans">
-                            Velocidade
-                          </span>
-                          <span className="font-bold text-white text-xs">{diag.speedKmh} km/h</span>
-                        </div>
-                        <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
-                          <span className="text-[9.5px] text-slate-400 block font-sans">
-                            Bateria Celular
-                          </span>
-                          <span className="font-bold text-white text-xs">
-                            {typeof data?.battery_level === 'number' && data.battery_level > 0
-                              ? `🔋 ${Math.round(data.battery_level)}%`
-                              : '🔋 —'}
-                          </span>
-                        </div>
-                        <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
-                          <span className="text-[9.5px] text-slate-400 block font-sans">
-                            Precisão GPS
-                          </span>
-                          <span className="font-bold text-white text-xs">
-                            {diag.accuracyMeters ? `±${Math.round(diag.accuracyMeters)}m` : 'Alta'}
-                          </span>
-                        </div>
-                      </div>
+                          {/* Informações adicionais do sinal (Velocidade, Bateria, Acurácia) */}
+                          <div className="grid grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
+                            <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
+                              <span className="text-[9.5px] text-slate-400 block font-sans">
+                                Velocidade
+                              </span>
+                              <span className="font-bold text-white text-xs">
+                                {diag.speedKmh} km/h
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
+                              <span className="text-[9.5px] text-slate-400 block font-sans">
+                                Bateria Celular
+                              </span>
+                              <span className="font-bold text-white text-xs">
+                                {typeof data?.battery_level === 'number' && data.battery_level > 0
+                                  ? `🔋 ${Math.round(data.battery_level)}%`
+                                  : '🔋 —'}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">
+                              <span className="text-[9.5px] text-slate-400 block font-sans">
+                                Precisão GPS
+                              </span>
+                              <span className="font-bold text-white text-xs">
+                                {diag.accuracyMeters
+                                  ? `±${Math.round(diag.accuracyMeters)}m`
+                                  : 'Alta'}
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      )}
 
                       {/* LOCALIZAÇÃO ATUAL: ENDEREÇO REVERSO E COORDENADAS */}
                       <div className="p-2.5 rounded-lg bg-[#0C152F] border border-slate-800 space-y-1">

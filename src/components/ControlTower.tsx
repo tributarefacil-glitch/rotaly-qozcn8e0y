@@ -1258,10 +1258,64 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       const pendingStops = uniqueCourierRouteOrders.filter((o) => o.status !== 'delivered')
       const isReturningToBase = hasRouteStarted && pendingStops.length === 0
 
+      // Avaliação de rota recém finalizada com todos pedidos delivered e route_finished = true
+      const allAssigned =
+        uniqueActiveBatchOrders.length > 0
+          ? uniqueActiveBatchOrders
+          : uniqueActiveTransitOrders.length > 0
+            ? uniqueActiveTransitOrders
+            : courierLocalOrders
+
+      // Encontrar lotes do entregador no dia
+      const finishedCandidateOrders = allAssigned.filter(
+        (o) => o.route_started === true && o.status !== 'cancelled',
+      )
+
+      // Agrupar por route_batch_key ou tratar lote atual
+      let isReturnedToBase = false
+      let returnedToBaseLabel = ''
+      let routeFinishedAtFormatted = ''
+      let deliveredTotalRatio = ''
+
+      if (finishedCandidateOrders.length > 0) {
+        const allDelivered = finishedCandidateOrders.every((o) => o.status === 'delivered')
+        const allFinished = finishedCandidateOrders.every((o) => o.route_finished === true)
+
+        if (allDelivered && allFinished) {
+          isReturnedToBase = true
+          // Determinar horário de término em America/Sao_Paulo a partir de route_finished_at
+          const finishedAtTimestamps = finishedCandidateOrders
+            .map((o) => (o.route_finished_at ? parseSafeTimestamp(o.route_finished_at) : 0))
+            .filter((t) => t > 0)
+            .sort((a, b) => b - a)
+
+          const latestFinishedTimestamp = finishedAtTimestamps[0] || Date.now()
+          try {
+            routeFinishedAtFormatted = new Intl.DateTimeFormat('pt-BR', {
+              timeZone: 'America/Sao_Paulo',
+              hour: '2-digit',
+              minute: '2-digit',
+            }).format(new Date(latestFinishedTimestamp))
+          } catch {
+            routeFinishedAtFormatted = '--:--'
+          }
+
+          const deliveredCount = finishedCandidateOrders.filter(
+            (o) => o.status === 'delivered',
+          ).length
+          const totalOrdersCount = finishedCandidateOrders.length
+          deliveredTotalRatio = `${deliveredCount}/${totalOrdersCount}`
+          returnedToBaseLabel = `✅ Retornou à base — rota finalizada ${routeFinishedAtFormatted} (${deliveredTotalRatio} entregas)`
+        }
+      }
+
       let statusColor: 'green' | 'yellow' | 'red' = 'green'
       let statusLabel = 'Disponível — rota não iniciada'
 
-      if (problemOrders.length > 0) {
+      if (isReturnedToBase) {
+        statusColor = 'green'
+        statusLabel = returnedToBaseLabel
+      } else if (problemOrders.length > 0) {
         statusColor = 'red'
         statusLabel = 'Ocorrência na Rota'
       } else if (isReturningToBase) {
@@ -1297,6 +1351,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         offline_buffered: latestLoc?.offline_buffered,
         accuracy: latestLoc?.accuracy,
         hasRouteStarted,
+        isReturnedToBase,
+        returnedToBaseLabel,
+        routeFinishedAtFormatted,
+        deliveredTotalRatio,
         statusColor,
         statusLabel,
         activeOrdersCount: inTransitOrders.length + pendingOrders.length,
@@ -1308,21 +1366,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         nextOrder,
         lastDelivered,
         vehicle: courier.vehicle_type || 'moto',
-        allAssignedOrders:
-          uniqueActiveBatchOrders.length > 0
-            ? uniqueActiveBatchOrders
-            : uniqueActiveTransitOrders.length > 0
-              ? uniqueActiveTransitOrders
-              : courierLocalOrders,
+        allAssignedOrders: allAssigned,
       }
     })
   }, [couriers, locations, todayOrders, globalInTransitOrders])
 
-  // REQUISITO DEFINITIVO: Entregador em rota NUNCA é expulso por falta de ping/oscilação de GPS.
-  // Status "Em Rota" e contadores derivam estritamente das ordens ativas:
-  // (route_started === true && route_finished !== true && status !== 'cancelled', agrupado por courier_id).
-  // Sem ping recente ou GPS com perda de sinal: entregador é MANTIDO na lista e no mapa na última
-  // posição conhecida, exibindo badge "🔴 GPS sem sinal" ou "⚠️ GPS desatualizado".
+  // REQUISITO DEFINITIVO:
+  // - Quando TODOS os pedidos do lote do entregador estiverem status='delivered' E route_finished=true,
+  //   remover o entregador de activeRouteCouriers e do badge "🛵 Em Rota (N)".
+  // - Entregador em rota em andamento (route_started === true && route_finished !== true && status !== 'cancelled')
+  //   NUNCA é expulso por falta de ping/oscilação de GPS.
   const activeRouteCouriers = useMemo(() => {
     // Conjunto de courier_ids com pedidos em rota ativa (global do dia ou local)
     const activeRouteCourierIdSet = new Set<string>()
@@ -1349,6 +1402,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     })
 
     return allCourierData.filter((c) => {
+      // Se todos os pedidos do lote estão status='delivered' e route_finished=true,
+      // remover de activeRouteCouriers e do badge "🛵 Em Rota (N)"
+      if (c.isReturnedToBase) return false
+
       // 1. Deve ter rota iniciada em andamento (por orders) OU sinalizar hasRouteStarted
       const hasActiveOrders = activeRouteCourierIdSet.has(c.courier.id)
       if (!hasActiveOrders && !c.hasRouteStarted) return false
@@ -2603,11 +2660,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         }
       })
     } else {
-      // Modo 'in_transit': Entregadores ativos + destinos em trânsito/pendentes
-      // Pins: Entregadores com rota iniciada com interpolação suave (transição animada ~2-3s)
-      const currentCourierIds = new Set(activeRouteCouriers.map((c) => c.courier.id))
+      // Modo 'in_transit': Entregadores ativos + destinos em trânsito/pendentes + entregadores que retornaram à base
+      const couriersToDisplay = [
+        ...activeRouteCouriers,
+        ...allCourierData.filter(
+          (c) => c.isReturnedToBase && MapDataService.cleanCoords(c.lat, c.lng),
+        ),
+      ]
+      const currentCourierIds = new Set(couriersToDisplay.map((c) => c.courier.id))
 
-      // Limpar marcadores de entregadores que não estão mais ativos
+      // Limpar marcadores de entregadores que não estão mais ativos nem em retorno
       courierMarkersMapRef.current.forEach((marker, cId) => {
         if (!currentCourierIds.has(cId)) {
           marker.setMap(null)
@@ -2620,7 +2682,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         }
       })
 
-      activeRouteCouriers.forEach((item) => {
+      couriersToDisplay.forEach((item) => {
         const targetPos = MapDataService.cleanCoords(item.lat, item.lng)
         if (!targetPos) return
         if (safeExtendBounds(bounds, targetPos)) {
@@ -2629,23 +2691,29 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
         const courierColor = getCourierRouteColor(item.courier.id)
         const routeInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
-        const isDeviated = routeInfo?.isDeviated ?? false
-        const isStoppedOut = routeInfo?.isUnexpectedStop ?? false
+        const isDeviated = !item.isReturnedToBase && (routeInfo?.isDeviated ?? false)
+        const isStoppedOut = !item.isReturnedToBase && (routeInfo?.isUnexpectedStop ?? false)
 
-        // Cor do marcador do entregador: destaque vermelho para desvio, âmbar para parada fora do local, ou cor estável do entregador
-        const pinColor = isDeviated
-          ? '#EF4444'
-          : isStoppedOut
-            ? '#F59E0B'
-            : item.statusColor === 'red'
-              ? '#EF4444'
-              : courierColor.stroke
+        // Card/pin do mapa vira estado de retorno:
+        // "✅ Retornou à base — rota finalizada HH:mm (X/X entregas)",
+        // SEM badges de movimento ("Parado há X min", velocidade 0 km/h, desvios).
+        const pinColor = item.isReturnedToBase
+          ? '#10B981'
+          : isDeviated
+            ? '#EF4444'
+            : isStoppedOut
+              ? '#F59E0B'
+              : item.statusColor === 'red'
+                ? '#EF4444'
+                : courierColor.stroke
 
-        const statusTag = isDeviated
-          ? `⚠️ [DESVIO DETECTADO: ${routeInfo?.deviationMeters || 0}m]`
-          : isStoppedOut
-            ? '⛔ [PARADA FORA DO LOCAL]'
-            : '[Em Rota]'
+        const statusTag = item.isReturnedToBase
+          ? `[${item.returnedToBaseLabel || 'Retornou à base'}]`
+          : isDeviated
+            ? `⚠️ [DESVIO DETECTADO: ${routeInfo?.deviationMeters || 0}m]`
+            : isStoppedOut
+              ? '⛔ [PARADA FORA DO LOCAL]'
+              : '[Em Rota]'
 
         const vehicleLabel = getVehicleLabel(item.vehicle)
         const vehicleEmoji = getVehicleEmoji(item.vehicle)
@@ -2665,7 +2733,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           item.offline_buffered,
         )
         let gpsPinBadge = ''
-        if (item.hasRouteStarted) {
+        if (!item.isReturnedToBase && item.hasRouteStarted) {
           if (courierDiag.minutesSinceLastPing > 10 || courierDiag.gpsState === 'no_signal') {
             gpsPinBadge = ' [🔴 GPS sem sinal]'
           } else if (
@@ -2905,9 +2973,19 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 : ''
           }
 
-          <div style="background-color: ${courierDiag.movementBadgeVariant === 'stopped' ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${courierDiag.movementBadgeVariant === 'stopped' ? '#fde68a' : '#bbf7d0'}; border-radius: 6px; padding: 4px 6px; margin-top: 4px; font-size: 10.5px; font-weight: 700; color: ${courierDiag.movementBadgeVariant === 'stopped' ? '#b45309' : '#15803d'};">
-            ${courierDiag.movementBadgeLabel}
-          </div>
+          ${
+            item.isReturnedToBase
+              ? `
+            <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 6px; padding: 5px 7px; margin-top: 4px; font-size: 10.5px; font-weight: 700; color: #047857;">
+              ${item.returnedToBaseLabel || '✅ Retornou à base — rota finalizada'}
+            </div>
+          `
+              : `
+            <div style="background-color: ${courierDiag.movementBadgeVariant === 'stopped' ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${courierDiag.movementBadgeVariant === 'stopped' ? '#fde68a' : '#bbf7d0'}; border-radius: 6px; padding: 4px 6px; margin-top: 4px; font-size: 10.5px; font-weight: 700; color: ${courierDiag.movementBadgeVariant === 'stopped' ? '#b45309' : '#15803d'};">
+              ${courierDiag.movementBadgeLabel}
+            </div>
+          `
+          }
         </div>
       `
           // Exibe inicialmente com carregando/fallback se demorar

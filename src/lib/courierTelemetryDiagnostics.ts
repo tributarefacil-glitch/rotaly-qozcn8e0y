@@ -143,7 +143,7 @@ export function diagnoseCourierTelemetry(
   // 2. TEMPO PARADO vs EM MOVIMENTO
   // Se não temos coordenadas ou nunca houve sinal
   const rawSpeed = typeof currentSpeed === 'number' ? currentSpeed : (latestLoc?.speed ?? 0)
-  const speedKmh = Math.max(0, Math.round(rawSpeed))
+  let speedKmh = Math.max(0, Math.round(rawSpeed))
 
   let isStopped = false
   let stoppedMinutes = 0
@@ -158,6 +158,30 @@ export function diagnoseCourierTelemetry(
     movementBadgeVariant = 'idle'
     movementBadgeLabel = 'Aguardando coordenadas'
   } else {
+    // Suavização de ruído GPS:
+    // Ping com speed >= 5 km/h MAS accuracy > 20 m E deslocamento < 10 m do ping anterior = tratar como PARADO.
+    // Fonte única de cálculo em courierTelemetryDiagnostics.ts, usada por card, pin, modal e lista — sem lógica paralela.
+    const prevLoc = sortedLocs.find(
+      (l) =>
+        (l.id ? l.id !== latestLoc?.id : true) &&
+        parseSafeTimestamp(l.updated || l.created) < (lastSignalTimestamp || now),
+    )
+    const distFromPrevMeters =
+      prevLoc && typeof prevLoc.lat === 'number' && typeof prevLoc.lng === 'number'
+        ? haversineDistanceMeters(finalLat, finalLng, prevLoc.lat, prevLoc.lng)
+        : null
+
+    const isGpsJitterNoise =
+      speedKmh >= 5 &&
+      typeof accuracyMeters === 'number' &&
+      accuracyMeters > 20 &&
+      distFromPrevMeters !== null &&
+      distFromPrevMeters < 10
+
+    if (isGpsJitterNoise) {
+      speedKmh = 0
+    }
+
     // Determinar se está parado:
     // Regra canônica: speed < 5 km/h E deslocamento < 50m desde o ping de referência
     const isInstantStopped = speedKmh < 5
@@ -177,7 +201,24 @@ export function diagnoseCourierTelemetry(
       if (!locTime) break
 
       const distM = haversineDistanceMeters(refLat, refLng, loc.lat, loc.lng)
-      const locSpeed = typeof loc.speed === 'number' ? loc.speed : 0
+      let locSpeed = typeof loc.speed === 'number' ? loc.speed : 0
+      const locAccuracy = typeof loc.accuracy === 'number' ? loc.accuracy : null
+
+      // Avaliar ruído para pontos históricos
+      const nextOlderLoc = sortedLocs[i + 1]
+      if (
+        locSpeed >= 5 &&
+        locAccuracy !== null &&
+        locAccuracy > 20 &&
+        nextOlderLoc &&
+        typeof nextOlderLoc.lat === 'number' &&
+        typeof nextOlderLoc.lng === 'number'
+      ) {
+        const dOlder = haversineDistanceMeters(loc.lat, loc.lng, nextOlderLoc.lat, nextOlderLoc.lng)
+        if (dOlder < 10) {
+          locSpeed = 0
+        }
+      }
 
       // Entregador PARADO quando speed < 5 km/h E deslocamento < 50 m desde o ping de referência
       if (distM < 50 && locSpeed < 5) {
