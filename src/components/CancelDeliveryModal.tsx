@@ -108,6 +108,8 @@ export const CancelDeliveryModal: React.FC<CancelDeliveryModalProps> = ({
         completion_reason: selectedOption.completionReason,
         actual_arrival: now,
         notes: finalNotes,
+        route_finished: true,
+        route_finished_at: now,
       })
 
       // Gerar notificação interna

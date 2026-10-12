@@ -372,7 +372,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
             Acompanhamento em tempo real do saldo de cada entregador vinculado à sua operação:{' '}
             <strong className="text-emerald-400">Total Adiantado</strong> menos{' '}
             <strong className="text-amber-400">
-              Gasto em Rotas Oficiais (Odômetro &amp; Histórico Viário)
+              Gasto em Rotas Oficiais (Histórico Viário das Rotas)
             </strong>
             .
           </p>
@@ -586,8 +586,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
             Conta Corrente Oficial Sincronizada com o Painel Admin
           </p>
           <p className="text-slate-400 text-[11px] leading-relaxed">
-            O valor gasto é apurado com precedência oficial:{' '}
-            <strong>Odômetro Físico da Moto</strong> (quando informado) ou{' '}
+            O valor gasto é apurado com a precedência oficial do{' '}
             <strong>Histórico Viário das Rotas</strong> (Base → Paradas → Retorno). O GPS é
             utilizado para auditoria de desvios. Para entregadores de bicicleta (🚲), o combustível
             é isento e é exibido o KM real percorrido. Clique em qualquer card para abrir o

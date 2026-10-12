@@ -1863,8 +1863,8 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
                 Histórico de KM e Combustível por Entregador
               </CardTitle>
               <CardDescription className="text-xs text-slate-500">
-                Hierarquia oficial de KM (Odômetro &gt; Histórico de Rota c/ Retorno &gt;
-                Telemetria) e reembolso de combustível (Bicicleta = R$ 0)
+                Hierarquia oficial de KM (Histórico de Rota c/ Retorno &gt; Telemetria GPS) e
+                reembolso de combustível (Bicicleta = R$ 0)
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">

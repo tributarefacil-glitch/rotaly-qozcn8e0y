@@ -503,11 +503,23 @@ onRecordAfterCreateSuccess((e) => {
     // NÃO disparar:
     // (a) nos primeiros minutos da rota quando o entregador ainda não visitou nenhuma parada (0 entregas finalizadas);
     // (b) em paradas intermediárias na base durante o lote quando ainda há entregas pendentes.
+    // Considerar SOMENTE pedidos do dia atual na data civil de Brasília (UTC-3, janela 05h–23h59)
+    // e EXCLUIR pedidos status='cancelled'
+    const nowUtc = new Date(currentLocTime)
+    const bsbMs = nowUtc.getTime() - 3 * 3600000
+    const bsbDateObj = new Date(bsbMs)
+    const bsbYear = bsbDateObj.getUTCFullYear()
+    const bsbMonth = String(bsbDateObj.getUTCMonth() + 1).padStart(2, '0')
+    const bsbDay = String(bsbDateObj.getUTCDate()).padStart(2, '0')
+    const bsbDateKey = `${bsbYear}-${bsbMonth}-${bsbDay}`
+    // Janela operacional de Brasília: 05:00 UTC-3 = 08:00 UTC; 23:59:59 UTC-3 = 02:59:59 UTC do dia seguinte
+    const windowStartUtc = `${bsbDateKey} 08:00:00`
+
     let openOrdersForBaseAlert = []
     try {
       openOrdersForBaseAlert = $app.findRecordsByFilter(
         'orders',
-        `courier_id = '${courierId}' && route_started = true && (route_finished = false || route_finished = null)`,
+        `courier_id = '${courierId}' && route_started = true && (route_finished = false || route_finished = null) && status != 'cancelled' && (route_started_at >= '${windowStartUtc}' || created >= '${windowStartUtc}')`,
         'route_started_at,created',
         50,
         0,

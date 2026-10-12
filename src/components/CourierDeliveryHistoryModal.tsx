@@ -883,7 +883,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       'Status',
       'KM Real Oficial (Reembolsável)',
       'KM em Desvios e Paradas (Não Reembolsável)',
-      'KM Total Rodado (Odômetro Real)',
+      'KM Total Rodado (GPS / Telemetria)',
       'KM Descartado por Ruído',
       'Origem Telemetria (GPS Real vs Estimado)',
       'Combustível Oficial (R$)',
@@ -1666,7 +1666,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 <div className="p-3 rounded-lg bg-[#0E1738] border border-blue-500/30 text-xs space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] uppercase font-bold text-[#60A5FA] block">
-                      Auditoria de Telemetria & Odômetro
+                      Auditoria de Telemetria & GPS
                     </span>
                     <Badge
                       variant="outline"

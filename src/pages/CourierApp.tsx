@@ -189,15 +189,10 @@ export default function CourierApp() {
   const [isFinishingRoute, setIsFinishingRoute] = useState(false)
   const [isSubmittingPin, setIsSubmittingPin] = useState(false)
 
-  // Campos de odômetro legados mantidos apenas como estados neutros em memória (aposentados da UI)
-  const [odometroInicialInput, setOdometroInicialInput] = useState<string>('')
-  const [odometroFinalInput, setOdometroFinalInput] = useState<string>('')
   const [resequenceFailureBanner, setResequenceFailureBanner] = useState<{
     message: string
     timestamp: string
   } | null>(null)
-  const [fotoOdometroInicial, setFotoOdometroInicial] = useState<File | null>(null)
-  const [fotoOdometroFinal, setFotoOdometroFinal] = useState<File | null>(null)
   const [currentCourierLocation, setCurrentCourierLocation] = useState<{
     lat: number
     lng: number
@@ -1678,8 +1673,6 @@ export default function CourierApp() {
       }
 
       setIsFinishRouteModalOpen(false)
-      setOdometroFinalInput('')
-      setFotoOdometroFinal(null)
       baseGeofenceHitCountRef.current = 0
       await loadCourierOrders({ force: true })
       await loadFuelAndAccountData({ force: true })
@@ -2679,7 +2672,7 @@ export default function CourierApp() {
           forcedAlertReason === 'at_base_unfinalized'
             ? () => {
                 handleAcknowledgeForcedAlert()
-                setIsFinishRouteModalOpen(true)
+                handleFinishFullRoute(false)
               }
             : undefined
         }

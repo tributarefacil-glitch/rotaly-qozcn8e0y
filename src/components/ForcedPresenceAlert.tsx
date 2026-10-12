@@ -63,7 +63,7 @@ export const ForcedPresenceAlert: React.FC<ForcedPresenceAlertProps> = ({
     title = 'CHEGADA À BASE DETECTADA'
     mainMessage = 'Você chegou à base — finalize a rota antes de encerrar o expediente'
     subMessage =
-      'Seu GPS detectou presença na Base Mais Saudável. Conclua a conferência do odômetro e finalize a rota antes de sair.'
+      'Seu GPS detectou presença na Base Mais Saudável. Finalize a rota para encerrar o expediente.'
   }
 
   return (

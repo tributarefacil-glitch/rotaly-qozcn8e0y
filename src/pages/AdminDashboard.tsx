@@ -2263,7 +2263,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 </Suspense>
               </TabsContent>
 
-              {/* TAB: RECONCILIAÇÃO POR LOTE (3 FONTES: VIÁRIO OFICIAL 1x, GPS TELEMETRIA, ODÔMETRO) */}
+              {/* TAB: RECONCILIAÇÃO POR LOTE (FONTES: VIÁRIO OFICIAL 1x, GPS TELEMETRIA) */}
               <TabsContent value="batch-reconciliation" className="space-y-6">
                 <Suspense fallback={<SectionSkeleton />}>
                   <BatchReconciliationSection
