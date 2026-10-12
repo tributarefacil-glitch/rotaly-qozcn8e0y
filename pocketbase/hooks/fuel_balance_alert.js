@@ -147,6 +147,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       carroKml: 12.0,
       caminhaoPrice: 6.49,
       caminhaoKml: 7.0,
+      alertThresholdPct: 80,
     }
 
     try {
@@ -173,6 +174,19 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         s.carroKml = cKml
         s.caminhaoPrice = tPrice
         s.caminhaoKml = tKml
+
+        try {
+          var extraData = r.get('extra')
+          if (typeof extraData === 'string' && extraData) {
+            extraData = JSON.parse(extraData)
+          }
+          if (extraData && typeof extraData === 'object') {
+            var rawThreshold = Number(extraData.fuel_alert_threshold_pct)
+            if (!isNaN(rawThreshold) && rawThreshold > 0 && rawThreshold <= 100) {
+              s.alertThresholdPct = rawThreshold
+            }
+          }
+        } catch (_) {}
       }
     } catch (err) {
       console.log('[daily_fuel_balance_check] Aviso ao ler app_settings:', err)
@@ -744,7 +758,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         availableBalance = Number((carryOver + currentMonthAdvTotal).toFixed(2))
       }
 
-      // 4. FRENTE 2: Média dos últimos 30 dias e sugestão de recarga
+      // 4. FRENTE 2: Média com janela real e sugestão de recarga (alinhada 100% com o painel)
       var ordersLast30d = courierOrders.filter(function (ord) {
         var oDateVal =
           ord.getString('route_finished_at') ||
@@ -755,17 +769,47 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       })
 
       var spent30d = computeOrdersOfficialSpent(ordersLast30d, courier, fuelSettings, approvalsMap)
-      var dailyAverage = Number((spent30d / 30).toFixed(2))
+      var dailyAverage = 0
+      var averageLabel = 'Média 30d'
+
+      if (ordersLast30d.length > 0) {
+        var oldestOrderTs = ordersLast30d.reduce(function (minTs, o) {
+          var oDateVal =
+            o.getString('route_finished_at') ||
+            o.getString('actual_arrival') ||
+            o.getString('created')
+          var t = parseSafeTimestamp(oDateVal)
+          return t > 0 && t < minTs ? t : minTs
+        }, now.getTime())
+
+        var elapsedDays = Math.max(1, Math.ceil((now.getTime() - oldestOrderTs) / (24 * 3600000)))
+        var windowDays = Math.min(30, elapsedDays)
+
+        if (windowDays < 28) {
+          dailyAverage = Number((spent30d / windowDays).toFixed(2))
+          averageLabel = 'Média ' + windowDays + 'd'
+        } else {
+          dailyAverage = Number((spent30d / 30).toFixed(2))
+          averageLabel = 'Média 30d'
+        }
+      }
+
       var projection = Number((dailyAverage * remainingDays).toFixed(2))
       var suggestedRecharge = Math.max(0, Number((projection - currentBalance).toFixed(2)))
 
-      // 5. FRENTE 3: Disparo do alerta (gasto atingiu 80% do saldo disponibilizado ou saldo negativo)
+      // 5. FRENTE 3: Disparo do alerta (gasto atingiu limiar de app_settings ou saldo negativo)
+      var thresholdPct = fuelSettings.alertThresholdPct || 80
+      var triggerHighRatio = thresholdPct / 100
+      var triggerLowRatio = (100 - thresholdPct) / 100
+
       var reachedThreshold = false
       if (currentBalance < 0) {
         reachedThreshold = true
       } else if (availableBalance > 0) {
-        // Gasto pós-corte >= 80% do saldo disponibilizado, i.e., saldo restante <= 20% do disponibilizado
-        if (postCutoffSpent >= availableBalance * 0.8 || currentBalance <= availableBalance * 0.2) {
+        if (
+          postCutoffSpent >= availableBalance * triggerHighRatio ||
+          currentBalance <= availableBalance * triggerLowRatio
+        ) {
           reachedThreshold = true
         }
       } else {
@@ -942,7 +986,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         alertRec.set('suggested_recharge', suggestedRecharge)
         alertRec.set('recipient_email', targetAdminEmail)
         alertRec.set('status', sendStatus)
-        var detailNote = `Média 30d: R$ ${dailyAverage.toFixed(2)}/dia | Período: ${remainingIntervalLabel} | Projeção: R$ ${projection.toFixed(2)}`
+        var detailNote = `${averageLabel}: R$ ${dailyAverage.toFixed(2)}/dia | Período: ${remainingIntervalLabel} | Projeção: R$ ${projection.toFixed(2)}`
         if (sendError) detailNote += ` | Erro: ${sendError}`
         alertRec.set('notes', detailNote)
         $app.save(alertRec)
@@ -1074,6 +1118,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       carroKml: 12.0,
       caminhaoPrice: 6.49,
       caminhaoKml: 7.0,
+      alertThresholdPct: 80,
     }
 
     try {
@@ -1100,6 +1145,19 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         s.carroKml = cKml
         s.caminhaoPrice = tPrice
         s.caminhaoKml = tKml
+
+        try {
+          var extraData = r.get('extra')
+          if (typeof extraData === 'string' && extraData) {
+            extraData = JSON.parse(extraData)
+          }
+          if (extraData && typeof extraData === 'object') {
+            var rawThreshold = Number(extraData.fuel_alert_threshold_pct)
+            if (!isNaN(rawThreshold) && rawThreshold > 0 && rawThreshold <= 100) {
+              s.alertThresholdPct = rawThreshold
+            }
+          }
+        } catch (_) {}
       }
     } catch (err) {
       console.log('[/backend/v1/fuel-balance/check-now] Aviso ao ler app_settings:', err)
@@ -1657,7 +1715,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         availableBalance = Number((carryOver + currentMonthAdvTotal).toFixed(2))
       }
 
-      // FRENTE 2: Média dos últimos 30 dias e sugestão
+      // FRENTE 2: Média com janela real e sugestão (alinhada 100% com o painel)
       var ordersLast30d = courierOrders.filter(function (ord) {
         var oDateVal =
           ord.getString('route_finished_at') ||
@@ -1673,16 +1731,47 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         fuelSettings,
         approvalsMapCheck,
       )
-      var dailyAverage = Number((spent30d / 30).toFixed(2))
+      var dailyAverage = 0
+      var averageLabel = 'Média 30d'
+
+      if (ordersLast30d.length > 0) {
+        var oldestOrderTs = ordersLast30d.reduce(function (minTs, o) {
+          var oDateVal =
+            o.getString('route_finished_at') ||
+            o.getString('actual_arrival') ||
+            o.getString('created')
+          var t = parseSafeTimestamp(oDateVal)
+          return t > 0 && t < minTs ? t : minTs
+        }, now.getTime())
+
+        var elapsedDays = Math.max(1, Math.ceil((now.getTime() - oldestOrderTs) / (24 * 3600000)))
+        var windowDays = Math.min(30, elapsedDays)
+
+        if (windowDays < 28) {
+          dailyAverage = Number((spent30d / windowDays).toFixed(2))
+          averageLabel = 'Média ' + windowDays + 'd'
+        } else {
+          dailyAverage = Number((spent30d / 30).toFixed(2))
+          averageLabel = 'Média 30d'
+        }
+      }
+
       var projection = Number((dailyAverage * remainingDays).toFixed(2))
       var suggestedRecharge = Math.max(0, Number((projection - currentBalance).toFixed(2)))
 
-      // FRENTE 3: Gatilho 80% do saldo disponibilizado
+      // FRENTE 3: Gatilho com limiar configurável de app_settings
+      var thresholdPct = fuelSettings.alertThresholdPct || 80
+      var triggerHighRatio = thresholdPct / 100
+      var triggerLowRatio = (100 - thresholdPct) / 100
+
       var reachedThreshold = false
       if (currentBalance < 0) {
         reachedThreshold = true
       } else if (availableBalance > 0) {
-        if (postCutoffSpent >= availableBalance * 0.8 || currentBalance <= availableBalance * 0.2) {
+        if (
+          postCutoffSpent >= availableBalance * triggerHighRatio ||
+          currentBalance <= availableBalance * triggerLowRatio
+        ) {
           reachedThreshold = true
         }
       } else {
@@ -1859,7 +1948,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         alertRec.set('suggested_recharge', suggestedRecharge)
         alertRec.set('recipient_email', targetAdminEmail)
         alertRec.set('status', sendStatus)
-        var detailNote = `Média 30d: R$ ${dailyAverage.toFixed(2)}/dia | Período: ${remainingIntervalLabel} | Projeção: R$ ${projection.toFixed(2)}`
+        var detailNote = `${averageLabel}: R$ ${dailyAverage.toFixed(2)}/dia | Período: ${remainingIntervalLabel} | Projeção: R$ ${projection.toFixed(2)}`
         if (sendError) detailNote += ` | Erro: ${sendError}`
         alertRec.set('notes', detailNote)
         $app.save(alertRec)
@@ -1875,6 +1964,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         monthlySpent: postCutoffSpent,
         dailyAverage30d: dailyAverage,
         remainingDays: remainingDays,
+        averageLabel: averageLabel,
         intervalLabel: remainingIntervalLabel,
         projection: projection,
         suggestedRecharge: suggestedRecharge,

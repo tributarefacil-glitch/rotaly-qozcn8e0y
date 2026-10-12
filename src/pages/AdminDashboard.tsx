@@ -1952,6 +1952,39 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   )}
                               </div>
 
+                              {/* Paridade de Alerta por E-mail do Dia Civil */}
+                              {acc.todayAlertSent && (
+                                <div className="p-2 rounded-lg bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 flex items-center justify-between gap-2 text-[11px]">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <Mail className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                                    <span className="font-semibold text-indigo-900 dark:text-indigo-200 truncate">
+                                      📧 E-mail enviado hoje
+                                      {acc.todayAlertSent.created ? (
+                                        <>
+                                          {' às '}
+                                          {new Intl.DateTimeFormat('pt-BR', {
+                                            timeZone: 'America/Sao_Paulo',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                          }).format(new Date(acc.todayAlertSent.created))}
+                                        </>
+                                      ) : null}
+                                      {acc.todayAlertSent.recipient_email ? (
+                                        <span className="text-slate-500 font-normal ml-1">
+                                          → {acc.todayAlertSent.recipient_email}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </div>
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] px-1.5 py-0 font-bold border-indigo-300 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 shrink-0"
+                                  >
+                                    Recarga: R$ {acc.todayAlertSent.suggested_recharge.toFixed(2)}
+                                  </Badge>
+                                </div>
+                              )}
+
                               {/* Saldo Principal Canônico (Período-Independente) */}
                               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border flex items-center justify-between">
                                 <div>

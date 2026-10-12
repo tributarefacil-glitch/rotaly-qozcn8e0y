@@ -313,6 +313,7 @@ export default function CourierFuelPage() {
         <CourierFuelSummaryCard
           metrics={periodFilter === 'month' ? currentMonthMetrics : metrics}
           courier={user}
+          account={fuelAccount}
           periodLabel={
             periodFilter === 'today'
               ? 'Hoje'

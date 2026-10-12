@@ -2,6 +2,7 @@ import pb from '@/lib/pocketbase/client'
 import type {
   AppSettingsRecord,
   FuelAdvanceRecord,
+  FuelBalanceAlertRecord,
   LocationRecord,
   MembroRecord,
   OffRouteEventRecord,
@@ -48,6 +49,18 @@ export interface UnifiedCourierFuelAccount {
   availableBalance?: number
   reachedAlertThreshold?: boolean
   averageLabel?: string
+  todayAlertSent?: {
+    id: string
+    alert_date: string
+    balance: number
+    monthly_spent: number
+    monthly_average: number
+    suggested_recharge: number
+    recipient_email?: string
+    status: 'sent' | 'failed'
+    notes?: string
+    created: string
+  } | null
 }
 export class FuelAccountService {
   private static instance: FuelAccountService
@@ -491,12 +504,25 @@ export class FuelAccountService {
       suggestedRecharge = Math.max(0, Number((projectionRemainingMonth - finalBalance).toFixed(2)))
     }
 
-    // Gatilho do alerta: gasto >= 80% do saldo disponibilizado (saldo <= 20% do disponibilizado) ou saldo < 0
+    // Gatilho do alerta: configurável via app_settings.extra.fuel_alert_threshold_pct (padrão 80)
+    let thresholdPct = 80
+    if (settings && settings.extra && typeof settings.extra === 'object') {
+      const customPct = Number((settings.extra as Record<string, unknown>).fuel_alert_threshold_pct)
+      if (!isNaN(customPct) && customPct > 0 && customPct <= 100) {
+        thresholdPct = customPct
+      }
+    }
+    const triggerHighRatio = thresholdPct / 100
+    const triggerLowRatio = (100 - thresholdPct) / 100
+
     let reachedAlertThreshold = false
     if (finalBalance < 0) {
       reachedAlertThreshold = true
     } else if (availableBalance > 0) {
-      if (postCutoffSpent >= availableBalance * 0.8 || finalBalance <= availableBalance * 0.2) {
+      if (
+        postCutoffSpent >= availableBalance * triggerHighRatio ||
+        finalBalance <= availableBalance * triggerLowRatio
+      ) {
         reachedAlertThreshold = true
       }
     } else if (postCutoffSpent > 0) {
@@ -606,6 +632,55 @@ export class FuelAccountService {
    * Carrega todos os dados necessários e calcula a conta corrente de um entregador individual
    * (usado diretamente pelo app do entregador).
    */
+  /**
+   * Obtém os alertas de saldo enviados hoje civil (America/Sao_Paulo) para paridade com o painel.
+   */
+  async getTodayAlerts(courierIds?: string[]): Promise<Map<string, FuelBalanceAlertRecord>> {
+    const alertMap = new Map<string, FuelBalanceAlertRecord>()
+    try {
+      const now = new Date()
+      const spParts = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).formatToParts(now)
+      const pMap: Record<string, string> = {}
+      spParts.forEach((p) => {
+        if (p.type !== 'literal') pMap[p.type] = p.value
+      })
+      const todayDateStr = `${pMap.year}-${pMap.month}-${pMap.day}`
+
+      let filter = `alert_date = '${todayDateStr}' && status = 'sent'`
+      if (courierIds && courierIds.length > 0) {
+        const idFilter = courierIds.map((id) => `courier_id = '${id}'`).join(' || ')
+        filter = `(${filter}) && (${idFilter})`
+      }
+
+      const alerts = await pb
+        .collection<FuelBalanceAlertRecord>('fuel_balance_alerts')
+        .getFullList({
+          filter,
+          sort: '-created',
+          requestKey: null,
+        })
+
+      alerts.forEach((alert) => {
+        // Se houver mais de um, mantém o mais recente
+        if (alert.courier_id && !alertMap.has(alert.courier_id)) {
+          alertMap.set(alert.courier_id, alert)
+        }
+      })
+    } catch (err) {
+      console.warn('[FuelAccountService] Erro ao buscar fuel_balance_alerts do dia civil:', err)
+    }
+    return alertMap
+  }
+
+  /**
+   * Carrega todos os dados necessários e calcula a conta corrente de um entregador individual
+   * (usado diretamente pelo app do entregador).
+   */
   async getCourierSingleAccount(
     courierId: string,
     periodFilter: 'all' | 'month' | 'week' | 'today' = 'month',
@@ -629,8 +704,8 @@ export class FuelAccountService {
         return null
       }
 
-      // 2. Carrega concorrentemente adiantamentos, pedidos, configurações, locais, desvios e aprovações do entregador
-      const [advances, orders, settings, locations, offRouteEvents, approvalsList] =
+      // 2. Carrega concorrentemente adiantamentos, pedidos, configurações, locais, desvios, aprovações e alerta do dia
+      const [advances, orders, settings, locations, offRouteEvents, approvalsList, todayAlertsMap] =
         await Promise.all([
           this.getFuelAdvances(courierId),
           pb
@@ -683,6 +758,7 @@ export class FuelAccountService {
               requestKey: null,
             })
             .catch(() => []),
+          this.getTodayAlerts([courierId]),
         ])
 
       const approvalsMap = new Map<
@@ -699,7 +775,7 @@ export class FuelAccountService {
         }
       })
 
-      return this.calculateAccountForCourier({
+      const account = this.calculateAccountForCourier({
         courier: courierUser,
         advances,
         orders,
@@ -709,6 +785,28 @@ export class FuelAccountService {
         periodFilter,
         approvalsMap,
       })
+
+      const alertRecord = todayAlertsMap.get(courierId)
+      if (alertRecord) {
+        account.todayAlertSent = {
+          id: alertRecord.id,
+          alert_date: alertRecord.alert_date,
+          balance: alertRecord.balance,
+          monthly_spent: alertRecord.monthly_spent,
+          monthly_average: alertRecord.monthly_average,
+          suggested_recharge: alertRecord.suggested_recharge,
+          recipient_email: alertRecord.recipient_email,
+          status: alertRecord.status,
+          notes: alertRecord.notes,
+          created: alertRecord.created,
+        }
+        // Paridade estrita: quando existe registro gravado hoje, usa seus números oficiais
+        account.balance = alertRecord.balance
+        account.dailyAverage30d = alertRecord.monthly_average
+        account.suggestedRecharge = alertRecord.suggested_recharge
+      }
+
+      return account
     } catch (err) {
       console.error('[FuelAccountService] Erro ao obter conta única do courier:', err)
       return null
@@ -733,44 +831,46 @@ export class FuelAccountService {
 
     const courierIds = couriers.map((c) => c.id)
 
-    const [advances, settings, locations, offRouteEvents, approvalsList] = await Promise.all([
-      this.getFuelAdvances(courierIds, targetCompanyId),
-      pb
-        .collection<AppSettingsRecord>('app_settings')
-        .getFirstListItem("key = 'global_settings'", { requestKey: null })
-        .catch(async () => {
-          try {
-            return await deliveryService.getSettings()
-          } catch {
-            return null
-          }
-        }),
-      pb
-        .collection<LocationRecord>('locations')
-        .getFullList({
-          sort: '-created',
-          requestKey: null,
-        })
-        .catch(() => [] as LocationRecord[]),
-      pb
-        .collection<OffRouteEventRecord>('off_route_events')
-        .getFullList({
-          sort: '-created',
-          requestKey: null,
-        })
-        .catch(() => [] as OffRouteEventRecord[]),
-      pb
-        .collection('route_km_approvals')
-        .getFullList<{
-          order_id: string
-          approved_km: number
-          justification?: string
-          status: 'approved' | 'rejected' | 'pending'
-        }>({
-          requestKey: null,
-        })
-        .catch(() => []),
-    ])
+    const [advances, settings, locations, offRouteEvents, approvalsList, todayAlertsMap] =
+      await Promise.all([
+        this.getFuelAdvances(courierIds, targetCompanyId),
+        pb
+          .collection<AppSettingsRecord>('app_settings')
+          .getFirstListItem("key = 'global_settings'", { requestKey: null })
+          .catch(async () => {
+            try {
+              return await deliveryService.getSettings()
+            } catch {
+              return null
+            }
+          }),
+        pb
+          .collection<LocationRecord>('locations')
+          .getFullList({
+            sort: '-created',
+            requestKey: null,
+          })
+          .catch(() => [] as LocationRecord[]),
+        pb
+          .collection<OffRouteEventRecord>('off_route_events')
+          .getFullList({
+            sort: '-created',
+            requestKey: null,
+          })
+          .catch(() => [] as OffRouteEventRecord[]),
+        pb
+          .collection('route_km_approvals')
+          .getFullList<{
+            order_id: string
+            approved_km: number
+            justification?: string
+            status: 'approved' | 'rejected' | 'pending'
+          }>({
+            requestKey: null,
+          })
+          .catch(() => []),
+        this.getTodayAlerts(courierIds),
+      ])
 
     const approvalsMap = new Map<
       string,
@@ -801,8 +901,8 @@ export class FuelAccountService {
       }
     }
 
-    return couriers.map((courier) =>
-      this.calculateAccountForCourier({
+    return couriers.map((courier) => {
+      const account = this.calculateAccountForCourier({
         courier,
         advances,
         orders: effectiveOrders || [],
@@ -811,8 +911,30 @@ export class FuelAccountService {
         offRouteEvents,
         periodFilter,
         approvalsMap,
-      }),
-    )
+      })
+
+      const alertRecord = todayAlertsMap.get(courier.id)
+      if (alertRecord) {
+        account.todayAlertSent = {
+          id: alertRecord.id,
+          alert_date: alertRecord.alert_date,
+          balance: alertRecord.balance,
+          monthly_spent: alertRecord.monthly_spent,
+          monthly_average: alertRecord.monthly_average,
+          suggested_recharge: alertRecord.suggested_recharge,
+          recipient_email: alertRecord.recipient_email,
+          status: alertRecord.status,
+          notes: alertRecord.notes,
+          created: alertRecord.created,
+        }
+        // Paridade estrita com o e-mail enviado hoje
+        account.balance = alertRecord.balance
+        account.dailyAverage30d = alertRecord.monthly_average
+        account.suggestedRecharge = alertRecord.suggested_recharge
+      }
+
+      return account
+    })
   }
 
   /**

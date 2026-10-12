@@ -11,9 +11,10 @@ import {
   TrendingUp,
   AlertTriangle,
   Package,
+  Mail,
 } from 'lucide-react'
 import type { CourierFuelCalculationResult } from '@/hooks/useCourierFuelMetrics'
-import type { UserRecord } from '@/types/delivery'
+import type { UserRecord, CourierFuelAccount } from '@/types/delivery'
 import type { UnifiedCourierFuelAccount } from '@/services/fuelAccountService'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -22,7 +23,7 @@ import { deliveryService } from '@/services/deliveryService'
 interface CourierFuelSummaryCardProps {
   metrics: CourierFuelCalculationResult
   courier?: UserRecord | null
-  account?: UnifiedCourierFuelAccount | null
+  account?: UnifiedCourierFuelAccount | CourierFuelAccount | null
   onOpenHistoryModal: () => void
   title?: string
   subtitle?: string
@@ -163,6 +164,39 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
       </CardHeader>
 
       <CardContent className="p-4 pt-2 space-y-3 text-xs">
+        {/* Paridade de Alerta por E-mail do Dia Civil */}
+        {account?.todayAlertSent && (
+          <div className="p-2 rounded-lg bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 flex items-center justify-between gap-2 text-[11px]">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Mail className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+              <span className="font-semibold text-indigo-900 dark:text-indigo-200 truncate">
+                📧 E-mail enviado hoje
+                {account.todayAlertSent.created ? (
+                  <>
+                    {' às '}
+                    {new Intl.DateTimeFormat('pt-BR', {
+                      timeZone: 'America/Sao_Paulo',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    }).format(new Date(account.todayAlertSent.created))}
+                  </>
+                ) : null}
+                {account.todayAlertSent.recipient_email ? (
+                  <span className="text-slate-500 font-normal ml-1">
+                    → {account.todayAlertSent.recipient_email}
+                  </span>
+                ) : null}
+              </span>
+            </div>
+            <Badge
+              variant="outline"
+              className="text-[9px] px-1.5 py-0 font-bold border-indigo-300 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 shrink-0"
+            >
+              Recarga: R$ {account.todayAlertSent.suggested_recharge.toFixed(2)}
+            </Badge>
+          </div>
+        )}
+
         {/* Rótulo de Período Explícito */}
         <div className="flex items-center justify-between">
           {(Number(metrics?.deliveriesCount) || 0) === 0 &&
@@ -391,8 +425,9 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
             <div className="flex items-baseline justify-between pt-0.5">
               <div>
                 <span className="text-[10px] text-slate-500 block">
-                  Média 30d: <strong>R$ {account.dailyAverage30d.toFixed(2)}/dia</strong> •
-                  Projeção: R$ {(account.projectionRemainingMonth || 0).toFixed(2)}
+                  {account.averageLabel || 'Média 30d'}:{' '}
+                  <strong>R$ {account.dailyAverage30d.toFixed(2)}/dia</strong> • Projeção: R${' '}
+                  {(account.projectionRemainingMonth || 0).toFixed(2)}
                 </span>
               </div>
               <span className="font-mono text-base font-black text-blue-700 dark:text-blue-400">

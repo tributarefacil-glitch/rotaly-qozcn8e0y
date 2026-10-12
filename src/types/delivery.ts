@@ -434,6 +434,27 @@ export interface CourierFuelAccount {
   periodAdvances?: number
   periodAdjustments?: number
   carryOverBalance?: number
+  dailyAverage30d?: number
+  spent30d?: number
+  remainingDays?: number
+  remainingIntervalLabel?: string
+  projectionRemainingMonth?: number
+  suggestedRecharge?: number
+  availableBalance?: number
+  reachedAlertThreshold?: boolean
+  averageLabel?: string
+  todayAlertSent?: {
+    id: string
+    alert_date: string
+    balance: number
+    monthly_spent: number
+    monthly_average: number
+    suggested_recharge: number
+    recipient_email?: string
+    status: 'sent' | 'failed'
+    notes?: string
+    created: string
+  } | null
 }
 
 export type GpsFailureReason =
@@ -598,6 +619,23 @@ export interface RouteKmApprovalRecord extends RecordModel {
     order_id?: OrderRecord
     courier_id?: UserRecord
     approved_by?: UserRecord
+    empresa_id?: EmpresaRecord
+  }
+}
+
+export interface FuelBalanceAlertRecord extends RecordModel {
+  courier_id: string
+  empresa_id?: string
+  alert_date: string
+  balance: number
+  monthly_spent: number
+  monthly_average: number
+  suggested_recharge: number
+  recipient_email?: string
+  status: 'sent' | 'failed'
+  notes?: string
+  expand?: {
+    courier_id?: UserRecord
     empresa_id?: EmpresaRecord
   }
 }
