@@ -353,6 +353,7 @@ export interface AppSettingsRecord extends RecordModel {
   carro_consumption_kml?: number
   caminhao_fuel_price?: number
   caminhao_consumption_kml?: number
+  stop_duration_minutes?: number // Tempo de permanência por parada em minutos (padrão 5 min)
   work_start_time?: string // Horário de entrada padrão (ex: "08:00")
   lunch_start_time?: string // Saída para almoço (ex: "12:00")
   lunch_end_time?: string // Retorno do almoço (ex: "13:00")
@@ -531,6 +532,9 @@ export interface CourierOptimizationPlan {
   outbound_distance_km?: number
   return_distance_km?: number
   estimated_duration_minutes: number
+  transit_duration_minutes?: number
+  service_duration_minutes?: number
+  stop_duration_minutes?: number
   estimated_fuel_cost: number
   start_base?: { name: string; address: string; lat: number; lng: number }
   end_base?: { name: string; address: string; lat: number; lng: number }
@@ -545,6 +549,9 @@ export interface MultiCourierOptimizationResult {
   returnDistanceKm?: string
   totalEstimatedFuelCost: number
   totalDurationMinutes: number
+  totalTransitMinutes?: number
+  totalServiceMinutes?: number
+  stopDurationMinutes?: number
   startBase?: BaseAddressRecord | { name: string; address: string; lat: number; lng: number }
   endBase?: BaseAddressRecord | { name: string; address: string; lat: number; lng: number }
 }

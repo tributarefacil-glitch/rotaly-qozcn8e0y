@@ -29,7 +29,7 @@ export interface MapMarkerItem {
   subtitle?: string
   lat: number
   lng: number
-  type: 'courier' | 'order_pending' | 'order_transit' | 'order_delivered' | 'current'
+  type: 'courier' | 'order_pending' | 'order_transit' | 'order_delivered' | 'current' | 'base'
   speed?: number
   tracking_code?: string
   customer_name?: string
@@ -488,13 +488,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         gpsBadgeColor = '#b91c1c'
         gpsBadgeBorder = '#fecaca'
       } else if (item.gps_status === 'offline' || minutesSinceLastPoint > 10) {
-        // Faixa > 10 min: Sem sinal (vermelho/âmbar escuro)
+        // Faixa > 10 min: Sem sinal (vermelho)
         gpsBadgeText = `📴 Sem sinal (${minutesSinceLastPoint > 0 ? `${minutesSinceLastPoint} min` : '>10 min'})`
         gpsBadgeBg = '#fef2f2'
         gpsBadgeColor = '#b91c1c'
         gpsBadgeBorder = '#fecaca'
-      } else if (minutesSinceLastPoint > 5) {
-        // Faixa 5 a 10 min: Última posição há X min (cinza/âmbar suave, sem parecer falha crítica)
+      } else if (minutesSinceLastPoint > 3) {
+        // Faixa > 3 min até 10 min: badge âmbar
         gpsBadgeText = `⏸ Última posição há ${minutesSinceLastPoint} min`
         gpsBadgeBg = '#fffbeb'
         gpsBadgeColor = '#b45309'
@@ -1495,7 +1495,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                                   </span>
                                 )
                               }
-                              if (minutesSinceLastPoint > 5) {
+                              if (minutesSinceLastPoint > 3) {
                                 return (
                                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-amber-950/80 text-amber-300 border-amber-500/40">
                                     <span>⏸</span> Última posição há {minutesSinceLastPoint} min
