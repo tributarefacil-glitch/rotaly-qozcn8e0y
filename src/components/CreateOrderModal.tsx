@@ -1192,10 +1192,24 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             return
           }
 
+          const existingCustomer = localCustomers.find((c) => c.id === existingMatchedCustomerId)
+          const notesLower = (existingCustomer?.notes || '').toLowerCase()
+          const isDefinitiveCorrection =
+            notesLower.includes('correção definitiva') ||
+            notesLower.includes('pin real confirmado') ||
+            notesLower.includes('definitivo')
+
+          const updatePayload = { ...customerPayload }
+          if (isDefinitiveCorrection) {
+            // Preserva rigorosamente o PIN soberano/corrigido já aprovado
+            delete updatePayload.lat
+            delete updatePayload.lng
+          }
+
           // Update existing customer record directly
           const updatedCust = await deliveryService.updateCustomer(
             existingMatchedCustomerId,
-            customerPayload,
+            updatePayload,
           )
           finalCustomerId = updatedCust.id || existingMatchedCustomerId
           setCustomerId(finalCustomerId)
@@ -1205,9 +1219,23 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           const conflictCheck = await deliveryService.checkPhoneConflict(phonesToValidate)
           if (conflictCheck.conflict && conflictCheck.customer) {
             // Found existing customer by one of the phones -> update their record instead of duplicating
+            const existingCustomer = conflictCheck.customer
+            const notesLower = (existingCustomer?.notes || '').toLowerCase()
+            const isDefinitiveCorrection =
+              notesLower.includes('correção definitiva') ||
+              notesLower.includes('pin real confirmado') ||
+              notesLower.includes('definitivo')
+
+            const updatePayload = { ...customerPayload }
+            if (isDefinitiveCorrection) {
+              // Preserva rigorosamente o PIN soberano/corrigido já aprovado
+              delete updatePayload.lat
+              delete updatePayload.lng
+            }
+
             const updatedCust = await deliveryService.updateCustomer(
               conflictCheck.customer.id,
-              customerPayload,
+              updatePayload,
             )
             finalCustomerId = updatedCust.id || conflictCheck.customer.id
             setCustomerId(finalCustomerId)
