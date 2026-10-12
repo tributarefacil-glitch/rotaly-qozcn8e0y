@@ -4625,10 +4625,24 @@ export const deliveryService = {
     const currentCust = alert.expand?.customer as CustomerRecord | undefined
     const customerUpdate: Partial<CustomerRecord> = {}
 
-    // REGRA DE OURO ANTI-CEP vs PIN_ENTREGADOR:
-    // (1) Se varredura_cep: NUNCA mover o pin do cliente; apenas atualiza dados de CEP/bairro
-    // (2) Se pin_entregador: grava TANTO lat/lng QUANTO o endereço completo sugerido
-    //     (street, neighborhood, city, state, postal_code, address) obtido do GPS
+    // REGRA DE PROTEÇÃO DEFINITIVA DE PIN:
+    // Antes de escrever lat/lng no cliente, verificar se customer.notes contém "[CORREÇÃO DEFINITIVA"
+    // Se contiver, NUNCA sobrescrever o pin canonical do cliente com coordenadas geocodificadas ou de alerta.
+    // Só permitir atualização de pin quando o alerta carregar pin GPS físico do entregador
+    // (alert.courier_lat/courier_lng ou suggested.lat/lng estritamente preenchidos) E o cliente NÃO tiver a nota de correção definitiva.
+    const custNotes = currentCust?.notes || ''
+    const hasDefinitiveCorrection = custNotes.includes('[CORREÇÃO DEFINITIVA')
+
+    const rawCourierLat = (alert as any).courier_lat ?? suggested.lat
+    const rawCourierLng = (alert as any).courier_lng ?? suggested.lng
+    const hasValidCourierGps =
+      rawCourierLat !== undefined &&
+      rawCourierLat !== null &&
+      !isNaN(Number(rawCourierLat)) &&
+      rawCourierLng !== undefined &&
+      rawCourierLng !== null &&
+      !isNaN(Number(rawCourierLng))
+
     const isVarreduraCep = alert.origin === 'varredura_cep'
 
     if (suggested.address) customerUpdate.address = String(suggested.address)
@@ -4638,13 +4652,9 @@ export const deliveryService = {
     if (suggested.state) customerUpdate.state = String(suggested.state)
     if (suggested.postal_code) customerUpdate.postal_code = String(suggested.postal_code)
 
-    if (!isVarreduraCep) {
-      if (suggested.lat !== undefined && suggested.lat !== null && !isNaN(Number(suggested.lat))) {
-        customerUpdate.lat = Number(suggested.lat)
-      }
-      if (suggested.lng !== undefined && suggested.lng !== null && !isNaN(Number(suggested.lng))) {
-        customerUpdate.lng = Number(suggested.lng)
-      }
+    if (!isVarreduraCep && !hasDefinitiveCorrection && hasValidCourierGps) {
+      customerUpdate.lat = Number(rawCourierLat)
+      customerUpdate.lng = Number(rawCourierLng)
     }
 
     // Adiciona nota no cadastro do cliente registrando a aprovação
