@@ -280,9 +280,9 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         deliveryService.getActiveCompanyId() ||
         (await deliveryService.getMatrizCompanyId())
 
-      // ETAPA 1 (prioritária, imediata): getOrders + getCouriers + getLatestLocations
-      // Popula os estados críticos e libera imediatamente a renderização dos cards do Kanban, entregadores e mapa
-      const [ordersData, couriersData, locsData] = await Promise.all([
+      // ETAPA 1 (prioritária, isolada): getOrders, getCouriers, getLatestLocations
+      // Usa Promise.allSettled para que NENHUMA falha secundária aborte o carregamento de couriers ou pedidos.
+      const [ordersResult, couriersResult, locsResult] = await Promise.allSettled([
         deliveryService.getOrders(
           ordersFilter,
           '-created',
@@ -292,13 +292,40 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         deliveryService.getCouriers(targetCompanyId),
         deliveryService.getLatestLocations(),
       ])
-      setOrders(ordersData)
-      setCouriers(couriersData)
-      setLocations(locsData)
+
+      if (ordersResult.status === 'fulfilled') {
+        setOrders(ordersResult.value || [])
+      } else {
+        console.warn('Aviso ao carregar pedidos em SellerDashboard:', ordersResult.reason)
+        setOrders([])
+      }
+
+      if (couriersResult.status === 'fulfilled') {
+        setCouriers(couriersResult.value || [])
+      } else {
+        console.warn('Aviso ao carregar entregadores em SellerDashboard:', couriersResult.reason)
+        // Fallback defensivo direto para nunca zerar a lista de entregadores
+        try {
+          const directCouriers = await deliveryService.getCouriers()
+          setCouriers(directCouriers)
+        } catch {
+          setCouriers([])
+        }
+      }
+
+      if (locsResult.status === 'fulfilled') {
+        setLocations(locsResult.value || [])
+      } else {
+        console.warn('Aviso ao carregar localizações em SellerDashboard:', locsResult.reason)
+        setLocations([])
+      }
+
       setIsLoading(false)
 
-      // ETAPA 2 (em segundo plano, sem bloquear UI): getCustomers, getBaseAddresses, getSettings, getOffRouteEvents, getFuelAdvances
-      Promise.all([
+      // ETAPA 2 (em segundo plano, isolada com Promise.allSettled):
+      // getCustomers, getBaseAddresses, getSettings, getOffRouteEvents, getFuelAdvances
+      // Não consulta fuel_costs (coleção descontinuada) nem filtra reviews por empresa_id.
+      Promise.allSettled([
         deliveryService.getCustomers('', targetCompanyId),
         deliveryService.getBaseAddresses(),
         deliveryService.getSettings(),
@@ -310,22 +337,32 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
           targetCompanyId,
         ),
       ])
-        .then(([custData, basesData, settingsData, eventsData, fuelData]) => {
-          setCustomers(custData)
-          setFuelAdvances(fuelData)
-          setBaseAddresses(basesData)
-          setSettings(settingsData)
-          setOffRouteEvents(eventsData)
-
-          // Seleção robusta de base padrão
-          const defaultBase = basesData.find((b) => b.is_default) || basesData[0]
-          const defaultEnd = basesData.find((b) => b.is_end_default) || defaultBase
-
-          if (defaultBase) {
-            setSelectedBaseId(defaultBase.id)
+        .then(([custRes, basesRes, settingsRes, eventsRes, fuelRes]) => {
+          if (custRes.status === 'fulfilled') {
+            setCustomers(custRes.value || [])
           }
-          if (defaultEnd) {
-            setSelectedEndAddressId(defaultEnd.id)
+          if (fuelRes.status === 'fulfilled') {
+            setFuelAdvances(fuelRes.value || [])
+          }
+          if (settingsRes.status === 'fulfilled' && settingsRes.value) {
+            setSettings(settingsRes.value)
+          }
+          if (eventsRes.status === 'fulfilled') {
+            setOffRouteEvents(eventsRes.value || [])
+          }
+
+          if (basesRes.status === 'fulfilled' && basesRes.value) {
+            const basesData = basesRes.value
+            setBaseAddresses(basesData)
+            const defaultBase = basesData.find((b) => b.is_default) || basesData[0]
+            const defaultEnd = basesData.find((b) => b.is_end_default) || defaultBase
+
+            if (defaultBase) {
+              setSelectedBaseId(defaultBase.id)
+            }
+            if (defaultEnd) {
+              setSelectedEndAddressId(defaultEnd.id)
+            }
           }
         })
         .catch((secErr) => {

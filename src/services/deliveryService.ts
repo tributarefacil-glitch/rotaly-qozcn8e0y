@@ -1658,108 +1658,82 @@ export const deliveryService = {
   },
 
   // Users / Couriers / Sellers
-  // Filtrados pela empresa ativa através dos vínculos da coleção membros (ativo = true)
+  // Consulta direta à coleção users com role='courier' && status != 'inactive',
+  // aceitando entregadores offline/idle/busy para viabilizar planejamento prévio de rota.
+  // Preserva o status real do usuário logado (inclusive offline).
   async getCouriers(empresaId?: string) {
     const authUser = pb.authStore.record as any
     const isMaster = authUser?.role === 'master'
     const targetCompanyId =
-      empresaId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+      empresaId ||
+      authUser?.empresa_id ||
+      this.getActiveCompanyId() ||
+      (await this.getMatrizCompanyId())
 
-    // Se for Master e não especificou empresa (ou empresa é ALL), pode ver todos
-    if (isMaster && empresaId === 'ALL') {
+    const filters: string[] = ["role = 'courier'", "status != 'inactive'"]
+
+    // Aplicar filtro por empresa_id quando o campo existir no registro do usuário ou contexto
+    if (!isMaster || (empresaId && empresaId !== 'ALL')) {
+      const userEmpresaId =
+        authUser?.empresa_id || (empresaId !== 'ALL' ? targetCompanyId : undefined)
+      if (userEmpresaId) {
+        // users pode conter empresa_id ou o vínculo residir em membros
+        // Para filtros do PocketBase em users, aplicamos empresa_id se existir no authUser
+        if (authUser?.empresa_id) {
+          filters.push(`empresa_id = '${authUser.empresa_id}'`)
+        }
+      }
+    }
+
+    const filterClause = filters.join(' && ')
+
+    try {
       const list = await pb.collection<UserRecord>('users').getFullList({
-        filter: "role = 'courier'",
+        filter: filterClause,
         sort: '-created',
         requestKey: null,
       })
+
       const couriersMap = new Map<string, UserRecord>()
       for (const u of list) {
         if (u && u.id && !couriersMap.has(u.id)) {
           couriersMap.set(u.id, {
             ...u,
             vehicle_type: u.vehicle_type || 'moto',
-            status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
+            // Preserva o status real (idle, busy, offline, active) sem forçar tudo para 'active'
+            status: u.status || 'offline',
           })
         }
       }
+
       return Array.from(couriersMap.values())
-    }
+    } catch (err) {
+      console.warn('Erro ao consultar users para getCouriers com filtro direto:', err)
 
-    // Filtrar entregadores membros da empresa ativa e UNIR com a lista de users com role='courier'
-    // Garantindo deduplicação por id e nunca descartando entregadores cadastrados em users
-    const couriersMap = new Map<string, UserRecord>()
+      // Fallback tolerante: consulta apenas por role = 'courier' && status != 'inactive'
+      try {
+        const fallbackList = await pb.collection<UserRecord>('users').getFullList({
+          filter: "role = 'courier' && status != 'inactive'",
+          sort: '-created',
+          requestKey: null,
+        })
 
-    try {
-      const members = await pb.collection<MembroRecord>('membros').getFullList({
-        filter: `empresa_id = '${targetCompanyId}' && ativo = true && (papel = 'courier' || papel = 'entregador')`,
-        expand: 'user_id',
-        sort: '-created',
-        requestKey: null,
-      })
-
-      for (const m of members) {
-        const u = m.expand?.user_id as UserRecord | undefined
-        // Ignora vínculos órfãos ou registros inválidos e deduplica por ID de usuário
-        if (u && u.id && (u.role === 'courier' || !u.role)) {
-          if (!couriersMap.has(u.id)) {
+        const couriersMap = new Map<string, UserRecord>()
+        for (const u of fallbackList) {
+          if (u && u.id && !couriersMap.has(u.id)) {
             couriersMap.set(u.id, {
               ...u,
               vehicle_type: u.vehicle_type || 'moto',
-              status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
-            } as UserRecord)
+              status: u.status || 'offline',
+            })
           }
         }
+        return Array.from(couriersMap.values())
+      } catch (fallbackErr) {
+        console.error('Falha crítica ao buscar entregadores em users:', fallbackErr)
+        return []
       }
-    } catch (e) {
-      console.warn('Erro ao filtrar couriers por membros:', e)
     }
-
-    // Sempre buscar couriers da coleção users e UNIR (dedup por id)
-    // Se for Matriz ou filial principal, une todos os usuários com role='courier' (excluindo apenas quem for membro exclusivo de outra empresa ativa)
-    try {
-      const isMatriz = await this.isMatrizCompany(targetCompanyId)
-      const usersList = await pb.collection<UserRecord>('users').getFullList({
-        filter: "role = 'courier'",
-        sort: '-created',
-        requestKey: null,
-      })
-
-      let otherCompanyMemberUserIds = new Set<string>()
-      if (!isMatriz) {
-        try {
-          const otherMembers = await pb.collection<MembroRecord>('membros').getFullList({
-            filter: `empresa_id != '${targetCompanyId}' && ativo = true && (papel = 'courier' || papel = 'entregador')`,
-            fields: 'user_id',
-            requestKey: null,
-          })
-          otherCompanyMemberUserIds = new Set(otherMembers.map((m) => m.user_id))
-        } catch (mErr) {
-          console.warn('Aviso ao consultar membros de outras empresas:', mErr)
-        }
-      }
-
-      for (const u of usersList) {
-        if (u && u.id && !couriersMap.has(u.id)) {
-          // Se não for matriz e o courier estiver vinculado exclusivamente a outra empresa, pula
-          if (!isMatriz && otherCompanyMemberUserIds.has(u.id)) {
-            continue
-          }
-          couriersMap.set(u.id, {
-            ...u,
-            vehicle_type: u.vehicle_type || 'moto',
-            status: u.status === 'inactive' ? ('inactive' as const) : ('active' as const),
-          })
-        }
-      }
-    } catch (usersErr) {
-      console.warn('Erro ao unir couriers de users:', usersErr)
-    }
-
-    if (couriersMap.size > 0) {
-      return Array.from(couriersMap.values())
-    }
-
-    return []
   },
 
   async getSellers(empresaId?: string) {
@@ -4121,22 +4095,20 @@ export const deliveryService = {
   },
 
   // Reviews (Avaliação de Entregador e Vendedor no Rastreio Público)
+  // NOTA: A coleção 'reviews' NÃO possui coluna empresa_id (apenas order_id, courier_id, seller_id).
+  // Consultas com empresa_id resultam em erro HTTP 400.
   async getReviews(
     filter = '',
     sort = '-created',
     expand = 'order_id,courier_id,seller_id',
     limit = 50,
   ) {
-    let finalFilter = filter
-    if (!filter.includes('empresa_id') && !filter.includes('order_id')) {
-      const companyClause = this.getCompanyFilterClause('empresa_id')
-      if (companyClause) {
-        finalFilter = filter ? `(${filter}) && ${companyClause}` : companyClause
-      }
-    }
+    // Sanitizar removendo qualquer cláusula indevida com empresa_id
+    const sanitizedFilter = (filter || '').replace(/\bempresa_id\s*=\s*'[^']*'\s*(&&)?/g, '').trim()
+    const cleanFilter = sanitizedFilter.replace(/^(&&|\s)+|(&&|\s)+$/g, '')
 
     const res = await pb.collection<ReviewRecord>('reviews').getList(1, limit, {
-      filter: finalFilter,
+      filter: cleanFilter || undefined,
       sort,
       expand,
       requestKey: null,

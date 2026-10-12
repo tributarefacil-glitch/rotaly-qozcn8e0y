@@ -789,8 +789,13 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
   }
 
   // Filtered couriers for smart search & filtering
+  // Entregadores inativos são sempre excluídos. Entregadores offline, idle e busy
+  // permanecem visíveis e selecionáveis para viabilizar o planejamento prévio de rota.
   const filteredCouriers = useMemo(() => {
     return couriers.filter((c) => {
+      // Entregadores inativos fora da seleção
+      if (c.status === 'inactive') return false
+
       const matchesSearch =
         c.name.toLowerCase().includes(searchCourierFilter.toLowerCase()) ||
         (c.vehicle_model || '').toLowerCase().includes(searchCourierFilter.toLowerCase()) ||
@@ -4254,7 +4259,34 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                   const isSelected = selectedCourierIds.includes(courier.id)
                   const palette = COURIER_PALETTE[idx % COURIER_PALETTE.length]
                   const hasActiveRoute = isCourierWithActiveRoute(courier.id)
-                  const isBusy = courier.status === 'busy' || hasActiveRoute
+                  const isOffline = courier.status === 'offline'
+                  const isInRoute = hasActiveRoute || courier.status === 'busy'
+                  const isAvailable = !isOffline && !isInRoute // idle ou active
+
+                  // Status badge informativo:
+                  // 🟢 Disponível (idle/active)
+                  // ⚪ Offline (fora de turno) (offline)
+                  // 🔄 Em rota (busy ou rota ativa)
+                  const statusBadge = isInRoute
+                    ? {
+                        label: '🔄 Em rota',
+                        desc: hasActiveRoute ? 'entrará na fila' : 'ocupado',
+                        className:
+                          'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
+                      }
+                    : isOffline
+                      ? {
+                          label: '⚪ Offline (fora de turno)',
+                          desc: 'planejamento liberado',
+                          className:
+                            'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-400/30',
+                        }
+                      : {
+                          label: '🟢 Disponível',
+                          desc: 'pronto',
+                          className:
+                            'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
+                        }
 
                   return (
                     <label
@@ -4293,14 +4325,11 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             title={`Cor da rota: ${palette.name}`}
                           />
                         </div>
-                        <div className="flex items-center justify-between text-[10px] text-slate-500 mt-0.5">
-                          <span className="truncate">
-                            {hasActiveRoute
-                              ? '🔄 Em rota — entrará na fila'
-                              : isBusy
-                                ? '⚠️ Ocupado'
-                                : '🟢 Disponível'}{' '}
-                            • {courier.vehicle_model || courier.vehicle_type || 'Moto'}
+                        <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1 gap-1">
+                          <span
+                            className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border font-medium truncate ${statusBadge.className}`}
+                          >
+                            {statusBadge.label}
                           </span>
                           <button
                             type="button"
@@ -4311,13 +4340,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                             Só este
                           </button>
                         </div>
-                        {hasActiveRoute && (
-                          <div className="mt-1">
-                            <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 font-medium">
-                              Em rota — entrará na fila
-                            </span>
-                          </div>
-                        )}
+                        <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 truncate">
+                          {courier.vehicle_model || courier.vehicle_type || 'Moto'}
+                          {courier.vehicle_plate ? ` • ${courier.vehicle_plate}` : ''}
+                        </div>
                       </div>
                     </label>
                   )

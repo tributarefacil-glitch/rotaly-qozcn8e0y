@@ -1,7 +1,7 @@
 import type { RecordModel } from 'pocketbase'
 
 export type UserRole = 'master' | 'admin' | 'seller' | 'courier'
-export type UserStatus = 'active' | 'inactive' | 'pending' | 'idle' | 'busy'
+export type UserStatus = 'active' | 'inactive' | 'pending' | 'idle' | 'busy' | 'offline'
 export type VehicleType =
   | 'moto'
   | 'carro'
