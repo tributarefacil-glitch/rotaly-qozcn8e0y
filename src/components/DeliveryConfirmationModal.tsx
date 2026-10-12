@@ -883,8 +883,10 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           )
         }
       }
-      // CORREÇÃO REAL DE ENDEREÇO confirmada pelo entregador (atualiza pin na coleção customers e no endereço específico)
-      if (isDelivered && addressCorrectionConfirmed && currentLoc && order.customer_id) {
+      // REGRA SOBERANA (decisão do dono 12/10):
+      // Ao confirmar entrega, o pin do entregador no local consolida address/street/number/complement/lat/lng
+      // do customer sem intervenção do vendedor. Endereço digitado inicial é apenas sugestão.
+      if (isDelivered && currentLoc && order.customer_id) {
         try {
           const oldLat = order.expand?.customer_id?.lat
           const oldLng = order.expand?.customer_id?.lng
@@ -903,9 +905,9 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
             actor_name: pb.authStore.record?.name || 'Entregador',
             collection: 'customers',
             record_id: order.customer_id,
-            field: 'lat,lng',
-            old_value: `${oldLat},${oldLng}`,
-            new_value: `${currentLoc.lat},${currentLoc.lng}`,
+            field: 'address,lat,lng',
+            old_value: `${oldAddress} (${oldLat},${oldLng})`,
+            new_value: `GPS (${currentLoc.lat},${currentLoc.lng})`,
             courier_id: courierId || order.courier_id,
             empresa_id: order.empresa_id,
             metadata: {
@@ -914,12 +916,12 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               address: oldAddress,
               real_gps: currentLoc,
               customer_address_id: order.customer_address_id,
+              system_trigger: true,
             },
           })
-          toast.success('Ponto do cliente corrigido para sua localização real!')
         } catch (corrErr) {
           console.warn(
-            '[DeliveryConfirmationModal] Falha ao atualizar coordenadas do cliente:',
+            '[DeliveryConfirmationModal] Falha ao atualizar coordenadas do cliente com pin soberano:',
             corrErr,
           )
         }

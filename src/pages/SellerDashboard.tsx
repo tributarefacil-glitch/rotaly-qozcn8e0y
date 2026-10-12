@@ -1926,7 +1926,10 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                                   {customer?.name || 'Cliente'}
                                 </p>
                                 <p className="text-[11px] text-slate-400 truncate max-w-xs">
-                                  {customer?.address || 'Endereço não cadastrado'}
+                                  {customer?.address ||
+                                    order.end_address_text ||
+                                    'Endereço não cadastrado'}
+                                  {customer?.complement ? ` (${customer.complement})` : ''}
                                 </p>
                               </td>
                               <td className="py-3 px-3 text-slate-300">

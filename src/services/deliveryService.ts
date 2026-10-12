@@ -1005,6 +1005,10 @@ export const deliveryService = {
       const customer = await pb.collection<CustomerRecord>('customers').getOne(customerId)
       if (!customer) return
 
+      // REGRA INTOCÁVEL: Nota '[CORREÇÃO DEFINITIVA' não pode ser sobrescrita
+      const currentNotes = customer.notes || ''
+      const isDefinitive = currentNotes.includes('[CORREÇÃO DEFINITIVA')
+
       let addresses = customer.addresses ? [...customer.addresses] : []
       let updatedAddresses = false
       let isTargetDefault = false
@@ -1041,6 +1045,59 @@ export const deliveryService = {
       if (isTargetDefault || addresses.length === 0 || !customer.lat || !customer.lng) {
         updatePayload.lat = lat
         updatePayload.lng = lng
+      }
+
+      // Enriquecimento automático estilo Uber via geocodificação reversa
+      if (!isDefinitive) {
+        try {
+          const { reverseGeocodeUberAddress } = await import('@/lib/uberAddress')
+          const enriched = await reverseGeocodeUberAddress({
+            lat,
+            lng,
+            existingAddress: customer.address,
+            existingComplement: customer.complement,
+          })
+
+          if (enriched && enriched.fullAddress) {
+            updatePayload.address = enriched.fullAddress
+            if (enriched.street) updatePayload.street = enriched.street
+            if (enriched.number) updatePayload.number = enriched.number
+            if (enriched.complement) updatePayload.complement = enriched.complement
+            if (enriched.neighborhood) updatePayload.neighborhood = enriched.neighborhood
+            if (enriched.city) updatePayload.city = enriched.city
+            if (enriched.state) updatePayload.state = enriched.state
+            if (enriched.postalCode) updatePayload.postal_code = enriched.postalCode
+
+            // Se o Google não encontrou número, gerar alerta pendente
+            if (!enriched.number || enriched.number === 'S/N') {
+              try {
+                await pb.collection('address_alerts').create({
+                  customer: customerId,
+                  company: customer.empresa_id || '',
+                  origin: 'pin_entregador',
+                  status: 'pendente',
+                  distance_meters: 0,
+                  marked_at: new Date().toISOString(),
+                  suggested_address: JSON.stringify({
+                    address: enriched.fullAddress,
+                    lat,
+                    lng,
+                    reason: 'Local sem número oficial ou interpolado retornado pelo geocoder',
+                  }),
+                  notes:
+                    'Endereço estilo Uber pendente de numeração oficial/interpolada pelo Google.',
+                })
+              } catch {
+                /* intentionally ignored */
+              }
+            }
+          }
+        } catch (enrichErr) {
+          console.warn(
+            '[deliveryService] Enriquecimento reverso Uber falhou, prosseguindo com lat/lng:',
+            enrichErr,
+          )
+        }
       }
 
       if (Object.keys(updatePayload).length > 0) {

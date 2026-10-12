@@ -291,6 +291,46 @@ onRecordUpdateRequest((e) => {
         console.log('[orders_guard] Aviso ao salvar audit_trail para liberação admin:', auditErr)
       }
     }
+
+    // BLOCO NOVO (decisão do dono 12/10):
+    // Ao confirmar entrega (status 'delivered'), o pin do entregador no local é a fonte soberana de endereço.
+    // Se a ordem possuir coordenadas de entrega e cliente associado, dispara enriquecimento automático
+    // se o cliente ainda não possuir nota de [CORREÇÃO DEFINITIVA.
+    if (newStatus === 'delivered' && customerIdVal) {
+      try {
+        const custRecord = $app.findRecordById('customers', customerIdVal)
+        const custNotes = custRecord ? custRecord.getString('notes') || '' : ''
+
+        // Respeitar nota intocável
+        if (!custNotes.includes('[CORREÇÃO DEFINITIVA')) {
+          const dLat =
+            targetOrder.getFloat('delivery_lat') || targetOrder.getFloat('end_address_lat') || 0
+          const dLng =
+            targetOrder.getFloat('delivery_lng') || targetOrder.getFloat('end_address_lng') || 0
+
+          if (dLat !== 0 && dLng !== 0 && !isNaN(dLat) && !isNaN(dLng)) {
+            // Atualizar lat/lng do cliente se não tiver ou se veio de pin do entregador
+            const currentCustLat = custRecord.getFloat('lat') || 0
+            const currentCustLng = custRecord.getFloat('lng') || 0
+
+            if (currentCustLat === 0 && currentCustLng === 0) {
+              custRecord.set('lat', dLat)
+              custRecord.set('lng', dLng)
+              $app.save(custRecord)
+              console.log(
+                '[orders_guard] Coordenadas do cliente preenchidas via pin entregador:',
+                customerIdVal,
+              )
+            }
+          }
+        }
+      } catch (errCustPin) {
+        console.log(
+          '[orders_guard] Aviso ao sincronizar coordenadas do customer no hook:',
+          errCustPin,
+        )
+      }
+    }
   } catch (err) {
     // Se for o BadRequestError explicitamente lançado, propaga para barrar a requisição
     if (

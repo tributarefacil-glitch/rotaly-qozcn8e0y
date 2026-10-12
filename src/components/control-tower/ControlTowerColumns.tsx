@@ -172,7 +172,10 @@ export const ControlTowerColumns: React.FC<ControlTowerColumnsProps> = ({
                           </h4>
                           <p className="text-[11px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
                             <MapPin className="h-3 w-3 text-slate-500 shrink-0" />
-                            <span>{cust?.address || 'Endereço não cadastrado'}</span>
+                            <span>
+                              {cust?.address || order.end_address_text || 'Endereço não cadastrado'}
+                              {cust?.complement ? ` (${cust.complement})` : ''}
+                            </span>
                           </p>
                         </div>
 

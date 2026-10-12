@@ -832,14 +832,36 @@ export function CreateCustomerModal({
   )
 
   const getFullFormattedAddress = () => {
+    // Formato canônico padrão Uber: "Rua X, [nº], Bairro, Cidade - UF, CEP" com lote/quadra preservado
+    const rawStreet = streetAndNumber.trim()
+    let streetVal = rawStreet
+    let numberVal = ''
+    if (rawStreet.includes(',')) {
+      const sp = rawStreet.split(',')
+      streetVal = sp[0].trim()
+      numberVal = sp.slice(1).join(',').trim()
+    }
+
     const parts: string[] = []
-    if (streetAndNumber.trim()) parts.push(streetAndNumber.trim())
-    if (complement.trim()) parts.push(complement.trim())
+    if (streetVal) {
+      if (numberVal && !/^(s\/n|sn|sem\s*n[uú]mero)$/i.test(numberVal)) {
+        parts.push(`${streetVal}, ${numberVal}`)
+      } else {
+        parts.push(streetVal)
+      }
+    }
+
+    // Complemento com lote/quadra mantido separadamente sem duplicar na linha principal
     if (neighborhood.trim()) parts.push(neighborhood.trim())
     if (city.trim()) {
       parts.push(ufState ? `${city.trim()} - ${ufState}` : city.trim())
     }
-    if (postalCode.trim()) parts.push(`CEP: ${postalCode.trim()}`)
+    if (postalCode.trim()) {
+      const cleanCep = postalCode.replace(/\D/g, '')
+      const formattedCep =
+        cleanCep.length === 8 ? `${cleanCep.slice(0, 5)}-${cleanCep.slice(5)}` : postalCode.trim()
+      parts.push(`CEP ${formattedCep}`)
+    }
     return parts.join(', ')
   }
 
