@@ -69,6 +69,7 @@ import {
 } from '@/lib/googleMaps'
 import { encodePlusCode } from '@/lib/plusCode'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { MapDataService } from '@/lib/mapDataService'
 import { BaseAddressAutocomplete, BaseAddressResult } from '@/components/BaseAddressAutocomplete'
 import { FormErrorBoundary } from '@/components/FormErrorBoundary'
 import { CustomerSearchCombobox } from '@/components/CustomerSearchCombobox'
@@ -483,9 +484,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       calculateSmartRouteSuggestion(lat, lng)
 
       const google = getGoogle()
-      if (mapInstanceRef.current && google?.maps) {
+      const cleanPos = MapDataService.cleanCoords(lat, lng)
+      if (mapInstanceRef.current && google?.maps && cleanPos) {
         try {
-          const pos = new google.maps.LatLng(lat, lng)
+          const pos = new google.maps.LatLng(cleanPos.lat, cleanPos.lng)
           mapInstanceRef.current.setCenter(pos)
           mapInstanceRef.current.setZoom(zoomLevel)
 
@@ -2032,17 +2034,28 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                           }
                           onChange={(e) => {
                             const parsed = parseFloat(e.target.value)
-                            if (!isNaN(parsed)) {
-                              setSelectedCoords((prev) => ({ ...prev, lat: parsed }))
+                            const cleanManual = MapDataService.cleanCoords(
+                              parsed,
+                              selectedCoords.lng,
+                            )
+                            if (cleanManual) {
+                              setSelectedCoords((prev) => ({ ...prev, lat: cleanManual.lat }))
                               setHasLocationPinned(true)
                               setIsPinManuallyAdjusted(true)
                               isSelectedFromAutocompleteRef.current = true
                               const google = getGoogle()
                               if (mapInstanceRef.current && google?.maps) {
-                                const pos = new google.maps.LatLng(parsed, selectedCoords.lng)
-                                mapInstanceRef.current.setCenter(pos)
-                                if (markerInstanceRef.current)
-                                  markerInstanceRef.current.setPosition(pos)
+                                try {
+                                  const pos = new google.maps.LatLng(
+                                    cleanManual.lat,
+                                    cleanManual.lng,
+                                  )
+                                  mapInstanceRef.current.setCenter(pos)
+                                  if (markerInstanceRef.current)
+                                    markerInstanceRef.current.setPosition(pos)
+                                } catch (err) {
+                                  console.warn('Erro ao atualizar posição manual lat:', err)
+                                }
                               }
                             }
                           }}
@@ -2062,17 +2075,28 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                           }
                           onChange={(e) => {
                             const parsed = parseFloat(e.target.value)
-                            if (!isNaN(parsed)) {
-                              setSelectedCoords((prev) => ({ ...prev, lng: parsed }))
+                            const cleanManual = MapDataService.cleanCoords(
+                              selectedCoords.lat,
+                              parsed,
+                            )
+                            if (cleanManual) {
+                              setSelectedCoords((prev) => ({ ...prev, lng: cleanManual.lng }))
                               setHasLocationPinned(true)
                               setIsPinManuallyAdjusted(true)
                               isSelectedFromAutocompleteRef.current = true
                               const google = getGoogle()
                               if (mapInstanceRef.current && google?.maps) {
-                                const pos = new google.maps.LatLng(selectedCoords.lat, parsed)
-                                mapInstanceRef.current.setCenter(pos)
-                                if (markerInstanceRef.current)
-                                  markerInstanceRef.current.setPosition(pos)
+                                try {
+                                  const pos = new google.maps.LatLng(
+                                    cleanManual.lat,
+                                    cleanManual.lng,
+                                  )
+                                  mapInstanceRef.current.setCenter(pos)
+                                  if (markerInstanceRef.current)
+                                    markerInstanceRef.current.setPosition(pos)
+                                } catch (err) {
+                                  console.warn('Erro ao atualizar posição manual lng:', err)
+                                }
                               }
                             }
                           }}

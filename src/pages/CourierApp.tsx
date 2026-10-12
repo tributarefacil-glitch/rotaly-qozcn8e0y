@@ -942,15 +942,10 @@ export default function CourierApp() {
           },
         })
 
-        // PATCH 4: Ponto que falhar com 400 (além de rede/5xx) entra no buffer offline sanitizado com offline_buffered=true
-        // e timestamp original; nunca descarte silencioso.
-        if (hasActiveStartedRoute) {
-          const reasonCode =
-            e?.status === 400
-              ? 'rejected_400'
-              : (accuracyVal ?? 2000) >= 500
-                ? 'sem-fix'
-                : 'network_offline'
+        // REQUISITO: Aceitar 400 descartando o payload rejeitado (evita loop infinito de rejeição do backend)
+        // Apenas falhas de rede / sinal fraco entram no buffer offline para retry controlado (1/min)
+        if (hasActiveStartedRoute && e?.status !== 400) {
+          const reasonCode = (accuracyVal ?? 2000) >= 500 ? 'sem-fix' : 'network_offline'
           offlineTelemetryBuffer.enqueuePoint({
             userId: user.id,
             lat,

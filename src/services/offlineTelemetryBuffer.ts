@@ -432,15 +432,21 @@ class OfflineTelemetryBufferService {
             pointId: pt.id,
           })
 
-          // PATCH 4: Ponto que falhar com 400 (além de rede/5xx) PERMANECE no buffer offline sanitizado,
-          // com timestamp original e offline_buffered=true; retry de no máximo 1 tentativa por ponto
-          // por minuto; NUNCA descarte silencioso.
-          remainingPoints.push({
-            ...pt,
-            error:
-              err?.message ||
-              (err?.status === 400 ? 'HTTP 400 - Backend rejeitou payload' : 'Falha de rede/5xx'),
-          })
+          // REQUISITO: Aceitar 400 descartando o payload rejeitado (evita loop infinito de rejeição do backend)
+          // Falha de rede / 5xx / timeout permanece no buffer para retry (1 tentativa por minuto)
+          if (err?.status === 400) {
+            console.warn(
+              '[TELEMETRIA] Payload rejeitado com 400 pelo backend — descartando do buffer para evitar loop:',
+              pt.id,
+            )
+            sentIds.push(pt.id)
+            this.pointLastRetryAttemptMap.delete(pt.id)
+          } else {
+            remainingPoints.push({
+              ...pt,
+              error: err?.message || 'Falha de rede/5xx',
+            })
+          }
         }
       }
 

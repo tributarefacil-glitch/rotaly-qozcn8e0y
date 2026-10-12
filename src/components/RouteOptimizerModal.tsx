@@ -96,7 +96,8 @@ import {
   isGoogleMapsAuthError,
   fallbackGeocodeAddress,
 } from '@/lib/googleMaps'
-import { safeSetMap } from '@/lib/safeMapOps'
+import { safeSetMap, safeExtendBounds } from '@/lib/safeMapOps'
+import { MapDataService } from '@/lib/mapDataService'
 import {
   calculateRouteWorkShift,
   formatRemainingDuration,
@@ -2148,14 +2149,18 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           const pathCoords: Array<{ lat: number; lng: number }> = []
 
           // 1. PONTO DE PARTIDA (Base de Saída do Entregador) - Verde
-          const startLat = plan.start_base?.lat || -22.906847
-          const startLng = plan.start_base?.lng || -43.172896
+          const cleanStart =
+            MapDataService.cleanCoords(plan.start_base?.lat, plan.start_base?.lng) ||
+            MapDataService.getOrderBaseOrigin(plan.start_base)
+          const startLat = cleanStart.lat
+          const startLng = cleanStart.lng
           pathCoords.push({ lat: startLat, lng: startLng })
-          bounds.extend(new google.maps.LatLng(startLat, startLng))
-          hasPoints = true
+          if (safeExtendBounds(bounds, cleanStart)) {
+            hasPoints = true
+          }
 
           const startMarker = new google.maps.Marker({
-            position: { lat: startLat, lng: startLng },
+            position: cleanStart,
             map: mapInstanceRef.current,
             title: `🟢 PARTIDA: ${plan.start_base?.name || 'Base de Saída'} (${plan.courier.name})`,
             icon: {
@@ -2189,12 +2194,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
           // 2. PARADAS ORDENADAS (Numeradas, com suporte a ARRASTE MANUAL)
           plan.stops.forEach((stop, stopIdx) => {
-            pathCoords.push({ lat: stop.lat, lng: stop.lng })
-            bounds.extend(new google.maps.LatLng(stop.lat, stop.lng))
+            const cleanStop = MapDataService.cleanCoords(stop.lat, stop.lng)
+            if (!cleanStop) return
+            pathCoords.push(cleanStop)
+            if (safeExtendBounds(bounds, cleanStop)) {
+              hasPoints = true
+            }
 
             // Marcador arrastável para ajuste manual no mapa
             const stopMarker = new google.maps.Marker({
-              position: { lat: stop.lat, lng: stop.lng },
+              position: cleanStop,
               map: mapInstanceRef.current,
               title: `Parada #${stopIdx + 1}: ${stop.customer_name} (Arraste para ajustar)`,
               draggable: true, // HABILITA ARRASTE MANUAL
@@ -2249,13 +2258,17 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           })
 
           // 3. PONTO DE CHEGADA / RETORNO (End Base) - Vermelho / Bandeira
-          const endLat = plan.end_base?.lat || startLat
-          const endLng = plan.end_base?.lng || startLng
+          const cleanEnd =
+            MapDataService.cleanCoords(plan.end_base?.lat, plan.end_base?.lng) || cleanStart
+          const endLat = cleanEnd.lat
+          const endLng = cleanEnd.lng
           pathCoords.push({ lat: endLat, lng: endLng })
-          bounds.extend(new google.maps.LatLng(endLat, endLng))
+          if (safeExtendBounds(bounds, cleanEnd)) {
+            hasPoints = true
+          }
 
           const endMarker = new google.maps.Marker({
-            position: { lat: endLat, lng: endLng },
+            position: cleanEnd,
             map: mapInstanceRef.current,
             title: `🏁 CHEGADA: ${plan.end_base?.name || 'Ponto de Retorno'} (${plan.courier.name})`,
             icon: {
@@ -2320,11 +2333,13 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         const endBaseObj = resolvedEndEntity
 
         // 1. Ponto de Partida selecionado
-        if (startBaseObj.lat && startBaseObj.lng) {
-          bounds.extend(new google.maps.LatLng(startBaseObj.lat, startBaseObj.lng))
-          hasPoints = true
+        const cleanStartObj = MapDataService.cleanCoords(startBaseObj.lat, startBaseObj.lng)
+        if (cleanStartObj) {
+          if (safeExtendBounds(bounds, cleanStartObj)) {
+            hasPoints = true
+          }
           const startMarker = new google.maps.Marker({
-            position: { lat: startBaseObj.lat, lng: startBaseObj.lng },
+            position: cleanStartObj,
             map: mapInstanceRef.current,
             title: `🟢 PARTIDA: ${startBaseObj.name}`,
             icon: {
@@ -2355,17 +2370,18 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         }
 
         // 2. Ponto de Chegada selecionado
+        const cleanEndObj = MapDataService.cleanCoords(endBaseObj.lat, endBaseObj.lng)
         if (
-          endBaseObj.lat &&
-          endBaseObj.lng &&
+          cleanEndObj &&
           (endBaseObj.id !== startBaseObj.id ||
-            endBaseObj.lat !== startBaseObj.lat ||
-            endBaseObj.lng !== startBaseObj.lng)
+            cleanEndObj.lat !== cleanStartObj?.lat ||
+            cleanEndObj.lng !== cleanStartObj?.lng)
         ) {
-          bounds.extend(new google.maps.LatLng(endBaseObj.lat, endBaseObj.lng))
-          hasPoints = true
+          if (safeExtendBounds(bounds, cleanEndObj)) {
+            hasPoints = true
+          }
           const endMarker = new google.maps.Marker({
-            position: { lat: endBaseObj.lat, lng: endBaseObj.lng },
+            position: cleanEndObj,
             map: mapInstanceRef.current,
             title: `🏁 CHEGADA: ${endBaseObj.name}`,
             icon: {
@@ -2398,14 +2414,18 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
         ordersToShow.forEach((o, idx) => {
           const cust = localCustomers.find((c) => c.id === o.customer_id) || o.expand?.customer_id
-          if (cust && cust.lat && cust.lng) {
-            bounds.extend(new google.maps.LatLng(cust.lat, cust.lng))
-            hasPoints = true
+          const cleanCust =
+            MapDataService.getOrderDestination(o) ||
+            MapDataService.cleanCoords(cust?.lat, cust?.lng)
+          if (cleanCust) {
+            if (safeExtendBounds(bounds, cleanCust)) {
+              hasPoints = true
+            }
 
             const m = new google.maps.Marker({
-              position: { lat: cust.lat, lng: cust.lng },
+              position: cleanCust,
               map: mapInstanceRef.current,
-              title: `#${idx + 1} - ${cust.name || 'Cliente'} (${o.tracking_code})`,
+              title: `#${idx + 1} - ${cust?.name || 'Cliente'} (${o.tracking_code})`,
               label: {
                 text: `${idx + 1}`,
                 color: '#ffffff',
@@ -2440,11 +2460,13 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           .filter((c) => selectedCourierIds.includes(c.id))
           .forEach((c) => {
             const loc = locations.find((l) => l.user_id === c.id)
-            if (loc && loc.lat && loc.lng) {
-              bounds.extend(new google.maps.LatLng(loc.lat, loc.lng))
-              hasPoints = true
+            const cleanLoc = MapDataService.cleanCoords(loc?.lat, loc?.lng)
+            if (cleanLoc) {
+              if (safeExtendBounds(bounds, cleanLoc)) {
+                hasPoints = true
+              }
               const cm = new google.maps.Marker({
-                position: { lat: loc.lat, lng: loc.lng },
+                position: cleanLoc,
                 map: mapInstanceRef.current,
                 title: `🛵 ${c.name} (Disponível)`,
                 icon: 'https://maps.google.com/mapfiles/ms/icons/purple-dot.png',

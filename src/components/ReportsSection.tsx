@@ -72,6 +72,7 @@ import {
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { useToast } from '@/hooks/use-toast'
 import { CourierDeliveryHistoryModal } from '@/components/CourierDeliveryHistoryModal'
+import { MapDataService } from '@/lib/mapDataService'
 
 interface ReportsSectionProps {
   orders: OrderRecord[]
@@ -2068,13 +2069,14 @@ export const ReportsSection: React.FC<ReportsSectionProps> = ({
                     order.status === 'client_absent' ||
                     order.status === 'address_error' ||
                     order.status === 'cancelled'
-                  const baseLat = Number(order.start_base_lat) || 0
-                  const baseLng = Number(order.start_base_lng) || 0
+                  const cleanBase = MapDataService.cleanCoords(
+                    order.start_base_lat,
+                    order.start_base_lng,
+                  )
+                  const baseLat = cleanBase?.lat ?? 0
+                  const baseLng = cleanBase?.lng ?? 0
                   const isZeroBase =
-                    baseLat === 0 &&
-                    baseLng === 0 &&
-                    !order.start_base_name &&
-                    !order.start_base_address
+                    !cleanBase && !order.start_base_name && !order.start_base_address
 
                   const baseDist =
                     !isUnsuccessful &&

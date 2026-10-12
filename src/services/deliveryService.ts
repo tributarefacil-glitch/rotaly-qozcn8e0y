@@ -83,14 +83,23 @@ export function sanitizeLocationPayload(params: {
   const numLat = typeof lat === 'number' ? lat : Number(lat)
   const numLng = typeof lng === 'number' ? lng : Number(lng)
 
-  if (isNaN(numLat) || numLat < -90 || numLat > 90) {
-    throw new Error(
-      `[sanitizeLocationPayload] Latitude inválida: ${lat} (deve estar entre -90 e 90)`,
-    )
+  if (
+    isNaN(numLat) ||
+    !isFinite(numLat) ||
+    numLat < -90 ||
+    numLat > 90 ||
+    isNaN(numLng) ||
+    !isFinite(numLng) ||
+    numLng < -180 ||
+    numLng > 180
+  ) {
+    throw new Error(`[sanitizeLocationPayload] Coordenadas inválidas: lat=${lat}, lng=${lng}`)
   }
-  if (isNaN(numLng) || numLng < -180 || numLng > 180) {
+
+  // Rejeita coordenada (0, 0)
+  if (Math.abs(numLat) < 0.000001 && Math.abs(numLng) < 0.000001) {
     throw new Error(
-      `[sanitizeLocationPayload] Longitude inválida: ${lng} (deve estar entre -180 e 180)`,
+      '[sanitizeLocationPayload] Ponto nulo (0,0) rejeitado por segurança de telemetria',
     )
   }
 
@@ -2199,6 +2208,31 @@ export const deliveryService = {
       offlineBuffered: extra?.offline_buffered,
     })
 
+    // Rejeição de saltos impossíveis (> 300 km/h implícito entre pings consecutivos)
+    const prevCached = this._lastCourierLocationRecordMap.get(userId)
+    if (prevCached && prevCached.timestamp) {
+      const deltaSec = Math.max(1, (now - prevCached.timestamp) / 1000)
+      const distMeters = haversineDistanceMeters(
+        prevCached.lat,
+        prevCached.lng,
+        sanitizedPayload.lat!,
+        sanitizedPayload.lng!,
+      )
+      const speedKmh = (distMeters / deltaSec) * 3.6
+      if (speedKmh > 300) {
+        console.warn('[TELEMETRIA] Salto impossível descartado (>300 km/h):', {
+          speedKmh: Math.round(speedKmh),
+          distMeters: Math.round(distMeters),
+          deltaSec,
+          prev: { lat: prevCached.lat, lng: prevCached.lng },
+          next: { lat: sanitizedPayload.lat, lng: sanitizedPayload.lng },
+        })
+        throw new Error(
+          `[sanitizeLocationPayload] Salto impossível de telemetria (${Math.round(speedKmh)} km/h)`,
+        )
+      }
+    }
+
     // Deduplicação defensiva no cliente antes de criar novas linhas:
     // Se a posição mudou menos de ~10m OU a acurácia é >= 500m (sem fix / fallback de 2000m),
     // reutiliza/atualiza o registro recente existente em vez de criar outro registro repetido.
@@ -2552,12 +2586,12 @@ export const deliveryService = {
     } catch (err) {
       console.warn('[deliveryService] Falha ao carregar base ativa:', err)
     }
-    // Fallback defensivo: coordenadas conhecidas da base Mais Saudável (apenas se não houver base cadastrada)
+    // Fallback canônico oficial Drogaria Mais Saudável Pilar
     return {
-      lat: -22.7001402,
-      lng: -43.2982834,
+      lat: -22.6977499,
+      lng: -43.2936013,
       name: 'Mais Saudável',
-      address: '',
+      address: 'Pilar',
     }
   },
 

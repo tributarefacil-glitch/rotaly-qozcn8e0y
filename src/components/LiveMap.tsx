@@ -20,7 +20,8 @@ import {
   reverseGeocodeCoordinates,
 } from '@/lib/googleMaps'
 import { parseSafeTimestamp } from '@/lib/operationalWindow'
-import { safeSetMap } from '@/lib/safeMapOps'
+import { safeSetMap, safeExtendBounds } from '@/lib/safeMapOps'
+import { MapDataService } from '@/lib/mapDataService'
 import { getCourierRouteColor } from '@/lib/courierRouteColors'
 
 export interface MapMarkerItem {
@@ -734,12 +735,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     const activePolylineKeys = new Set<string>()
 
     visibleRouteLines.forEach((r, idx) => {
-      const rawCoords = r.streetCoordinates || [r.origin, r.destination]
+      const rawCoords = (r.streetCoordinates || [r.origin, r.destination])
+        .map((c: any) => MapDataService.cleanCoords(c?.lat, c?.lng))
+        .filter(Boolean) as { lat: number; lng: number }[]
       // Polyline limitada aos últimos 100 pontos por entregador
       const coords = rawCoords && rawCoords.length > 100 ? rawCoords.slice(-100) : rawCoords
       if (coords.length < 2) return
 
-      const pathArray = coords.map((c) => ({ lat: c.lat, lng: c.lng }))
+      const pathArray = coords
       const baseKey = `route-${idx}-${r.isReturnLeg ? 'return' : 'main'}`
       activePolylineKeys.add(baseKey)
 
@@ -819,14 +822,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       }
 
       // Linha de desvio (vermelha)
-      if (r.isDeviated && r.courierPosition) {
+      const cleanDevCourier = MapDataService.cleanCoords(
+        r.courierPosition?.lat,
+        r.courierPosition?.lng,
+      )
+      const refPoint = coords[0] || MapDataService.cleanCoords(r.origin?.lat, r.origin?.lng)
+      if (r.isDeviated && cleanDevCourier && refPoint) {
         const devKey = `dev-${idx}`
         activePolylineKeys.add(devKey)
-        const refPoint = coords[0] || r.origin
-        const devPath = [
-          { lat: r.courierPosition.lat, lng: r.courierPosition.lng },
-          { lat: refPoint.lat, lng: refPoint.lng },
-        ]
+        const devPath = [cleanDevCourier, refPoint]
 
         let existingDev = googlePolylineMapRef.current.get(devKey)
         if (!existingDev) {
@@ -861,25 +865,32 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     }
     // --- 2. CÍRCULO DE PRECISÃO ---
     const courierItem = visibleMarkers.find((m) => m.type === 'courier' && m.lat && m.lng)
-    if (showAccuracyCircle && courierItem) {
-      if (!googleAccuracyCircleRef.current) {
-        googleAccuracyCircleRef.current = new google.maps.Circle({
-          strokeColor: '#0052CC',
-          strokeOpacity: 0.65,
-          strokeWeight: 1.5,
-          fillColor: '#38BDF8',
-          fillOpacity: 0.18,
-          map: mapInstanceRef.current,
-          center: { lat: courierItem.lat, lng: courierItem.lng },
-          radius: accuracyRadiusMeters,
-          clickable: false,
-        })
-      } else {
-        if (typeof googleAccuracyCircleRef.current.setMap === 'function') {
-          googleAccuracyCircleRef.current.setMap(mapInstanceRef.current)
+    const cleanAccuracyCenter = courierItem
+      ? MapDataService.cleanCoords(courierItem.lat, courierItem.lng)
+      : null
+    if (showAccuracyCircle && cleanAccuracyCenter) {
+      try {
+        if (!googleAccuracyCircleRef.current) {
+          googleAccuracyCircleRef.current = new google.maps.Circle({
+            strokeColor: '#0052CC',
+            strokeOpacity: 0.65,
+            strokeWeight: 1.5,
+            fillColor: '#38BDF8',
+            fillOpacity: 0.18,
+            map: mapInstanceRef.current,
+            center: cleanAccuracyCenter,
+            radius: accuracyRadiusMeters,
+            clickable: false,
+          })
+        } else {
+          if (typeof googleAccuracyCircleRef.current.setMap === 'function') {
+            googleAccuracyCircleRef.current.setMap(mapInstanceRef.current)
+          }
+          googleAccuracyCircleRef.current.setCenter(cleanAccuracyCenter)
+          googleAccuracyCircleRef.current.setRadius(accuracyRadiusMeters)
         }
-        googleAccuracyCircleRef.current.setCenter({ lat: courierItem.lat, lng: courierItem.lng })
-        googleAccuracyCircleRef.current.setRadius(accuracyRadiusMeters)
+      } catch (err) {
+        console.warn('[LiveMap] Erro ao atualizar círculo de precisão:', err)
       }
     } else if (googleAccuracyCircleRef.current) {
       safeSetMap(googleAccuracyCircleRef.current, null)
@@ -906,33 +917,30 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     })
 
     visibleMarkers.forEach((item) => {
-      if (
-        typeof item.lat !== 'number' ||
-        typeof item.lng !== 'number' ||
-        isNaN(item.lat) ||
-        isNaN(item.lng)
-      ) {
+      const cleanItemCoords = MapDataService.cleanCoords(item.lat, item.lng)
+      if (!cleanItemCoords) {
         return
       }
 
-      let adjustedLat = item.lat
-      let adjustedLng = item.lng
+      let adjustedLat = cleanItemCoords.lat
+      let adjustedLng = cleanItemCoords.lng
       if (item.type !== 'courier' && item.type !== 'base') {
-        const k = `${item.lat.toFixed(5)}_${item.lng.toFixed(5)}`
+        const k = `${cleanItemCoords.lat.toFixed(5)}_${cleanItemCoords.lng.toFixed(5)}`
         const bucket = markerBuckets.get(k) || []
         if (bucket.length > 1) {
           const idx = bucket.findIndex((b) => b.id === item.id)
           if (idx > 0) {
             const r = 0.00015
             const theta = (idx * 2 * Math.PI) / bucket.length
-            adjustedLat = item.lat + r * Math.sin(theta)
-            adjustedLng = item.lng + r * Math.cos(theta)
+            adjustedLat = cleanItemCoords.lat + r * Math.sin(theta)
+            adjustedLng = cleanItemCoords.lng + r * Math.cos(theta)
           }
         }
       }
 
+      const cleanAdjusted = MapDataService.cleanCoords(adjustedLat, adjustedLng) || cleanItemCoords
       currentMarkerIds.add(item.id)
-      const targetPos = { lat: adjustedLat, lng: adjustedLng }
+      const targetPos = cleanAdjusted
       const markerIcon = getMarkerIcon(item)
       const isSelected = item.id === selectedMarkerId
 
@@ -1169,25 +1177,24 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       const bounds = new google.maps.LatLngBounds()
       let hasCoords = false
       visibleMarkers.forEach((m) => {
-        if (
-          typeof m.lat === 'number' &&
-          typeof m.lng === 'number' &&
-          !isNaN(m.lat) &&
-          !isNaN(m.lng)
-        ) {
-          bounds.extend({ lat: m.lat, lng: m.lng })
+        const clean = MapDataService.cleanCoords(m.lat, m.lng)
+        if (clean && safeExtendBounds(bounds, clean)) {
           hasCoords = true
         }
       })
       if (hasCoords) {
         hasInitialFitRef.current = true
-        mapInstanceRef.current.fitBounds(bounds, { top: 60, right: 60, bottom: 60, left: 60 })
-        const listener = google.maps.event.addListener(mapInstanceRef.current, 'idle', () => {
-          if (mapInstanceRef.current.getZoom() > 15) {
-            mapInstanceRef.current.setZoom(15)
-          }
-          google.maps.event.removeListener(listener)
-        })
+        try {
+          mapInstanceRef.current.fitBounds(bounds, { top: 60, right: 60, bottom: 60, left: 60 })
+          const listener = google.maps.event.addListener(mapInstanceRef.current, 'idle', () => {
+            if (mapInstanceRef.current.getZoom() > 15) {
+              mapInstanceRef.current.setZoom(15)
+            }
+            google.maps.event.removeListener(listener)
+          })
+        } catch (err) {
+          console.warn('[LiveMap] Erro ao executar fitBounds:', err)
+        }
       }
     }
   }

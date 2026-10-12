@@ -75,3 +75,37 @@ export function toLatLngSegura(lat: any, lng: any): { lat: number; lng: number }
 
   return { lat: numLat, lng: numLng }
 }
+
+/**
+ * Estende um google.maps.LatLngBounds com validação prévia e try/catch interno.
+ * Rejeita pontos inválidos antes de tocar a API do Google Maps, evitando
+ * "not a LatLng or LatLngLiteral: in property lat: not a number".
+ */
+export function safeExtendBounds(bounds: any, coords: { lat: any; lng: any } | any): boolean {
+  if (!bounds || typeof bounds.extend !== 'function') return false
+  const safe = toLatLngSegura(coords?.lat, coords?.lng)
+  if (!safe) return false
+  try {
+    bounds.extend(safe)
+    return true
+  } catch (err) {
+    console.warn('[safeExtendBounds] Erro ao estender bounds:', err)
+    return false
+  }
+}
+
+/**
+ * Executa panTo no mapa com validação prévia de coordenadas e try/catch interno.
+ */
+export function safePanTo(map: any, coords: { lat: any; lng: any } | any): boolean {
+  if (!map || typeof map.panTo !== 'function') return false
+  const safe = toLatLngSegura(coords?.lat, coords?.lng)
+  if (!safe) return false
+  try {
+    map.panTo(safe)
+    return true
+  } catch (err) {
+    console.warn('[safePanTo] Erro ao executar panTo no mapa:', err)
+    return false
+  }
+}

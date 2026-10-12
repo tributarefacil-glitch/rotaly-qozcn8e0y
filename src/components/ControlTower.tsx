@@ -69,7 +69,8 @@ import {
   makeCustomerSvgIcon,
 } from '@/components/LiveMap'
 import { getCourierRouteColor } from '@/lib/courierRouteColors'
-import { toLatLngSegura } from '@/lib/safeMapOps'
+import { toLatLngSegura, safeExtendBounds, safePanTo } from '@/lib/safeMapOps'
+import { MapDataService } from '@/lib/mapDataService'
 import pb from '@/lib/pocketbase/client'
 import { deliveryService } from '@/services/deliveryService'
 import {
@@ -785,59 +786,77 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           }
 
           // 2. Atualização imediata do pin no mapa nativo para movimento suave em tempo real
-          if (
-            newLoc.user_id &&
-            typeof newLoc.lat === 'number' &&
-            typeof newLoc.lng === 'number' &&
-            !isNaN(newLoc.lat) &&
-            !isNaN(newLoc.lng)
-          ) {
-            const existingMarker = courierMarkersMapRef.current.get(newLoc.user_id)
-            if (existingMarker) {
-              const prevPos = existingMarker.getPosition()
-              if (prevPos) {
-                const sLat = prevPos.lat()
-                const sLng = prevPos.lng()
-                const dLat = newLoc.lat - sLat
-                const dLng = newLoc.lng - sLng
-                if (Math.abs(dLat) > 0.00001 || Math.abs(dLng) > 0.00001) {
-                  const prevAnim = courierAnimFramesRef.current.get(newLoc.user_id)
-                  if (prevAnim) cancelAnimationFrame(prevAnim)
-                  const startT = performance.now()
-                  const dur = 700
-                  const step = (now: number) => {
-                    const el = now - startT
-                    const prog = Math.min(1, el / dur)
-                    existingMarker.setPosition({
-                      lat: sLat + dLat * prog,
-                      lng: sLng + dLng * prog,
-                    })
-                    if (prog < 1) {
-                      const req = requestAnimationFrame(step)
-                      courierAnimFramesRef.current.set(newLoc.user_id, req)
-                    } else {
-                      existingMarker.setPosition({ lat: newLoc.lat, lng: newLoc.lng })
-                      courierAnimFramesRef.current.delete(newLoc.user_id)
+          const cleanLoc = MapDataService.cleanCoords(newLoc?.lat, newLoc?.lng)
+          if (newLoc.user_id && cleanLoc) {
+            try {
+              const existingMarker = courierMarkersMapRef.current.get(newLoc.user_id)
+              if (existingMarker) {
+                const prevPos = existingMarker.getPosition()
+                if (prevPos) {
+                  const sLat = typeof prevPos.lat === 'function' ? prevPos.lat() : prevPos.lat
+                  const sLng = typeof prevPos.lng === 'function' ? prevPos.lng() : prevPos.lng
+                  const dLat = cleanLoc.lat - sLat
+                  const dLng = cleanLoc.lng - sLng
+                  if (Math.abs(dLat) > 0.00001 || Math.abs(dLng) > 0.00001) {
+                    const prevAnim = courierAnimFramesRef.current.get(newLoc.user_id)
+                    if (prevAnim) cancelAnimationFrame(prevAnim)
+                    const startT = performance.now()
+                    const dur = 700
+                    const step = (now: number) => {
+                      const el = now - startT
+                      const prog = Math.min(1, el / dur)
+                      try {
+                        existingMarker.setPosition({
+                          lat: sLat + dLat * prog,
+                          lng: sLng + dLng * prog,
+                        })
+                      } catch (err) {
+                        console.warn(
+                          '[ControlTower] Erro na interpolação de posição do entregador:',
+                          err,
+                        )
+                      }
+                      if (prog < 1) {
+                        const req = requestAnimationFrame(step)
+                        courierAnimFramesRef.current.set(newLoc.user_id, req)
+                      } else {
+                        try {
+                          existingMarker.setPosition({ lat: cleanLoc.lat, lng: cleanLoc.lng })
+                        } catch {
+                          /* safe ignore */
+                        }
+                        courierAnimFramesRef.current.delete(newLoc.user_id)
+                      }
                     }
+                    const req = requestAnimationFrame(step)
+                    courierAnimFramesRef.current.set(newLoc.user_id, req)
                   }
-                  const req = requestAnimationFrame(step)
-                  courierAnimFramesRef.current.set(newLoc.user_id, req)
+                } else {
+                  try {
+                    existingMarker.setPosition({ lat: cleanLoc.lat, lng: cleanLoc.lng })
+                  } catch {
+                    /* safe ignore */
+                  }
                 }
-              } else {
-                existingMarker.setPosition({ lat: newLoc.lat, lng: newLoc.lng })
               }
-            }
 
-            // (1) Auto-follow suave se entregador ativo em rota estiver fora do campo de visão
-            if (mapInstance && isAutoFollow && !isDraggingRef.current && !isDrawerOpen) {
-              const winGoogle = typeof window !== 'undefined' ? (window as any).google : null
-              if (winGoogle?.maps?.LatLng) {
-                const courierLatLng = new winGoogle.maps.LatLng(newLoc.lat, newLoc.lng)
-                const bounds = mapInstance.getBounds?.()
-                if (bounds && !bounds.contains(courierLatLng)) {
-                  mapInstance.panTo(courierLatLng)
+              // (1) Auto-follow suave se entregador ativo em rota estiver fora do campo de visão
+              if (mapInstance && isAutoFollow && !isDraggingRef.current && !isDrawerOpen) {
+                const winGoogle = typeof window !== 'undefined' ? (window as any).google : null
+                if (winGoogle?.maps?.LatLng) {
+                  try {
+                    const courierLatLng = new winGoogle.maps.LatLng(cleanLoc.lat, cleanLoc.lng)
+                    const bounds = mapInstance.getBounds?.()
+                    if (bounds && !bounds.contains(courierLatLng)) {
+                      safePanTo(mapInstance, cleanLoc)
+                    }
+                  } catch (err) {
+                    console.warn('[ControlTower] Erro no auto-follow do mapa:', err)
+                  }
                 }
               }
+            } catch (err) {
+              console.warn('[ControlTower] Erro ao manipular marcador em realtime:', err)
             }
           }
         }
@@ -1280,37 +1299,49 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     })
   }, [couriers, locations, todayOrders, globalInTransitOrders])
 
-  // REQUISITO: No mapa aparecem entregadores com rota iniciada e coordenadas válidas
-  // Mantém ativo se há pedidos em trânsito (inTransitCount > 0) OU se está retornando à base (hasPendingReturnToBase)
-  // REGRA DE TELEMETRIA: entregadores cuja última location tenha mais de 10 minutos são considerados "GPS desatualizado".
-  // Enquanto desatualizado, não posicionar o pin em coordenada nenhuma (nunca na base nem coordenadas antigas/inventadas).
+  // REQUISITO DEFINITIVO: Entregador em rota NUNCA é expulso por falta de ping/oscilação de GPS.
+  // Status "Em Rota" e contadores derivam estritamente das ordens ativas:
+  // (route_started === true && route_finished !== true && status !== 'cancelled', agrupado por courier_id).
+  // Sem ping recente ou GPS com perda de sinal: entregador é MANTIDO na lista e no mapa na última
+  // posição conhecida, exibindo badge "🔴 GPS sem sinal" ou "⚠️ GPS desatualizado".
   const activeRouteCouriers = useMemo(() => {
-    return allCourierData.filter((c) => {
-      if (!c.hasRouteStarted || !c.hasValidCoords) return false
-      if (c.inTransitCount <= 0 && !c.hasPendingReturnToBase) return false
-
-      const diag = diagnoseCourierTelemetry(
-        c.courier.id,
-        locations,
-        c.lat,
-        c.lng,
-        c.speed,
-        c.gps_status,
-        c.gps_reason,
-        c.location_timestamp,
-        c.accuracy,
-        c.offline_buffered,
-      )
-
-      // Se a última location tiver mais de 10 minutos (diag.minutesSinceLastPing > 10 ou diag.gpsState === 'no_signal'),
-      // suprime a exibição de pin no mapa (não posicionar em coordenada nenhuma).
-      if (diag.minutesSinceLastPing > 10 || diag.gpsState === 'no_signal') {
-        return false
+    // Conjunto de courier_ids com pedidos em rota ativa (global do dia ou local)
+    const activeRouteCourierIdSet = new Set<string>()
+    todayOrders.forEach((o) => {
+      if (
+        o.courier_id &&
+        o.route_started === true &&
+        o.route_finished !== true &&
+        o.status !== 'cancelled'
+      ) {
+        activeRouteCourierIdSet.add(o.courier_id)
       }
+    })
+    globalInTransitOrders.forEach((o) => {
+      if (
+        o.courier_id &&
+        o.route_started === true &&
+        o.route_finished !== true &&
+        o.status !== 'cancelled' &&
+        isTodayOrder(o, operationalWindow)
+      ) {
+        activeRouteCourierIdSet.add(o.courier_id)
+      }
+    })
 
+    return allCourierData.filter((c) => {
+      // 1. Deve ter rota iniciada em andamento (por orders) OU sinalizar hasRouteStarted
+      const hasActiveOrders = activeRouteCourierIdSet.has(c.courier.id)
+      if (!hasActiveOrders && !c.hasRouteStarted) return false
+
+      // 2. Coordenadas válidas sanitizadas pelo MapDataService
+      const clean = MapDataService.cleanCoords(c.lat, c.lng)
+      if (!clean) return false
+
+      // Entregador em rota NUNCA é descartado por falta de ping ou gpsState === 'no_signal'.
       return true
     })
-  }, [allCourierData, locations])
+  }, [allCourierData, todayOrders, globalInTransitOrders, operationalWindow])
 
   // Entregadores disponíveis (mantido para cálculos internos se necessário)
   const availableCouriers = useMemo(() => {
@@ -1343,8 +1374,6 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         }
 
         // Fallback oficial da base (Drogaria Mais Saudável, Rua da Fortuna, 13 — Pilar)
-        const OFFICIAL_BASE_FALLBACK: LatLngPoint = { lat: -22.6977499, lng: -43.2936013 }
-
         // O primeiro pedido ativo (ou o último delivered se todos já foram entregues) define a base
         const primaryOrder =
           activeRouteOrders.find((o) => o.status === 'in_transit') ||
@@ -1352,27 +1381,19 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           activeRouteOrders[activeRouteOrders.length - 1] ||
           activeRouteOrders[0]
 
-        const baseLat = primaryOrder.start_base_lat
-          ? Number(primaryOrder.start_base_lat)
-          : OFFICIAL_BASE_FALLBACK.lat
-        const baseLng = primaryOrder.start_base_lng
-          ? Number(primaryOrder.start_base_lng)
-          : OFFICIAL_BASE_FALLBACK.lng
-        const origin: LatLngPoint = { lat: baseLat, lng: baseLng }
-        const courierPos: LatLngPoint = { lat: item.lat, lng: item.lng }
+        // Fallback oficial e bases via MapDataService
+        const originClean = MapDataService.getOrderBaseOrigin(primaryOrder)
+        const origin: LatLngPoint = { lat: originClean.lat, lng: originClean.lng }
+
+        const cleanCourier = MapDataService.cleanCoords(item.lat, item.lng) || originClean
+        const courierPos: LatLngPoint = { lat: cleanCourier.lat, lng: cleanCourier.lng }
 
         // Base de retorno: end_address_lat/lng ou fallback start_base ou fallback oficial
-        const returnBaseLat = primaryOrder.end_address_lat
-          ? Number(primaryOrder.end_address_lat)
-          : primaryOrder.start_base_lat
-            ? Number(primaryOrder.start_base_lat)
-            : OFFICIAL_BASE_FALLBACK.lat
-        const returnBaseLng = primaryOrder.end_address_lng
-          ? Number(primaryOrder.end_address_lng)
-          : primaryOrder.start_base_lng
-            ? Number(primaryOrder.start_base_lng)
-            : OFFICIAL_BASE_FALLBACK.lng
-        const returnBasePos: LatLngPoint = { lat: returnBaseLat, lng: returnBaseLng }
+        const cleanReturn =
+          MapDataService.cleanCoords(primaryOrder.end_address_lat, primaryOrder.end_address_lng) ||
+          MapDataService.cleanCoords(primaryOrder.start_base_lat, primaryOrder.start_base_lng) ||
+          originClean
+        const returnBasePos: LatLngPoint = { lat: cleanReturn.lat, lng: cleanReturn.lng }
 
         // Separar paradas em pendentes (in_transit/pending) e concluídas (delivered)
         const pendingStopsList: LatLngPoint[] = []
@@ -1380,8 +1401,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
         activeRouteOrders.forEach((o) => {
           const c = o.expand?.customer_id
-          if (c?.lat && c?.lng) {
-            const pt = { lat: Number(c.lat), lng: Number(c.lng) }
+          const cleanPt = MapDataService.cleanCoords(c?.lat, c?.lng)
+          if (cleanPt) {
+            const pt: LatLngPoint = { lat: cleanPt.lat, lng: cleanPt.lng }
             if (o.status !== 'delivered') {
               pendingStopsList.push(pt)
             } else {
@@ -1899,7 +1921,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     // Modo 'in_transit': mostra entregadores ativos + pedidos in_transit/pending (pin laranja com nome e sequência)
     // 1. Entregadores em rota ativa (marcador azul com ícone de veículo)
     activeRouteCouriers.forEach((item) => {
-      const courierName = item.courier.name || item.courier.email
+      const courierName = item.courier?.name || item.courier?.email
       const plate = item.courier.vehicle_plate ? ` • Placa: ${item.courier.vehicle_plate}` : ''
       const routeInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
       const warningSuffix = routeInfo?.isDeviated
@@ -1960,7 +1982,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       })
       .forEach((order) => {
         const cust = order.expand?.customer_id
-        if (cust?.lat && cust?.lng) {
+        const cleanDest = MapDataService.getOrderDestination(order)
+        if (cleanDest) {
           const courier = order.expand?.courier_id
           const isTransit = order.status === 'in_transit' || order.route_started
           const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
@@ -1971,14 +1994,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
           list.push({
             id: `order-${order.id}`,
-            title: `${seqText}${cust.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
-            subtitle: `${cust.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
-            lat: cust.lat,
-            lng: cust.lng,
+            title: `${seqText}${cust?.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
+            subtitle: `${cust?.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
+            lat: cleanDest.lat,
+            lng: cleanDest.lng,
             type: isTransit ? 'order_transit' : 'order_pending',
             tracking_code: order.tracking_code,
-            customer_name: cust.name,
-            customer_address: cust.address,
+            customer_name: cust?.name,
+            customer_address: cust?.address,
             total_price: Number(order.total_price || 0),
             estimated_arrival: order.estimated_arrival,
             courier_name: courier?.name,
@@ -2113,21 +2136,29 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       // 1. DESENHAR/MUTAR ROTAS REAIS VIÁRIAS NO GOOGLE MAPS NATIVO
       activeRoutesData.forEach((routeData) => {
         const cId = routeData.courierId
-        const fPoints = routeData.forwardPoints || routeData.points
-        const hasForward = fPoints && fPoints.length >= 2
-        const rawFPath = hasForward ? fPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })) : []
+        const fPoints = (routeData.forwardPoints || routeData.points || [])
+          .map((p: any) => MapDataService.cleanCoords(p?.lat, p?.lng))
+          .filter(Boolean) as { lat: number; lng: number }[]
+        const hasForward = fPoints.length >= 2
+        const rawFPath = fPoints
 
-        const retPoints = routeData.returnPoints
-        const hasReturn = retPoints && retPoints.length >= 2
-        const rawRetPath = hasReturn ? retPoints.map((p: any) => ({ lat: p.lat, lng: p.lng })) : []
+        const retPoints = (routeData.returnPoints || [])
+          .map((p: any) => MapDataService.cleanCoords(p?.lat, p?.lng))
+          .filter(Boolean) as { lat: number; lng: number }[]
+        const hasReturn = retPoints.length >= 2
+        const rawRetPath = retPoints
 
-        const hasDev = Boolean(routeData.isDeviated && routeData.nearestPointOnRoute)
-        const rawDevPath = hasDev
-          ? [
-              { lat: routeData.courierPos.lat, lng: routeData.courierPos.lng },
-              { lat: routeData.nearestPointOnRoute.lat, lng: routeData.nearestPointOnRoute.lng },
-            ]
-          : []
+        const cleanDevCourier = MapDataService.cleanCoords(
+          routeData.courierPos?.lat,
+          routeData.courierPos?.lng,
+        )
+        const cleanDevNearest = MapDataService.cleanCoords(
+          routeData.nearestPointOnRoute?.lat,
+          routeData.nearestPointOnRoute?.lng,
+        )
+        const hasDev = Boolean(routeData.isDeviated && cleanDevCourier && cleanDevNearest)
+        const rawDevPath =
+          hasDev && cleanDevCourier && cleanDevNearest ? [cleanDevCourier, cleanDevNearest] : []
 
         const courierColor = getCourierRouteColor(cId)
         let lines = activePolylinesMapRef.current.get(cId)
@@ -2171,39 +2202,46 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 /* safe ignore */
               }
             }
-            fPoints.forEach((p: any) => bounds.extend(p))
-            hasCoords = true
+            fPoints.forEach((p: any) => {
+              if (safeExtendBounds(bounds, p)) hasCoords = true
+            })
           } else {
             lines.main?.setMap(null)
             lines.inner?.setMap(null)
           }
 
           if (hasReturn) {
-            if (!lines.returnLeg) {
-              lines.returnLeg = new win.google.maps.Polyline({
-                path: rawRetPath,
-                geodesic: true,
-                strokeColor: courierColor.returnLeg,
-                strokeOpacity: 0,
-                strokeWeight: 4,
-                icons: [
-                  {
-                    icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
-                    repeat: '8px',
-                  },
-                ],
-                map,
-              })
-            } else {
-              lines.returnLeg?.setMap(map)
-              lines.returnLeg.setPath(rawRetPath)
-              try {
-                lines.returnLeg.setOptions({ strokeColor: courierColor.returnLeg })
-              } catch {
-                /* safe ignore */
+            try {
+              if (!lines.returnLeg) {
+                lines.returnLeg = new win.google.maps.Polyline({
+                  path: rawRetPath,
+                  geodesic: true,
+                  strokeColor: courierColor.returnLeg,
+                  strokeOpacity: 0,
+                  strokeWeight: 4,
+                  icons: [
+                    {
+                      icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
+                      repeat: '8px',
+                    },
+                  ],
+                  map,
+                })
+              } else {
+                lines.returnLeg?.setMap(map)
+                lines.returnLeg.setPath(rawRetPath)
+                try {
+                  lines.returnLeg.setOptions({ strokeColor: courierColor.returnLeg })
+                } catch {
+                  /* safe ignore */
+                }
               }
+              retPoints.forEach((p: any) => {
+                if (safeExtendBounds(bounds, p)) hasCoords = true
+              })
+            } catch (err) {
+              console.warn('[ControlTower] Erro na polyline de retorno:', err)
             }
-            retPoints.forEach((p: any) => bounds.extend(p))
           } else if (lines.returnLeg) {
             lines.returnLeg?.setMap(null)
           }
@@ -2254,28 +2292,34 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               strokeWeight: 2,
               map,
             })
-            fPoints.forEach((p: any) => bounds.extend(p))
-            hasCoords = true
+            fPoints.forEach((p: any) => {
+              if (safeExtendBounds(bounds, p)) hasCoords = true
+            })
           }
 
           let returnPolyline: any = null
           if (hasReturn) {
-            returnPolyline = new win.google.maps.Polyline({
-              path: rawRetPath,
-              geodesic: true,
-              strokeColor: courierColor.returnLeg,
-              strokeOpacity: 0,
-              strokeWeight: 4,
-              icons: [
-                {
-                  icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
-                  repeat: '8px',
-                },
-              ],
-              map,
-            })
-            retPoints.forEach((p: any) => bounds.extend(p))
-            hasCoords = true
+            try {
+              returnPolyline = new win.google.maps.Polyline({
+                path: rawRetPath,
+                geodesic: true,
+                strokeColor: courierColor.returnLeg,
+                strokeOpacity: 0,
+                strokeWeight: 4,
+                icons: [
+                  {
+                    icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
+                    repeat: '8px',
+                  },
+                ],
+                map,
+              })
+              retPoints.forEach((p: any) => {
+                if (safeExtendBounds(bounds, p)) hasCoords = true
+              })
+            } catch (err) {
+              console.warn('[ControlTower] Erro ao instanciar returnPolyline:', err)
+            }
           }
 
           let devPolyline: any = null
@@ -2306,34 +2350,42 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         }
 
         // Base Marker se presente (atualizado no lugar em vez de destruir/recriar)
-        if (routeData.basePos) {
+        const cleanBasePos = MapDataService.cleanCoords(
+          routeData.basePos?.lat,
+          routeData.basePos?.lng,
+        )
+        if (cleanBasePos) {
           const baseKey = `base-${cId}`
           let baseMarker = baseMarkersMapRef.current.get(baseKey)
           const baseTitle = `🟢 Base de Partida (${routeData.courier.name})`
-          if (baseMarker) {
-            baseMarker.setMap(map)
-            baseMarker.setPosition(routeData.basePos)
-            baseMarker.setTitle(baseTitle)
-            baseMarker.setZIndex?.(500)
-          } else {
-            baseMarker = new win.google.maps.Marker({
-              position: routeData.basePos,
-              map,
-              title: baseTitle,
-              icon: {
-                path: win.google.maps.SymbolPath.CIRCLE,
-                scale: 7,
-                fillColor: '#10B981',
-                fillOpacity: 1,
-                strokeWeight: 2,
-                strokeColor: '#FFFFFF',
-              },
-              zIndex: 500,
-            })
-            baseMarker.setZIndex?.(500)
-            baseMarkersMapRef.current.set(baseKey, baseMarker)
+          try {
+            if (baseMarker) {
+              baseMarker.setMap(map)
+              baseMarker.setPosition(cleanBasePos)
+              baseMarker.setTitle(baseTitle)
+              baseMarker.setZIndex?.(500)
+            } else {
+              baseMarker = new win.google.maps.Marker({
+                position: cleanBasePos,
+                map,
+                title: baseTitle,
+                icon: {
+                  path: win.google.maps.SymbolPath.CIRCLE,
+                  scale: 7,
+                  fillColor: '#10B981',
+                  fillOpacity: 1,
+                  strokeWeight: 2,
+                  strokeColor: '#FFFFFF',
+                },
+                zIndex: 500,
+              })
+              baseMarker.setZIndex?.(500)
+              baseMarkersMapRef.current.set(baseKey, baseMarker)
+            }
+            newMarkers.push(baseMarker)
+          } catch (err) {
+            console.warn('[ControlTower] Erro ao manipular baseMarker:', err)
           }
-          newMarkers.push(baseMarker)
         }
       })
     }
@@ -2398,27 +2450,29 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
       deliveredOrders.forEach((order) => {
         const cust = order.expand?.customer_id
-        if (cust?.lat && cust?.lng) {
-          const bucketKey = `${cust.lat.toFixed(5)}_${cust.lng.toFixed(5)}`
+        const cleanDest = MapDataService.getOrderDestination(order)
+        if (cleanDest) {
+          const bucketKey = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
           const bucket = coordBuckets.get(bucketKey) || []
-          let finalLat = cust.lat
-          let finalLng = cust.lng
+          let finalLat = cleanDest.lat
+          let finalLng = cleanDest.lng
           if (bucket.length > 1) {
             const idx = bucket.findIndex((b) => b.id === order.id)
             if (idx > 0) {
               const r = 0.00015
               const theta = (idx * 2 * Math.PI) / bucket.length
-              finalLat = cust.lat + r * Math.sin(theta)
-              finalLng = cust.lng + r * Math.cos(theta)
+              finalLat = cleanDest.lat + r * Math.sin(theta)
+              finalLng = cleanDest.lng + r * Math.cos(theta)
             }
           }
-          const destPos = { lat: finalLat, lng: finalLng }
-          bounds.extend(destPos)
-          hasCoords = true
+          const destPos = MapDataService.cleanCoords(finalLat, finalLng) || cleanDest
+          if (safeExtendBounds(bounds, destPos)) {
+            hasCoords = true
+          }
           activeDeliveredOrderIds.add(order.id)
 
           const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
-          const markerTitle = `✓ ${seqText}Entregue: ${cust.name || 'Cliente'} (${order.tracking_code})`
+          const markerTitle = `✓ ${seqText}Entregue: ${cust?.name || 'Cliente'} (${order.tracking_code})`
           const markerIcon = (() => {
             const generated = makeCustomerSvgIcon(
               cust.name,
@@ -2461,12 +2515,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               const html = `
                   <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
-                      <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
+                      <strong style="font-size: 11.5px; color: #0f172a;">${cust?.name || 'Cliente'}</strong>
                       ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #dcfce7; color: #15803d; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
                     </div>
                     <div style="font-size: 10px; color: #15803d; font-weight: 700; margin-bottom: 3px;">✓ Entregue (${order.tracking_code})</div>
                     <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                      📍 ${cust.address || cust.street || (typeof cust.lat === 'number' && typeof cust.lng === 'number' ? `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}` : 'Coordenadas não disponíveis')}
+                      📍 ${cust?.address || cust?.street || 'Coordenadas registradas'}
                     </div>
                   </div>
                 `
@@ -2516,9 +2570,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       })
 
       activeRouteCouriers.forEach((item) => {
-        const targetPos = { lat: item.lat, lng: item.lng }
-        bounds.extend(targetPos)
-        hasCoords = true
+        const targetPos = MapDataService.cleanCoords(item.lat, item.lng)
+        if (!targetPos) return
+        if (safeExtendBounds(bounds, targetPos)) {
+          hasCoords = true
+        }
 
         const courierColor = getCourierRouteColor(item.courier.id)
         const routeInfo = activeRoutesData.find((r) => r.courierId === item.courier.id)
@@ -2624,10 +2680,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
             // (1) Auto-follow suave na atualização de telemetria do entregador ativo em rota
             if (isAutoFollow && !isDraggingRef.current && item.hasRouteStarted && map?.getBounds) {
-              const courierLatLng = new win.google.maps.LatLng(targetPos.lat, targetPos.lng)
-              const curBounds = map.getBounds()
-              if (curBounds && !curBounds.contains(courierLatLng)) {
-                map.panTo(courierLatLng)
+              try {
+                const courierLatLng = new win.google.maps.LatLng(targetPos.lat, targetPos.lng)
+                const curBounds = map.getBounds()
+                if (curBounds && !curBounds.contains(courierLatLng)) {
+                  safePanTo(map, targetPos)
+                }
+              } catch (err) {
+                console.warn('[ControlTower] Erro no auto-follow do entregador:', err)
               }
             }
           } else {
@@ -2855,23 +2915,25 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
       transitOrders.forEach((order) => {
         const cust = order.expand?.customer_id
-        if (cust?.lat && cust?.lng) {
-          const bucketKey = `${cust.lat.toFixed(5)}_${cust.lng.toFixed(5)}`
+        const cleanDest = MapDataService.getOrderDestination(order)
+        if (cleanDest) {
+          const bucketKey = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
           const bucket = coordBuckets.get(bucketKey) || []
-          let finalLat = cust.lat
-          let finalLng = cust.lng
+          let finalLat = cleanDest.lat
+          let finalLng = cleanDest.lng
           if (bucket.length > 1) {
             const idx = bucket.findIndex((b) => b.id === order.id)
             if (idx > 0) {
               const r = 0.00015
               const theta = (idx * 2 * Math.PI) / bucket.length
-              finalLat = cust.lat + r * Math.sin(theta)
-              finalLng = cust.lng + r * Math.cos(theta)
+              finalLat = cleanDest.lat + r * Math.sin(theta)
+              finalLng = cleanDest.lng + r * Math.cos(theta)
             }
           }
-          const destPos = { lat: finalLat, lng: finalLng }
-          bounds.extend(destPos)
-          hasCoords = true
+          const destPos = MapDataService.cleanCoords(finalLat, finalLng) || cleanDest
+          if (safeExtendBounds(bounds, destPos)) {
+            hasCoords = true
+          }
           activeTransitOrderIds.add(order.id)
 
           const isTransit = order.status === 'in_transit' || order.route_started
@@ -3213,9 +3275,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     const pathCoordinates: any[] = []
 
     // 1. Base / Partida pin if available
-    const safeBasePos = toLatLngSegura(selectedOrder.start_base_lat, selectedOrder.start_base_lng)
+    const safeBasePos = MapDataService.cleanCoords(
+      selectedOrder.start_base_lat,
+      selectedOrder.start_base_lng,
+    )
     if (safeBasePos) {
-      bounds.extend(safeBasePos)
+      safeExtendBounds(bounds, safeBasePos)
       pathCoordinates.push(safeBasePos)
 
       const baseMarker = new win.google.maps.Marker({
@@ -3269,9 +3334,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     // 2. Entregador pin
     if (courierData && courierData.hasRouteStarted) {
-      const safeCourierPos = toLatLngSegura(courierData.lat, courierData.lng)
+      const safeCourierPos = MapDataService.cleanCoords(courierData.lat, courierData.lng)
       if (safeCourierPos) {
-        bounds.extend(safeCourierPos)
+        safeExtendBounds(bounds, safeCourierPos)
         pathCoordinates.push(safeCourierPos)
 
         const courierMarker = new win.google.maps.Marker({
@@ -3291,9 +3356,11 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
 
     // 3. Cliente destino pin (highlighted com nome visível e número de sequência na mesma cor do entregador)
-    const safeClientPos = toLatLngSegura(cust?.lat, cust?.lng)
+    const safeClientPos =
+      MapDataService.getOrderDestination(selectedOrder) ||
+      MapDataService.cleanCoords(cust?.lat, cust?.lng)
     if (safeClientPos) {
-      bounds.extend(safeClientPos)
+      safeExtendBounds(bounds, safeClientPos)
       pathCoordinates.push(safeClientPos)
 
       const clientMarker = new win.google.maps.Marker({
@@ -3331,19 +3398,22 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           }[])
 
     if (blueLinePoints.length >= 2) {
-      blueLinePoints.forEach((p) => bounds.extend(p))
+      try {
+        blueLinePoints.forEach((p) => safeExtendBounds(bounds, p))
 
-      const polyline = new win.google.maps.Polyline({
-        path: blueLinePoints,
-        geodesic: true,
-        strokeColor: courierDrawerColor.stroke,
-        strokeOpacity: 0.9,
-        strokeWeight: 5,
-      })
-      polyline.setMap(miniMap)
-      drawerPolylineRef.current = polyline
+        const polyline = new win.google.maps.Polyline({
+          path: blueLinePoints,
+          geodesic: true,
+          strokeColor: courierDrawerColor.stroke,
+          strokeOpacity: 0.85,
+          strokeWeight: 4,
+          map: miniMap,
+        })
+        drawerPolylineRef.current = polyline
+      } catch (err) {
+        console.warn('[ControlTower Drawer] Erro ao desenhar polyline:', err)
+      }
     }
-
     // Verificar se o entregador está em desvio de rota e desenhar LINHA VERMELHA
     // REQUISITO ESTRITO: Linha vermelha apenas quando hasActiveRouteStarted && isDeviated
     // Só avaliar se rota iniciada e não finalizada e pedido não entregue/cancelado
@@ -3749,15 +3819,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           setIsAutoFollow={setIsAutoFollow}
           onRecenterAutoFollow={() => {
             const firstActive = activeRouteCouriers[0]
-            if (
-              firstActive &&
-              typeof firstActive.lat === 'number' &&
-              typeof firstActive.lng === 'number'
-            ) {
-              if (mapInstance && typeof window !== 'undefined') {
-                const win = window as any
-                if (win.google?.maps?.LatLng) {
-                  mapInstance.panTo(new win.google.maps.LatLng(firstActive.lat, firstActive.lng))
+            if (firstActive && mapInstance) {
+              const cleanFirst = MapDataService.cleanCoords(firstActive.lat, firstActive.lng)
+              if (cleanFirst) {
+                safePanTo(mapInstance, cleanFirst)
+                try {
+                  mapInstance.setZoom(15)
+                } catch {
+                  /* safe ignore */
                 }
               }
             }
