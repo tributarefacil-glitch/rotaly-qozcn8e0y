@@ -1664,6 +1664,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const routeResult = {
             courierId: item.courier.id,
             orderId: primaryOrder.id,
+            allOrders: activeRouteOrders,
             points,
             forwardPoints,
             returnPoints,
@@ -1964,53 +1965,63 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       })
     })
 
-    // 2. Destinos de entregas em rota ativa (marcador laranja com nome e número de sequência)
-    // REQUISITO ESTRITO: um pedido só gera pin se TODAS as condições:
-    // status !== 'delivered' && status !== 'cancelled' && route_started === true && route_finished !== true
-    // E o courier vinculado está no conjunto de entregadores com rota ativa (activeRouteCouriers)
-    const activeRouteCourierIdSet = new Set(activeRouteCouriers.map((c) => c.courier.id))
-
-    todayOrders
-      .filter((o) => {
-        return (
-          o.status !== 'delivered' &&
-          o.status !== 'cancelled' &&
-          o.route_started === true &&
-          o.route_finished !== true &&
-          Boolean(o.courier_id && activeRouteCourierIdSet.has(o.courier_id))
-        )
-      })
-      .forEach((order) => {
-        const cust = order.expand?.customer_id
-        const cleanDest = MapDataService.getOrderDestination(order)
-        if (cleanDest) {
-          const courier = order.expand?.courier_id
-          const isTransit = order.status === 'in_transit' || order.route_started
-          const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
-          const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
-          const seqText = order.sequence ? `[#${order.sequence}] ` : ''
-          const courierId = order.courier_id || courier?.id
-          const courierColor = getCourierRouteColor(courierId)
-
-          list.push({
-            id: `order-${order.id}`,
-            title: `${seqText}${cust?.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
-            subtitle: `${cust?.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
-            lat: cleanDest.lat,
-            lng: cleanDest.lng,
-            type: isTransit ? 'order_transit' : 'order_pending',
-            tracking_code: order.tracking_code,
-            customer_name: cust?.name,
-            customer_address: cust?.address,
-            total_price: Number(order.total_price || 0),
-            estimated_arrival: order.estimated_arrival,
-            courier_name: courier?.name,
-            courier_id: courierId,
-            pinColorOverride: courierColor.stroke,
-            delivery_sequence: order.sequence,
-          })
+    // 2. Destinos de entregas em rota ativa (marcador por cliente numerado [#seq])
+    // B3: Extrair pedidos de activeRouteCouriers[i].allAssignedOrders para não perder entregas do lote ativo
+    const seenOrderIds = new Set<string>()
+    activeRouteCouriers.forEach((courierItem) => {
+      const courierOrders = courierItem.allAssignedOrders || []
+      courierOrders.forEach((order) => {
+        if (
+          order.status === 'cancelled' ||
+          order.route_finished === true ||
+          !order.route_started ||
+          seenOrderIds.has(order.id)
+        ) {
+          return
         }
+        seenOrderIds.add(order.id)
+
+        const cleanDest = MapDataService.getOrderDestination(order)
+        if (!cleanDest) {
+          console.warn(
+            '[ControlTower] Cliente sem coordenada válida no pedido:',
+            order.tracking_code,
+            order.id,
+          )
+          return
+        }
+
+        const cust = order.expand?.customer_id
+        const courier = order.expand?.courier_id || courierItem.courier
+        const isDelivered = order.status === 'delivered'
+        const isTransit = order.status === 'in_transit' || order.route_started
+        const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
+        const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
+        const seqText = order.sequence ? `[#${order.sequence}] ` : ''
+        const courierId = order.courier_id || courier?.id
+        const courierColor = getCourierRouteColor(courierId)
+        // Cor do pin: entregue = verde #10B981, trânsito/pendente = laranja #FF6B35 ou cor do entregador
+        const pinColor = isDelivered ? '#10B981' : courierColor.stroke || '#FF6B35'
+
+        list.push({
+          id: `order-${order.id}`,
+          title: `${seqText}${cust?.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
+          subtitle: `${cust?.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
+          lat: cleanDest.lat,
+          lng: cleanDest.lng,
+          type: isDelivered ? 'order_delivered' : isTransit ? 'order_transit' : 'order_pending',
+          tracking_code: order.tracking_code,
+          customer_name: cust?.name,
+          customer_address: cust?.address,
+          total_price: Number(order.total_price || 0),
+          estimated_arrival: order.estimated_arrival,
+          courier_name: courier?.name,
+          courier_id: courierId,
+          pinColorOverride: pinColor,
+          delivery_sequence: order.sequence,
+        })
       })
+    })
 
     return list
   }, [mapDisplayMode, activeRouteCouriers, todayOrders, activeRoutesData])
@@ -2174,8 +2185,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 path: rawFPath,
                 geodesic: true,
                 strokeColor: courierColor.stroke,
-                strokeOpacity: 0.95,
-                strokeWeight: 5,
+                strokeOpacity: 1.0,
+                strokeWeight: 6,
+                zIndex: 800,
                 map,
               })
               lines.inner = new win.google.maps.Polyline({
@@ -2184,20 +2196,26 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 strokeColor: courierColor.inner,
                 strokeOpacity: 0.85,
                 strokeWeight: 2,
+                zIndex: 801,
                 map,
               })
             } else {
               lines.main?.setMap(map)
               lines.main.setPath(rawFPath)
               try {
-                lines.main.setOptions({ strokeColor: courierColor.stroke })
+                lines.main.setOptions({
+                  strokeColor: courierColor.stroke,
+                  strokeOpacity: 1.0,
+                  strokeWeight: 6,
+                  zIndex: 800,
+                })
               } catch {
                 /* safe ignore */
               }
               lines.inner?.setMap(map)
               lines.inner.setPath(rawFPath)
               try {
-                lines.inner.setOptions({ strokeColor: courierColor.inner })
+                lines.inner.setOptions({ strokeColor: courierColor.inner, zIndex: 801 })
               } catch {
                 /* safe ignore */
               }
@@ -2216,13 +2234,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 lines.returnLeg = new win.google.maps.Polyline({
                   path: rawRetPath,
                   geodesic: true,
-                  strokeColor: courierColor.returnLeg,
-                  strokeOpacity: 0,
-                  strokeWeight: 4,
+                  strokeColor: '#60A5FA',
+                  strokeOpacity: 0.9,
+                  strokeWeight: 5,
+                  zIndex: 790,
                   icons: [
                     {
-                      icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
-                      repeat: '8px',
+                      icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                      repeat: '10px',
                     },
                   ],
                   map,
@@ -2231,7 +2250,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 lines.returnLeg?.setMap(map)
                 lines.returnLeg.setPath(rawRetPath)
                 try {
-                  lines.returnLeg.setOptions({ strokeColor: courierColor.returnLeg })
+                  lines.returnLeg.setOptions({
+                    strokeColor: '#60A5FA',
+                    strokeOpacity: 0.9,
+                    strokeWeight: 5,
+                    zIndex: 790,
+                  })
                 } catch {
                   /* safe ignore */
                 }
@@ -2280,8 +2304,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               path: rawFPath,
               geodesic: true,
               strokeColor: courierColor.stroke,
-              strokeOpacity: 0.95,
-              strokeWeight: 5,
+              strokeOpacity: 1.0,
+              strokeWeight: 6,
+              zIndex: 800,
               map,
             })
             innerPolyline = new win.google.maps.Polyline({
@@ -2290,6 +2315,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               strokeColor: courierColor.inner,
               strokeOpacity: 0.85,
               strokeWeight: 2,
+              zIndex: 801,
               map,
             })
             fPoints.forEach((p: any) => {
@@ -2303,13 +2329,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               returnPolyline = new win.google.maps.Polyline({
                 path: rawRetPath,
                 geodesic: true,
-                strokeColor: courierColor.returnLeg,
-                strokeOpacity: 0,
-                strokeWeight: 4,
+                strokeColor: '#60A5FA',
+                strokeOpacity: 0.9,
+                strokeWeight: 5,
+                zIndex: 790,
                 icons: [
                   {
-                    icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
-                    repeat: '8px',
+                    icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+                    repeat: '10px',
                   },
                 ],
                 map,
@@ -2888,25 +2915,26 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       // REQUISITO ESTRITO: um pedido só gera pin se TODAS as condições:
       // status !== 'delivered' && status !== 'cancelled' && route_started === true && route_finished !== true
       // E o courier vinculado está no conjunto de entregadores com rota ativa (activeRouteCouriers)
-      const nativeActiveCourierIds = new Set(activeRouteCouriers.map((c) => c.courier.id))
-
+      // Pins: Destinos das entregas em rota ativa (Google Maps nativo)
+      // B3: Usar activeRouteCouriers[i].allAssignedOrders para não perder entregas do lote ativo
       const activeTransitOrderIds = new Set<string>()
-      const transitOrders = todayOrders.filter((o) => {
-        return (
-          o.status !== 'delivered' &&
-          o.status !== 'cancelled' &&
-          o.route_started === true &&
-          o.route_finished !== true &&
-          Boolean(o.courier_id && nativeActiveCourierIds.has(o.courier_id))
-        )
+      const transitOrdersMap = new Map<string, OrderRecord>()
+      activeRouteCouriers.forEach((courierItem) => {
+        const courierOrders = courierItem.allAssignedOrders || []
+        courierOrders.forEach((o) => {
+          if (o.status !== 'cancelled' && o.route_started === true && o.route_finished !== true) {
+            transitOrdersMap.set(o.id, o)
+          }
+        })
       })
+      const transitOrders = Array.from(transitOrdersMap.values())
 
       // Detecção de clientes com lat/lng idênticas para aplicar offset polar (r≈0,00015°, θ=i·2π/N)
       const coordBuckets = new Map<string, typeof transitOrders>()
       transitOrders.forEach((o) => {
-        const c = o.expand?.customer_id
-        if (c?.lat && c?.lng) {
-          const key = `${c.lat.toFixed(5)}_${c.lng.toFixed(5)}`
+        const cleanDest = MapDataService.getOrderDestination(o)
+        if (cleanDest) {
+          const key = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
           const arr = coordBuckets.get(key) || []
           arr.push(o)
           coordBuckets.set(key, arr)
@@ -2916,92 +2944,102 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       transitOrders.forEach((order) => {
         const cust = order.expand?.customer_id
         const cleanDest = MapDataService.getOrderDestination(order)
-        if (cleanDest) {
-          const bucketKey = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
-          const bucket = coordBuckets.get(bucketKey) || []
-          let finalLat = cleanDest.lat
-          let finalLng = cleanDest.lng
-          if (bucket.length > 1) {
-            const idx = bucket.findIndex((b) => b.id === order.id)
-            if (idx > 0) {
-              const r = 0.00015
-              const theta = (idx * 2 * Math.PI) / bucket.length
-              finalLat = cleanDest.lat + r * Math.sin(theta)
-              finalLng = cleanDest.lng + r * Math.cos(theta)
-            }
-          }
-          const destPos = MapDataService.cleanCoords(finalLat, finalLng) || cleanDest
-          if (safeExtendBounds(bounds, destPos)) {
-            hasCoords = true
-          }
-          activeTransitOrderIds.add(order.id)
-
-          const isTransit = order.status === 'in_transit' || order.route_started
-          const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
-          const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
-          const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
-          const courierId = order.courier_id || order.expand?.courier_id?.id
-          const courierColor = getCourierRouteColor(courierId)
-          const markerTitle = `🏁 ${seqText}Destino: ${cust.name || 'Cliente'} (${order.tracking_code})${etaText}`
-          const markerIcon = makeNativeCustomerSvg(
-            cust.name,
-            order.sequence,
-            isTransit,
-            courierColor.stroke,
+        if (!cleanDest) {
+          console.warn(
+            '[ControlTower] Cliente sem coordenada válida no pedido:',
+            order.tracking_code,
+            order.id,
           )
-
-          let destMarker = customerMarkersMapRef.current.get(order.id)
-          if (destMarker) {
-            destMarker.setMap(map)
-            destMarker.setPosition(destPos)
-            destMarker.setTitle(markerTitle)
-            destMarker.setIcon(markerIcon)
-            destMarker.setZIndex?.(100 + (order.sequence || 0))
-          } else {
-            destMarker = new win.google.maps.Marker({
-              position: destPos,
-              map,
-              title: markerTitle,
-              icon: markerIcon,
-              zIndex: 100 + (order.sequence || 0),
-            })
-            destMarker.setZIndex?.(100 + (order.sequence || 0))
-
-            // Hover: tooltip compacto de cliente
-            destMarker.addListener('mouseover', () => {
-              const html = `
-                  <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
-                      <strong style="font-size: 11.5px; color: #0f172a;">${cust.name || 'Cliente'}</strong>
-                      ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #ffedd5; color: #c2410c; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
-                    </div>
-                    <div style="font-size: 10px; color: ${isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
-                      ${isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
-                    </div>
-                    <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                      📍 ${cust.address || cust.street || (typeof cust.lat === 'number' && typeof cust.lng === 'number' ? `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}` : 'Coordenadas não disponíveis')}
-                    </div>
-                    ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
-                  </div>
-                `
-              hoverInfoWindow.setContent(html)
-              hoverInfoWindow.open(map, destMarker)
-            })
-
-            destMarker.addListener('mouseout', () => {
-              hoverInfoWindow.close()
-            })
-
-            destMarker.addListener('click', () => {
-              hoverInfoWindow.close()
-              handleOpenOrderDetails(order)
-            })
-
-            customerMarkersMapRef.current.set(order.id, destMarker)
-          }
-
-          newMarkers.push(destMarker)
+          return
         }
+
+        const bucketKey = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
+        const bucket = coordBuckets.get(bucketKey) || []
+        let finalLat = cleanDest.lat
+        let finalLng = cleanDest.lng
+        if (bucket.length > 1) {
+          const idx = bucket.findIndex((b) => b.id === order.id)
+          if (idx > 0) {
+            const r = 0.00015
+            const theta = (idx * 2 * Math.PI) / bucket.length
+            finalLat = cleanDest.lat + r * Math.sin(theta)
+            finalLng = cleanDest.lng + r * Math.cos(theta)
+          }
+        }
+        const destPos = MapDataService.cleanCoords(finalLat, finalLng) || cleanDest
+        if (safeExtendBounds(bounds, destPos)) {
+          hasCoords = true
+        }
+        activeTransitOrderIds.add(order.id)
+
+        const isDelivered = order.status === 'delivered'
+        const isTransit = order.status === 'in_transit' || order.route_started
+        const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
+        const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
+        const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
+        const courierId = order.courier_id || order.expand?.courier_id?.id
+        const courierColor = getCourierRouteColor(courierId)
+        // B3: entregue = verde #10B981, trânsito/pendente = laranja #FF6B35 ou cor do entregador
+        const pinColor = isDelivered ? '#10B981' : courierColor.stroke || '#FF6B35'
+        const markerTitle = `${isDelivered ? '✓ Entregue' : '🏁 Destino'}: ${seqText}${cust?.name || 'Cliente'} (${order.tracking_code})${etaText}`
+        const markerIcon = makeNativeCustomerSvg(
+          cust?.name,
+          order.sequence,
+          !isDelivered && isTransit,
+          pinColor,
+        )
+
+        let destMarker = customerMarkersMapRef.current.get(order.id)
+        if (destMarker) {
+          destMarker.setMap(map)
+          destMarker.setPosition(destPos)
+          destMarker.setTitle(markerTitle)
+          destMarker.setIcon(markerIcon)
+          destMarker.setZIndex?.(100 + (order.sequence || 0))
+        } else {
+          destMarker = new win.google.maps.Marker({
+            position: destPos,
+            map,
+            title: markerTitle,
+            icon: markerIcon,
+            zIndex: 100 + (order.sequence || 0),
+          })
+          destMarker.setZIndex?.(100 + (order.sequence || 0))
+
+          // Hover: tooltip compacto de cliente
+          destMarker.addListener('mouseover', () => {
+            const html = `
+                <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
+                    <strong style="font-size: 11.5px; color: #0f172a;">${cust?.name || 'Cliente'}</strong>
+                    ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: ${isDelivered ? '#dcfce7' : '#ffedd5'}; color: ${isDelivered ? '#15803d' : '#c2410c'}; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+                  </div>
+                  <div style="font-size: 10px; color: ${isDelivered ? '#15803d' : isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
+                    ${isDelivered ? '✓ Concluído' : isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
+                  </div>
+                  <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                    📍 ${cust?.address || cust?.street || (typeof cust?.lat === 'number' && typeof cust?.lng === 'number' ? `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}` : 'Coordenadas não disponíveis')}
+                  </div>
+                  ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
+                </div>
+              `
+            hoverInfoWindow.setContent(html)
+            hoverInfoWindow.open(map, destMarker)
+          })
+
+          destMarker.addListener('mouseout', () => {
+            hoverInfoWindow.close()
+          })
+
+          destMarker.addListener('click', () => {
+            hoverInfoWindow.close()
+            handleOpenOrderDetails(order)
+          })
+
+          customerMarkersMapRef.current.set(order.id, destMarker)
+        }
+
+        newMarkers.push(destMarker)
       })
 
       // Limpar marcadores de destinos que não estão mais nesta exibição

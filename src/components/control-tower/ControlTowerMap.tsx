@@ -877,11 +877,21 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                   mapDisplayMode === 'delivered'
                     ? []
                     : activeRoutesData
-                        .filter(
-                          (routeData) =>
+                        .filter((routeData) => {
+                          // B2: Usar routeData.allOrders / courierId em vez de apenas routeData.order
+                          const hasActiveInAll = (routeData as any).allOrders?.some(
+                            (o: any) => Boolean(o.route_started) && o.route_finished !== true,
+                          )
+                          const hasActiveInOrder =
                             Boolean(routeData.order?.route_started) &&
-                            routeData.order?.route_finished !== true,
-                        )
+                            routeData.order?.route_finished !== true
+                          const hasActiveCourier =
+                            Boolean(routeData.courierId) &&
+                            activeRouteCouriers.some(
+                              (c) => c.courier.id === routeData.courierId && c.hasRouteStarted,
+                            )
+                          return hasActiveInAll || hasActiveInOrder || hasActiveCourier
+                        })
                         .flatMap((routeData) => {
                           const lines: any[] = []
                           const fPoints = routeData.forwardPoints || routeData.points
