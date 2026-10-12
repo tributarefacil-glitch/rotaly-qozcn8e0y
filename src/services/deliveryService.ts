@@ -39,6 +39,126 @@ import type {
   AuditTrailRecord,
 } from '@/types/delivery'
 
+/**
+ * PATCH 1 — Sanitização de payload de telemetria (locations):
+ * - lat: arredondado a 6 decimais, faixa -90..90 (lança erro se inválido)
+ * - lng: arredondado a 6 decimais, faixa -180..180 (lança erro se inválido)
+ * - speed: número >= 0, teto 250, 1 decimal, senão 0
+ * - heading: 0..360, 1 decimal, senão 0
+ * - accuracy: >= 0, teto 10000, 1 decimal, senão 10
+ * - gps_status: default 'active'
+ * - gps_reason: default '' (ou 'sem-fix' se accuracy >= 500)
+ * - offline_buffered: booleano
+ * - battery_level: incluída só se inteiro 1..100
+ */
+export function sanitizeLocationPayload(params: {
+  userId: string
+  lat: number
+  lng: number
+  speed?: number | null
+  heading?: number | null
+  batteryLevel?: number | null
+  accuracy?: number | null
+  gpsStatus?: string | null
+  gpsReason?: string | null
+  offlineBuffered?: boolean | null
+}): Partial<LocationRecord> {
+  const {
+    userId,
+    lat,
+    lng,
+    speed,
+    heading,
+    batteryLevel,
+    accuracy,
+    gpsStatus,
+    gpsReason,
+    offlineBuffered,
+  } = params
+
+  if (!userId || typeof userId !== 'string' || !userId.trim()) {
+    throw new Error('[sanitizeLocationPayload] userId é obrigatório e deve ser string não vazia')
+  }
+
+  const numLat = typeof lat === 'number' ? lat : Number(lat)
+  const numLng = typeof lng === 'number' ? lng : Number(lng)
+
+  if (isNaN(numLat) || numLat < -90 || numLat > 90) {
+    throw new Error(
+      `[sanitizeLocationPayload] Latitude inválida: ${lat} (deve estar entre -90 e 90)`,
+    )
+  }
+  if (isNaN(numLng) || numLng < -180 || numLng > 180) {
+    throw new Error(
+      `[sanitizeLocationPayload] Longitude inválida: ${lng} (deve estar entre -180 e 180)`,
+    )
+  }
+
+  const cleanLat = Math.round(numLat * 1e6) / 1e6
+  const cleanLng = Math.round(numLng * 1e6) / 1e6
+
+  // Speed: número >= 0, teto 250, 1 decimal, senão 0
+  let cleanSpeed = 0
+  if (typeof speed === 'number' && !isNaN(speed) && isFinite(speed) && speed >= 0) {
+    cleanSpeed = Math.round(Math.min(250, speed) * 10) / 10
+  }
+
+  // Heading: 0..360, 1 decimal, senão 0
+  let cleanHeading = 0
+  if (
+    typeof heading === 'number' &&
+    !isNaN(heading) &&
+    isFinite(heading) &&
+    heading >= 0 &&
+    heading <= 360
+  ) {
+    cleanHeading = Math.round(heading * 10) / 10
+  }
+
+  // Accuracy: >= 0, teto 10000, 1 decimal, senão 10
+  let cleanAccuracy = 10
+  if (typeof accuracy === 'number' && !isNaN(accuracy) && isFinite(accuracy) && accuracy >= 0) {
+    cleanAccuracy = Math.round(Math.min(10000, accuracy) * 10) / 10
+  }
+
+  // gps_status default 'active'
+  const cleanGpsStatus =
+    gpsStatus && typeof gpsStatus === 'string' && gpsStatus.trim() ? gpsStatus.trim() : 'active'
+
+  // gps_reason default '' (ou 'sem-fix' se accuracy >= 500)
+  let cleanGpsReason = ''
+  if (gpsReason && typeof gpsReason === 'string' && gpsReason.trim()) {
+    cleanGpsReason = gpsReason.trim()
+  } else if (cleanAccuracy >= 500) {
+    cleanGpsReason = 'sem-fix'
+  }
+
+  // offline_buffered booleano
+  const cleanOfflineBuffered = Boolean(offlineBuffered)
+
+  const payload: Partial<LocationRecord> = {
+    user_id: userId.trim(),
+    lat: cleanLat,
+    lng: cleanLng,
+    speed: cleanSpeed,
+    heading: cleanHeading,
+    accuracy: cleanAccuracy,
+    gps_status: cleanGpsStatus,
+    gps_reason: cleanGpsReason,
+    offline_buffered: cleanOfflineBuffered,
+  }
+
+  // battery_level incluída só se inteiro 1..100
+  if (typeof batteryLevel === 'number' && !isNaN(batteryLevel) && isFinite(batteryLevel)) {
+    const roundedBattery = Math.round(batteryLevel)
+    if (roundedBattery >= 1 && roundedBattery <= 100) {
+      payload.battery_level = roundedBattery
+    }
+  }
+
+  return payload
+}
+
 export const deliveryService = {
   // Multi-tenant Empresas & Membros
   async getEmpresas(filter = '', sort = 'nome_razao_social') {
@@ -2015,6 +2135,22 @@ export const deliveryService = {
     return pb.files.getURL(record, filename)
   },
 
+  // Sanitização de telemetria de localização
+  sanitizeLocationPayload(params: {
+    userId: string
+    lat: number
+    lng: number
+    speed?: number | null
+    heading?: number | null
+    batteryLevel?: number | null
+    accuracy?: number | null
+    gpsStatus?: string | null
+    gpsReason?: string | null
+    offlineBuffered?: boolean | null
+  }): Partial<LocationRecord> {
+    return sanitizeLocationPayload(params)
+  },
+
   // Locations
   async getLatestLocations(filter = '', sort = '-created', minutesWindow = 60) {
     // Sanitização técnica: a coleção PocketBase 'locations' usa 'user_id', NÃO 'courier_id'
@@ -2076,90 +2212,101 @@ export const deliveryService = {
     },
   ) {
     const now = Date.now()
-    const accuracy =
-      typeof extra?.accuracy === 'number' && !isNaN(extra.accuracy)
-        ? Math.round(extra.accuracy * 10) / 10
-        : undefined
-
-    // Se accuracy >= 500m (sem fix real), marcar o motivo como 'sem-fix' se gps_reason não veio especificado
-    let gpsReason = extra?.gps_reason
-    if ((accuracy == null || accuracy >= 500) && !gpsReason) {
-      gpsReason = 'sem-fix'
-    }
-
-    const payload: Partial<LocationRecord> = {
-      user_id: userId,
+    const sanitizedPayload = sanitizeLocationPayload({
+      userId,
       lat,
       lng,
       speed,
       heading,
-    }
-    // Bateria real: apenas valores estritamente positivos (> 0) são gravados
-    // Valores nulos, indefinidos ou 0 (dispositivos sem Battery API como iOS) não devem poluir o banco como 0%
-    if (typeof batteryLevel === 'number' && !isNaN(batteryLevel) && batteryLevel > 0) {
-      payload.battery_level = Math.max(1, Math.min(100, Math.round(batteryLevel)))
-    }
-    if (extra?.gps_status) {
-      payload.gps_status = extra.gps_status
-    }
-    if (gpsReason !== undefined) {
-      payload.gps_reason = gpsReason
-    }
-    if (extra?.offline_buffered !== undefined) {
-      payload.offline_buffered = extra.offline_buffered
-    }
-    if (accuracy !== undefined) {
-      payload.accuracy = accuracy
-    }
+      batteryLevel,
+      accuracy: extra?.accuracy,
+      gpsStatus: extra?.gps_status,
+      gpsReason: extra?.gps_reason,
+      offlineBuffered: extra?.offline_buffered,
+    })
 
     // Deduplicação defensiva no cliente antes de criar novas linhas:
     // Se a posição mudou menos de ~10m OU a acurácia é >= 500m (sem fix / fallback de 2000m),
     // reutiliza/atualiza o registro recente existente em vez de criar outro registro repetido.
     const cached = this._lastCourierLocationRecordMap.get(userId)
     if (cached && cached.id) {
-      const dist = haversineDistanceMeters(cached.lat, cached.lng, lat, lng)
-      const isWeakOrFallback = (accuracy ?? 2000) >= 500 || (cached.accuracy ?? 2000) >= 500
+      const dist = haversineDistanceMeters(
+        cached.lat,
+        cached.lng,
+        sanitizedPayload.lat!,
+        sanitizedPayload.lng!,
+      )
+      const isWeakOrFallback =
+        (sanitizedPayload.accuracy ?? 2000) >= 500 || (cached.accuracy ?? 2000) >= 500
       const isSubTenMeters = dist < 10
 
       if (isSubTenMeters || isWeakOrFallback) {
         try {
           const updated = await pb
             .collection<LocationRecord>('locations')
-            .update(cached.id, payload)
+            .update(cached.id, sanitizedPayload)
           this._lastCourierLocationRecordMap.set(userId, {
             id: updated.id,
-            lat,
-            lng,
-            accuracy,
+            lat: sanitizedPayload.lat!,
+            lng: sanitizedPayload.lng!,
+            accuracy: sanitizedPayload.accuracy,
             timestamp: now,
           })
           return updated
         } catch (err: any) {
+          console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
+            status: err?.status,
+            message: err?.message,
+            fieldErrors: err?.data?.data || err?.data,
+            payload: sanitizedPayload,
+          })
           // Se o update falhar (ex: registro apagado 404 ou 400), limpa o cache e recria
           this._lastCourierLocationRecordMap.delete(userId)
-          const createdFallback = await pb.collection<LocationRecord>('locations').create(payload)
-          this._lastCourierLocationRecordMap.set(userId, {
-            id: createdFallback.id,
-            lat,
-            lng,
-            accuracy,
-            timestamp: now,
-          })
-          return createdFallback
+          try {
+            const createdFallback = await pb
+              .collection<LocationRecord>('locations')
+              .create(sanitizedPayload)
+            this._lastCourierLocationRecordMap.set(userId, {
+              id: createdFallback.id,
+              lat: sanitizedPayload.lat!,
+              lng: sanitizedPayload.lng!,
+              accuracy: sanitizedPayload.accuracy,
+              timestamp: now,
+            })
+            return createdFallback
+          } catch (createFallbackErr: any) {
+            console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
+              status: createFallbackErr?.status,
+              message: createFallbackErr?.message,
+              fieldErrors: createFallbackErr?.data?.data || createFallbackErr?.data,
+              payload: sanitizedPayload,
+            })
+            throw createFallbackErr
+          }
         }
       }
     }
 
     // Caso contrário (deslocamento real >= 10m com fix de GPS aceitável), cria novo ponto
-    const created = await pb.collection<LocationRecord>('locations').create(payload)
-    this._lastCourierLocationRecordMap.set(userId, {
-      id: created.id,
-      lat,
-      lng,
-      accuracy,
-      timestamp: now,
-    })
-    return created
+    try {
+      const created = await pb.collection<LocationRecord>('locations').create(sanitizedPayload)
+      this._lastCourierLocationRecordMap.set(userId, {
+        id: created.id,
+        lat: sanitizedPayload.lat!,
+        lng: sanitizedPayload.lng!,
+        accuracy: sanitizedPayload.accuracy,
+        timestamp: now,
+      })
+      return created
+    } catch (createErr: any) {
+      console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
+        status: createErr?.status,
+        message: createErr?.message,
+        fieldErrors: createErr?.data?.data || createErr?.data,
+        payload: sanitizedPayload,
+      })
+      throw createErr
+    }
   },
 
   async getLatestLocationForCourier(courierId: string) {

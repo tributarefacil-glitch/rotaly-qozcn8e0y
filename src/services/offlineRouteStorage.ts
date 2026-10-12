@@ -63,6 +63,7 @@ export interface OfflineLocationPoint {
     | 'weak_signal'
     | 'cached_while_offline'
     | 'sem-fix'
+    | 'rejected_400'
   synced?: boolean
   error?: string
 }

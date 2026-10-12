@@ -203,8 +203,8 @@ class NativeGpsBridgeService {
           userId: options.userId,
           title: options.notificationTitle || 'Rotaly em Operação',
           text: options.notificationText || 'Rastreando rota em primeiro plano (GPS ativo)',
-          minIntervalMs: options.minIntervalMs || 5000,
-          minDistanceMeters: options.minDistanceMeters || 10,
+          minIntervalMs: options.minIntervalMs || 30000,
+          minDistanceMeters: options.minDistanceMeters || 5,
         })
         window.RotalyNativeGps.startForegroundTracking(payload)
         console.info('[NativeGpsBridge] Foreground service nativo iniciado!')

@@ -219,12 +219,11 @@ public class MainActivity extends AppCompatActivity {
                 Intent serviceIntent = new Intent(MainActivity.this, RotalyGpsForegroundService.class);
                 serviceIntent.setAction(RotalyGpsForegroundService.ACTION_START);
                 serviceIntent.putExtra(RotalyGpsForegroundService.EXTRA_OPTIONS_JSON, optionsJson);
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent);
-                } else {
-                    startService(serviceIntent);
-                }
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    startForegroundService(serviceIntent);
+} else {
+    startService(serviceIntent);
+}
                 return true;
             } catch (Exception e) {
                 Log.e(TAG, "Erro ao iniciar foreground service:", e);

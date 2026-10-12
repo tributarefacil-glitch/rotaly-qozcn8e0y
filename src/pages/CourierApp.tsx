@@ -33,6 +33,10 @@ import {
 } from '@/components/CourierRedirectionTutorialModal'
 import { IPhoneGpsGuideModal } from '@/components/IPhoneGpsGuideModal'
 import { NavigationAppChoiceModal } from '@/components/NavigationAppChoiceModal'
+import {
+  CourierBatteryGuideModal,
+  BATTERY_OPTIMIZATION_ACK_KEY,
+} from '@/components/CourierBatteryGuideModal'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
@@ -174,6 +178,7 @@ export default function CourierApp() {
   const [pendingBufferedPoints, setPendingBufferedPoints] = useState<number>(0)
   const [isFlushingBuffer, setIsFlushingBuffer] = useState<boolean>(false)
   const [isIPhoneGuideOpen, setIsIPhoneGuideOpen] = useState(false)
+  const [isBatteryGuideOpen, setIsBatteryGuideOpen] = useState(false)
   const [wakeLockSupported, setWakeLockSupported] = useState<boolean>(true)
   const [isWakeLockActive, setIsWakeLockActive] = useState<boolean>(false)
 
@@ -699,7 +704,8 @@ export default function CourierApp() {
     }
   }, [user?.id])
 
-  // Gerenciamento de Wake Lock para manter a tela ativa e o Safari iOS executando durante a rota ativa
+  // Gerenciamento de Wake Lock para manter a tela ativa durante a rota ativa
+  // PATCH 5: Wake lock contínuo — re-adquire no visibilitychange quando visível, libera ao encerrar/cancelar rota
   useEffect(() => {
     let released = false
 
@@ -747,8 +753,17 @@ export default function CourierApp() {
 
     requestWakeLock()
 
+    const handleVisibilityChangeForWakeLock = () => {
+      if (document.visibilityState === 'visible' && hasActiveStartedRoute) {
+        requestWakeLock()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChangeForWakeLock)
+
     return () => {
       released = true
+      document.removeEventListener('visibilitychange', handleVisibilityChangeForWakeLock)
       if (wakeLockSentinelRef.current) {
         wakeLockSentinelRef.current.release().catch(() => {})
         wakeLockSentinelRef.current = null
@@ -858,20 +873,34 @@ export default function CourierApp() {
 
         const isWeak = (accuracyVal ?? 2000) >= 500
         const gpsReason = isWeak ? 'sem-fix' : ''
-
-        // Tentar envio normal online
-        await deliveryService.updateCourierLocation(
-          user.id,
+        const sanitizedHeading = typeof (last ? 0 : 0) === 'number' ? 0 : 0 // heading real ou 0
+        // Sanitizar payload antes do envio
+        const sanitizedPayload = deliveryService.sanitizeLocationPayload({
+          userId: user.id,
           lat,
           lng,
           speed,
-          90,
-          batteryLevel ?? undefined,
+          heading: sanitizedHeading,
+          batteryLevel: batteryLevel ?? undefined,
+          accuracy: accuracyVal,
+          gpsStatus: 'active',
+          gpsReason,
+          offlineBuffered: false,
+        })
+
+        // Tentar envio normal online
+        await deliveryService.updateCourierLocation(
+          sanitizedPayload.user_id!,
+          sanitizedPayload.lat!,
+          sanitizedPayload.lng!,
+          sanitizedPayload.speed,
+          sanitizedPayload.heading,
+          sanitizedPayload.battery_level,
           {
-            gps_status: 'active',
-            gps_reason: gpsReason,
+            gps_status: sanitizedPayload.gps_status,
+            gps_reason: sanitizedPayload.gps_reason,
             offline_buffered: false,
-            accuracy: accuracyVal,
+            accuracy: sanitizedPayload.accuracy,
           },
         )
 
@@ -897,38 +926,51 @@ export default function CourierApp() {
           offlineTelemetryBuffer.flush(user.id).catch(() => {})
         }
       } catch (e: any) {
-        // Se o erro for 400 (payload rejeitado pelo backend), descarta o ponto imediatamente sem retry nem re-enfileiramento
+        // Log de falha padronizado
+        console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
+          status: e?.status,
+          message: e?.message,
+          fieldErrors: e?.data?.data || e?.data,
+          payload: {
+            userId: user.id,
+            lat,
+            lng,
+            speed,
+            heading: 0,
+            accuracy: accuracyVal,
+            batteryLevel: batteryLevel ?? undefined,
+          },
+        })
+
+        // PATCH 4: Ponto que falhar com 400 (além de rede/5xx) entra no buffer offline sanitizado com offline_buffered=true
+        // e timestamp original; nunca descarte silencioso.
+        if (hasActiveStartedRoute) {
+          const reasonCode =
+            e?.status === 400
+              ? 'rejected_400'
+              : (accuracyVal ?? 2000) >= 500
+                ? 'sem-fix'
+                : 'network_offline'
+          offlineTelemetryBuffer.enqueuePoint({
+            userId: user.id,
+            lat,
+            lng,
+            speed,
+            heading: 0,
+            accuracy: accuracyVal,
+            batteryLevel: batteryLevel ?? undefined,
+            timestamp: now,
+            reason: reasonCode,
+          })
+        }
+
         if (e?.status === 400) {
-          console.warn(
-            '[CourierApp] Ponto de telemetria rejeitado com HTTP 400 — descartando sem retry:',
-            e,
-          )
           retryCountRef.current = 0
           if (retryTimeoutRef.current) {
             clearTimeout(retryTimeoutRef.current)
             retryTimeoutRef.current = null
           }
         } else {
-          console.error(
-            'Failed to post live location (aplicando backoff exponencial máx 3 tentativas):',
-            e,
-          )
-
-          // Salvar no buffer offline se em rota ativa quando falha a conexão (offline ou erro de rede/5xx)
-          if (hasActiveStartedRoute) {
-            offlineTelemetryBuffer.enqueuePoint({
-              userId: user.id,
-              lat,
-              lng,
-              speed,
-              heading: 90,
-              accuracy: accuracyVal,
-              batteryLevel: batteryLevel ?? undefined,
-              timestamp: now,
-              reason: (accuracyVal ?? 2000) >= 500 ? 'sem-fix' : 'network_offline',
-            })
-          }
-
           // RETRY COM BACKOFF EXPONENCIAL (10s, 30s, 60s) — NO MÁXIMO 3 TENTATIVAS PARA REDE/5xx
           if (retryCountRef.current < 3 && isEffectActive) {
             retryCountRef.current += 1
@@ -982,10 +1024,10 @@ export default function CourierApp() {
       nativeGpsBridge
         .startTracking({
           userId: user.id,
-          notificationTitle: 'Rotaly — Entregas Ativas',
+          notificationTitle: 'Rotaly está rastreando sua rota',
           notificationText: 'Rastreamento GPS em primeiro plano ativo (contínuo)',
-          minIntervalMs: 5000,
-          minDistanceMeters: 10,
+          minIntervalMs: 30000,
+          minDistanceMeters: 5,
         })
         .catch((e) => console.warn('Erro ao iniciar native foreground GPS:', e))
     }
@@ -1217,6 +1259,26 @@ export default function CourierApp() {
       toast.success('🚀 Rota iniciada! Telemetria ativa e rastreamento oficial em tempo real.', {
         duration: 4000,
       })
+
+      // PATCH 5: Exibir modal de instruções de bateria ao iniciar rota
+      // Se já reconhecido anteriormente no aparelho, exibe um lembrete curto via toast;
+      // se não reconhecido ainda ou no primeiro uso do dia, abre o modal completo
+      try {
+        const lastAck = localStorage.getItem(BATTERY_OPTIMIZATION_ACK_KEY)
+        if (!lastAck) {
+          setIsBatteryGuideOpen(true)
+        } else {
+          toast.info(
+            '🔋 Dica de Bateria: Mantenha a otimização de bateria desativada para GPS contínuo.',
+            {
+              duration: 4000,
+            },
+          )
+        }
+      } catch {
+        setIsBatteryGuideOpen(true)
+      }
+
       await loadCourierOrders()
     } catch (err) {
       console.error('Erro ao iniciar rota:', err)
@@ -2558,6 +2620,15 @@ export default function CourierApp() {
           if (triggerImmediateGpsRef.current) {
             triggerImmediateGpsRef.current()
           }
+        }}
+      />
+
+      {/* Modal de Instruções de Otimização de Bateria e GPS Contínuo (PATCH 5) */}
+      <CourierBatteryGuideModal
+        open={isBatteryGuideOpen}
+        onClose={() => setIsBatteryGuideOpen(false)}
+        onAcknowledge={() => {
+          setIsBatteryGuideOpen(false)
         }}
       />
 
