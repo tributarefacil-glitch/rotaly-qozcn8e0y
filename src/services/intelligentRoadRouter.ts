@@ -48,8 +48,24 @@ export interface RouteOptimizationOutput {
   outbound_distance_km: number
   return_distance_km: number
   estimated_duration_minutes: number
+  transit_duration_minutes?: number
+  service_duration_minutes?: number
+  stop_duration_minutes?: number
   estimated_fuel_cost: number
   isRealStreetRoute: boolean
+}
+
+/**
+ * Divide uma lista de elementos em pedaços (chunks) de tamanho máximo especificado.
+ */
+export function chunkArray<T>(items: T[], chunkSize = 23): T[][] {
+  if (!items || items.length === 0) return []
+  if (chunkSize <= 0) return [[...items]]
+  const chunks: T[][] = []
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize))
+  }
+  return chunks
 }
 
 /**
@@ -135,131 +151,140 @@ export function sequenceStopsWithDeterministicTsp(
     return calcDistanceMeters(fromLat, fromLng, toStop.lat, toStop.lng) * URBAN_ROAD_FACTOR
   }
 
-  const unvisited = [...stops]
-  const ordered: StopCandidate[] = []
-  let curLat = origin.lat
-  let curLng = origin.lng
-  let lastStop: StopCandidate | null = null
-  let lastAddress = ''
+  const evalTourCost = (tour: StopCandidate[]): number => {
+    let total = 0
+    let prevStop: StopCandidate | null = null
+    let prevLat = origin.lat
+    let prevLng = origin.lng
 
-  while (unvisited.length > 0) {
-    let bestIdx = -1
-    let bestScore = Infinity
-
-    for (let i = 0; i < unvisited.length; i++) {
-      const candidate = unvisited[i]
-      const dist = getDistance(lastStop, candidate, curLat, curLng)
-
-      // Fator de prioridade do pedido
-      let priorityMult = 1.0
-      if (candidate.priority === 'urgent') priorityMult = 0.4
-      else if (candidate.priority === 'high') priorityMult = 0.7
-
-      // BÔNUS DE MESMA RUA: Se está na mesma rua do ponto anterior e a uma distância razoável (< 1.5km),
-      // reduz drasticamente o score de distância para que seja visitado em seguida (efeito natural de rua)
-      let sameStreetBonus = 1.0
-      if (lastAddress && areAddressesOnSameStreet(lastAddress, candidate.address)) {
-        if (dist <= 1500) {
-          sameStreetBonus = 0.15 // 85% de desconto de distância para manter clientes da mesma rua juntos
-        }
-      }
-
-      // Proximidade imediata (< 150m = vizinhos contíguos de quarteirão)
-      if (dist <= 150) {
-        sameStreetBonus = Math.min(sameStreetBonus, 0.2)
-      }
-
-      const score = dist * priorityMult * sameStreetBonus
-      if (score < bestScore) {
-        bestScore = score
-        bestIdx = i
-      }
+    for (const stop of tour) {
+      total += getDistance(prevStop, stop, prevLat, prevLng)
+      prevStop = stop
+      prevLat = stop.lat
+      prevLng = stop.lng
     }
 
-    if (bestIdx >= 0) {
-      const next = unvisited.splice(bestIdx, 1)[0]
-      ordered.push(next)
-      curLat = next.lat
-      curLng = next.lng
-      lastStop = next
-      lastAddress = next.address
-    } else if (unvisited.length > 0) {
-      // Desempate determinístico por created se houver resíduo
-      unvisited.sort((a, b) => {
-        const timeA = new Date((a as any).created || (a as any).rawOrder?.created || 0).getTime()
-        const timeB = new Date((b as any).created || (b as any).rawOrder?.created || 0).getTime()
-        if (timeA !== timeB) return timeA - timeB
-        return a.id.localeCompare(b.id)
-      })
-      ordered.push(...unvisited.splice(0, unvisited.length))
-      break
-    }
-  }
-
-  // Refinamento Local 2-Opt: desata nós e cruzamentos viários sobre distâncias viárias
-  // SEMPRE executado para todas as rotas com 4 ou mais paradas (incluindo rotas > 23 paradas)
-  if (ordered.length >= 4) {
-    let improved = true
-    let iterations = 0
-    const maxIterations = ordered.length > 50 ? 30 : 60
-
-    const evalTourCost = (tour: StopCandidate[]): number => {
-      let total = 0
-      let prevStop: StopCandidate | null = null
-      let prevLat = origin.lat
-      let prevLng = origin.lng
-
-      for (const stop of tour) {
-        total += getDistance(prevStop, stop, prevLat, prevLng)
-        prevStop = stop
-        prevLat = stop.lat
-        prevLng = stop.lng
-      }
-
-      // Distância de retorno ao destino
-      if (osrmDistancesMatrix && prevStop) {
-        const lastIdx = stopIndexMap.get(prevStop.id) ?? -1
-        if (lastIdx >= 0 && osrmDistancesMatrix[lastIdx]?.[0] !== undefined) {
-          total += osrmDistancesMatrix[lastIdx][0]
-        } else {
-          total +=
-            calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng) *
-            URBAN_ROAD_FACTOR
-        }
+    // Distância de retorno ao destino
+    if (osrmDistancesMatrix && prevStop) {
+      const lastIdx = stopIndexMap.get(prevStop.id) ?? -1
+      if (lastIdx >= 0 && osrmDistancesMatrix[lastIdx]?.[0] !== undefined) {
+        total += osrmDistancesMatrix[lastIdx][0]
       } else {
         total +=
           calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng) * URBAN_ROAD_FACTOR
       }
-
-      return total
+    } else {
+      total +=
+        calcDistanceMeters(prevLat, prevLng, destination.lat, destination.lng) * URBAN_ROAD_FACTOR
     }
 
-    let currentCost = evalTourCost(ordered)
+    return total
+  }
+
+  // Gera uma rota via Nearest Neighbor com ou sem aplicação do bônus de mesma rua
+  const buildNearestNeighborTour = (applySameStreetBonus: boolean): StopCandidate[] => {
+    const unvisited = [...stops]
+    const ordered: StopCandidate[] = []
+    let curLat = origin.lat
+    let curLng = origin.lng
+    let lastStop: StopCandidate | null = null
+    let lastAddress = ''
+
+    while (unvisited.length > 0) {
+      let bestIdx = -1
+      let bestScore = Infinity
+
+      for (let i = 0; i < unvisited.length; i++) {
+        const candidate = unvisited[i]
+        const dist = getDistance(lastStop, candidate, curLat, curLng)
+
+        // Fator de prioridade do pedido
+        let priorityMult = 1.0
+        if (candidate.priority === 'urgent') priorityMult = 0.4
+        else if (candidate.priority === 'high') priorityMult = 0.7
+
+        // BÔNUS DE MESMA RUA: Se está na mesma rua do ponto anterior e a uma distância razoável (< 1.5km),
+        // reduz o score de distância (0.15) para que seja visitado em seguida
+        let sameStreetBonus = 1.0
+        if (applySameStreetBonus) {
+          if (lastAddress && areAddressesOnSameStreet(lastAddress, candidate.address)) {
+            if (dist <= 1500) {
+              sameStreetBonus = 0.15 // 85% de desconto de distância para manter clientes da mesma rua juntos
+            }
+          }
+
+          // Proximidade imediata (< 150m = vizinhos contíguos de quarteirão)
+          if (dist <= 150) {
+            sameStreetBonus = Math.min(sameStreetBonus, 0.2)
+          }
+        }
+
+        const score = dist * priorityMult * sameStreetBonus
+        if (score < bestScore) {
+          bestScore = score
+          bestIdx = i
+        }
+      }
+
+      if (bestIdx >= 0) {
+        const next = unvisited.splice(bestIdx, 1)[0]
+        ordered.push(next)
+        curLat = next.lat
+        curLng = next.lng
+        lastStop = next
+        lastAddress = next.address
+      } else if (unvisited.length > 0) {
+        // Desempate determinístico por created se houver resíduo
+        unvisited.sort((a, b) => {
+          const timeA = new Date((a as any).created || (a as any).rawOrder?.created || 0).getTime()
+          const timeB = new Date((b as any).created || (b as any).rawOrder?.created || 0).getTime()
+          if (timeA !== timeB) return timeA - timeB
+          return a.id.localeCompare(b.id)
+        })
+        ordered.push(...unvisited.splice(0, unvisited.length))
+        break
+      }
+    }
+
+    return ordered
+  }
+
+  // Aplica o refinamento local 2-Opt desatando nós e cruzamentos viários
+  const runTwoOpt = (initialTour: StopCandidate[], respectSameStreet = true): StopCandidate[] => {
+    const tour = [...initialTour]
+    if (tour.length < 4) return tour
+
+    let improved = true
+    let iterations = 0
+    const maxIterations = tour.length > 50 ? 30 : 60
+    let currentCost = evalTourCost(tour)
 
     while (improved && iterations < maxIterations) {
       improved = false
       iterations++
 
-      for (let i = 0; i < ordered.length - 1; i++) {
-        for (let k = i + 1; k < ordered.length; k++) {
-          // Não inverter se quebrar adjacência de clientes da mesma rua a menos de 500m
-          const a1 = ordered[i]
-          const a2 = ordered[i + 1]
-          if (areAddressesOnSameStreet(a1.address, a2.address)) {
-            const dSame = calcDistanceMeters(a1.lat, a1.lng, a2.lat, a2.lng)
-            if (dSame < 500 && k === i + 1) continue
+      for (let i = 0; i < tour.length - 1; i++) {
+        for (let k = i + 1; k < tour.length; k++) {
+          if (respectSameStreet) {
+            // Não inverter se quebrar adjacência de clientes da mesma rua a menos de 500m
+            const a1 = tour[i]
+            const a2 = tour[i + 1]
+            if (areAddressesOnSameStreet(a1.address, a2.address)) {
+              const dSame = calcDistanceMeters(a1.lat, a1.lng, a2.lat, a2.lng)
+              if (dSame < 500 && k === i + 1) continue
+            }
           }
 
           // Testar troca 2-opt: reverte o segmento entre i e k
           const candidateTour = [
-            ...ordered.slice(0, i),
-            ...ordered.slice(i, k + 1).reverse(),
-            ...ordered.slice(k + 1),
+            ...tour.slice(0, i),
+            ...tour.slice(i, k + 1).reverse(),
+            ...tour.slice(k + 1),
           ]
 
           const candidateCost = evalTourCost(candidateTour)
           if (candidateCost < currentCost - 10) {
-            ordered.splice(0, ordered.length, ...candidateTour)
+            tour.splice(0, tour.length, ...candidateTour)
             currentCost = candidateCost
             improved = true
             break
@@ -268,9 +293,28 @@ export function sequenceStopsWithDeterministicTsp(
         if (improved) break
       }
     }
+
+    return tour
   }
 
-  return ordered
+  // 1. D0 = km total SEM bônus de mesma rua (sequência puramente ótima por distância)
+  const tourWithoutBonusRaw = buildNearestNeighborTour(false)
+  const tourWithoutBonus = runTwoOpt(tourWithoutBonusRaw, false)
+  const d0Cost = evalTourCost(tourWithoutBonus)
+
+  // 2. D1 = km total COM bônus de mesma rua (fator 0.15 / agrupamento)
+  const tourWithBonusRaw = buildNearestNeighborTour(true)
+  const tourWithBonus = runTwoOpt(tourWithBonusRaw, true)
+  const d1Cost = evalTourCost(tourWithBonus)
+
+  // REGRA DO ITEM 2:
+  // O bônus de "mesma rua" (fator 0.15) só vale se NÃO piorar o km total em mais de 10%
+  // Se D1 > D0 * 1.10, descartar o agrupamento e manter a sequência ótima sem bônus (D0)
+  if (d1Cost > d0Cost * 1.1) {
+    return tourWithoutBonus
+  }
+
+  return tourWithBonus
 }
 
 /**
@@ -418,6 +462,7 @@ export async function optimizeRouteSequence(params: {
   vehicleType?: string
   pricePerLiter?: number
   consumptionKml?: number
+  stopDurationMinutes?: number
 }): Promise<RouteOptimizationOutput> {
   const {
     origin,
@@ -426,7 +471,15 @@ export async function optimizeRouteSequence(params: {
     vehicleType = 'moto',
     pricePerLiter = 5.89,
     consumptionKml = 32,
+    stopDurationMinutes = 5,
   } = params
+
+  const effectiveStopDuration =
+    typeof stopDurationMinutes === 'number' &&
+    !isNaN(stopDurationMinutes) &&
+    stopDurationMinutes >= 0
+      ? stopDurationMinutes
+      : 5
 
   if (stops.length === 0) {
     return {
@@ -435,6 +488,9 @@ export async function optimizeRouteSequence(params: {
       outbound_distance_km: 0,
       return_distance_km: 0,
       estimated_duration_minutes: 0,
+      transit_duration_minutes: 0,
+      service_duration_minutes: 0,
+      stop_duration_minutes: effectiveStopDuration,
       estimated_fuel_cost: 0,
       isRealStreetRoute: false,
     }
@@ -456,9 +512,16 @@ export async function optimizeRouteSequence(params: {
   let isGoogleOptimized = false
   let legsData: Array<{ distanceMeters: number; durationSeconds: number }> | null = null
 
-  // Se tivermos até 23 paradas e a API do Google Maps estiver disponível,
-  // tentamos a otimização oficial da Google com respeito às regras viárias
-  if (preProcessedStops.length <= 23) {
+  // 1) RESOLUÇÃO COM GOOGLE DIRECTIONS:
+  // Para rotas de até 23 paradas: um único bloco direto via Google Directions (optimizeWaypoints: true)
+  // Para lotes com MAIS de 25 paradas: chunkArray(stops, 23) em blocos de <=23 waypoints (<=25 com origem/destino);
+  // cada bloco resolvido via Google Directions com optimizeWaypoints:true;
+  // e costura viária entre os blocos ligando o extremo final do bloco anterior ao ponto mais próximo
+  // do início do bloco seguinte, usando matriz de distâncias viárias (fetchOsrmDistanceMatrix).
+  const isGoogleAvailable =
+    typeof window !== 'undefined' && Boolean((window as any).google?.maps?.DirectionsService)
+
+  if (isGoogleAvailable && preProcessedStops.length <= 23) {
     const googleResult = await sequenceStopsWithGoogleDirections(
       origin,
       destination,
@@ -470,12 +533,89 @@ export async function optimizeRouteSequence(params: {
       legsData = googleResult.legs
       isGoogleOptimized = true
     }
+  } else if (isGoogleAvailable && preProcessedStops.length > 23) {
+    // Lotes com mais de 23/25 paradas divididos em chunks de 23 paradas
+    const chunks = chunkArray(preProcessedStops, 23)
+    const solvedChunks: StopCandidate[][] = []
+    let chunksAllSuccess = true
+
+    let currentOrigin = origin
+    for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+      const chunkStops = chunks[cIdx]
+      const isLastChunk = cIdx === chunks.length - 1
+      const chunkDestination = isLastChunk ? destination : destination // destino de referência
+
+      const googleChunkRes = await sequenceStopsWithGoogleDirections(
+        currentOrigin,
+        chunkDestination,
+        chunkStops,
+        vehicleType,
+      )
+
+      if (googleChunkRes && googleChunkRes.orderedStops.length === chunkStops.length) {
+        solvedChunks.push(googleChunkRes.orderedStops)
+        const lastInChunk = googleChunkRes.orderedStops[googleChunkRes.orderedStops.length - 1]
+        currentOrigin = { lat: lastInChunk.lat, lng: lastInChunk.lng }
+      } else {
+        chunksAllSuccess = false
+        break
+      }
+    }
+
+    if (chunksAllSuccess && solvedChunks.length === chunks.length) {
+      // Costurar os blocos ligando o extremo final de um bloco ao ponto mais próximo do início do seguinte,
+      // usando MATRIZ DE DISTÂNCIAS VIÁRIAS OSRM (nunca distância euclidiana/linha reta).
+      const stitched: StopCandidate[] = [...solvedChunks[0]]
+
+      for (let c = 1; c < solvedChunks.length; c++) {
+        const prevChunkEnd = stitched[stitched.length - 1]
+        const nextChunk = [...solvedChunks[c]]
+
+        let bestNextIndex = 0
+        try {
+          const { fetchOsrmDistanceMatrix } = await import('@/services/osrmRoutingService')
+          // Matriz viária entre o final do bloco anterior (índice 0) e os candidatos do próximo bloco (índices 1..K)
+          const matrixPoints = [
+            { lat: prevChunkEnd.lat, lng: prevChunkEnd.lng },
+            ...nextChunk.map((s) => ({ lat: s.lat, lng: s.lng })),
+          ]
+          const matrix = await fetchOsrmDistanceMatrix(matrixPoints)
+          if (matrix?.distancesMeters?.[0]) {
+            let minRoadDist = Infinity
+            for (let k = 0; k < nextChunk.length; k++) {
+              const roadDist = matrix.distancesMeters[0][k + 1]
+              if (typeof roadDist === 'number' && roadDist >= 0 && roadDist < minRoadDist) {
+                minRoadDist = roadDist
+                bestNextIndex = k
+              }
+            }
+          }
+        } catch (stitchErr) {
+          console.warn('[RoadRouter] Erro ao costurar blocos com matriz viária OSRM:', stitchErr)
+        }
+
+        // Se o ponto mais próximo do início não for o primeiro do próximo chunk,
+        // roda uma rotação viária mantendo a consistência do circuito interno do bloco
+        if (bestNextIndex > 0) {
+          const reorderedNextChunk = [
+            ...nextChunk.slice(bestNextIndex),
+            ...nextChunk.slice(0, bestNextIndex),
+          ]
+          stitched.push(...reorderedNextChunk)
+        } else {
+          stitched.push(...nextChunk)
+        }
+      }
+
+      finalStops = stitched
+      isGoogleOptimized = true
+      legsData = null // será recalculado viariamente perna a perna para precisão total da costura
+    }
   }
 
-  // Se a Google não estava disponível ou tínhamos mais de 23 paradas:
-  // Assegurar caminho OSRM fetchOsrmDistanceMatrix + TSP determinístico (2-Opt) SEMPRE,
-  // sem fallback de linha reta (haversine) para sequenciamento.
-  if (!isGoogleOptimized) {
+  // Fallback: se o Google não estiver disponível ou a chamada aos blocos falhou:
+  // Assegurar caminho OSRM fetchOsrmDistanceMatrix + TSP determinístico (2-Opt com regra do teto de 10% no bônus de mesma rua)
+  if (!isGoogleOptimized || finalStops.length !== preProcessedStops.length) {
     let osrmMatrix: number[][] | null = null
     try {
       const { fetchOsrmDistanceMatrix } = await import('@/services/osrmRoutingService')
@@ -495,6 +635,8 @@ export async function optimizeRouteSequence(params: {
       preProcessedStops,
       osrmMatrix,
     )
+    isGoogleOptimized = false
+    legsData = null
   }
 
   // Agora calcular as métricas de distância acumulada e pernas (legs)
@@ -597,11 +739,17 @@ export async function optimizeRouteSequence(params: {
   const returnKm = Number((returnMeters / 1000).toFixed(2))
   const totalKm = Number((outboundKm + returnKm).toFixed(2))
 
-  // Duração total: tempo de deslocamento + 5 minutos de atendimento por parada
-  let durationMins = Math.round(totalDurationSeconds / 60)
-  if (durationMins <= 0 || !isGoogleOptimized) {
-    durationMins = Math.round((totalKm / 22) * 60 + finalStops.length * 5)
+  // Separação de tempos: Deslocamento viário (transit) vs Permanência em paradas (service)
+  // transitDurationMins = tempo gasto em deslocamento pelas pernas viárias
+  let transitDurationMins = Math.round(totalDurationSeconds / 60)
+  if (transitDurationMins <= 0) {
+    // Estimativa urbana viária (~22 km/h média de tráfego urbano)
+    transitDurationMins = Math.round((totalKm / 22) * 60)
   }
+
+  // serviceDurationMins = paradas * tempo de permanência configurado
+  const serviceDurationMins = Math.round(finalStops.length * effectiveStopDuration)
+  const durationMins = transitDurationMins + serviceDurationMins
 
   // Custo de combustível
   // Bicicleta nunca gera custo de combustível
@@ -625,6 +773,9 @@ export async function optimizeRouteSequence(params: {
     outbound_distance_km: outboundKm,
     return_distance_km: returnKm,
     estimated_duration_minutes: durationMins,
+    transit_duration_minutes: transitDurationMins,
+    service_duration_minutes: serviceDurationMins,
+    stop_duration_minutes: effectiveStopDuration,
     estimated_fuel_cost: Number(fuelCost.toFixed(2)),
     isRealStreetRoute: isGoogleOptimized,
   }

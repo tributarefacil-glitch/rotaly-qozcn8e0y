@@ -1219,6 +1219,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       outboundKm: number
       returnKm: number
       durationMins: number
+      transitMins: number
+      serviceMins: number
+      stopDurationMins: number
       fuelCost: number
     } => {
       let curLat = startLat
@@ -1248,7 +1251,19 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const outboundKm = Number((cumMeters / 1000).toFixed(2))
       const returnKm = Number((returnMeters / 1000).toFixed(2))
       const totalDistKmNum = Number((totalMeters / 1000).toFixed(2))
-      const durationMins = Math.round((totalDistKmNum / 22) * 60 + stops.length * 5)
+
+      // Leitura de stop_duration_minutes de app_settings (padrão 5 min quando ausente)
+      const stopDurationMins =
+        typeof appSettings?.stop_duration_minutes === 'number' &&
+        !isNaN(appSettings.stop_duration_minutes) &&
+        appSettings.stop_duration_minutes >= 0
+          ? appSettings.stop_duration_minutes
+          : 5
+
+      // Tempo de deslocamento viário (transit) separado do tempo de permanência por parada (service)
+      const transitMins = Math.round((totalDistKmNum / 22) * 60)
+      const serviceMins = Math.round(stops.length * stopDurationMins)
+      const durationMins = transitMins + serviceMins
 
       const { pricePerLiter, consumptionKml, category } = deliveryService.getVehicleFuelParams(
         appSettings,
@@ -1269,6 +1284,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         outboundKm,
         returnKm,
         durationMins,
+        transitMins,
+        serviceMins,
+        stopDurationMins,
         fuelCost: Number(fuelCost.toFixed(2)),
       }
     },
@@ -1354,6 +1372,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           outbound_distance_km: metrics.outboundKm,
           return_distance_km: metrics.returnKm,
           estimated_duration_minutes: metrics.durationMins,
+          transit_duration_minutes: metrics.transitMins,
+          service_duration_minutes: metrics.serviceMins,
+          stop_duration_minutes: metrics.stopDurationMins,
           estimated_fuel_cost: metrics.fuelCost,
         }
       })
@@ -1361,6 +1382,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const grandDistKm = (grandTotalDistMeters / 1000).toFixed(1)
       const totalFuel = newPlans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
       const totalMins = newPlans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
+      const totalTransit = newPlans.reduce((acc, p) => acc + (p.transit_duration_minutes || 0), 0)
+      const totalService = newPlans.reduce((acc, p) => acc + (p.service_duration_minutes || 0), 0)
 
       return {
         ...prev,
@@ -1368,6 +1391,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         totalDistanceKm: grandDistKm,
         totalEstimatedFuelCost: Number(totalFuel.toFixed(2)),
         totalDurationMinutes: totalMins,
+        totalTransitMinutes: totalTransit,
+        totalServiceMinutes: totalService,
       }
     })
 
@@ -1942,6 +1967,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           vehicleType: isCourierBike ? 'bicicleta' : courierData.courier.vehicle_type,
           pricePerLiter: planFuelPrice,
           consumptionKml: planFuelCons,
+          stopDurationMinutes: appSettings?.stop_duration_minutes ?? 5,
         })
         const stops: OptimizedStop[] = roadRouteResult.stops.map((s) => ({
           id: s.id,
@@ -1968,6 +1994,10 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           outbound_distance_km: roadRouteResult.outbound_distance_km,
           return_distance_km: roadRouteResult.return_distance_km,
           estimated_duration_minutes: roadRouteResult.estimated_duration_minutes,
+          transit_duration_minutes: roadRouteResult.transit_duration_minutes,
+          service_duration_minutes: roadRouteResult.service_duration_minutes,
+          stop_duration_minutes:
+            roadRouteResult.stop_duration_minutes ?? appSettings?.stop_duration_minutes ?? 5,
           estimated_fuel_cost: roadRouteResult.estimated_fuel_cost,
           start_base: {
             name: startBase.name,
@@ -1987,6 +2017,14 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const grandDistKm = grandTotalDistanceMeters / 1000
       const totalFuelCost = plans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
       const totalEstDuration = plans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
+      const totalTransitMinutes = plans.reduce(
+        (acc, p) => acc + (p.transit_duration_minutes || 0),
+        0,
+      )
+      const totalServiceMinutes = plans.reduce(
+        (acc, p) => acc + (p.service_duration_minutes || 0),
+        0,
+      )
 
       // ITEM 4: Alertar se custo viário + combustível exceder o valor das entregas (rota não pode dar prejuízo)
       const totalDeliveriesValue = ordersToOptimize.reduce(
@@ -2011,6 +2049,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         totalDistanceKm: grandDistKm.toFixed(1),
         totalEstimatedFuelCost: Number(totalFuelCost.toFixed(2)),
         totalDurationMinutes: totalEstDuration,
+        totalTransitMinutes: totalTransitMinutes,
+        totalServiceMinutes: totalServiceMinutes,
+        stopDurationMinutes: appSettings?.stop_duration_minutes ?? 5,
         startBase,
         endBase,
       }
@@ -2885,6 +2926,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           outbound_distance_km: metrics.outboundKm,
           return_distance_km: metrics.returnKm,
           estimated_duration_minutes: metrics.durationMins,
+          transit_duration_minutes: metrics.transitMins,
+          service_duration_minutes: metrics.serviceMins,
+          stop_duration_minutes: metrics.stopDurationMins,
           estimated_fuel_cost: metrics.fuelCost,
         }
       })
@@ -2892,6 +2936,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const grandDistKm = (grandTotalDistMeters / 1000).toFixed(1)
       const totalFuel = newPlans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
       const totalMins = newPlans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
+      const totalTransit = newPlans.reduce((acc, p) => acc + (p.transit_duration_minutes || 0), 0)
+      const totalService = newPlans.reduce((acc, p) => acc + (p.service_duration_minutes || 0), 0)
 
       return {
         ...prev,
@@ -2899,6 +2945,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         totalDistanceKm: grandDistKm,
         totalEstimatedFuelCost: Number(totalFuel.toFixed(2)),
         totalDurationMinutes: totalMins,
+        totalTransitMinutes: totalTransit,
+        totalServiceMinutes: totalService,
       }
     })
   }
@@ -2934,6 +2982,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           outbound_distance_km: metrics.outboundKm,
           return_distance_km: metrics.returnKm,
           estimated_duration_minutes: metrics.durationMins,
+          transit_duration_minutes: metrics.transitMins,
+          service_duration_minutes: metrics.serviceMins,
+          stop_duration_minutes: metrics.stopDurationMins,
           estimated_fuel_cost: metrics.fuelCost,
         }
       })
@@ -2941,6 +2992,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const grandDistKm = (grandTotalDistMeters / 1000).toFixed(1)
       const totalFuel = newPlans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
       const totalMins = newPlans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
+      const totalTransit = newPlans.reduce((acc, p) => acc + (p.transit_duration_minutes || 0), 0)
+      const totalService = newPlans.reduce((acc, p) => acc + (p.service_duration_minutes || 0), 0)
 
       return {
         ...prev,
@@ -2948,6 +3001,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         totalDistanceKm: grandDistKm,
         totalEstimatedFuelCost: Number(totalFuel.toFixed(2)),
         totalDurationMinutes: totalMins,
+        totalTransitMinutes: totalTransit,
+        totalServiceMinutes: totalService,
       }
     })
     toast.info('Parada removida da rota calculada.')
@@ -3137,6 +3192,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             outbound_distance_km: metrics.outboundKm,
             return_distance_km: metrics.returnKm,
             estimated_duration_minutes: metrics.durationMins,
+            transit_duration_minutes: metrics.transitMins,
+            service_duration_minutes: metrics.serviceMins,
+            stop_duration_minutes: metrics.stopDurationMins,
             estimated_fuel_cost: metrics.fuelCost,
           }
         }
@@ -3158,6 +3216,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             outbound_distance_km: metrics.outboundKm,
             return_distance_km: metrics.returnKm,
             estimated_duration_minutes: metrics.durationMins,
+            transit_duration_minutes: metrics.transitMins,
+            service_duration_minutes: metrics.serviceMins,
+            stop_duration_minutes: metrics.stopDurationMins,
             estimated_fuel_cost: metrics.fuelCost,
           }
         }
@@ -3168,6 +3229,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
       const grandDistKm = (grandTotalDistMeters / 1000).toFixed(1)
       const totalFuel = newPlans.reduce((acc, p) => acc + (p.estimated_fuel_cost || 0), 0)
       const totalMins = newPlans.reduce((acc, p) => acc + p.estimated_duration_minutes, 0)
+      const totalTransit = newPlans.reduce((acc, p) => acc + (p.transit_duration_minutes || 0), 0)
+      const totalService = newPlans.reduce((acc, p) => acc + (p.service_duration_minutes || 0), 0)
 
       return {
         ...prev,
@@ -3175,6 +3238,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         totalDistanceKm: grandDistKm,
         totalEstimatedFuelCost: Number(totalFuel.toFixed(2)),
         totalDurationMinutes: totalMins,
+        totalTransitMinutes: totalTransit,
+        totalServiceMinutes: totalService,
       }
     })
     toast.success('Entrega reatribuída para outro entregador.')
@@ -5072,12 +5137,28 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 <div className="flex items-center gap-2">
                   <Clock className="h-4 w-4 text-amber-600" />
                   <div>
-                    <span className="text-slate-500 block text-[10px] uppercase font-bold">
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold flex items-center gap-1">
                       Previsão de Tempo
+                      <span className="text-[9px] font-normal lowercase text-slate-400">
+                        (permanência:{' '}
+                        {optimizationResult.stopDurationMinutes ||
+                          appSettings?.stop_duration_minutes ||
+                          5}
+                        min/parada)
+                      </span>
                     </span>
-                    <span className="font-bold text-slate-900 dark:text-white">
-                      ~{optimizationResult.totalDurationMinutes} minutos
-                    </span>
+                    <div className="flex items-baseline gap-1.5 flex-wrap">
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        ~{optimizationResult.totalDurationMinutes} min total
+                      </span>
+                      {typeof optimizationResult.totalTransitMinutes === 'number' &&
+                        typeof optimizationResult.totalServiceMinutes === 'number' && (
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                            ({optimizationResult.totalTransitMinutes} min deslocamento +{' '}
+                            {optimizationResult.totalServiceMinutes} min paradas)
+                          </span>
+                        )}
+                    </div>
                   </div>
                 </div>
 
@@ -5164,6 +5245,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                         <div className="flex items-center gap-1.5 flex-wrap justify-end">
                           <Badge className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] border">
                             {plan.stops.length} paradas • {plan.total_distance_km} km
+                          </Badge>
+                          <Badge className="bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-[10px] border-amber-200">
+                            ⏱️ ~{plan.estimated_duration_minutes} min
+                            {typeof plan.transit_duration_minutes === 'number' &&
+                            typeof plan.service_duration_minutes === 'number' ? (
+                              <span className="font-normal opacity-90 ml-1">
+                                ({plan.transit_duration_minutes}m desl. +{' '}
+                                {plan.service_duration_minutes}m par.)
+                              </span>
+                            ) : null}
                           </Badge>
                           {plan.courier.vehicle_type === 'bicicleta' ||
                           plan.courier.vehicle_type === 'bicycle' ? (
