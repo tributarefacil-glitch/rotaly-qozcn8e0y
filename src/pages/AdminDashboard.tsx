@@ -964,7 +964,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       }
     } catch (err: unknown) {
       console.error('Error updating status:', err)
-      toast.error('Falha ao atualizar status do usuário.')
+      const errorMsg = getErrorMessage(err)
+      toast.error(`Falha ao atualizar status: ${errorMsg}`)
     } finally {
       setUpdatingUserId(null)
     }
