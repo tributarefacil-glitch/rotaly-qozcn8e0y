@@ -151,31 +151,38 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               ? new Date(sortedBatchOrders[0].created).getTime() + 4 * 60 * 60 * 1000
               : Date.now()
 
-        // 1. Verificar se já temos pings no pool de locations da página
+        // 1. Verificar pings de locations correspondentes ao entregador (courier_id / user_id)
+        // e janela temporal DO LOTE (não minutesWindow fixa)
         const poolMatches = locationsPool.filter((loc) => {
-          if (loc.user_id !== courierId) return false
+          const locCourierId = (loc as any).courier_id || loc.user_id
+          if (locCourierId !== courierId) return false
           const t = new Date(loc.created).getTime()
           return t >= startTs && t <= endTs
         })
 
         let rawPings: LocationRecord[] = poolMatches
 
-        // Se o pool local tiver menos de 2 pings ou estiver vazio, buscar no backend pela janela exata do lote
-        if (rawPings.length < 2) {
-          try {
-            const startDate = new Date(startTs).toISOString()
-            const endDate = new Date(endTs).toISOString()
-            const directLocs = await deliveryService.getCourierLocations(
-              courierId,
-              startDate,
-              endDate,
-            )
-            if (directLocs && directLocs.length > 0) {
-              rawPings = directLocs
-            }
-          } catch (fetchErr) {
-            console.warn('[AuditRouteMapModal] Erro ao buscar telemetria sob demanda:', fetchErr)
+        // Buscar no backend pela janela temporal exata DO LOTE (startTs a endTs)
+        try {
+          const startDate = new Date(startTs).toISOString()
+          const endDate = new Date(endTs).toISOString()
+          const directLocs = await deliveryService.getCourierLocations(
+            courierId,
+            startDate,
+            endDate,
+          )
+          if (directLocs && directLocs.length > 0) {
+            // Unir pings do pool e do backend evitando duplicatas por id
+            const existingIds = new Set(rawPings.map((p) => p.id))
+            directLocs.forEach((dl) => {
+              if (!existingIds.has(dl.id)) {
+                rawPings.push(dl)
+                existingIds.add(dl.id)
+              }
+            })
           }
+        } catch (fetchErr) {
+          console.warn('[AuditRouteMapModal] Erro ao buscar telemetria sob demanda:', fetchErr)
         }
 
         // Sanitização e ordenação estrita em ordem cronológica (+created)
@@ -231,7 +238,7 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
           })
         }
 
-        // 2. Traçado viário planejado completo da rota otimizada:
+        // 2. Traçado viário planejado completo da rota otimizada (partindo da base Pilar -22.6977499, -43.2936013):
         // Base oficial -> Clientes na sequência otimizada -> Retorno à base
         const plannedWaypoints: LatLngPoint[] = [
           { lat: baseCoords.lat, lng: baseCoords.lng },
@@ -242,7 +249,7 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
         plannedWaypoints.push({ lat: baseCoords.lat, lng: baseCoords.lng })
 
         // Calcular traçado viário via fetchStreetRoute entre waypoints consecutivos
-        // Proibido traçar linha reta entre pins!
+        // Proibido traçar linha reta ou interpolar fallback reto entre pins!
         const fullRoadSegments: LatLngPoint[] = []
 
         if (plannedWaypoints.length >= 2) {
@@ -257,13 +264,10 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
                 } else {
                   fullRoadSegments.push(...leg.coordinates)
                 }
-              } else {
-                if (fullRoadSegments.length === 0) fullRoadSegments.push(pFrom)
-                fullRoadSegments.push(pTo)
               }
-            } catch {
-              if (fullRoadSegments.length === 0) fullRoadSegments.push(pFrom)
-              fullRoadSegments.push(pTo)
+            } catch (errStreet) {
+              console.warn('[AuditRouteMapModal] Falha ao obter trecho viário OSRM:', errStreet)
+              // SEM fallback em linha reta: não adicionar pTo/pFrom falsos em caso de erro OSRM
             }
           }
         }
@@ -292,8 +296,8 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
   // Inicializar e desenhar no Google Maps
   useEffect(() => {
     if (!isOpen || isLoading || loadingError) return
-    // REGRA CRÍTICA: Se a rota OSRM ainda não estiver carregada (plannedRoutePoints < 2) e temos clientes a visitar,
-    // aguardar a resolução viária antes de desenhar e classificar qualquer ping. NUNCA classificar contra a base.
+    // REGRA CRÍTICA DO PASSO 1: A rota viária OSRM (plannedRoutePoints >= 2) deve carregar ANTES de qualquer classificação.
+    // Enquanto não completa: aguardar rota planejada viária completa — sem classificar pings, sem calcular desvio.
     if (plannedRoutePoints.length < 2 && clientStops.length > 0) return
     if (!mapContainerRef.current) return
 
@@ -662,16 +666,15 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
         <div className="relative w-full h-[520px] bg-slate-100">
           <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-0" />
 
-          {/* ESTADO DE CARREGANDO */}
-          {isLoading && (
-            <div className="absolute inset-0 z-20 bg-white/80 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center">
+          {/* ESTADO DE CARREGANDO / AGUARDANDO ROTA PLANEJADA */}
+          {(isLoading || (plannedRoutePoints.length < 2 && clientStops.length > 0 && !loadingError)) && (
+            <div className="absolute inset-0 z-20 bg-white/85 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center">
               <RefreshCw className="h-8 w-8 text-[#0052CC] animate-spin mb-3" />
               <p className="font-bold text-slate-800 text-sm">
-                Carregando traçado viário e pings de telemetria do lote...
+                aguardando rota planejada...
               </p>
               <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                Calculando rota otimizada e distâncias perpendiculares ponto-segmento no estilo
-                Vuupt.
+                Carregando rota viária OSRM a partir da Base Pilar antes da classificação de telemetria.
               </p>
             </div>
           )}
@@ -694,8 +697,8 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                 <span>
-                  <strong>Atenção: Nenhum ping de GPS gravado neste lote</strong>
-                  {telemetryPings.length === 1 ? ' (apenas 1 ping isolado gravado)' : ''}. Apenas a
+                  <strong>sem telemetria</strong>
+                  {telemetryPings.length === 1 ? ' (apenas 1 ping gravado)' : ' suficiente (<2 pings)'}. Apenas a
                   rota viária otimizada planejada (linha azul) está sendo exibida.
                 </span>
               </div>

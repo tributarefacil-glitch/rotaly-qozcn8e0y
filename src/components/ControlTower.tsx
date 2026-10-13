@@ -664,17 +664,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
   }
 
-  // Sincronização inicial e periódica:
-  // Executa busca autônoma APENAS se props não foram fornecidas pelo componente pai (!hasParentData)
+  // Sincronização inicial:
+  // Executa busca autônoma APENAS se props não foram fornecidas pelo componente pai (!hasParentData).
+  // Posição do entregador é atualizada exclusivamente por subscrição realtime de locations (sem polling redundante).
   useEffect(() => {
     if (shouldFetchAutonomously) {
       fetchData()
-      const interval = setInterval(() => {
-        if (shouldFetchAutonomously) {
-          fetchData()
-        }
-      }, 30000)
-      return () => clearInterval(interval)
     }
   }, [user?.id, user?.role, currentCompany?.id, shouldFetchAutonomously])
 
@@ -1030,6 +1025,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       pb.collection('off_route_events')
         .subscribe('*', (e) => {
           if (!isSubscribed) return
+          // off_route_events possui apenas courier_id (filtrar por courier_id se necessário, nunca user_id ou empresa_id)
+          const recordCourierId = (e.record as any).courier_id
           if (e.action === 'create') {
             setRecentDeviations((prev) => [e.record, ...prev])
             setLastUpdated(new Date())
@@ -2079,64 +2076,73 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     // 2. Destinos de entregas em rota ativa (marcador por cliente numerado [#seq])
     // B3: Extrair pedidos de activeRouteCouriers[i].allAssignedOrders para não perder entregas do lote ativo
     const seenOrderIds = new Set<string>()
+    const processOrderMarker = (order: OrderRecord, courierItem?: any) => {
+      try {
+        if (
+          order.status === 'cancelled' ||
+          order.route_finished === true ||
+          !order.route_started ||
+          seenOrderIds.has(order.id)
+        ) {
+          return
+        }
+        seenOrderIds.add(order.id)
+
+        const cleanDest = MapDataService.getOrderDestination(order)
+        if (!cleanDest) {
+          console.warn(
+            '[ControlTower] Cliente sem coordenada válida no pedido:',
+            order.tracking_code,
+            order.id,
+          )
+          return
+        }
+
+        const cust = order.expand?.customer_id
+        const courier = order.expand?.courier_id || courierItem?.courier
+        const isDelivered = order.status === 'delivered'
+        const isTransit = order.status === 'in_transit' || order.route_started
+        const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
+        const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
+        const seqText = order.sequence ? `[#${order.sequence}] ` : ''
+        const courierId = order.courier_id || courier?.id
+        // Pins verde #10B981 entregue / laranja #FF6B35 pendente, na sequência (regra verbatim do dono)
+        const pinColor = isDelivered ? '#10B981' : '#FF6B35'
+        const titlePrefix = isDelivered ? `✓ ${seqText}` : seqText
+
+        list.push({
+          id: `order-${order.id}`,
+          title: `${titlePrefix}${cust?.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
+          subtitle: `${cust?.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
+          lat: cleanDest.lat,
+          lng: cleanDest.lng,
+          type: isDelivered ? 'order_delivered' : isTransit ? 'order_transit' : 'order_pending',
+          tracking_code: order.tracking_code,
+          customer_name: cust?.name,
+          customer_address: cust?.address,
+          total_price: Number(order.total_price || 0),
+          estimated_arrival: order.estimated_arrival,
+          courier_name: courier?.name,
+          courier_id: courierId,
+          pinColorOverride: pinColor,
+          delivery_sequence: order.sequence,
+        })
+      } catch (err) {
+        console.warn('[ControlTower] Erro ao processar pin do pedido:', order?.id, err)
+      }
+    }
+
+    // Processar pedidos atribuídos aos entregadores ativos
     activeRouteCouriers.forEach((courierItem) => {
       const courierOrders = courierItem.allAssignedOrders || []
-      courierOrders.forEach((order) => {
-        try {
-          if (
-            order.status === 'cancelled' ||
-            order.route_finished === true ||
-            !order.route_started ||
-            seenOrderIds.has(order.id)
-          ) {
-            return
-          }
-          seenOrderIds.add(order.id)
+      courierOrders.forEach((order) => processOrderMarker(order, courierItem))
+    })
 
-          const cleanDest = MapDataService.getOrderDestination(order)
-          if (!cleanDest) {
-            console.warn(
-              '[ControlTower] Cliente sem coordenada válida no pedido:',
-              order.tracking_code,
-              order.id,
-            )
-            return
-          }
-
-          const cust = order.expand?.customer_id
-          const courier = order.expand?.courier_id || courierItem.courier
-          const isDelivered = order.status === 'delivered'
-          const isTransit = order.status === 'in_transit' || order.route_started
-          const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
-          const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
-          const seqText = order.sequence ? `[#${order.sequence}] ` : ''
-          const courierId = order.courier_id || courier?.id
-          const courierColor = getCourierRouteColor(courierId)
-          // Pins verde #10B981 entregue / laranja #FF6B35 pendente, na sequência (regra verbatim do dono)
-          const pinColor = isDelivered ? '#10B981' : '#FF6B35'
-          const titlePrefix = isDelivered ? `✓ ${seqText}` : seqText
-
-          list.push({
-            id: `order-${order.id}`,
-            title: `${titlePrefix}${cust?.name || 'Cliente'} • ${order.tracking_code}${etaSuffix}`,
-            subtitle: `${cust?.address || 'Endereço'} • R$ ${Number(order.total_price || 0).toFixed(2)}`,
-            lat: cleanDest.lat,
-            lng: cleanDest.lng,
-            type: isDelivered ? 'order_delivered' : isTransit ? 'order_transit' : 'order_pending',
-            tracking_code: order.tracking_code,
-            customer_name: cust?.name,
-            customer_address: cust?.address,
-            total_price: Number(order.total_price || 0),
-            estimated_arrival: order.estimated_arrival,
-            courier_name: courier?.name,
-            courier_id: courierId,
-            pinColorOverride: pinColor,
-            delivery_sequence: order.sequence,
-          })
-        } catch (err) {
-          console.warn('[ControlTower] Erro ao processar pin do pedido:', order?.id, err)
-        }
-      })
+    // Garantir que todos os pedidos em rota ativa do dia (todayOrders em rota iniciada) estejam pinados na Torre
+    todayOrders.forEach((order) => {
+      if (order.route_started && !order.route_finished && order.status !== 'cancelled') {
+        processOrderMarker(order)
+      }
     })
 
     return list
