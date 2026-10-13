@@ -69,6 +69,7 @@ import {
   isOrderInPeriod,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
+import { AuditRouteMapModal } from '@/components/AuditRouteMapModal'
 
 interface KmAuditReportProps {
   orders: OrderRecord[]
@@ -133,6 +134,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   const [proposedKmInput, setProposedKmInput] = useState<string>('')
   const [justificationInput, setJustificationInput] = useState<string>('')
   const [isSavingApproval, setIsSavingApproval] = useState<boolean>(false)
+
+  // Modal de Auditoria no Mapa (estilo Vuupt com Google Maps)
+  const [isAuditMapModalOpen, setIsAuditMapModalOpen] = useState<boolean>(false)
+  const [activeAuditMapData, setActiveAuditMapData] = useState<{
+    batchKey: string
+    batchDisplay?: string
+    batchOrders: OrderRecord[]
+    courier?: UserRecord
+    divergenceKm?: number
+    divergencePct?: number
+  } | null>(null)
 
   // Carregar pedidos sob demanda quando o filtro for multi-dia (week, month, custom, all)
   const fetchPeriodOrders = useCallback(async () => {
@@ -1419,17 +1431,45 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                     <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[10px]">
                       <span className="text-slate-500">{bRows.length} entregas</span>
                       {maxGps > 0 && loteComp.valido && (
-                        <span
-                          className={`font-mono font-bold ${
-                            loteComp.diferenca <= 0.5
-                              ? 'text-emerald-600'
-                              : loteComp.diferenca <= 2.0
-                                ? 'text-amber-600'
-                                : 'text-rose-600'
-                          }`}
-                        >
-                          Divergência: {loteComp.diferenca.toFixed(1)} km
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`font-mono font-bold ${
+                              loteComp.diferenca <= 0.5
+                                ? 'text-emerald-600'
+                                : loteComp.diferenca <= 2.0
+                                  ? 'text-amber-600'
+                                  : 'text-rose-600'
+                            }`}
+                          >
+                            Divergência: {loteComp.diferenca.toFixed(1)} km
+                          </span>
+                          {/* Se desvio > 20% no lote completo, exibir botão Ver no mapa */}
+                          {loteCanonico > 0 &&
+                            Math.round((loteComp.diferenca / loteCanonico) * 100) > 20 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const batchPct = Math.round(
+                                    (loteComp.diferenca / loteCanonico) * 100,
+                                  )
+                                  setActiveAuditMapData({
+                                    batchKey: bKey,
+                                    batchDisplay: bRows[0].batchDisplay,
+                                    batchOrders,
+                                    courier: bRows[0].courier,
+                                    divergenceKm: loteComp.diferenca,
+                                    divergencePct: batchPct,
+                                  })
+                                  setIsAuditMapModalOpen(true)
+                                }}
+                                className="h-5 px-1.5 text-[9px] font-bold text-[#0052CC] border-blue-200 bg-blue-50/70 hover:bg-blue-100 gap-1"
+                              >
+                                <Route className="h-2.5 w-2.5 text-[#0052CC]" />
+                                Ver no mapa
+                              </Button>
+                            )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1642,7 +1682,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                             const isWithinTolerance = diffPct <= 20
 
                             return (
-                              <div className="space-y-0.5">
+                              <div className="space-y-1">
                                 <Badge
                                   className={`text-[10px] font-bold ${
                                     isWithinTolerance
@@ -1654,12 +1694,41 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                   {diffPct}% desvio
                                 </Badge>
                                 {!isWithinTolerance && (
-                                  <div className="flex items-center justify-center gap-1 pt-0.5">
+                                  <div className="flex flex-col items-center justify-center gap-1 pt-0.5">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                        const batchKeyTarget =
+                                          row.batchKey || `single_${row.order.id}`
+                                        const batchOrders = allOrdersPool.filter((o) => {
+                                          if (o.route_batch_key && row.order.route_batch_key) {
+                                            return o.route_batch_key === row.order.route_batch_key
+                                          }
+                                          return o.id === row.order.id
+                                        })
+                                        setActiveAuditMapData({
+                                          batchKey: batchKeyTarget,
+                                          batchDisplay: row.batchDisplay,
+                                          batchOrders:
+                                            batchOrders.length > 0 ? batchOrders : [row.order],
+                                          courier: row.courier,
+                                          divergenceKm: Math.abs(gpsKm - roadKm),
+                                          divergencePct: diffPct,
+                                        })
+                                        setIsAuditMapModalOpen(true)
+                                      }}
+                                      className="h-5 px-2 text-[10px] font-bold text-[#0052CC] border-blue-200 bg-blue-50/80 hover:bg-blue-100 shadow-2xs gap-1"
+                                    >
+                                      <Route className="h-3 w-3 text-[#0052CC]" />
+                                      Ver no mapa
+                                    </Button>
+
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       onClick={() => handleOpenActionModal(row, 'approve')}
-                                      className="h-5 px-1.5 text-[9px] text-rose-700 hover:bg-rose-50 underline"
+                                      className="h-4 px-1 text-[9px] text-rose-700 hover:bg-rose-50 underline"
                                     >
                                       Exceção admin
                                     </Button>
@@ -1878,6 +1947,24 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* MODAL DE AUDITORIA NO MAPA ESTILO VUUPT */}
+      {activeAuditMapData && (
+        <AuditRouteMapModal
+          isOpen={isAuditMapModalOpen}
+          onClose={() => {
+            setIsAuditMapModalOpen(false)
+            setActiveAuditMapData(null)
+          }}
+          batchKey={activeAuditMapData.batchKey}
+          batchDisplay={activeAuditMapData.batchDisplay}
+          batchOrders={activeAuditMapData.batchOrders}
+          courier={activeAuditMapData.courier}
+          divergenceKm={activeAuditMapData.divergenceKm}
+          divergencePct={activeAuditMapData.divergencePct}
+          locationsPool={locations}
+        />
+      )}
     </div>
   )
 }
