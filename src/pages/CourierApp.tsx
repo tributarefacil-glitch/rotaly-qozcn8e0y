@@ -1656,7 +1656,7 @@ export default function CourierApp() {
       const isAutoCorrection = distanceMeters === undefined || distanceMeters <= 500
 
       if (isAutoCorrection) {
-        // Fluxo (2): Correção automática no cadastro
+        // Fluxo (2): Correção automática no cadastro (apenas tolerado <=500m)
         await deliveryService.applyAddressCorrectionAutomatic({
           customerId: customer.id,
           currentCustomer: customer,
@@ -1694,6 +1694,7 @@ export default function CourierApp() {
         const currentAddressJson = {
           address: customer.address || '',
           street: customer.street || '',
+          number: customer.number || '',
           neighborhood: customer.neighborhood || '',
           city: customer.city || '',
           state: customer.state || '',

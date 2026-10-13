@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { deliveryService } from '@/services/deliveryService'
 import { AddressAlertRecord, AddressAlertStatus } from '@/types/delivery'
+import { haversineDistanceMeters } from '@/lib/geo'
 
 interface SuspiciousAddressesBoxProps {
   empresaId?: string
@@ -243,7 +244,36 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
               const custName = cust?.name || 'Cliente sem nome'
               const cur = (alert.current_address || {}) as Record<string, any>
               const sug = (alert.suggested_address || {}) as Record<string, any>
-              const distMeters = alert.distance_meters || 0
+
+              // Coordenadas com fallback para o cliente se o alerta não tiver snapshot explícito
+              const oldLat =
+                cur.lat !== undefined && cur.lat !== null
+                  ? Number(cur.lat)
+                  : cust?.lat !== undefined && cust?.lat !== null
+                    ? Number(cust.lat)
+                    : null
+              const oldLng =
+                cur.lng !== undefined && cur.lng !== null
+                  ? Number(cur.lng)
+                  : cust?.lng !== undefined && cust?.lng !== null
+                    ? Number(cust.lng)
+                    : null
+
+              const newLat = sug.lat !== undefined && sug.lat !== null ? Number(sug.lat) : null
+              const newLng = sug.lng !== undefined && sug.lng !== null ? Number(sug.lng) : null
+
+              // Alerta só é revisável/tem números confiáveis quando tem snapshot com coordenadas válidas
+              const hasOldCoords =
+                oldLat !== null && !isNaN(oldLat) && oldLng !== null && !isNaN(oldLng)
+              const hasNewCoords =
+                newLat !== null && !isNaN(newLat) && newLng !== null && !isNaN(newLng)
+              const isReviewable = hasOldCoords && hasNewCoords
+
+              // Distância real calculada entre o pin antigo do snapshot e o pin novo sugerido
+              const calculatedDistMeters = isReviewable
+                ? Math.round(haversineDistanceMeters(oldLat, oldLng, newLat, newLng))
+                : alert.distance_meters || 0
+              const distMeters = isReviewable ? calculatedDistMeters : alert.distance_meters || 0
               const distKm = (distMeters / 1000).toFixed(1)
               const isProcessing = processingAlertId === alert.id
 
@@ -314,8 +344,8 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                                 : 'bg-rose-600 text-white'
                           }`}
                         >
-                          {alert.status === 'pendente' && distMeters > 500
-                            ? `Aprovação pendente — entregue a ${Number(distKm) >= 1 ? `${distKm} km` : `${distMeters} m`} do pin`
+                          {alert.status === 'pendente' && isReviewable && distMeters > 500
+                            ? `Aprovação pendente — desvio de ${Number(distKm) >= 1 ? `${distKm} km` : `${distMeters} m`}`
                             : alert.status}
                         </Badge>
                       </div>
@@ -335,46 +365,50 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                       </div>
                     ) : (
                       <div className="space-y-1.5">
-                        {/* Linha canônica de comparação de pins e distância */}
-                        <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-amber-100/70 dark:bg-amber-950/50 border border-amber-300 text-amber-950 dark:text-amber-100 text-xs font-mono">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <MapPin className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                            <span className="truncate">
-                              Pin antigo:{' '}
-                              {cur.lat !== undefined && cur.lat !== null
-                                ? `${Number(cur.lat).toFixed(4)},${Number(cur.lng).toFixed(4)}`
-                                : cust?.lat
-                                  ? `${Number(cust.lat).toFixed(4)},${Number(cust.lng).toFixed(4)}`
-                                  : 'N/A'}{' '}
-                              → Pin novo:{' '}
-                              {sug.lat !== undefined && sug.lat !== null
-                                ? `${Number(sug.lat).toFixed(4)},${Number(sug.lng).toFixed(4)}`
-                                : 'N/A'}{' '}
-                              ({distMeters >= 1000 ? `${distKm} km` : `${distMeters} m`})
+                        {/* Linha canônica de comparação de pins e distância: 6 casas decimais e badges só se for revisável */}
+                        {isReviewable ? (
+                          <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-amber-100/70 dark:bg-amber-950/50 border border-amber-300 text-amber-950 dark:text-amber-100 text-xs font-mono">
+                            <div className="flex items-center gap-1.5 truncate">
+                              <MapPin className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                              <span className="truncate">
+                                Pin antigo: {oldLat!.toFixed(6)}, {oldLng!.toFixed(6)} → Pin novo:{' '}
+                                {newLat!.toFixed(6)}, {newLng!.toFixed(6)} (
+                                {distMeters >= 1000 ? `${distKm} km` : `${distMeters} m`})
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs">
+                            <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                            <span>
+                              Sem snapshot prévio de coordenadas. Revisão manual por endereço
+                              textual necessária.
                             </span>
                           </div>
-                        </div>
+                        )}
 
                         {/* Legenda mandatória */}
                         <p className="text-[11px] text-amber-800 dark:text-amber-300 italic px-1">
-                          ℹ️ O endereço textual permanece — o que está sendo corrigido é a posição
-                          do pin no mapa.
+                          O endereço textual do cliente permanece — o que está sendo revisado é a
+                          posição do pin no mapa.
                         </p>
 
-                        {/* Mini-mapa SVG com 2 marcadores + polyline (sem API paga) */}
-                        {(cur.lat || cust?.lat) && (cur.lng || cust?.lng) && sug.lat && sug.lng && (
-                          <div className="p-2 rounded-lg bg-slate-900 border border-slate-700 text-white">
-                            <div className="flex items-center justify-between text-[10px] text-slate-300 mb-1">
-                              <span className="flex items-center gap-1">
-                                <span className="inline-block w-2 h-2 rounded-full bg-rose-500"></span>{' '}
-                                Pin antigo
+                        {/* Mini-mapa SVG com os dois pins nomeados vindos do snapshot gravado no alerta */}
+                        {isReviewable && (
+                          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-700 text-white">
+                            <div className="flex items-center justify-between text-[11px] text-slate-300 mb-1.5 font-medium">
+                              <span className="flex items-center gap-1.5">
+                                <span className="inline-block w-2.5 h-2.5 rounded-full bg-rose-500"></span>{' '}
+                                <strong className="text-rose-300">Pin antigo</strong> (
+                                {oldLat!.toFixed(6)}, {oldLng!.toFixed(6)})
                               </span>
-                              <span className="text-slate-400 font-sans">
-                                Distância: {distMeters >= 1000 ? `${distKm} km` : `${distMeters} m`}
+                              <span className="text-slate-300 font-mono text-[10px] bg-slate-800 px-2 py-0.5 rounded">
+                                Desvio: {distMeters >= 1000 ? `${distKm} km` : `${distMeters} m`}
                               </span>
-                              <span className="flex items-center gap-1">
-                                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>{' '}
-                                Pin novo
+                              <span className="flex items-center gap-1.5">
+                                <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400"></span>{' '}
+                                <strong className="text-emerald-300">Pin novo</strong> (
+                                {newLat!.toFixed(6)}, {newLng!.toFixed(6)})
                               </span>
                             </div>
                             <svg
@@ -384,46 +418,48 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                               {/* Linha tracejada conectando os dois pins */}
                               <line
                                 x1="45"
-                                y1="40"
+                                y1="36"
                                 x2="255"
-                                y2="40"
+                                y2="36"
                                 stroke="#38bdf8"
-                                strokeWidth="2.5"
+                                strokeWidth="2"
                                 strokeDasharray="5,4"
                               />
                               {/* Marcador Pin Antigo */}
-                              <circle cx="45" cy="40" r="9" fill="#f43f5e" />
-                              <circle cx="45" cy="40" r="4" fill="#ffffff" />
+                              <circle cx="45" cy="36" r="9" fill="#f43f5e" />
+                              <circle cx="45" cy="36" r="4" fill="#ffffff" />
                               <text
                                 x="45"
-                                y="65"
+                                y="60"
                                 textAnchor="middle"
                                 fill="#fda4af"
-                                fontSize="9"
-                                fontFamily="monospace"
+                                fontSize="10"
+                                fontWeight="bold"
+                                fontFamily="sans-serif"
                               >
-                                Antigo
+                                Pin antigo
                               </text>
                               {/* Marcador Pin Novo */}
-                              <circle cx="255" cy="40" r="9" fill="#10b981" />
-                              <circle cx="255" cy="40" r="4" fill="#ffffff" />
+                              <circle cx="255" cy="36" r="9" fill="#10b981" />
+                              <circle cx="255" cy="36" r="4" fill="#ffffff" />
                               <text
                                 x="255"
-                                y="65"
+                                y="60"
                                 textAnchor="middle"
                                 fill="#6ee7b7"
-                                fontSize="9"
-                                fontFamily="monospace"
+                                fontSize="10"
+                                fontWeight="bold"
+                                fontFamily="sans-serif"
                               >
-                                Novo GPS
+                                Pin novo
                               </text>
                               {/* Rótulo de distância no centro */}
                               <rect
-                                x="110"
-                                y="27"
-                                width="80"
-                                height="18"
-                                rx="4"
+                                x="105"
+                                y="24"
+                                width="90"
+                                height="22"
+                                rx="5"
                                 fill="#1e293b"
                                 stroke="#475569"
                                 strokeWidth="1"
@@ -433,7 +469,7 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                                 y="39"
                                 textAnchor="middle"
                                 fill="#38bdf8"
-                                fontSize="10"
+                                fontSize="11"
                                 fontWeight="bold"
                               >
                                 {distMeters >= 1000 ? `${distKm} km` : `${distMeters} m`}
@@ -489,18 +525,12 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                               CEP: <strong>{cur.postal_code || cust?.postal_code}</strong>
                             </p>
                           )}
-                          {cur.lat && cur.lng && (
+                          {hasOldCoords && (
                             <p className="font-mono text-[10px] text-slate-500 flex items-center gap-1">
                               <MapPin className="h-3 w-3 text-slate-500 shrink-0" />
                               <span>
-                                Pin atual: {Number(cur.lat).toFixed(4)},{' '}
-                                {Number(cur.lng).toFixed(4)}
+                                Pin antigo snapshot: {oldLat!.toFixed(6)}, {oldLng!.toFixed(6)}
                               </span>
-                              {alert.origin === 'varredura_cep' && (
-                                <span className="text-[9px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-1 py-0.2 rounded font-sans font-bold">
-                                  Soberano
-                                </span>
-                              )}
                             </p>
                           )}
                         </div>
@@ -539,15 +569,14 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                               <MapPin className="h-3 w-3 text-emerald-600 shrink-0" />
                               <span>
                                 Pin do cliente mantido intacto (
-                                {Number(cur.lat || sug.lat).toFixed(4)},{' '}
-                                {Number(cur.lng || sug.lng).toFixed(4)})
+                                {Number(cur.lat || sug.lat).toFixed(6)},{' '}
+                                {Number(cur.lng || sug.lng).toFixed(6)})
                               </span>
                             </p>
                           ) : (
-                            sug.lat &&
-                            sug.lng && (
+                            hasNewCoords && (
                               <p className="font-mono text-[10px] text-slate-500">
-                                Pin: {Number(sug.lat).toFixed(4)}, {Number(sug.lng).toFixed(4)}
+                                Pin novo sugerido: {newLat!.toFixed(6)}, {newLng!.toFixed(6)}
                                 {sug.accuracy_meters
                                   ? ` (precisão ~${Math.round(sug.accuracy_meters)}m)`
                                   : ''}

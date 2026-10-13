@@ -293,10 +293,14 @@ onRecordUpdateRequest((e) => {
     }
 
     // BLOCO NOVO (decisão do dono 12/10):
-    // Ao confirmar entrega (status 'delivered'), o pin do entregador no local é a fonte soberana de endereço.
-    // Se a ordem possuir coordenadas de entrega e cliente associado, dispara enriquecimento automático
-    // se o cliente ainda não possuir nota de [CORREÇÃO DEFINITIVA.
-    if (newStatus === 'delivered' && customerIdVal) {
+    // Ao confirmar entrega (status 'delivered'), o pin do entregador no local preenche coordenadas
+    // APENAS se o cliente ainda não possuir nenhuma coordenada e não for entrega pendente de aprovação (>500m).
+    // PROIBIDO sobrescrever coordenadas de cliente antes da aprovação do alerta pela central!
+    if (
+      newStatus === 'delivered' &&
+      customerIdVal &&
+      geofenceFlag !== 'pendente_aprovacao_gt_500m'
+    ) {
       try {
         const custRecord = $app.findRecordById('customers', customerIdVal)
         const custNotes = custRecord ? custRecord.getString('notes') || '' : ''
@@ -309,7 +313,7 @@ onRecordUpdateRequest((e) => {
             targetOrder.getFloat('delivery_lng') || targetOrder.getFloat('end_address_lng') || 0
 
           if (dLat !== 0 && dLng !== 0 && !isNaN(dLat) && !isNaN(dLng)) {
-            // Atualizar lat/lng do cliente se não tiver ou se veio de pin do entregador
+            // Atualizar lat/lng do cliente APENAS se estiver sem coordenadas
             const currentCustLat = custRecord.getFloat('lat') || 0
             const currentCustLng = custRecord.getFloat('lng') || 0
 
@@ -318,7 +322,7 @@ onRecordUpdateRequest((e) => {
               custRecord.set('lng', dLng)
               $app.save(custRecord)
               console.log(
-                '[orders_guard] Coordenadas do cliente preenchidas via pin entregador:',
+                '[orders_guard] Coordenadas iniciais do cliente preenchidas via pin entregador:',
                 customerIdVal,
               )
             }

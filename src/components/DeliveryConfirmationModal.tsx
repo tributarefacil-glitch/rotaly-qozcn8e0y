@@ -399,10 +399,21 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       if (!hasClientCoords) {
         // CLIENTE SEM COORDENADAS NUNCA BLOQUEIA
         geofenceFlag = 'sem_coordenadas'
-        // Criar/atualizar alerta de pin_entregador automaticamente na coleção address_alerts (DEDUP)
+        // Criar/atualizar alerta de pin_entregador automaticamente na coleção address_alerts (DEDUP com snapshot antigo)
         if (currentLoc) {
           try {
             const customerId = order.customer_id || ''
+            const oldSnapshot = {
+              address: order.expand?.customer_id?.address || order.end_address_text || '',
+              street: order.expand?.customer_id?.street || '',
+              number: order.expand?.customer_id?.number || '',
+              neighborhood: order.expand?.customer_id?.neighborhood || '',
+              city: order.expand?.customer_id?.city || '',
+              state: order.expand?.customer_id?.state || '',
+              postal_code: order.expand?.customer_id?.postal_code || '',
+              lat: null,
+              lng: null,
+            }
             const suggestedObj = {
               address: order.expand?.customer_id?.address || order.end_address_text || '',
               lat: currentLoc.lat,
@@ -427,6 +438,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                 distance_meters: 0,
                 marked_at: markedAtIso,
                 notes: noteText,
+                current_address: existingAlert.current_address || oldSnapshot,
               })
             } else {
               await pb.collection('address_alerts').create({
@@ -437,6 +449,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                 distance_meters: 0,
                 marked_by: courierId || pb.authStore.record?.id || '',
                 marked_at: markedAtIso,
+                current_address: oldSnapshot,
                 suggested_address: suggestedObj,
                 notes: noteText,
               })
@@ -463,9 +476,20 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           // Distância > 500m: marca pendente_aprovacao_gt_500m e encaminha para aprovação da central
           geofenceFlag = 'pendente_aprovacao_gt_500m'
 
-          // Registrar alerta em address_alerts para a central de auditoria (DEDUP: se já existe pendente, faz UPDATE)
+          // Registrar alerta em address_alerts para a central de auditoria (DEDUP com snapshot antigo completo)
           try {
             const customerId = order.customer_id || ''
+            const oldSnapshot = {
+              address: order.expand?.customer_id?.address || order.end_address_text || '',
+              street: order.expand?.customer_id?.street || '',
+              number: order.expand?.customer_id?.number || '',
+              neighborhood: order.expand?.customer_id?.neighborhood || '',
+              city: order.expand?.customer_id?.city || '',
+              state: order.expand?.customer_id?.state || '',
+              postal_code: order.expand?.customer_id?.postal_code || '',
+              lat: clientLat,
+              lng: clientLng,
+            }
             const suggestedObj = {
               address: order.expand?.customer_id?.address || order.end_address_text || '',
               lat: currentLoc.lat,
@@ -490,6 +514,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                 distance_meters: distanceToPinM,
                 marked_at: markedAtIso,
                 notes: noteText,
+                current_address: existingAlert.current_address || oldSnapshot,
               })
             } else {
               await pb.collection('address_alerts').create({
@@ -500,6 +525,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                 distance_meters: distanceToPinM,
                 marked_by: courierId || pb.authStore.record?.id || '',
                 marked_at: markedAtIso,
+                current_address: oldSnapshot,
                 suggested_address: suggestedObj,
                 notes: noteText,
               })
@@ -856,10 +882,13 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           )
         }
       }
-      // REGRA SOBERANA (decisão do dono 12/10):
-      // Ao confirmar entrega, o pin do entregador no local consolida address/street/number/complement/lat/lng
-      // do customer sem intervenção do vendedor. Endereço digitado inicial é apenas sugestão.
-      if (isDelivered && currentLoc && order.customer_id) {
+      // REGRA SOBERANA DE PIN & AUDITORIA:
+      // Se a entrega gerou alerta pendente (geofenceFlag === 'pendente_aprovacao_gt_500m'),
+      // É PROIBIDO sobrescrever customer e order prematuramente antes da decisão do admin!
+      // Apenas atualiza o cadastro do cliente diretamente se o desvio for tolerado (<= 500m ou ok).
+      const requiresAdminApproval = geofenceFlag === 'pendente_aprovacao_gt_500m'
+
+      if (isDelivered && currentLoc && order.customer_id && !requiresAdminApproval) {
         try {
           const oldLat = order.expand?.customer_id?.lat
           const oldLng = order.expand?.customer_id?.lng

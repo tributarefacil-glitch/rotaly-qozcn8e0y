@@ -4805,10 +4805,10 @@ export const deliveryService = {
     const activeCompanyId =
       data.company || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
 
-    // DEDUPLICAÇÃO DE ALERTA PIN_ENTREGADOR:
-    // Antes do create, consultar se já existe alerta com status='pendente' para o mesmo customer.
-    // Se existir, fazer UPDATE do existente (suggested_address, distance_meters, marked_at, notes)
-    if (data.customer && data.origin === 'pin_entregador') {
+    // DEDUPLICAÇÃO DE ALERTA (REGRA ESTRITA CONTRA RECORRÊNCIA):
+    // Bloquear criação de novo address_alert para o mesmo cliente enquanto existir alerta PENDENTE para ele.
+    // Se existir pendente, atualiza o snapshot e a sugestão no existente em vez de criar um alerta conflitante!
+    if (data.customer) {
       try {
         const existingList = await pb
           .collection<AddressAlertRecord>('address_alerts')
@@ -4821,6 +4821,7 @@ export const deliveryService = {
         if (existing) {
           return await pb.collection<AddressAlertRecord>('address_alerts').update(existing.id, {
             suggested_address: data.suggested_address,
+            current_address: existing.current_address || data.current_address || {},
             distance_meters: data.distance_meters ?? existing.distance_meters,
             marked_at: new Date().toISOString(),
             notes: data.notes || existing.notes,
@@ -4831,6 +4832,34 @@ export const deliveryService = {
       }
     }
 
+    // SNAPSHOT INTELIGENTE: Se current_address não foi passado ou não tem lat/lng, capturar do customer
+    let effectiveCurrentAddress = data.current_address || {}
+    if (data.customer && (!effectiveCurrentAddress || !(effectiveCurrentAddress as any).lat)) {
+      try {
+        const cust = await pb.collection<CustomerRecord>('customers').getOne(data.customer, {
+          requestKey: null,
+        })
+        if (cust) {
+          effectiveCurrentAddress = {
+            address: cust.address || '',
+            street: cust.street || '',
+            number: cust.number || '',
+            neighborhood: cust.neighborhood || '',
+            city: cust.city || '',
+            state: cust.state || '',
+            postal_code: cust.postal_code || '',
+            lat: cust.lat ?? null,
+            lng: cust.lng ?? null,
+          }
+        }
+      } catch (custErr) {
+        console.warn(
+          '[deliveryService] Falha ao capturar snapshot do cliente para alerta:',
+          custErr,
+        )
+      }
+    }
+
     const payload: Partial<AddressAlertRecord> = {
       customer: data.customer,
       company: activeCompanyId,
@@ -4838,7 +4867,7 @@ export const deliveryService = {
       status: 'pendente',
       distance_meters: data.distance_meters || 0,
       notes: data.notes || '',
-      current_address: data.current_address || {},
+      current_address: effectiveCurrentAddress,
       suggested_address: data.suggested_address,
       marked_by: authUser?.id || undefined,
       marked_at: new Date().toISOString(),
@@ -4894,12 +4923,28 @@ export const deliveryService = {
 
     const isVarreduraCep = alert.origin === 'varredura_cep'
 
-    if (suggested.address) customerUpdate.address = String(suggested.address)
-    if (suggested.street) customerUpdate.street = String(suggested.street)
-    if (suggested.neighborhood) customerUpdate.neighborhood = String(suggested.neighborhood)
-    if (suggested.city) customerUpdate.city = String(suggested.city)
-    if (suggested.state) customerUpdate.state = String(suggested.state)
-    if (suggested.postal_code) customerUpdate.postal_code = String(suggested.postal_code)
+    // REGRA DE OURO DO PROJETO:
+    // O endereço textual do cliente permanece o cadastrado (estilo Uber).
+    // O que o pin do entregador corrige é a posição do pin no mapa (lat/lng) e número interpolado se faltar.
+    // Nunca sobrescrever o texto completo do endereço se já existir endereço cadastrado.
+    if (!currentCust?.address && suggested.address) {
+      customerUpdate.address = String(suggested.address)
+    }
+    if (!currentCust?.street && suggested.street) {
+      customerUpdate.street = String(suggested.street)
+    }
+    if (!currentCust?.neighborhood && suggested.neighborhood) {
+      customerUpdate.neighborhood = String(suggested.neighborhood)
+    }
+    if (!currentCust?.city && suggested.city) {
+      customerUpdate.city = String(suggested.city)
+    }
+    if (!currentCust?.state && suggested.state) {
+      customerUpdate.state = String(suggested.state)
+    }
+    if (!currentCust?.postal_code && suggested.postal_code) {
+      customerUpdate.postal_code = String(suggested.postal_code)
+    }
 
     if (!isVarreduraCep && !hasDefinitiveCorrection && hasValidCourierGps) {
       customerUpdate.lat = Number(rawCourierLat)
