@@ -2930,6 +2930,13 @@ export const deliveryService = {
         })
       }
 
+      // Calcular carimbo canônico unificado para todos os pedidos da rota iniciada,
+      // impedindo herança indevida de chave residual de sessão anterior.
+      const startedAtIso = now
+      const startMin = Math.floor(new Date(startedAtIso).getTime() / 60000)
+      const dayKey = startedAtIso.slice(0, 10).replace(/-/g, '')
+      const canonicalKey = `rb_${courierId}_${dayKey}_${startMin}`
+
       let updatedCount = 0
       for (const order of ordersToUpdate) {
         const hasFile = !!odometerData?.foto_odometro_inicial
@@ -2938,7 +2945,8 @@ export const deliveryService = {
         if (hasFile || hasOdom) {
           const formData = new FormData()
           formData.append('route_started', 'true')
-          formData.append('route_started_at', order.route_started_at || now)
+          formData.append('route_started_at', order.route_started_at || startedAtIso)
+          formData.append('route_batch_key', canonicalKey)
           formData.append('status', order.status === 'assigned' ? 'in_transit' : order.status)
           if (hasOdom) {
             formData.append('odometro_inicial', String(odometerData!.odometro_inicial))
@@ -2950,7 +2958,8 @@ export const deliveryService = {
         } else {
           await pb.collection('orders').update(order.id, {
             route_started: true,
-            route_started_at: order.route_started_at || now,
+            route_started_at: order.route_started_at || startedAtIso,
+            route_batch_key: canonicalKey,
             status: order.status === 'assigned' ? 'in_transit' : order.status,
           })
         }

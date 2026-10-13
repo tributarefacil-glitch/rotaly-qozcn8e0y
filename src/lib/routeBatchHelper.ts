@@ -30,6 +30,12 @@ export function deriveRouteBatchKey(
   existingKeys?: Iterable<string>,
   courierId?: string,
 ): string {
+  // Prioridade 1: chave explicitamente gravada no banco
+  const explicitKey = (order.route_batch_key || '').trim()
+  if (explicitKey) {
+    return explicitKey
+  }
+
   const effectiveCourier = courierId || order.courier_id || 'unassigned'
 
   if (order.route_started_at) {
@@ -126,8 +132,12 @@ export function groupOrdersByRouteBatch(
   courierId?: string,
 ): Map<string, OrderRecord[]> {
   const routeBatches = new Map<string, OrderRecord[]>()
+
+  // Pedidos que já possuem route_batch_key gravado no banco usam estritamente essa chave
+  // Apenas pedidos sem chave gravada caem no agrupamento temporal de fallback
   orders.forEach((o) => {
-    const assignedKey = deriveRouteBatchKey(o, routeBatches.keys(), courierId)
+    const explicitKey = (o.route_batch_key || '').trim()
+    const assignedKey = explicitKey || deriveRouteBatchKey(o, routeBatches.keys(), courierId)
     const list = routeBatches.get(assignedKey) || []
     list.push(o)
     routeBatches.set(assignedKey, list)

@@ -1754,16 +1754,33 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                         {/* Desvio %: Badge verde/neutro se ≤20%, vermelho com alerta se >20% */}
                         <td className="py-3 px-3 align-top text-center">
                           {(() => {
-                            // COMPARAÇÃO SEMPRE LOTE × LOTE (Regra do Motor Canônico de Telemetria):
-                            // Nunca comparar perna × lote. Se temos dados do lote (canonicalBatchTelem ou row.gpsKm do lote e roadKm do lote),
-                            // avalia lote × lote.
-                            const batchRoadKm =
-                              row.canonicalBatchTelem?.km_viario_total ?? row.roadKm ?? 0
-                            const batchGpsKm =
-                              row.canonicalBatchTelem?.km_gps_total ??
-                              (typeof row.gpsKm === 'number' && row.gpsKm > 0 ? row.gpsKm : null)
+                            // Regra canônica oficial: badge "+N% desvio", divergência em km e botão
+                            // "Ver no mapa" SÓ quando row.canonicalBatchTelem existir e tiver
+                            // km_gps_total > 0; caso nulo/em processamento, estado neutro
+                            // "Aguardando telemetria" — zero números fictícios.
+                            const hasCanonicalTelem =
+                              !!row.canonicalBatchTelem &&
+                              typeof row.canonicalBatchTelem.km_gps_total === 'number' &&
+                              row.canonicalBatchTelem.km_gps_total > 0
 
-                            if (batchGpsKm === null || batchRoadKm <= 0) {
+                            if (!hasCanonicalTelem) {
+                              return (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] text-slate-500 bg-slate-50 border-slate-200"
+                                >
+                                  Aguardando telemetria
+                                </Badge>
+                              )
+                            }
+
+                            const batchGpsKm = row.canonicalBatchTelem!.km_gps_total!
+                            const batchRoadKm =
+                              row.canonicalBatchTelem!.km_viario_total !== undefined
+                                ? row.canonicalBatchTelem!.km_viario_total!
+                                : (row.roadKm ?? 0)
+
+                            if (batchRoadKm <= 0) {
                               return (
                                 <Badge
                                   variant="outline"
@@ -1791,37 +1808,51 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                   {isWithinTolerance ? '✓ ' : '🚨 '}
                                   {diffPct}% desvio
                                 </Badge>
-                                {!isWithinTolerance && (
-                                  <div className="flex flex-col items-center justify-center gap-1 pt-0.5">
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => {
-                                        const batchKeyTarget =
-                                          row.batchKey || `single_${row.order.id}`
-                                        const batchOrders = allOrdersPool.filter((o) => {
-                                          if (o.route_batch_key && row.order.route_batch_key) {
-                                            return o.route_batch_key === row.order.route_batch_key
-                                          }
-                                          return o.id === row.order.id
-                                        })
-                                        setActiveAuditMapData({
-                                          batchKey: batchKeyTarget,
-                                          batchDisplay: row.batchDisplay,
-                                          batchOrders:
-                                            batchOrders.length > 0 ? batchOrders : [row.order],
-                                          courier: row.courier,
-                                          divergenceKm: Math.abs(batchGpsKm - batchRoadKm),
-                                          divergencePct: diffPct,
-                                        })
-                                        setIsAuditMapModalOpen(true)
-                                      }}
-                                      className="h-5 px-2 text-[10px] font-bold text-[#0052CC] border-blue-200 bg-blue-50/80 hover:bg-blue-100 shadow-2xs gap-1"
-                                    >
-                                      <Route className="h-3 w-3 text-[#0052CC]" />
-                                      Ver no mapa
-                                    </Button>
 
+                                <span className="text-[10px] font-mono text-slate-500 block">
+                                  div: {Math.abs(batchGpsKm - batchRoadKm).toFixed(1)} km
+                                </span>
+
+                                <div className="flex flex-col items-center justify-center gap-1 pt-0.5">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      const effectiveBatchKey =
+                                        row.canonicalBatchTelem?.route_batch_key ||
+                                        row.order.route_batch_key ||
+                                        row.batchKey ||
+                                        `single_${row.order.id}`
+
+                                      // Buscar pedidos estritamente pelo route_batch_key do lote selecionado
+                                      const batchOrders = allOrdersPool.filter((o) => {
+                                        if (effectiveBatchKey && o.route_batch_key) {
+                                          return o.route_batch_key === effectiveBatchKey
+                                        }
+                                        if (row.order.route_batch_key && o.route_batch_key) {
+                                          return o.route_batch_key === row.order.route_batch_key
+                                        }
+                                        return o.id === row.order.id
+                                      })
+
+                                      setActiveAuditMapData({
+                                        batchKey: effectiveBatchKey,
+                                        batchDisplay: row.batchDisplay,
+                                        batchOrders:
+                                          batchOrders.length > 0 ? batchOrders : [row.order],
+                                        courier: row.courier,
+                                        divergenceKm: Math.abs(batchGpsKm - batchRoadKm),
+                                        divergencePct: diffPct,
+                                      })
+                                      setIsAuditMapModalOpen(true)
+                                    }}
+                                    className="h-5 px-2 text-[10px] font-bold text-[#0052CC] border-blue-200 bg-blue-50/80 hover:bg-blue-100 shadow-2xs gap-1"
+                                  >
+                                    <Route className="h-3 w-3 text-[#0052CC]" />
+                                    Ver no mapa
+                                  </Button>
+
+                                  {!isWithinTolerance && (
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1830,8 +1861,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                     >
                                       Exceção admin
                                     </Button>
-                                  </div>
-                                )}
+                                  )}
+                                </div>
                               </div>
                             )
                           })()}

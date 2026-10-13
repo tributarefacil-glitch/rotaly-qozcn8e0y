@@ -1437,6 +1437,7 @@ export default function CourierApp() {
     setIsStartingRoute(true)
     try {
       const orderIdsToStart = activeDeliveries.map((o) => o.id)
+      // Carimbo canônico derivado no início de rota: startMin + dayKey + courierId
       await deliveryService.startCourierRoute(user.id, orderIdsToStart)
       setIsStartRouteModalOpen(false)
       toast.success('🚀 Rota iniciada! Telemetria ativa e rastreamento oficial em tempo real.', {

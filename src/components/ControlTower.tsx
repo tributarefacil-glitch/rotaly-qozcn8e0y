@@ -1515,11 +1515,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const batchKey = deriveRouteBatchKey(primaryOrder, undefined, item.courier.id)
 
           // Sequência completa de paradas do lote (ordenadas por sequence)
+          // Se o pedido não tem coordenada de destino válida (cleanPt), pular o segmento
+          // no roteamento OSRM/Google (evita perna espúria longa na polilinha),
+          // mantendo pins e rotas dos clientes com coordenada válida.
           const allBatchStops: LatLngPoint[] = []
           activeRouteOrders.forEach((o) => {
-            const c = o.expand?.customer_id
-            const cleanPt = MapDataService.cleanCoords(c?.lat, c?.lng)
-            if (cleanPt) {
+            const cleanPt =
+              MapDataService.getOrderDestination(o) ||
+              MapDataService.cleanCoords(o.expand?.customer_id?.lat, o.expand?.customer_id?.lng) ||
+              MapDataService.cleanCoords(o.end_address_lat, o.end_address_lng)
+            if (cleanPt && cleanPt.lat && cleanPt.lng) {
               allBatchStops.push({ lat: cleanPt.lat, lng: cleanPt.lng })
             }
           })
