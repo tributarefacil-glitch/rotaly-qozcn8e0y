@@ -5205,6 +5205,28 @@ export const deliveryService = {
     newAddress?: string
     calculationMethod?: string
   }): Promise<RouteKmApprovalRecord> {
+    const roadKm = Number((params.originalRoadKm ?? 0).toFixed(1))
+    const gpsKm =
+      params.originalGpsKm !== undefined ? Number(params.originalGpsKm.toFixed(1)) : undefined
+    const approvedKmNum = Number((params.approvedKm ?? 0).toFixed(1))
+
+    // REGRA 1.2 (Decisão do dono):
+    // Aprovação do menor entre Coluna A (viário) e Coluna B (telemetria) é automática e invisível.
+    // approved_km MAIOR que min(A, B) é RECUSADO sem justificativa textual obrigatória (mín 15 caracteres)
+    // + audit_trail action 'km_manual_approval_override' com metadata {prev_road_km, telemetry_km, approved_km, justification}.
+    const minCanonical = gpsKm !== undefined && gpsKm > 0 ? Math.min(roadKm, gpsKm) : roadKm
+
+    const justificationTrimmed = (params.justification || '').trim()
+    const isOverrideAboveMin = approvedKmNum > minCanonical
+
+    if (params.status === 'approved' && isOverrideAboveMin) {
+      if (justificationTrimmed.length < 15) {
+        throw new Error(
+          `Aprovação de KM (${approvedKmNum} km) superior ao menor valor (${minCanonical} km) exige justificativa obrigatória com no mínimo 15 caracteres.`,
+        )
+      }
+    }
+
     const authUser = pb.authStore.record as any
 
     // Verificar se já existe aprovação prévia para esta entrega
@@ -5262,17 +5284,49 @@ export const deliveryService = {
       calculation_method: params.calculationMethod || undefined,
     }
 
+    let savedApproval: RouteKmApprovalRecord
     if (existing.items.length > 0) {
-      return await pb
+      savedApproval = await pb
         .collection<RouteKmApprovalRecord>('route_km_approvals')
         .update(existing.items[0].id, payload, {
           expand: 'order_id,courier_id,approved_by,empresa_id',
         })
+    } else {
+      savedApproval = await pb
+        .collection<RouteKmApprovalRecord>('route_km_approvals')
+        .create(payload, {
+          expand: 'order_id,courier_id,approved_by,empresa_id',
+        })
     }
 
-    return await pb.collection<RouteKmApprovalRecord>('route_km_approvals').create(payload, {
-      expand: 'order_id,courier_id,approved_by,empresa_id',
-    })
+    // Gravar audit_trail quando houver override manual acima do min(A, B)
+    if (params.status === 'approved' && isOverrideAboveMin) {
+      try {
+        await pb.collection('audit_trail').create({
+          user_id: authUser?.id || '',
+          actor_name: authUser?.name || 'Administrador',
+          actor_role: authUser?.role || 'admin',
+          collection: 'route_km_approvals',
+          record_id: savedApproval.id,
+          courier_id: params.courierId,
+          action: 'km_manual_approval_override',
+          field: 'approved_km',
+          old_value: String(minCanonical),
+          new_value: String(approvedKmNum),
+          timestamp: new Date().toISOString(),
+          metadata: {
+            prev_road_km: roadKm,
+            telemetry_km: gpsKm ?? null,
+            approved_km: approvedKmNum,
+            justification: justificationTrimmed,
+          },
+        })
+      } catch (auditErr) {
+        console.warn('[saveRouteKmApproval] Falha ao gravar audit_trail de override:', auditErr)
+      }
+    }
+
+    return savedApproval
   },
 
   /**

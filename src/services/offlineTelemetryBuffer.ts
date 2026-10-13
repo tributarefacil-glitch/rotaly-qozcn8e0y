@@ -21,7 +21,8 @@ import { offlineRouteStorage, type OfflineLocationPoint } from './offlineRouteSt
 
 export type OfflineTelemetryPoint = OfflineLocationPoint
 
-const STORAGE_PREFIX = 'rotaly_offline_telemetry_'
+const STORAGE_PREFIX = 'rotaly_offline_telemetry_buffer_v2_'
+const LEGACY_STORAGE_PREFIX = 'rotaly_offline_telemetry_'
 const MAX_BUFFER_POINTS = 500
 
 const DEDUPLICATION_MAX_DISTANCE_METERS = 10
@@ -105,9 +106,21 @@ class OfflineTelemetryBufferService {
   private getLegacyBuffer(userId: string): OfflineTelemetryPoint[] {
     try {
       const raw = localStorage.getItem(this.getStorageKey(userId))
-      if (!raw) return []
-      const parsed = JSON.parse(raw)
-      return Array.isArray(parsed) ? parsed : []
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed : []
+      }
+      // Tentar chave legada se não existir na v2
+      const legacyRaw = localStorage.getItem(`${LEGACY_STORAGE_PREFIX}${userId}`)
+      if (legacyRaw) {
+        const parsedLegacy = JSON.parse(legacyRaw)
+        localStorage.removeItem(`${LEGACY_STORAGE_PREFIX}${userId}`)
+        if (Array.isArray(parsedLegacy) && parsedLegacy.length > 0) {
+          localStorage.setItem(this.getStorageKey(userId), JSON.stringify(parsedLegacy))
+          return parsedLegacy
+        }
+      }
+      return []
     } catch {
       return []
     }

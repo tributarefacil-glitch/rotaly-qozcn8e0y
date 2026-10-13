@@ -79,18 +79,24 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
 
   const isBicycle = vehicleType === 'bicicleta' || vehicleType === 'bike'
 
-  // 3. Buscar app_settings para consumo e preço do combustível
-  let consumptionKml = 30.0 // Moto 30 km/L default
-  let fuelPrice = 6.49 // R$ 6.49 default
+  // 3. Buscar app_settings para consumo e preço do combustível (elimina fallbacks hardcoded 32 km/L e R$ 5,89)
+  let consumptionKml = 40.0 // moto padrão do app_settings
+  let fuelPrice = 6.09
   try {
     const settingsList = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1)
     if (settingsList.items.length > 0) {
       const s = settingsList.items[0]
-      if (s.moto_consumption_kml && s.moto_consumption_kml > 0) {
+      if (typeof s.moto_consumption_kml === 'number' && s.moto_consumption_kml > 0) {
         consumptionKml = s.moto_consumption_kml
+      } else if (typeof s.fuel_consumption_kml === 'number' && s.fuel_consumption_kml > 0) {
+        consumptionKml = s.fuel_consumption_kml
       }
-      if (s.fuel_price && s.fuel_price > 0) {
+      if (typeof s.moto_fuel_price === 'number' && s.moto_fuel_price > 0) {
+        fuelPrice = s.moto_fuel_price
+      } else if (typeof s.fuel_price === 'number' && s.fuel_price > 0) {
         fuelPrice = s.fuel_price
+      } else if (typeof s.fuel_price_per_liter === 'number' && s.fuel_price_per_liter > 0) {
+        fuelPrice = s.fuel_price_per_liter
       }
     }
   } catch {
@@ -115,6 +121,7 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
 
   let totalViarioKm = 0
   const legDistances: number[] = []
+  const legSources: Array<'google' | 'osrm' | 'estimada_1.3x'> = []
 
   if (validStops.length > 0) {
     // Perna 1: Base → Parada 1
@@ -123,11 +130,17 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
       { lat: baseLat, lng: baseLng },
       { lat: p1.end_address_lat!, lng: p1.end_address_lng! },
     )
-    const leg1Km =
-      leg1 && leg1.distanceMeters > 0
-        ? Number((leg1.distanceMeters / 1000).toFixed(2))
-        : p1.distance_km || 1.0
+    let leg1Km = 1.0
+    let leg1Source: 'google' | 'osrm' | 'estimada_1.3x' = 'estimada_1.3x'
+    if (leg1 && leg1.distanceMeters > 0) {
+      leg1Km = Number((leg1.distanceMeters / 1000).toFixed(2))
+      leg1Source = 'osrm'
+    } else if (p1.distance_km && p1.distance_km > 0) {
+      leg1Km = p1.distance_km
+      leg1Source = 'estimada_1.3x'
+    }
     legDistances.push(leg1Km)
+    legSources.push(leg1Source)
     totalViarioKm += leg1Km
 
     // Pernas Intermediárias: Parada i → Parada i+1
@@ -138,15 +151,21 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
         { lat: curr.end_address_lat!, lng: curr.end_address_lng! },
         { lat: next.end_address_lat!, lng: next.end_address_lng! },
       )
-      const legKm =
-        leg && leg.distanceMeters > 0
-          ? Number((leg.distanceMeters / 1000).toFixed(2))
-          : next.distance_km || 1.0
+      let legKm = 1.0
+      let legSrc: 'google' | 'osrm' | 'estimada_1.3x' = 'estimada_1.3x'
+      if (leg && leg.distanceMeters > 0) {
+        legKm = Number((leg.distanceMeters / 1000).toFixed(2))
+        legSrc = 'osrm'
+      } else if (next.distance_km && next.distance_km > 0) {
+        legKm = next.distance_km
+        legSrc = 'estimada_1.3x'
+      }
       legDistances.push(legKm)
+      legSources.push(legSrc)
       totalViarioKm += legKm
     }
 
-    // Perna Final: Última Parada → Volta à Base (UMA ÚNICA VEZ)
+    // Perna Final: Última Parada → Volta à Base (UMA ÚNICA VEZ no fim do lote)
     const lastStop = validStops[validStops.length - 1]
     const returnLeg = await fetchStreetRoute(
       { lat: lastStop.end_address_lat!, lng: lastStop.end_address_lng! },
@@ -156,6 +175,8 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
       returnLeg && returnLeg.distanceMeters > 0
         ? Number((returnLeg.distanceMeters / 1000).toFixed(2))
         : lastStop.return_trip_km || 1.5
+    legDistances.push(returnKm)
+    legSources.push(returnLeg && returnLeg.distanceMeters > 0 ? 'osrm' : 'estimada_1.3x')
     totalViarioKm += returnKm
   }
 
@@ -188,28 +209,25 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
     }
   }
 
-  // 6. ITEM 3 (0.3): RECONCILIAÇÃO AUTOMÁTICA
-  // km telemetria (real na rua) vs km trajeto viário:
-  // <= 15% = auto-aprovado (km oficial = telemetria na rua)
-  // 15-30% = flag amarela com os dois valores lado a lado
-  // > 30% = bloqueia pagamento até decisão admin
+  // 6. ITEM 1.1 / 1.2: FORMA CANÔNICA ÚNICA (DECISÃO DO DONO)
+  // Coluna A (Rota Otimizada) = base + P1 + ... + Pn + volta à base UMA VEZ.
+  // Coluna B (GPS Telemetria) = a mesma forma medida pelo GPS.
+  // Aprovação do MENOR entre A e B é AUTOMÁTICA e INVISÍVEL:
+  // kmOficial = min(totalViarioKm, kmTelemetriaReal) quando telemetria estiver disponível e válida
   let reconciliationStatus: 'auto_approved' | 'yellow_flag' | 'blocked_admin_decision' =
     'auto_approved'
   let diffPct = 0
   let kmOficial = totalViarioKm
 
-  if (kmTelemetriaReal !== null && totalViarioKm > 0) {
+  if (kmTelemetriaReal !== null && kmTelemetriaReal > 0 && totalViarioKm > 0) {
     diffPct = Math.round((Math.abs(kmTelemetriaReal - totalViarioKm) / totalViarioKm) * 100)
+    // O km oficial único canônico é o MENOR entre A e B (automático)
+    kmOficial = Math.min(totalViarioKm, kmTelemetriaReal)
 
-    if (diffPct <= 15) {
+    if (diffPct <= 20) {
       reconciliationStatus = 'auto_approved'
-      kmOficial = kmTelemetriaReal
-    } else if (diffPct <= 30) {
-      reconciliationStatus = 'yellow_flag'
-      kmOficial = kmTelemetriaReal
     } else {
-      reconciliationStatus = 'blocked_admin_decision'
-      kmOficial = totalViarioKm // trava para aprovação admin
+      reconciliationStatus = 'yellow_flag'
     }
   } else {
     // Se telemetria indisponível ou API falhou: km oficial usa o viário do trajeto
@@ -240,6 +258,7 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
     }
 
     const legKm = legDistances[idx] || totalViarioKm / validCount
+    const legCalcOrigin = legSources && legSources[idx] ? legSources[idx] : 'osrm'
 
     // Atualiza pedido no banco de dados com os valores recalculados em cascata
     const updatePayload: Record<string, any> = {
@@ -247,6 +266,7 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
       fuel_cost: ordFuel,
       route_batch_key: routeBatchKey,
       distance_km: Number(legKm.toFixed(2)),
+      calculation_source: legCalcOrigin,
     }
     if (kmTelemetriaReal !== null) {
       updatePayload.km_real_rodado = kmTelemetriaReal

@@ -1167,6 +1167,32 @@ export default function CourierApp() {
     }
   }, [user, isGpsActive, hasActiveStartedRoute])
 
+  // Monitoramento periódico e flush a cada ciclo de 30s do buffer offline
+  useEffect(() => {
+    if (!user?.id) return
+
+    const cycleInterval = setInterval(() => {
+      if (
+        navigator.onLine &&
+        offlineTelemetryBuffer.size(user.id) > 0 &&
+        !isFlushingBufferRef.current &&
+        !isSendingLocationRef.current
+      ) {
+        setIsFlushingBuffer(true)
+        isFlushingBufferRef.current = true
+        offlineTelemetryBuffer
+          .flush(user.id)
+          .catch(() => {})
+          .finally(() => {
+            setIsFlushingBuffer(false)
+            isFlushingBufferRef.current = false
+          })
+      }
+    }, 30000)
+
+    return () => clearInterval(cycleInterval)
+  }, [user?.id])
+
   // Monitoramento periódico de "pings presos" em rota ativa (a cada 20 segundos)
   useEffect(() => {
     if (!hasActiveStartedRoute) {

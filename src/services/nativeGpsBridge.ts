@@ -279,6 +279,28 @@ class NativeGpsBridgeService {
    * Quando lat/lng não forem números válidos (null, undefined, NaN ou 0), passa 0, 0
    * e repassa o endereço/label como destino para a Intent nativa resolver.
    */
+  /**
+   * Dispara o intent ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (via plugin Capacitor ou nativo)
+   */
+  public async requestIgnoreBatteryOptimizations(): Promise<boolean> {
+    if (this.isCapacitorAvailable()) {
+      const cap = (window as any).Capacitor
+      try {
+        if (cap.Plugins && cap.Plugins.BatteryOptimization) {
+          await cap.Plugins.BatteryOptimization.requestIgnoreBatteryOptimization()
+          return true
+        }
+        if (cap.Plugins && cap.Plugins.App) {
+          await cap.Plugins.App.openUrl({ url: 'package:' + (cap.appId || 'com.rotaly.app') })
+          return true
+        }
+      } catch (e) {
+        console.warn('[nativeGpsBridge] Falha ao disparar requestIgnoreBatteryOptimizations:', e)
+      }
+    }
+    return false
+  }
+
   public openNavigation(params: {
     lat?: number | string | null
     lng?: number | string | null

@@ -941,6 +941,20 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       return
     }
 
+    const roadKm = activeItem.originalRoadKm || 0
+    const gpsKm = activeItem.originalGpsKm !== undefined ? activeItem.originalGpsKm : 0
+    const minCanonical = gpsKm > 0 ? Math.min(roadKm, gpsKm) : roadKm
+    const isOverrideAboveMin = modalAction === 'approve' && kmNum > minCanonical
+    const justificationTrimmed = justificationInput.trim()
+
+    // Regra 1.2: aprovado maior que min(A, B) é RECUSADO sem justificativa textual obrigatória (mín 15 caracteres)
+    if (isOverrideAboveMin && justificationTrimmed.length < 15) {
+      toast.error(
+        `Aprovação de ${kmNum.toFixed(1)} km é superior ao menor valor (${minCanonical.toFixed(1)} km). Justificativa obrigatória com no mínimo 15 caracteres.`,
+      )
+      return
+    }
+
     setIsSavingApproval(true)
     try {
       const targetCompanyId =
@@ -956,7 +970,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         originalGpsKm: activeItem.originalGpsKm,
         approvedKm: modalAction === 'approve' ? kmNum : activeItem.originalRoadKm,
         status: modalAction === 'approve' ? 'approved' : 'rejected',
-        justification: justificationInput.trim(),
+        justification: justificationTrimmed,
       })
 
       toast.success(
@@ -1430,17 +1444,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-100/70 text-slate-600 uppercase tracking-wider text-[11px] font-bold select-none">
                   <th className="py-3 px-4">a) Cliente / Endereço</th>
-                  <th className="py-3 px-3 text-center">b) Km trajeto viário</th>
-                  <th className="py-3 px-3 text-center">c) Km telemetria (real na rua)</th>
-                  <th className="py-3 px-3 text-center">d) Desvio de Rota</th>
-                  <th className="py-3 px-3 text-center">e) Parada Fora do Local</th>
-                  <th className="py-3 px-4 text-right">f) Aprovação do Administrador</th>
+                  <th className="py-3 px-3 text-center">Coluna A: Rota Otimizada (Viário)</th>
+                  <th className="py-3 px-3 text-center">Coluna B: GPS Telemetria</th>
+                  <th className="py-3 px-3 text-center">Desvio %</th>
+                  <th className="py-3 px-3 text-center">Parada Fora do Local</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredRows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-slate-400">
+                    <td colSpan={5} className="py-12 text-center text-slate-400">
                       {queueViewMode === 'pending_divergent' ? (
                         <>
                           <CheckCircle2 className="h-10 w-10 mx-auto text-emerald-500 mb-2" />
@@ -1553,15 +1566,24 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna b: Km trajeto viário */}
+                        {/* Coluna A: Rota Otimizada (Viário) */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
                             <span className="font-mono text-sm font-black text-slate-900 dark:text-white">
                               {row.roadKm.toFixed(1)} km
                             </span>
-                            <span className="text-[10px] text-slate-400 block">
-                              Km trajeto viário
-                            </span>
+                            <div className="flex items-center justify-center gap-1">
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] px-1 py-0 font-mono text-slate-600 border-slate-200 bg-slate-50"
+                              >
+                                {row.order.calculation_source === 'google'
+                                  ? 'Google'
+                                  : row.order.calculation_source === 'osrm'
+                                    ? 'OSRM'
+                                    : 'Estimada 1.3x'}
+                              </Badge>
+                            </div>
                             {row.isJointSecondary && (
                               <span className="text-[9px] text-indigo-600 block font-semibold">
                                 Rateio: 0.0 km (Viagem já inclusa)
@@ -1570,42 +1592,23 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna c: Km telemetria (real na rua) */}
+                        {/* Coluna B: GPS Telemetria */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
                             {typeof row.order.km_real_perna === 'number' &&
                             Number.isFinite(row.order.km_real_perna) &&
                             row.order.km_real_perna > 0 ? (
-                              <>
-                                <div className="flex items-center justify-center gap-1">
-                                  <span className="font-mono text-sm font-black text-purple-700 dark:text-purple-300">
-                                    {row.order.km_real_perna.toFixed(1)} km
-                                  </span>
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
-                                  >
-                                    [Perna]
-                                  </Badge>
-                                </div>
-                                <span className="text-[10px] text-slate-400 block">
-                                  Telemetria da perna
+                              <div className="flex items-center justify-center gap-1">
+                                <span className="font-mono text-sm font-black text-purple-700 dark:text-purple-300">
+                                  {row.order.km_real_perna.toFixed(1)} km
                                 </span>
-                                {row.divergenciaInfo?.valido &&
-                                  row.divergenciaInfo.diferenca >= 0.5 && (
-                                    <span
-                                      className={`text-[9px] block font-mono font-bold ${
-                                        row.order.km_real_perna > row.roadKm
-                                          ? 'text-rose-600'
-                                          : 'text-emerald-600'
-                                      }`}
-                                    >
-                                      {row.order.km_real_perna > row.roadKm
-                                        ? `+${row.divergenciaInfo.diferenca.toFixed(1)} km`
-                                        : `-${row.divergenciaInfo.diferenca.toFixed(1)} km`}
-                                    </span>
-                                  )}
-                              </>
+                                <Badge
+                                  variant="outline"
+                                  className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
+                                >
+                                  GPS
+                                </Badge>
+                              </div>
                             ) : (
                               <span className="font-mono text-sm font-bold text-slate-400">—</span>
                             )}
@@ -1613,48 +1616,61 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna d: Desvio de Rota / KM Extra Redireção */}
+                        {/* Desvio %: Badge verde/neutro se ≤20%, vermelho com alerta se >20% */}
                         <td className="py-3 px-3 align-top text-center">
-                          {row.isRedirected ? (
-                            <div className="space-y-0.5">
-                              <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold">
-                                🧭 +
-                                {(
-                                  row.order.redirection_extra_km ??
-                                  row.approval?.extra_km ??
-                                  0
-                                ).toFixed(1)}{' '}
-                                km extra
-                              </Badge>
-                              <span className="text-[9px] text-slate-500 block">
-                                {row.approval?.calculation_method === 'telemetry_gps'
-                                  ? 'Trajetória GPS real'
-                                  : 'Desvio A→B viário'}
-                              </span>
-                            </div>
-                          ) : row.deviationMeters > 0 ? (
-                            <div className="space-y-0.5">
-                              <Badge
-                                className={`text-[10px] font-bold ${
-                                  row.deviationMeters >= 500
-                                    ? 'bg-rose-100 text-rose-700 border-rose-300'
-                                    : 'bg-amber-100 text-amber-700 border-amber-300'
-                                }`}
-                              >
-                                🚨 +{row.deviationMeters} m
-                              </Badge>
-                              <span className="text-[10px] text-slate-400 block">
-                                às {row.deviationTimeStr}
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="text-[11px] text-emerald-600 font-semibold flex items-center justify-center gap-1">
-                              <Check className="h-3 w-3" /> Na rota
-                            </span>
-                          )}
+                          {(() => {
+                            const roadKm = row.roadKm || 0
+                            const gpsKm =
+                              typeof row.order.km_real_perna === 'number' &&
+                              Number.isFinite(row.order.km_real_perna) &&
+                              row.order.km_real_perna > 0
+                                ? row.order.km_real_perna
+                                : null
+
+                            if (gpsKm === null || roadKm <= 0) {
+                              return (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] text-slate-400 border-slate-200"
+                                >
+                                  Em conformidade
+                                </Badge>
+                              )
+                            }
+
+                            const diffPct = Math.round((Math.abs(gpsKm - roadKm) / roadKm) * 100)
+                            const isWithinTolerance = diffPct <= 20
+
+                            return (
+                              <div className="space-y-0.5">
+                                <Badge
+                                  className={`text-[10px] font-bold ${
+                                    isWithinTolerance
+                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                      : 'bg-rose-100 text-rose-800 border-rose-300'
+                                  }`}
+                                >
+                                  {isWithinTolerance ? '✓ ' : '🚨 '}
+                                  {diffPct}% desvio
+                                </Badge>
+                                {!isWithinTolerance && (
+                                  <div className="flex items-center justify-center gap-1 pt-0.5">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleOpenActionModal(row, 'approve')}
+                                      className="h-5 px-1.5 text-[9px] text-rose-700 hover:bg-rose-50 underline"
+                                    >
+                                      Exceção admin
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
                         </td>
 
-                        {/* Coluna f: Parada Fora do Local */}
+                        {/* Coluna e: Parada Fora do Local */}
                         <td className="py-3 px-3 align-top text-center">
                           {row.unexpectedStopsCount > 0 ? (
                             <div className="space-y-0.5">
@@ -1670,124 +1686,6 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           ) : (
                             <span className="text-[11px] text-slate-400">-</span>
                           )}
-                        </td>
-
-                        {/* Coluna g: Botão de Aprovação do Administrador */}
-                        <td className="py-3 px-4 align-top text-right">
-                          <div className="flex flex-col items-end gap-1.5">
-                            {/* Caso 1: Já deliberado no banco (aprovado ou rejeitado) */}
-                            {row.approval && row.approval.status !== 'pending' ? (
-                              <div className="text-right space-y-1">
-                                {isApproved ? (
-                                  <div className="flex flex-col items-end gap-0.5">
-                                    <Badge className="bg-emerald-600 text-white font-bold text-[10px] flex items-center gap-1 ml-auto">
-                                      <CheckCircle2 className="h-3 w-3" />
-                                      {row.approval.approval_type === 'redirection_auto'
-                                        ? 'Auto-Aprovado (≤3km)'
-                                        : 'Aprovado'}
-                                      : {row.approval.approved_km.toFixed(1)} km
-                                    </Badge>
-                                    {row.approval.extra_km ? (
-                                      <span className="text-[9px] text-emerald-700 font-mono">
-                                        (+{row.approval.extra_km.toFixed(1)} km extra incluso)
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                ) : (
-                                  <Badge className="bg-slate-200 text-slate-700 border-slate-300 font-bold text-[10px] flex items-center gap-1 ml-auto">
-                                    <XCircle className="h-3 w-3" />
-                                    Rejeitado (Viário Mantido)
-                                  </Badge>
-                                )}
-
-                                {row.approval.justification && (
-                                  <p
-                                    className="text-[10px] text-slate-500 italic max-w-xs truncate"
-                                    title={row.approval.justification}
-                                  >
-                                    "{row.approval.justification}"
-                                  </p>
-                                )}
-
-                                <div className="flex items-center justify-end gap-1 pt-0.5">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleOpenActionModal(row, 'approve')}
-                                    className="h-6 px-2 text-[10px] text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                                  >
-                                    Editar Decisão
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : row.isJointSecondary ? (
-                              /* Caso 2a: 2ª entrega conjunta - AUTO-APROVADA AUTOMATICAMENTE (viagem já inclusa na 1ª entrega) */
-                              <div className="text-right space-y-0.5">
-                                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-bold text-[10px] flex items-center gap-1 ml-auto">
-                                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                                  Aprovado Automaticamente (entrega conjunta, viagem já inclusa)
-                                </Badge>
-                                <span className="text-[9px] text-indigo-600 block">
-                                  Rateio 0,0 km • Deslocamento já contabilizado no 1º pedido
-                                </span>
-                              </div>
-                            ) : row.isAutoApproved ? (
-                              /* Caso 2b: Entrega SEM divergência (km viário ≈ km GPS) - APROVADA AUTOMATICAMENTE SEM BOTÃO */
-                              <div className="text-right space-y-0.5">
-                                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-bold text-[10px] flex items-center gap-1 ml-auto">
-                                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                                  Aprovado Automaticamente
-                                </Badge>
-                                <span className="text-[9px] text-slate-400 block">
-                                  Viário = GPS ({row.roadKm.toFixed(1)} km) • Oficial
-                                </span>
-                              </div>
-                            ) : (
-                              /* Caso 3: Entrega COM divergência que precisa de decisão do admin */
-                              <div className="flex flex-col items-end gap-1">
-                                {row.isRedirected && (
-                                  <Badge className="bg-amber-100 text-amber-800 border-amber-300 font-bold text-[9px] mb-0.5">
-                                    {row.order.redirection_status === 'initiated'
-                                      ? '⏳ Redireção Em Andamento'
-                                      : '⚠️ Desvio >3km Requer Revisão'}
-                                  </Badge>
-                                )}
-                                {row.divergenciaInfo?.valido && !row.isRedirected && (
-                                  <div className="space-y-0.5">
-                                    <Badge className="bg-rose-50 text-rose-700 border-rose-200 font-bold text-[9px] mb-0.5">
-                                      Divergência Perna ({row.divergenciaInfo.diferenca.toFixed(1)}{' '}
-                                      km)
-                                    </Badge>
-                                    {row.divergenciaInfo.alertaSanidade && (
-                                      <span className="text-[9px] font-bold text-amber-700 block">
-                                        {row.divergenciaInfo.alertaSanidade}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleOpenActionModal(row, 'reject')}
-                                    className="h-7 px-2.5 text-[11px] border-slate-200 text-slate-600 hover:bg-slate-100"
-                                    title="Mantém estritamente o trajeto viário oficial"
-                                  >
-                                    Rejeitar
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handleOpenActionModal(row, 'approve')}
-                                    className="h-7 px-2.5 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1 shadow-xs"
-                                    title="Aprova e substitui o trecho no cálculo oficial de KM e combustível"
-                                  >
-                                    <Check className="h-3.5 w-3.5" />
-                                    Aprovar KM
-                                  </Button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
                         </td>
                       </tr>
                     )

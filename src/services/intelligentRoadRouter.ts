@@ -610,8 +610,8 @@ export async function optimizeRouteSequence(params: {
     destination,
     stops,
     vehicleType = 'moto',
-    pricePerLiter = 5.89,
-    consumptionKml = 32,
+    pricePerLiter,
+    consumptionKml,
     stopDurationMinutes = 5,
   } = params
 
@@ -945,14 +945,16 @@ export async function optimizeRouteSequence(params: {
     vehicleType === 'bicicleta' || vehicleType === 'bicycle' || vehicleType === 'bike'
   const effectiveCons = isBicycle
     ? 0
-    : consumptionKml > 0
+    : typeof consumptionKml === 'number' && consumptionKml > 0
       ? consumptionKml
       : vehicleType === 'moto'
-        ? 32
+        ? 40
         : 10
+  const effectivePrice =
+    typeof pricePerLiter === 'number' && pricePerLiter > 0 ? pricePerLiter : 6.09
   const fuelCost =
-    !isBicycle && effectiveCons > 0 && pricePerLiter > 0
-      ? (totalKm * pricePerLiter) / effectiveCons
+    !isBicycle && effectiveCons > 0 && effectivePrice > 0
+      ? (totalKm * effectivePrice) / effectiveCons
       : 0
 
   return {
