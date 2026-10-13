@@ -119,6 +119,7 @@ function createMainPolyline(
     strokeColor,
     strokeOpacity: 0.95,
     strokeWeight: 5,
+    zIndex: 800,
     map,
   })
 }
@@ -138,12 +139,13 @@ function createInnerPolyline(
     strokeColor: innerColor,
     strokeOpacity: 0.85,
     strokeWeight: 2,
+    zIndex: 801,
     map,
   })
 }
 
 /**
- * Cria polilinha tracejada de retorno à base
+ * Cria polilinha tracejada de retorno à base viária OSRM
  */
 function createReturnPolyline(
   winGoogle: any,
@@ -155,12 +157,13 @@ function createReturnPolyline(
     path,
     geodesic: true,
     strokeColor: returnLegColor,
-    strokeOpacity: 0,
-    strokeWeight: 4,
+    strokeOpacity: 0.95,
+    strokeWeight: 5,
+    zIndex: 790,
     icons: [
       {
-        icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 2.5 },
-        repeat: '8px',
+        icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+        repeat: '10px',
       },
     ],
     map,
@@ -168,22 +171,18 @@ function createReturnPolyline(
 }
 
 /**
- * Cria polilinha tracejada vermelha de desvio de rota
+ * Cria polilinha vermelha contínua (#EF4444, weight 4, opacity 0.95) de caminho real/telemetria.
+ * Construída EXCLUSIVAMENTE a partir de pings gravados na coleção locations.
+ * PROIBIDO traçado fictício ou linha reta extrapolada.
  */
 function createDevPolyline(winGoogle: any, map: any, path: Array<{ lat: number; lng: number }>) {
   return new winGoogle.maps.Polyline({
     path,
     geodesic: true,
     strokeColor: '#EF4444',
-    strokeOpacity: 1.0,
+    strokeOpacity: 0.95,
     strokeWeight: 4,
-    icons: [
-      {
-        icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-        offset: '0',
-        repeat: '10px',
-      },
-    ],
+    zIndex: 900,
     map,
   })
 }
@@ -236,7 +235,12 @@ export function syncCourierRouteLines({
         safeSetMap(lines.main, map)
         safeSetPath(lines.main, rawFPath)
         try {
-          lines.main.setOptions({ strokeColor: courierColor.stroke })
+          lines.main.setOptions({
+            strokeColor: courierColor.stroke,
+            strokeOpacity: 0.95,
+            strokeWeight: 5,
+            zIndex: 800,
+          })
         } catch {
           /* safe ignore */
         }
@@ -270,7 +274,12 @@ export function syncCourierRouteLines({
         safeSetMap(lines.returnLeg, map)
         safeSetPath(lines.returnLeg, rawRetPath)
         try {
-          lines.returnLeg.setOptions({ strokeColor: courierColor.returnLeg })
+          lines.returnLeg.setOptions({
+            strokeColor: courierColor.returnLeg || '#60A5FA',
+            strokeOpacity: 0.95,
+            strokeWeight: 5,
+            zIndex: 790,
+          })
         } catch {
           /* safe ignore */
         }
@@ -282,13 +291,23 @@ export function syncCourierRouteLines({
       safeSetMap(lines.returnLeg, null)
     }
 
-    // 3. DEVIATION LINE — Linha de desvio PERMANECE vermelha #EF4444 (regra blindada >600m)
+    // 3. CAMINHO REAL TELEMETRIA — Polyline vermelha contínua (#EF4444, weight 4, opacity 0.95)
     if (hasDev) {
       if (!lines.dev) {
         lines.dev = createDevPolyline(winGoogle, map, rawDevPath)
       } else {
         safeSetMap(lines.dev, map)
         safeSetPath(lines.dev, rawDevPath)
+        try {
+          lines.dev.setOptions({
+            strokeColor: '#EF4444',
+            strokeOpacity: 0.95,
+            strokeWeight: 4,
+            zIndex: 900,
+          })
+        } catch {
+          /* safe ignore */
+        }
       }
     } else if (lines.dev) {
       safeSetMap(lines.dev, null)

@@ -108,6 +108,7 @@ import {
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
 import { isOrderInActiveRoute, isCourierRecentlyFinished } from '@/lib/activeRouteHelper'
+import { deriveRouteBatchKey } from '@/lib/routeBatchHelper'
 import type { AppSettingsRecord } from '@/types/delivery'
 import {
   ControlTowerDeliveredNotice,
@@ -390,18 +391,27 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     })
   }
 
-  // Cache de rotas ativas para evitar refetch viário (OSRM/Google) sem necessidade:
-  // courierId -> { courierPos, stopIdsHash, result }
+  // Cache de rotas ativas indexado pelo route_batch_key canônico do lote para persistir o traçado
+  // completo (base oficial -> paradas na sequência -> retorno) até route_finished === true:
+  // batchKey -> { batchKey, courierId, courierPos, stopIdsHash, result }
   const activeRoutesCacheRef = useRef<
     Map<
       string,
       {
+        batchKey: string
+        courierId: string
         courierPos: LatLngPoint
         stopIdsHash: string
         result: any
       }
     >
   >(new Map())
+
+  // Histórico de telemetria real (pings gravados na coleção locations com user_id=courierId e created>=route_started_at)
+  // courierId -> Array<{ lat: number; lng: number }>
+  const courierTelemetryHistoryMapRef = useRef<Map<string, Array<{ lat: number; lng: number }>>>(
+    new Map(),
+  )
 
   // Drawer mini-map state
   const drawerMiniMapRef = useRef<HTMLDivElement | null>(null)
@@ -880,11 +890,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
         const affectedCourierId = rec.courier_id
 
-        if (affectedCourierId && (rec.route_finished === true || rec.status === 'delivered')) {
-          // Ao mudar para delivered ou finalizar rota: limpar cache de geometria para recálculo imediato da nova perna
+        // REQUISITO DO DONO (1):
+        // REMOVER o delete do cache na entrega — o traçado viário azul permanece até route_finished === true.
+        // Apenas expurgar o cache quando o ciclo for finalizado (rec.route_finished === true).
+        if (affectedCourierId && rec.route_finished === true) {
+          const recBatchKey = deriveRouteBatchKey(rec, undefined, affectedCourierId)
+          activeRoutesCacheRef.current.delete(recBatchKey)
           activeRoutesCacheRef.current.delete(affectedCourierId)
+          courierTelemetryHistoryMapRef.current.delete(affectedCourierId)
 
-          // Limpar notificações e alertas falsos associados ao entregador/pedido entregue
+          // Limpar notificações e alertas falsos associados ao entregador
           const devKey = `dev-${affectedCourierId}-${rec.id}`
           const stopKey = `stop-${affectedCourierId}`
           const etaKey = `eta-${affectedCourierId}-${rec.id}`
@@ -892,50 +907,56 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           notifiedEventsRef.current.delete(stopKey)
           notifiedEventsRef.current.delete(etaKey)
 
-          // Disparar atualização imediata de estado para recalcular rota sem aguardar refresh
+          // Disparar atualização imediata de estado
           setLastUpdated(new Date())
 
-          if (rec.route_finished === true) {
-            // Remove polilinhas ativas no Google Maps nativo
-            const existingLines = activePolylinesMapRef.current.get(affectedCourierId)
-            if (existingLines) {
-              try {
-                existingLines.main?.setMap(null)
-                existingLines.inner?.setMap(null)
-                existingLines.returnLeg?.setMap(null)
-                existingLines.dev?.setMap(null)
-              } catch {
-                /* intentionally ignored */
-              }
-              activePolylinesMapRef.current.delete(affectedCourierId)
+          // Remove polilinhas ativas no Google Maps nativo
+          const existingLines = activePolylinesMapRef.current.get(affectedCourierId)
+          if (existingLines) {
+            try {
+              existingLines.main?.setMap(null)
+              existingLines.inner?.setMap(null)
+              existingLines.returnLeg?.setMap(null)
+              existingLines.dev?.setMap(null)
+            } catch {
+              /* intentionally ignored */
             }
-            if (googlePolylinesRef.current && googlePolylinesRef.current.length > 0) {
-              googlePolylinesRef.current.forEach((p) => {
-                try {
-                  p.setMap(null)
-                } catch {
-                  /* intentionally ignored */
-                }
-              })
-              googlePolylinesRef.current = []
-            }
-
-            // Remove o marcador animado do entregador no Google Maps nativo imediatamente
-            const courierMarker = courierMarkersMapRef.current.get(affectedCourierId)
-            if (courierMarker) {
-              try {
-                courierMarker.setMap(null)
-              } catch {
-                /* intentionally ignored */
-              }
-              courierMarkersMapRef.current.delete(affectedCourierId)
-            }
-            const animId = courierAnimFramesRef.current.get(affectedCourierId)
-            if (animId) {
-              cancelAnimationFrame(animId)
-              courierAnimFramesRef.current.delete(affectedCourierId)
-            }
+            activePolylinesMapRef.current.delete(affectedCourierId)
           }
+          if (googlePolylinesRef.current && googlePolylinesRef.current.length > 0) {
+            googlePolylinesRef.current.forEach((p) => {
+              try {
+                p.setMap(null)
+              } catch {
+                /* intentionally ignored */
+              }
+            })
+            googlePolylinesRef.current = []
+          }
+
+          // Remove o marcador animado do entregador no Google Maps nativo imediatamente
+          const courierMarker = courierMarkersMapRef.current.get(affectedCourierId)
+          if (courierMarker) {
+            try {
+              courierMarker.setMap(null)
+            } catch {
+              /* intentionally ignored */
+            }
+            courierMarkersMapRef.current.delete(affectedCourierId)
+          }
+          const animId = courierAnimFramesRef.current.get(affectedCourierId)
+          if (animId) {
+            cancelAnimationFrame(animId)
+            courierAnimFramesRef.current.delete(affectedCourierId)
+          }
+        } else if (affectedCourierId && rec.status === 'delivered') {
+          // Quando pedido vira delivered: NÃO deletar cache nem polilinhas!
+          // Limpa alertas pontuais de desvio/eta desta entrega concluída
+          const devKey = `dev-${affectedCourierId}-${rec.id}`
+          const etaKey = `eta-${affectedCourierId}-${rec.id}`
+          notifiedEventsRef.current.delete(devKey)
+          notifiedEventsRef.current.delete(etaKey)
+          setLastUpdated(new Date())
         }
 
         // Manter lista global de pedidos em trânsito sempre sincronizada (para todos os lojistas)
@@ -1434,146 +1455,158 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     // OTIMIZAÇÃO: Cache de movimento mínimo de 100m + debounce de ~800ms + asyncPool (concorrência 4)
     const computeActiveRoutes = async () => {
       const computeCourierRoute = async (item: (typeof activeRouteCouriers)[0]) => {
-        // Obter todos os pedidos ativos da rota iniciada ordenados por sequência
-        const activeRouteOrders = item.allAssignedOrders
-          .filter(
-            (o) =>
-              o.route_started === true &&
-              o.route_finished !== true &&
-              (o.status === 'in_transit' || o.status === 'pending' || o.status === 'delivered'),
-          )
-          .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
-
-        if (activeRouteOrders.length === 0) {
-          activeRoutesCacheRef.current.delete(item.courier.id)
-          return null
-        }
-
-        // Fallback oficial da base (Drogaria Mais Saudável, Rua da Fortuna, 13 — Pilar)
-        // O primeiro pedido ativo (ou o último delivered se todos já foram entregues) define a base
-        const primaryOrder =
-          activeRouteOrders.find((o) => o.status === 'in_transit') ||
-          activeRouteOrders.find((o) => o.status === 'pending') ||
-          activeRouteOrders[activeRouteOrders.length - 1] ||
-          activeRouteOrders[0]
-
-        // Fallback oficial e bases via MapDataService
-        const originClean = MapDataService.getOrderBaseOrigin(primaryOrder)
-        const origin: LatLngPoint = { lat: originClean.lat, lng: originClean.lng }
-
-        const cleanCourier = MapDataService.cleanCoords(item.lat, item.lng) || originClean
-        const courierPos: LatLngPoint = { lat: cleanCourier.lat, lng: cleanCourier.lng }
-
-        // Base de retorno: end_address_lat/lng ou fallback start_base ou fallback oficial
-        const cleanReturn =
-          MapDataService.cleanCoords(primaryOrder.end_address_lat, primaryOrder.end_address_lng) ||
-          MapDataService.cleanCoords(primaryOrder.start_base_lat, primaryOrder.start_base_lng) ||
-          originClean
-        const returnBasePos: LatLngPoint = { lat: cleanReturn.lat, lng: cleanReturn.lng }
-
-        // Separar paradas em pendentes (in_transit/pending) e concluídas (delivered)
-        const pendingStopsList: LatLngPoint[] = []
-        let lastDeliveredPos: LatLngPoint | null = null
-
-        activeRouteOrders.forEach((o) => {
-          const c = o.expand?.customer_id
-          const cleanPt = MapDataService.cleanCoords(c?.lat, c?.lng)
-          if (cleanPt) {
-            const pt: LatLngPoint = { lat: cleanPt.lat, lng: cleanPt.lng }
-            if (o.status !== 'delivered') {
-              pendingStopsList.push(pt)
-            } else {
-              lastDeliveredPos = pt
-            }
-          }
-        })
-
-        // Hash para verificar se a composição de pedidos/paradas/status mudou
-        const stopIdsHash = activeRouteOrders
-          .map((o) => `${o.id}:${o.status}:${o.sequence}`)
-          .join(',')
-        const cached = activeRoutesCacheRef.current.get(item.courier.id)
-
-        // Se cache existente for válido e posição mudou < 100 metros e pedidos não mudaram:
-        // reutilizar a geometria calculada (evita chamadas de rede e re-criação de linhas)
-        if (
-          cached &&
-          cached.stopIdsHash === stopIdsHash &&
-          distanceMeters(cached.courierPos, courierPos) < 100
-        ) {
-          // Atualiza apenas dados leves de telemetria instantânea (velocidade/posição/status do entregador)
-          return {
-            ...cached.result,
-            courierPos,
-            courier: item.courier,
-          }
-        }
-
         try {
-          // CORREÇÃO 1 & 4: Traçado ativo em tempo real
-          // Se há paradas pendentes:
-          // traçado parte da POSIÇÃO GPS ATUAL do entregador (courierPos) → próxima pendente → subsequentes pendentes
-          // Perna de retorno (tracejada #60A5FA): última pendente → returnBasePos
-          // Se NÃO há pendentes (todas entregues):
-          // traçado de ida fica vazio; traçado de retorno é courierPos → returnBasePos viário
-          let forwardPoints: LatLngPoint[] = []
-          let returnPoints: LatLngPoint[] = []
+          // Obter todos os pedidos ativos da rota iniciada ordenados por sequência
+          const activeRouteOrders = item.allAssignedOrders
+            .filter(
+              (o) =>
+                o.route_started === true &&
+                o.route_finished !== true &&
+                (o.status === 'in_transit' || o.status === 'pending' || o.status === 'delivered'),
+            )
+            .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
 
-          if (pendingStopsList.length > 0) {
-            // Trajeto vigente: courierPos → pendente 1 → pendente 2 ...
-            const activeWaypoints: LatLngPoint[] = [courierPos, ...pendingStopsList]
-            const forwardSegments: LatLngPoint[] = []
-            let prevPoint = activeWaypoints[0]
+          if (activeRouteOrders.length === 0) {
+            return null
+          }
 
-            for (let sIdx = 1; sIdx < activeWaypoints.length; sIdx++) {
-              const targetPoint = activeWaypoints[sIdx]
-              try {
-                const segRes = await fetchStreetRoute(prevPoint, targetPoint)
-                if (segRes.coordinates.length >= 2) {
-                  if (forwardSegments.length > 0) {
-                    forwardSegments.push(...segRes.coordinates.slice(1))
-                  } else {
-                    forwardSegments.push(...segRes.coordinates)
+          // Fallback oficial da base (Drogaria Mais Saudável, Rua da Fortuna, 13 — Pilar)
+          // O primeiro pedido ativo (ou o último delivered se todos já foram entregues) define a base
+          const primaryOrder =
+            activeRouteOrders.find((o) => o.status === 'in_transit') ||
+            activeRouteOrders.find((o) => o.status === 'pending') ||
+            activeRouteOrders[activeRouteOrders.length - 1] ||
+            activeRouteOrders[0]
+
+          // Fallback oficial e bases via MapDataService
+          const originClean = MapDataService.getOrderBaseOrigin(primaryOrder)
+          const origin: LatLngPoint = { lat: originClean.lat, lng: originClean.lng }
+
+          const cleanCourier = MapDataService.cleanCoords(item.lat, item.lng) || originClean
+          const courierPos: LatLngPoint = { lat: cleanCourier.lat, lng: cleanCourier.lng }
+
+          // Base de retorno: end_address_lat/lng ou fallback start_base ou fallback oficial
+          const cleanReturn =
+            MapDataService.cleanCoords(
+              primaryOrder.end_address_lat,
+              primaryOrder.end_address_lng,
+            ) ||
+            MapDataService.cleanCoords(primaryOrder.start_base_lat, primaryOrder.start_base_lng) ||
+            originClean
+          const returnBasePos: LatLngPoint = { lat: cleanReturn.lat, lng: cleanReturn.lng }
+
+          // Separar paradas em pendentes (in_transit/pending) e concluídas (delivered)
+          const pendingStopsList: LatLngPoint[] = []
+          let lastDeliveredPos: LatLngPoint | null = null
+
+          activeRouteOrders.forEach((o) => {
+            const c = o.expand?.customer_id
+            const cleanPt = MapDataService.cleanCoords(c?.lat, c?.lng)
+            if (cleanPt) {
+              const pt: LatLngPoint = { lat: cleanPt.lat, lng: cleanPt.lng }
+              if (o.status !== 'delivered') {
+                pendingStopsList.push(pt)
+              } else {
+                lastDeliveredPos = pt
+              }
+            }
+          })
+
+          // (1) LINHA AZUL = ROTA OTIMIZADA:
+          // Indexar o traçado viário completo do lote por route_batch_key (deriveRouteBatchKey).
+          // Traçado completo: base oficial (-22.6977499, -43.2936013) -> clientes na sequência -> retorno à base oficial via fetchStreetRoute/OSRM.
+          // O traçado completo permanece desenhado até route_finished === true (fim do ciclo).
+          // REMOVIDO o forwardPoints = [] com pendentes zerados. PROIBIDO linha reta entre pins.
+          const batchKey = deriveRouteBatchKey(primaryOrder, undefined, item.courier.id)
+
+          // Sequência completa de paradas do lote (ordenadas por sequence)
+          const allBatchStops: LatLngPoint[] = []
+          activeRouteOrders.forEach((o) => {
+            const c = o.expand?.customer_id
+            const cleanPt = MapDataService.cleanCoords(c?.lat, c?.lng)
+            if (cleanPt) {
+              allBatchStops.push({ lat: cleanPt.lat, lng: cleanPt.lng })
+            }
+          })
+
+          // Hash estável baseado no lote e nos IDs/sequência das paradas
+          const batchRouteHash = `${batchKey}_${activeRouteOrders.map((o) => `${o.id}:${o.sequence}`).join(',')}`
+          const cached =
+            activeRoutesCacheRef.current.get(batchKey) ||
+            activeRoutesCacheRef.current.get(item.courier.id)
+
+          let forwardPoints: LatLngPoint[] = cached?.result?.forwardPoints || []
+          let returnPoints: LatLngPoint[] = cached?.result?.returnPoints || []
+
+          const needsFullGeometryCalculation =
+            !forwardPoints || forwardPoints.length < 2 || cached?.stopIdsHash !== batchRouteHash
+
+          if (needsFullGeometryCalculation) {
+            try {
+              // Perna de Ida: Base oficial -> Sequência de clientes do lote
+              // Se houver paradas de clientes: base oficial -> cliente 1 -> cliente 2 ... -> cliente N
+              if (allBatchStops.length > 0) {
+                const forwardWaypoints: LatLngPoint[] = [origin, ...allBatchStops]
+                const forwardSegments: LatLngPoint[] = []
+                let prevPt = forwardWaypoints[0]
+
+                for (let sIdx = 1; sIdx < forwardWaypoints.length; sIdx++) {
+                  const targetPt = forwardWaypoints[sIdx]
+                  try {
+                    const segRes = await fetchStreetRoute(prevPt, targetPt)
+                    if (segRes.coordinates.length >= 2) {
+                      if (forwardSegments.length > 0) {
+                        forwardSegments.push(...segRes.coordinates.slice(1))
+                      } else {
+                        forwardSegments.push(...segRes.coordinates)
+                      }
+                    } else {
+                      if (forwardSegments.length === 0) forwardSegments.push(prevPt)
+                      forwardSegments.push(targetPt)
+                    }
+                  } catch {
+                    if (forwardSegments.length === 0) forwardSegments.push(prevPt)
+                    forwardSegments.push(targetPt)
                   }
-                } else {
-                  if (forwardSegments.length === 0) forwardSegments.push(prevPoint)
-                  forwardSegments.push(targetPoint)
+                  prevPt = targetPt
                 }
-              } catch {
-                if (forwardSegments.length === 0) forwardSegments.push(prevPoint)
-                forwardSegments.push(targetPoint)
-              }
-              prevPoint = targetPoint
-            }
+                forwardPoints = forwardSegments.length >= 2 ? forwardSegments : forwardWaypoints
 
-            forwardPoints = forwardSegments.length >= 2 ? forwardSegments : activeWaypoints
-
-            // Perna de retorno: última pendente → returnBasePos
-            const lastPendingStop = pendingStopsList[pendingStopsList.length - 1]
-            try {
-              const retRes = await fetchStreetRoute(lastPendingStop, returnBasePos)
-              if (retRes.coordinates.length >= 2) {
-                returnPoints = retRes.coordinates
+                // Perna de Retorno: última parada do lote -> returnBasePos oficial viário
+                const lastStop = allBatchStops[allBatchStops.length - 1]
+                try {
+                  const retRes = await fetchStreetRoute(lastStop, returnBasePos)
+                  if (retRes.coordinates.length >= 2) {
+                    returnPoints = retRes.coordinates
+                  } else {
+                    returnPoints = [lastStop, returnBasePos]
+                  }
+                } catch {
+                  returnPoints = [lastStop, returnBasePos]
+                }
               } else {
-                returnPoints = [lastPendingStop, returnBasePos]
+                // Sem clientes pinados no lote: traçado direto base -> returnBasePos
+                try {
+                  const segRes = await fetchStreetRoute(origin, returnBasePos)
+                  forwardPoints =
+                    segRes.coordinates.length >= 2 ? segRes.coordinates : [origin, returnBasePos]
+                  returnPoints = forwardPoints
+                } catch {
+                  forwardPoints = [origin, returnBasePos]
+                  returnPoints = forwardPoints
+                }
               }
-            } catch {
-              returnPoints = [lastPendingStop, returnBasePos]
-            }
-          } else {
-            // Sem paradas pendentes: o entregador já cumpriu todas as entregas e deve retornar à base
-            // forwardPoints vazio (não há linha azul de cliente a cumprir)
-            // returnPoints: courierPos → returnBasePos viário (linha tracejada azul-claro #60A5FA)
-            forwardPoints = []
-            try {
-              const retRes = await fetchStreetRoute(courierPos, returnBasePos)
-              if (retRes.coordinates.length >= 2) {
-                returnPoints = retRes.coordinates
-              } else {
-                returnPoints = [courierPos, returnBasePos]
+            } catch (routeCalcErr) {
+              console.warn(
+                '[ControlTower] Erro ao calcular traçado viário completo do lote:',
+                routeCalcErr,
+              )
+              if (!forwardPoints || forwardPoints.length === 0) {
+                forwardPoints = [origin, ...allBatchStops, returnBasePos]
               }
-            } catch {
-              returnPoints = [courierPos, returnBasePos]
+              if (!returnPoints || returnPoints.length === 0) {
+                returnPoints = [allBatchStops[allBatchStops.length - 1] || origin, returnBasePos]
+              }
             }
           }
 
@@ -1774,12 +1807,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             courier: item.courier,
           }
 
-          // Salvar em cache
-          activeRoutesCacheRef.current.set(item.courier.id, {
+          // Salvar em cache indexado tanto por route_batch_key quanto pelo courierId
+          const cacheEntry = {
+            batchKey,
+            courierId: item.courier.id,
             courierPos,
-            stopIdsHash,
+            stopIdsHash: batchRouteHash,
             result: routeResult,
-          })
+          }
+          activeRoutesCacheRef.current.set(batchKey, cacheEntry)
+          activeRoutesCacheRef.current.set(item.courier.id, cacheEntry)
 
           return routeResult
         } catch {
@@ -2077,8 +2114,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const seqText = order.sequence ? `[#${order.sequence}] ` : ''
           const courierId = order.courier_id || courier?.id
           const courierColor = getCourierRouteColor(courierId)
-          // Cor do pin: entregue = verde #10B981 com tag ✓ [#seq], trânsito/pendente = laranja #FF6B35 ou cor do entregador
-          const pinColor = isDelivered ? '#10B981' : courierColor.stroke || '#FF6B35'
+          // Pins verde #10B981 entregue / laranja #FF6B35 pendente, na sequência (regra verbatim do dono)
+          const pinColor = isDelivered ? '#10B981' : '#FF6B35'
           const titlePrefix = isDelivered ? `✓ ${seqText}` : seqText
 
           list.push({
@@ -2240,17 +2277,51 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         const hasReturn = retPoints.length >= 2
         const rawRetPath = retPoints
 
-        const cleanDevCourier = MapDataService.cleanCoords(
-          routeData.courierPos?.lat,
-          routeData.courierPos?.lng,
-        )
-        const cleanDevNearest = MapDataService.cleanCoords(
-          routeData.nearestPointOnRoute?.lat,
-          routeData.nearestPointOnRoute?.lng,
-        )
-        const hasDev = Boolean(routeData.isDeviated && cleanDevCourier && cleanDevNearest)
-        const rawDevPath =
-          hasDev && cleanDevCourier && cleanDevNearest ? [cleanDevCourier, cleanDevNearest] : []
+        // (2) LINHA VERMELHA = CAMINHO REAL:
+        // Polyline vermelha contínua (#EF4444, weight 4, opacity 0.95) construída EXCLUSIVAMENTE
+        // dos pings gravados na coleção locations (user_id=courierId, created>=route_started_at,
+        // ordenados por +created, sanitizados via MapDataService.cleanCoords).
+        // PROIBIDO inventar caminho, interpolar pontos distantes com linha reta ou traçado fictício:
+        // onde não há pings, não há linha.
+        const routeStartTimeIso = routeData.order?.route_started_at
+        const routeStartMs = routeStartTimeIso ? new Date(routeStartTimeIso).getTime() : 0
+
+        const telemetryPings = locations
+          .filter((loc) => {
+            if (loc.user_id !== cId) return false
+            if (routeStartMs > 0) {
+              const pingTime = parseSafeTimestamp(loc.created || loc.updated)
+              if (pingTime > 0 && pingTime < routeStartMs) return false
+            }
+            return true
+          })
+          .sort(
+            (a, b) =>
+              parseSafeTimestamp(a.created || a.updated) -
+              parseSafeTimestamp(b.created || b.updated),
+          )
+
+        const rawDevPath: Array<{ lat: number; lng: number }> = []
+        telemetryPings.forEach((loc) => {
+          const cleanPt = MapDataService.cleanCoords(loc.lat, loc.lng)
+          if (cleanPt) {
+            // Evitar pontos duplicados idênticos consecutivos
+            const lastAdded = rawDevPath[rawDevPath.length - 1]
+            if (
+              !lastAdded ||
+              Math.abs(lastAdded.lat - cleanPt.lat) > 0.00001 ||
+              Math.abs(lastAdded.lng - cleanPt.lng) > 0.00001
+            ) {
+              rawDevPath.push(cleanPt)
+            }
+          }
+        })
+
+        // Atualizar cache de histórico de telemetria
+        courierTelemetryHistoryMapRef.current.set(cId, rawDevPath)
+
+        // Linha vermelha existe apenas se houver pelo menos 2 pings reais gravados
+        const hasDev = rawDevPath.length >= 2
 
         const courierColor = getCourierRouteColor(cId)
         let lines = activePolylinesMapRef.current.get(cId)
@@ -2265,16 +2336,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               lines.main = new win.google.maps.Polyline({
                 path: rawFPath,
                 geodesic: true,
-                strokeColor: courierColor.stroke,
-                strokeOpacity: 1.0,
-                strokeWeight: 6,
+                strokeColor: courierColor.stroke || '#2563EB',
+                strokeOpacity: 0.95,
+                strokeWeight: 5,
                 zIndex: 800,
                 map,
               })
               lines.inner = new win.google.maps.Polyline({
                 path: rawFPath,
                 geodesic: true,
-                strokeColor: courierColor.inner,
+                strokeColor: courierColor.inner || '#93C5FD',
                 strokeOpacity: 0.85,
                 strokeWeight: 2,
                 zIndex: 801,
@@ -2285,9 +2356,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               lines.main.setPath(rawFPath)
               try {
                 lines.main.setOptions({
-                  strokeColor: courierColor.stroke,
-                  strokeOpacity: 1.0,
-                  strokeWeight: 6,
+                  strokeColor: courierColor.stroke || '#2563EB',
+                  strokeOpacity: 0.95,
+                  strokeWeight: 5,
                   zIndex: 800,
                 })
               } catch {
@@ -2296,7 +2367,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               lines.inner?.setMap(map)
               lines.inner.setPath(rawFPath)
               try {
-                lines.inner.setOptions({ strokeColor: courierColor.inner, zIndex: 801 })
+                lines.inner.setOptions({
+                  strokeColor: courierColor.inner || '#93C5FD',
+                  zIndex: 801,
+                })
               } catch {
                 /* safe ignore */
               }
@@ -2315,8 +2389,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 lines.returnLeg = new win.google.maps.Polyline({
                   path: rawRetPath,
                   geodesic: true,
-                  strokeColor: '#60A5FA',
-                  strokeOpacity: 0.9,
+                  strokeColor: courierColor.returnLeg || '#60A5FA',
+                  strokeOpacity: 0.95,
                   strokeWeight: 5,
                   zIndex: 790,
                   icons: [
@@ -2332,8 +2406,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 lines.returnLeg.setPath(rawRetPath)
                 try {
                   lines.returnLeg.setOptions({
-                    strokeColor: '#60A5FA',
-                    strokeOpacity: 0.9,
+                    strokeColor: courierColor.returnLeg || '#60A5FA',
+                    strokeOpacity: 0.95,
                     strokeWeight: 5,
                     zIndex: 790,
                   })
@@ -2357,26 +2431,30 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 path: rawDevPath,
                 geodesic: true,
                 strokeColor: '#EF4444',
-                strokeOpacity: 1.0,
+                strokeOpacity: 0.95,
                 strokeWeight: 4,
-                icons: [
-                  {
-                    icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-                    offset: '0',
-                    repeat: '10px',
-                  },
-                ],
+                zIndex: 900,
                 map,
               })
             } else {
               lines.dev?.setMap(map)
               lines.dev.setPath(rawDevPath)
+              try {
+                lines.dev.setOptions({
+                  strokeColor: '#EF4444',
+                  strokeOpacity: 0.95,
+                  strokeWeight: 4,
+                  zIndex: 900,
+                })
+              } catch {
+                /* safe ignore */
+              }
             }
           } else if (lines.dev) {
             lines.dev?.setMap(null)
           }
-        } else if (hasForward || hasReturn) {
-          // Criar polylines pela primeira vez para este entregador (mesmo se só tiver perna de retorno)
+        } else if (hasForward || hasReturn || hasDev) {
+          // Criar polylines pela primeira vez para este entregador
           let mainPolyline: any = null
           let innerPolyline: any = null
 
@@ -2384,16 +2462,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             mainPolyline = new win.google.maps.Polyline({
               path: rawFPath,
               geodesic: true,
-              strokeColor: courierColor.stroke,
-              strokeOpacity: 1.0,
-              strokeWeight: 6,
+              strokeColor: courierColor.stroke || '#2563EB',
+              strokeOpacity: 0.95,
+              strokeWeight: 5,
               zIndex: 800,
               map,
             })
             innerPolyline = new win.google.maps.Polyline({
               path: rawFPath,
               geodesic: true,
-              strokeColor: courierColor.inner,
+              strokeColor: courierColor.inner || '#93C5FD',
               strokeOpacity: 0.85,
               strokeWeight: 2,
               zIndex: 801,
@@ -2410,8 +2488,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               returnPolyline = new win.google.maps.Polyline({
                 path: rawRetPath,
                 geodesic: true,
-                strokeColor: '#60A5FA',
-                strokeOpacity: 0.9,
+                strokeColor: courierColor.returnLeg || '#60A5FA',
+                strokeOpacity: 0.95,
                 strokeWeight: 5,
                 zIndex: 790,
                 icons: [
@@ -2436,15 +2514,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               path: rawDevPath,
               geodesic: true,
               strokeColor: '#EF4444',
-              strokeOpacity: 1.0,
+              strokeOpacity: 0.95,
               strokeWeight: 4,
-              icons: [
-                {
-                  icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-                  offset: '0',
-                  repeat: '10px',
-                },
-              ],
+              zIndex: 900,
               map,
             })
           }
@@ -3084,8 +3156,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
           const courierId = order.courier_id || order.expand?.courier_id?.id
           const courierColor = getCourierRouteColor(courierId)
-          // B3: entregue = verde #10B981, trânsito/pendente = laranja #FF6B35 ou cor do entregador
-          const pinColor = isDelivered ? '#10B981' : courierColor.stroke || '#FF6B35'
+          // Pins verde #10B981 entregue / laranja #FF6B35 pendente, na sequência (regra verbatim do dono)
+          const pinColor = isDelivered ? '#10B981' : '#FF6B35'
           const markerTitle = `${isDelivered ? '✓ Entregue' : '🏁 Destino'}: ${seqText}${cust?.name || 'Cliente'} (${order.tracking_code})${etaText}`
           const markerIcon = makeNativeCustomerSvg(
             cust?.name,
@@ -3699,26 +3771,53 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       )
 
       if (isDeviatedStrict) {
-        // LINHA VERMELHA do desvio: liga a posição atual do entregador ao ponto correspondente na rota azul
-        const rawDeviationPath = [courierPoint, nearest.nearestPoint]
-        const deviationPath = rawDeviationPath
-          .map((p) => toLatLngSegura(p.lat, p.lng))
-          .filter(Boolean) as { lat: number; lng: number }[]
+        // (2) LINHA VERMELHA = CAMINHO REAL:
+        // Polyline vermelha contínua (#EF4444, weight 4, opacity 0.95) construída EXCLUSIVAMENTE
+        // dos pings gravados na coleção locations (user_id=courierId, created>=route_started_at,
+        // ordenados por +created, sanitizados via MapDataService.cleanCoords).
+        // PROIBIDO inventar caminho ou linha reta: onde não há pings, não há linha.
+        const drawerRouteStartTime = selectedOrder.route_started_at
+          ? new Date(selectedOrder.route_started_at).getTime()
+          : 0
 
-        if (deviationPath.length >= 2) {
+        const drawerCourierPings = locations
+          .filter((loc) => {
+            if (loc.user_id !== courierData.courier.id) return false
+            if (drawerRouteStartTime > 0) {
+              const pingTime = parseSafeTimestamp(loc.created || loc.updated)
+              if (pingTime > 0 && pingTime < drawerRouteStartTime) return false
+            }
+            return true
+          })
+          .sort(
+            (a, b) =>
+              parseSafeTimestamp(a.created || a.updated) -
+              parseSafeTimestamp(b.created || b.updated),
+          )
+
+        const drawerCleanPings: Array<{ lat: number; lng: number }> = []
+        drawerCourierPings.forEach((loc) => {
+          const cleanPt = MapDataService.cleanCoords(loc.lat, loc.lng)
+          if (cleanPt) {
+            const lastAdded = drawerCleanPings[drawerCleanPings.length - 1]
+            if (
+              !lastAdded ||
+              Math.abs(lastAdded.lat - cleanPt.lat) > 0.00001 ||
+              Math.abs(lastAdded.lng - cleanPt.lng) > 0.00001
+            ) {
+              drawerCleanPings.push(cleanPt)
+            }
+          }
+        })
+
+        if (drawerCleanPings.length >= 2) {
           const deviationPolyline = new win.google.maps.Polyline({
-            path: deviationPath,
+            path: drawerCleanPings,
             geodesic: true,
-            strokeColor: '#EF4444', // LINHA VERMELHA DE DESVIO
-            strokeOpacity: 1,
+            strokeColor: '#EF4444', // LINHA VERMELHA DE TELEMETRIA REAL
+            strokeOpacity: 0.95,
             strokeWeight: 4,
-            icons: [
-              {
-                icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
-                offset: '0',
-                repeat: '10px',
-              },
-            ],
+            zIndex: 900,
           })
           deviationPolyline.setMap(miniMap)
           drawerDeviationPolylineRef.current = deviationPolyline
