@@ -1,9 +1,9 @@
 /// <reference path="../pb_data/types.d.ts" />
 
 /**
- * Hook de Fechamento Operacional das 20h (cron 23h UTC = 20h Brasília)
- * Identificador do Cron: 'daily_20h_closing_check'
- * Horário: 23:00 UTC (20:00 America/Sao_Paulo / Brasília) todos os dias.
+ * Hook de Fechamento Operacional das 21h30 (cron 00h30 UTC = 21h30 Brasília)
+ * Identificador do Cron: 'daily_21h30_closing_check'
+ * Horário: 00:30 UTC (21:30 America/Sao_Paulo / Brasília) todos os dias.
  *
  * Itens obrigatórios (B1, B2, B3):
  * (B1) Calcular cobertura de telemetria do dia por TEMPO ATIVO:
@@ -22,8 +22,8 @@
  * - Envio de e-mail ao admin na ordem oficial: notifications_email -> admin membro -> email comercial -> master/admin -> fallback.
  */
 
-cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
-  console.log('[daily_20h_closing_check] Iniciando fechamento das 20h (23h UTC)...')
+cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
+  console.log('[daily_21h30_closing_check] Iniciando fechamento das 21h30 (00h30 UTC)...')
 
   function getCivilDateSp(utcStr) {
     if (!utcStr) return null
@@ -121,23 +121,39 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
   }
 
   // 1. Ler app_settings para moto (30 km/L e R$ 6,49 conforme banco/config)
-  let motoConsumptionKml = 30.0
-  let motoFuelPrice = 6.49
-  try {
-    const settingsRec = $app.findFirstRecordByData('app_settings', 'key', 'global_settings')
-    if (settingsRec) {
-      const c = Number(
-        settingsRec.get('moto_consumption_kml') || settingsRec.get('fuel_consumption_kml'),
-      )
-      const p = Number(
-        settingsRec.get('moto_fuel_price') || settingsRec.get('fuel_price_per_liter'),
-      )
-      if (c > 0) motoConsumptionKml = c
-      if (p > 0) motoFuelPrice = p
+  // Suporte resiliente a chave opcional por base futura sem quebrar chave global
+  function getFuelParamsForBase(baseKey) {
+    let kml = 30.0
+    let price = 6.49
+    try {
+      let settingsRec = null
+      if (baseKey) {
+        try {
+          settingsRec = $app.findFirstRecordByData('app_settings', 'key', `settings_${baseKey}`)
+        } catch (_) {}
+      }
+      if (!settingsRec) {
+        settingsRec = $app.findFirstRecordByData('app_settings', 'key', 'global_settings')
+      }
+      if (settingsRec) {
+        const c = Number(
+          settingsRec.get('moto_consumption_kml') || settingsRec.get('fuel_consumption_kml'),
+        )
+        const p = Number(
+          settingsRec.get('moto_fuel_price') || settingsRec.get('fuel_price_per_liter'),
+        )
+        if (c > 0) kml = c
+        if (p > 0) price = p
+      }
+    } catch (eSettings) {
+      console.log('[daily_21h30_closing_check] Erro ao ler app_settings:', eSettings)
     }
-  } catch (eSettings) {
-    console.log('[daily_20h_closing_check] Erro ao ler app_settings:', eSettings)
+    return { kml, price }
   }
+
+  const globalFuel = getFuelParamsForBase()
+  let motoConsumptionKml = globalFuel.kml
+  let motoFuelPrice = globalFuel.price
 
   const now = new Date()
   const todaySp = getCivilDateSp(now.toISOString())
@@ -186,7 +202,7 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
         0,
       )
     } catch (eO) {
-      console.log(`[daily_20h_closing_check] Erro ao buscar pedidos de ${courierName}:`, eO)
+      console.log(`[daily_21h30_closing_check] Erro ao buscar pedidos de ${courierName}:`, eO)
       continue
     }
 
@@ -213,9 +229,8 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
 
     const batchKeys = Object.keys(batchMap)
     console.log(
-      `[daily_20h_closing_check] Entregador ${courierName}: ${orders.length} pedidos em ${batchKeys.length} lotes`,
+      `[daily_21h30_closing_check] Entregador ${courierName}: ${orders.length} pedidos em ${batchKeys.length} lotes`,
     )
-
     for (let bIdx = 0; bIdx < batchKeys.length; bIdx++) {
       const bKey = batchKeys[bIdx]
       const bOrders = batchMap[bKey]
@@ -229,6 +244,62 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
         bOrders[bOrders.length - 1].getString('actual_arrival') ||
         now.toISOString()
 
+      // Verificar flag de pings offline pendentes em qualquer pedido do lote ou audit_trail
+      let hasPendingOfflinePings = false
+      let pendingOfflinePingsCount = 0
+      for (let po = 0; po < bOrders.length; po++) {
+        const ord = bOrders[po]
+        const notes = (ord.getString('notes') || '').toLowerCase()
+        if (
+          notes.includes('pings_offline_pendentes') ||
+          notes.includes('ping offline pendente') ||
+          notes.includes('telemetria_pendente_flush')
+        ) {
+          hasPendingOfflinePings = true
+          const mCount = ord.getString('notes').match(/pings_pendentes:\s*(\d+)/i)
+          if (mCount) {
+            pendingOfflinePingsCount = Math.max(pendingOfflinePingsCount, parseInt(mCount[1], 10))
+          }
+        }
+      }
+
+      // Checar se há registro no audit_trail recente de pings pendentes para este lote
+      if (!hasPendingOfflinePings && auditCol) {
+        try {
+          const trailCheck = $app.findRecordsByFilter(
+            'audit_trail',
+            `courier_id = '${courierId}' && action = 'telemetria_pings_offline_pendentes' && metadata ~ '${bKey}'`,
+            '-created',
+            1,
+            0,
+          )
+          if (trailCheck && trailCheck.length > 0) {
+            hasPendingOfflinePings = true
+            const meta = trailCheck[0].get('metadata')
+            if (meta && meta.remaining_pings) {
+              pendingOfflinePingsCount = Number(meta.remaining_pings) || 1
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Buscar ocorrências macro de entregador (off_route_events) vinculadas a este route_batch_key
+      let courierMacros = []
+      try {
+        courierMacros = $app.findRecordsByFilter(
+          'off_route_events',
+          `courier_id = '${courierId}' && (notes ~ '${bKey}' || address ~ '${bKey}')`,
+          '-created',
+          10,
+          0,
+        )
+      } catch (eMacro) {
+        console.log(
+          `[daily_21h30_closing_check] Aviso ao buscar macros em off_route_events:`,
+          eMacro,
+        )
+      }
+
       // Buscar pings de telemetria no período
       let pings = []
       try {
@@ -240,7 +311,7 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
           0,
         )
       } catch (eLoc) {
-        console.log(`[daily_20h_closing_check] Erro ao buscar locations de ${bKey}:`, eLoc)
+        console.log(`[daily_21h30_closing_check] Erro ao buscar locations de ${bKey}:`, eLoc)
       }
 
       // (B1) Calcular cobertura por TEMPO ATIVO:
@@ -284,13 +355,211 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
         totalLegs > 0 ? Math.round((estimatedLegsCount / totalLegs) * 100) : 0
 
       // Análise dos alertas
-      const isSubMedido = hasTelemetry && telemetryCoveragePct < 90
+      // Divergência percentual entre realizado e planejado
+      let desvioPct = 0
+      if (viarioPlanejadoKm > 0 && telemetriaKm > viarioPlanejadoKm) {
+        desvioPct = Math.round(((telemetriaKm - viarioPlanejadoKm) / viarioPlanejadoKm) * 100)
+      } else if (telemetriaKm > 0 && viarioPlanejadoKm > telemetriaKm) {
+        desvioPct = Math.round(((viarioPlanejadoKm - telemetriaKm) / telemetriaKm) * 100)
+      }
+
+      const hasMacroOccurrence = courierMacros.length > 0
+      const isDeviatedOver20 = desvioPct > 20
+
+      const isSubMedido = hasTelemetry && telemetryCoveragePct < 90 && !hasPendingOfflinePings
       const hasExcessEstimatedLegs = estimatedLegsPct > 20
 
       console.log(
-        `[daily_20h_closing_check] Lote ${bKey}: pings=${actualPings}/${expectedPings} (${telemetryCoveragePct}%), ` +
-          `pernas_estimadas=${estimatedLegsCount}/${totalLegs} (${estimatedLegsPct}%), submedido=${isSubMedido}, inflado=${hasExcessEstimatedLegs}`,
+        `[daily_21h30_closing_check] Lote ${bKey}: pings=${actualPings}/${expectedPings} (${telemetryCoveragePct}%), ` +
+          `pernas_estimadas=${estimatedLegsCount}/${totalLegs} (${estimatedLegsPct}%), submedido=${isSubMedido}, pings_pendentes=${hasPendingOfflinePings}, macros=${courierMacros.length}, inflado=${hasExcessEstimatedLegs}`,
       )
+
+      // (G) SE HOUVER PINGS OFFLINE PENDENTES NO LOTE:
+      // NÃO carimbar 'KM SUB-MEDIDO'; emitir alerta separado 'PING OFFLINE PENDENTE' com contagem para triagem do admin
+      if (hasPendingOfflinePings) {
+        const recipient = resolveAdminEmail(companyId)
+        if (auditCol) {
+          try {
+            const auditRec = new Record(auditCol)
+            auditRec.set('user_id', '')
+            auditRec.set('collection', 'orders')
+            auditRec.set('record_id', firstOrd.id)
+            auditRec.set('courier_id', courierId)
+            auditRec.set('action', 'alerta_ping_offline_pendente')
+            auditRec.set('field', 'telemetria_buffer')
+            auditRec.set(
+              'old_value',
+              `Lote finalizado com ${pendingOfflinePingsCount || 'N'} pings offline retidos no aparelho`,
+            )
+            auditRec.set(
+              'new_value',
+              'Alerta emitido para triagem do admin: aguardar sync antes de carimbar sub-medido',
+            )
+            auditRec.set('timestamp', now.toISOString())
+            auditRec.set('metadata', {
+              system_trigger: true,
+              actor_name: 'Sistema',
+              alerta: 'PING OFFLINE PENDENTE',
+              route_batch_key: bKey,
+              courier_name: courierName,
+              pings_pendentes: pendingOfflinePingsCount,
+              triagem_admin_necessaria: true,
+            })
+            $app.save(auditRec)
+          } catch (eAudit) {
+            console.log(
+              `[daily_21h30_closing_check] Erro ao gravar audit_trail de pings pendentes:`,
+              eAudit,
+            )
+          }
+        }
+
+        try {
+          const mailer = $app.newMailClient()
+          const senderAddress =
+            ($app.settings().meta && $app.settings().meta.senderAddress) || 'no-reply@goskip.app'
+          const senderName =
+            ($app.settings().meta && $app.settings().meta.senderName) || 'Rotaly Gestão de Entregas'
+
+          const htmlMsg = `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #f97316; background: #fff7ed; border-radius: 8px;">
+              <h2 style="color: #c2410c; margin-top: 0;">⚠️ PING OFFLINE PENDENTE — Fechamento 21h30</h2>
+              <p>O entregador <strong>${courierName}</strong> concluiu o lote <code>${bKey}</code> com <strong>${pendingOfflinePingsCount || 'alguns'} pings de GPS retidos no buffer offline do celular</strong> (sem confirmação de envio).</p>
+              <p><strong>Ação da Triagem:</strong> O sistema NÃO carimbou o lote como 'KM SUB-MEDIDO' para não penalizar indevidamente o entregador. Solicite que o entregador abra o aplicativo com sinal de internet para descarregar o buffer antes da aprovação final.</p>
+              <ul style="font-size: 13px; color: #9a3412;">
+                <li>Pings registrados no servidor: ${actualPings}</li>
+                <li>Pings pendentes no aparelho: ${pendingOfflinePingsCount || '≥ 1'}</li>
+              </ul>
+              <p style="font-size: 13px; color: #7c2d12;">Fechamento diário automatizado Rotaly — ${todaySp}</p>
+            </div>
+          `
+
+          mailer.send({
+            from: { address: senderAddress, name: senderName },
+            to: [{ address: recipient.toEmail }],
+            subject: `[Rotaly Fechamento 21h30] PING OFFLINE PENDENTE: ${courierName} (${pendingOfflinePingsCount || 'pings'} retidos)`,
+            html: htmlMsg,
+          })
+        } catch (eMail) {
+          console.log(
+            `[daily_21h30_closing_check] Falha ao enviar e-mail PING OFFLINE PENDENTE:`,
+            eMail,
+          )
+        }
+      }
+
+      // (O) Lote com desvio >20% e ocorrência macro do entregador:
+      // PRÉ-PREENCHER justificativa no alerta ao admin ('Entregador sinalizou [ocorrência] às HH:MM') e marcar lote prioritário na triagem.
+      // PROIBIDO aprovar km automaticamente — aprovação manual no MENOR entre previsto e realizado (regra do dono).
+      if (isDeviatedOver20 && hasMacroOccurrence) {
+        const latestMacro = courierMacros[0]
+        const macroTimeStr = latestMacro.getString('created')
+          ? new Date(latestMacro.getString('created')).toLocaleTimeString('pt-BR', {
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZone: 'America/Sao_Paulo',
+            })
+          : 'HH:MM'
+        const macroType = latestMacro.getString('event_type') || 'desvio'
+        const macroNote = latestMacro.getString('notes') || latestMacro.getString('address') || ''
+        const macroDesc =
+          macroType === 'blitz_transito'
+            ? '🚦 Blitz/Trânsito'
+            : macroType === 'rua_bloqueada'
+              ? '❌ Rua Bloqueada'
+              : macroType === 'beco_a_pe'
+                ? '🏃 Beco a Pé'
+                : `Ocorrência (${macroNote || macroType})`
+
+        const prefilledJustification = `Entregador sinalizou ${macroDesc} às ${macroTimeStr}`
+        const recipient = resolveAdminEmail(companyId)
+
+        if (auditCol) {
+          try {
+            const auditRec = new Record(auditCol)
+            auditRec.set('user_id', '')
+            auditRec.set('collection', 'orders')
+            auditRec.set('record_id', firstOrd.id)
+            auditRec.set('courier_id', courierId)
+            auditRec.set('action', 'alerta_desvio_macro_entregador_triagem_prioritaria')
+            auditRec.set('field', 'km_desvio,macro_ocorrencia')
+            auditRec.set('old_value', `${desvioPct}% de desvio com macro registrada`)
+            auditRec.set(
+              'new_value',
+              `Triagem Prioritária. Justificativa pré-preenchida: "${prefilledJustification}". Aprovação manual no MENOR entre previsto e realizado.`,
+            )
+            auditRec.set('timestamp', now.toISOString())
+            auditRec.set('metadata', {
+              system_trigger: true,
+              actor_name: 'Sistema',
+              alerta: 'TRIAGEM PRIORITARIA DESVIO COM MACRO',
+              prioridade_triagem: 'alta',
+              route_batch_key: bKey,
+              courier_name: courierName,
+              desvio_pct: desvioPct,
+              km_viario_planejado: viarioPlanejadoKm,
+              km_telemetria: telemetriaKm,
+              km_aprovacao_regra_dono_menor: Math.min(viarioPlanejadoKm, telemetriaKm),
+              prefilled_justification: prefilledJustification,
+              macro_ocorrencia: macroDesc,
+              macro_horario: macroTimeStr,
+              aprovacao_automatica: false,
+              exige_aprovacao_manual_menor: true,
+            })
+            $app.save(auditRec)
+          } catch (eAudit) {
+            console.log(
+              `[daily_21h30_closing_check] Erro ao gravar audit_trail de macro e triagem prioritária:`,
+              eAudit,
+            )
+          }
+        }
+
+        try {
+          const mailer = $app.newMailClient()
+          const senderAddress =
+            ($app.settings().meta && $app.settings().meta.senderAddress) || 'no-reply@goskip.app'
+          const senderName =
+            ($app.settings().meta && $app.settings().meta.senderName) || 'Rotaly Gestão de Entregas'
+
+          const menorKm = Math.min(viarioPlanejadoKm, telemetriaKm)
+
+          const htmlMsg = `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 2px solid #ef4444; background: #fff; border-radius: 8px;">
+              <div style="background: #ef4444; color: white; padding: 8px 12px; border-radius: 4px; font-weight: bold; margin-bottom: 12px;">
+                🚨 TRIAGEM PRIORITÁRIA — Desvio &gt;20% com Macro do Entregador
+              </div>
+              <h3 style="color: #0f172a; margin-top: 0;">Lote: <code>${bKey}</code> · Entregador: <strong>${courierName}</strong></h3>
+              <p style="background: #f1f5f9; padding: 10px; border-left: 4px solid #0052cc; font-size: 14px;">
+                <strong>Justificativa Pré-preenchida:</strong><br/>
+                <em>"${prefilledJustification}"</em>
+              </p>
+              <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>Desvio Detectado:</strong></td><td style="padding: 8px; color: #dc2626; font-weight: bold;">+${desvioPct}%</td></tr>
+                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Viário Previsto:</strong></td><td style="padding: 8px;">${viarioPlanejadoKm.toFixed(1)} km</td></tr>
+                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Realizado (GPS):</strong></td><td style="padding: 8px;">${telemetriaKm.toFixed(1)} km</td></tr>
+                <tr style="border-bottom: 1px solid #cbd5e1; background: #fef2f2;"><td style="padding: 8px;"><strong>KM Sugerido (Regra do dono - Menor):</strong></td><td style="padding: 8px; font-weight: bold; color: #b91c1c;">${menorKm.toFixed(1)} km</td></tr>
+              </table>
+              <p style="color: #b91c1c; font-size: 13px; font-weight: bold;">
+                PROIBIDO aprovação automática: o admin deve revisar na Auditoria de KM e aprovar manualmente.
+              </p>
+              <p style="font-size: 12px; color: #64748b;">Fechamento diário 21h30 Rotaly — ${todaySp}</p>
+            </div>
+          `
+
+          mailer.send({
+            from: { address: senderAddress, name: senderName },
+            to: [{ address: recipient.toEmail }],
+            subject: `[Rotaly Fechamento 21h30 - PRIORITÁRIO] Desvio >20%: ${courierName} sinalizou ${macroDesc}`,
+            html: htmlMsg,
+          })
+        } catch (eMail) {
+          console.log(
+            `[daily_21h30_closing_check] Falha ao enviar e-mail de triagem prioritária:`,
+            eMail,
+          )
+        }
+      }
 
       // Se < 90% -> alerta 'KM SUB-MEDIDO' ao admin com km reconciliado
       // NUNCA aprovar automático acima da telemetria sem essa trilha
@@ -352,7 +621,7 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
 
           const htmlMsg = `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-              <h2 style="color: #dc2626; margin-top: 0;">⚠️ ALERTA: KM SUB-MEDIDO — Fechamento 20h</h2>
+              <h2 style="color: #dc2626; margin-top: 0;">⚠️ ALERTA: KM SUB-MEDIDO — Fechamento 21h30</h2>
               <p>O entregador <strong>${courierName}</strong> teve cobertura de GPS/telemetria abaixo de 90% no lote <code>${bKey}</code>.</p>
               <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
                 <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>Cobertura por Tempo Ativo:</strong></td><td style="padding: 8px; color: #dc2626;"><strong>${telemetryCoveragePct}%</strong> (${actualPings} de ${expectedPings} pings esperados a cada 30s)</td></tr>
@@ -369,15 +638,15 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
           mailer.send({
             from: { address: senderAddress, name: senderName },
             to: [{ address: recipient.toEmail }],
-            subject: `[Rotaly Fechamento 20h] ALERTA KM SUB-MEDIDO: ${courierName} (${telemetryCoveragePct}% cobertura)`,
+            subject: `[Rotaly Fechamento 21h30] ALERTA KM SUB-MEDIDO: ${courierName} (${telemetryCoveragePct}% cobertura)`,
             html: htmlMsg,
           })
           console.log(
-            `[daily_20h_closing_check] Alerta KM SUB-MEDIDO enviado para ${recipient.toEmail} sobre ${courierName}`,
+            `[daily_21h30_closing_check] Alerta KM SUB-MEDIDO enviado para ${recipient.toEmail} sobre ${courierName}`,
           )
         } catch (eMail) {
           console.log(
-            `[daily_20h_closing_check] Falha ao enviar e-mail KM SUB-MEDIDO para ${recipient.toEmail}:`,
+            `[daily_21h30_closing_check] Falha ao enviar e-mail KM SUB-MEDIDO para ${recipient.toEmail}:`,
             eMail,
           )
         }
@@ -412,7 +681,7 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
             $app.save(auditRec)
           } catch (eAudit) {
             console.log(
-              `[daily_20h_closing_check] Erro ao gravar audit_trail de pernas estimadas:`,
+              `[daily_21h30_closing_check] Erro ao gravar audit_trail de pernas estimadas:`,
               eAudit,
             )
           }
@@ -427,7 +696,7 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
 
           const htmlMsg = `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #fef08a; background: #fefce8; border-radius: 8px;">
-              <h2 style="color: #ca8a04; margin-top: 0;">⚠️ ROTA COM PERNAS ESTIMADAS — Fechamento 20h</h2>
+              <h2 style="color: #ca8a04; margin-top: 0;">⚠️ ROTA COM PERNAS ESTIMADAS — Fechamento 21h30</h2>
               <p>O lote <code>${bKey}</code> do entregador <strong>${courierName}</strong> possui <strong>${estimatedLegsPct}%</strong> de pernas calculadas com fator estimado (1.3x linha reta).</p>
               <p><strong>Atenção:</strong> O valor do combustível pode estar inflado devido a falha temporária no traçado viário OSRM/Google. Revise na Auditoria de KM.</p>
               <ul style="font-size: 13px; color: #713f12;">
@@ -442,15 +711,15 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
           mailer.send({
             from: { address: senderAddress, name: senderName },
             to: [{ address: recipient.toEmail }],
-            subject: `[Rotaly Fechamento 20h] ROTA COM PERNAS ESTIMADAS: ${courierName} (${estimatedLegsPct}% estimado)`,
+            subject: `[Rotaly Fechamento 21h30] ROTA COM PERNAS ESTIMADAS: ${courierName} (${estimatedLegsPct}% estimado)`,
             html: htmlMsg,
           })
           console.log(
-            `[daily_20h_closing_check] Alerta ROTA COM PERNAS ESTIMADAS enviado para ${recipient.toEmail}`,
+            `[daily_21h30_closing_check] Alerta ROTA COM PERNAS ESTIMADAS enviado para ${recipient.toEmail}`,
           )
         } catch (eMail) {
           console.log(
-            `[daily_20h_closing_check] Falha ao enviar e-mail de pernas estimadas:`,
+            `[daily_21h30_closing_check] Falha ao enviar e-mail de pernas estimadas:`,
             eMail,
           )
         }
@@ -458,11 +727,11 @@ cronAdd('daily_20h_closing_check', '0 23 * * *', () => {
     }
   }
 
-  console.log('[daily_20h_closing_check] Fechamento das 20h concluído com sucesso.')
+  console.log('[daily_21h30_closing_check] Fechamento das 21h30 concluído com sucesso.')
 })
 
-// Endpoint para acionar manualmente ou validar o fechamento das 20h
-routerAdd('POST', '/backend/v1/fechamento-20h/run-now', (c) => {
+// Endpoint para acionar manualmente ou validar o fechamento das 21h30
+routerAdd('POST', '/backend/v1/fechamento-21h30/run-now', (c) => {
   const authRecord =
     (typeof c.Auth === 'function' ? c.Auth() : null) || c.auth || c.get('authRecord')
   const role = authRecord ? authRecord.getString('role') : ''
@@ -471,8 +740,8 @@ routerAdd('POST', '/backend/v1/fechamento-20h/run-now', (c) => {
   }
   // Dispara o fechamento chamando diretamente
   console.log(
-    '[fechamento-20h/run-now] Disparo manual acionado pelo admin:',
+    '[fechamento-21h30/run-now] Disparo manual acionado pelo admin:',
     authRecord.getString('email'),
   )
-  return c.json(200, { success: true, message: 'Fechamento das 20h engatilhado com sucesso.' })
+  return c.json(200, { success: true, message: 'Fechamento das 21h30 engatilhado com sucesso.' })
 })

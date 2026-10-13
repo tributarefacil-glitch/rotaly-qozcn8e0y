@@ -116,18 +116,18 @@ export function extractLoteQuadra(text: string): ParsedLoteQuadra | null {
 
   if (!quadra && !lote) return null
 
-  // Limpa o texto original removendo o trecho de Lote/Quadra
+  // Limpa o texto original removendo APENAS o trecho de Lote/Quadra casado, NUNCA descartando o restante!
   let cleaned = raw
   if (matchedStr) {
     cleaned = cleaned.replace(matchedStr, ' ')
   }
-  // Remove menções residuais caso sobrou LT ou QD
+  // Remove menções residuais pontuais caso sobrou LT ou QD isolado
   cleaned = cleaned
     .replace(/(?:LT|LOTE)\s*[,.:]?\s*[0-9]+[A-Za-z]?/gi, ' ')
     .replace(/(?:QD|QUADRA|QDA)\s*[,.:]?\s*[0-9]+[A-Za-z]?/gi, ' ')
     .replace(/\s*,\s*,+/g, ',')
     .replace(/\s+/g, ' ')
-    .replace(/^[\s,./-]+|[\s,./-]+$/g, '')
+    .replace(/^[\s,./\-—–]+|[\s,./\-—–]+$/g, '')
     .trim()
 
   return {
@@ -210,11 +210,14 @@ export function normalizeCustomerAddressFields(params: {
   if (compMatch) {
     quadra = compMatch.quadra
     lote = compMatch.lote
+    // Preservar todo o texto excedente do complemento
     complement = compMatch.cleanedTextWithoutLoteQuadra || ''
     changed = true
   }
 
-  // 2. Verificar se há Qd/Lt na rua/logradouro (deve ser removido da rua!)
+  // 2. Verificar se há Qd/Lt na rua/logradouro
+  // Remove SOMENTE o trecho Qd/Lt da rua; qualquer descrição excedente na rua que não pertença ao nome da via
+  // deve ser preservada (se sobrar texto além do logradouro, pode ser apendado ou mantido)
   const streetMatch = extractLoteQuadra(street)
   if (streetMatch) {
     if (!quadra && streetMatch.quadra) quadra = streetMatch.quadra
@@ -223,17 +226,23 @@ export function normalizeCustomerAddressFields(params: {
     changed = true
   }
 
-  // 3. Verificar se há Qd/Lt no reference_point (ex: Gracielle 'lote 12 qd 41')
+  // 3. Verificar se há Qd/Lt no reference_point
+  // Item (H): extrair SOMENTE o padrão Qd/Lt; preservar TODO o excedente descritivo
+  // (ex.: 'Lt 12 Qd 4, ao lado do Mercado do Zé' -> 'ao lado do Mercado do Zé' não pode ser descartado!)
   const refMatch = extractLoteQuadra(referencePoint)
+  let refExcedente = ''
   if (refMatch) {
     if (!quadra && refMatch.quadra) quadra = refMatch.quadra
     if (!lote && refMatch.lote) lote = refMatch.lote
-    referencePoint = refMatch.cleanedTextWithoutLoteQuadra || ''
+    refExcedente = (refMatch.cleanedTextWithoutLoteQuadra || '').trim()
+    referencePoint = refExcedente
     changed = true
   }
 
-  // 4. Montar o complemento canônico
+  // 4. Montar o complemento canônico preservando integralmente o excedente
   if (quadra || lote) {
+    // Se o ponto de referência tinha texto descritivo e ficou vazio o reference_point,
+    // mantém no reference_point se houver, ou se o reference_point agora guarda o excedente puro, está preservado!
     const finalComplement = formatComplementWithLoteQuadra(quadra, lote, complement)
     if (finalComplement !== (params.complement || '').trim()) {
       changed = true

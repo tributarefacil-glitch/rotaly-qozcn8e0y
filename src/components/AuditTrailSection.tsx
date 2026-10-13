@@ -178,6 +178,42 @@ export const AuditTrailSection: React.FC<AuditTrailSectionProps> = ({
             Exclusão
           </Badge>
         )
+      case 'alerta_km_submedido':
+        return (
+          <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-bold text-[10px]">
+            ⚠️ KM Sub-Medido (21h30)
+          </Badge>
+        )
+      case 'alerta_ping_offline_pendente':
+        return (
+          <Badge className="bg-amber-100 text-amber-800 border-amber-300 font-bold text-[10px]">
+            ⚠️ Ping Offline Pendente (21h30)
+          </Badge>
+        )
+      case 'alerta_rota_com_pernas_estimadas':
+        return (
+          <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300 font-bold text-[10px]">
+            ⚠️ Pernas Estimadas (21h30)
+          </Badge>
+        )
+      case 'alerta_desvio_macro_entregador_triagem_prioritaria':
+        return (
+          <Badge className="bg-red-600 text-white font-bold text-[10px]">
+            🚨 Triagem Prioritária Macro (21h30)
+          </Badge>
+        )
+      case 'ocorrencia_macro_entregador':
+        return (
+          <Badge className="bg-indigo-100 text-indigo-800 border-indigo-300 font-bold text-[10px]">
+            🚦 Macro Entregador
+          </Badge>
+        )
+      case 'telemetria_pings_offline_pendentes':
+        return (
+          <Badge className="bg-orange-100 text-orange-800 border-orange-300 font-bold text-[10px]">
+            📡 Buffer Pendente
+          </Badge>
+        )
       default:
         return (
           <Badge variant="outline" className="text-[10px] uppercase font-mono">

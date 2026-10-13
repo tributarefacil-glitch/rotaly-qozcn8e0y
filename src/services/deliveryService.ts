@@ -2461,16 +2461,24 @@ export const deliveryService = {
   },
 
   // Helper para obter parâmetros de combustível de um determinado veículo/categoria
+  // Item (I): app_settings permanece global (base única Pilar): leitura tolerante a uma futura chave opcional por base sem quebrar chave global
   getVehicleFuelParams(
-    settings?: Partial<AppSettingsRecord> | null,
+    settings?: (Partial<AppSettingsRecord> & { base_key?: string; [k: string]: any }) | null,
     vehicleType?: string,
+    baseKey?: string,
   ): {
     pricePerLiter: number
     consumptionKml: number
     category: 'moto' | 'carro' | 'caminhao' | 'bicicleta'
   } {
     const category = this.normalizeVehicleCategory(vehicleType)
-    const baseFallbackPrice = settings?.fuel_price_per_liter || 6.49
+
+    // Resolução tolerante a chave específica por base se existir no futuro (ex.: settings_pilar, base_fuel_price_per_liter)
+    const effectiveBaseKey = baseKey || (settings as any)?.base_key
+    const baseSpecificPrice = effectiveBaseKey
+      ? (settings as any)?.[`price_${effectiveBaseKey}`]
+      : undefined
+    const baseFallbackPrice = baseSpecificPrice || settings?.fuel_price_per_liter || 6.49
 
     if (category === 'bicicleta') {
       return {
@@ -2483,24 +2491,48 @@ export const deliveryService = {
     if (category === 'carro') {
       return {
         category: 'carro',
-        pricePerLiter: settings?.carro_fuel_price || baseFallbackPrice,
-        consumptionKml: settings?.carro_consumption_kml || 12.0,
+        pricePerLiter:
+          (effectiveBaseKey && (settings as any)?.[`carro_fuel_price_${effectiveBaseKey}`]) ||
+          settings?.carro_fuel_price ||
+          baseFallbackPrice,
+        consumptionKml:
+          (effectiveBaseKey && (settings as any)?.[`carro_consumption_kml_${effectiveBaseKey}`]) ||
+          settings?.carro_consumption_kml ||
+          12.0,
       }
     }
 
     if (category === 'caminhao') {
       return {
         category: 'caminhao',
-        pricePerLiter: settings?.caminhao_fuel_price || baseFallbackPrice,
-        consumptionKml: settings?.caminhao_consumption_kml || 7.0,
+        pricePerLiter:
+          (effectiveBaseKey && (settings as any)?.[`caminhao_fuel_price_${effectiveBaseKey}`]) ||
+          settings?.caminhao_fuel_price ||
+          baseFallbackPrice,
+        consumptionKml:
+          (effectiveBaseKey &&
+            (settings as any)?.[`caminhao_consumption_kml_${effectiveBaseKey}`]) ||
+          settings?.caminhao_consumption_kml ||
+          7.0,
       }
     }
 
-    // Default moto: segue app_settings (ou taxa padrão 30 km/L e R$ 6,49 conforme regra do sistema)
+    // Default moto: segue app_settings tolerante a base (ou taxa padrão 30 km/L e R$ 6,49 conforme regra do sistema)
+    const motoPrice =
+      (effectiveBaseKey && (settings as any)?.[`moto_fuel_price_${effectiveBaseKey}`]) ||
+      settings?.moto_fuel_price ||
+      settings?.fuel_price_per_liter ||
+      6.49
+    const motoKml =
+      (effectiveBaseKey && (settings as any)?.[`moto_consumption_kml_${effectiveBaseKey}`]) ||
+      settings?.moto_consumption_kml ||
+      settings?.fuel_consumption_kml ||
+      30.0
+
     return {
       category: 'moto',
-      pricePerLiter: settings?.moto_fuel_price || settings?.fuel_price_per_liter || 6.49,
-      consumptionKml: settings?.moto_consumption_kml || settings?.fuel_consumption_kml || 30.0,
+      pricePerLiter: motoPrice,
+      consumptionKml: motoKml,
     }
   },
 
@@ -2936,6 +2968,8 @@ export const deliveryService = {
 
   // Finalizar a Rota Inteira ao Retornar à Base
   // Regra: "O APP DO ENTREGADOR PRECISA FINALIZAR CADA ENTREGA E NO FINAL DA BASE PONTO DE CHEGADA ELE FINALIZA ROTA INTEIRA. ELE SÓ RECEBE UMA NOVA ROTA QUANDO FINALIZAR A ROTA ATUAL."
+  // Item (G): Antes do fechamento, forçar offlineTelemetryBuffer.flush() com retries determinísticos até confirmar ou esgotar.
+  // Se sobrar ping não enviado: flag de pings pendentes no lote + registro em audit_trail (user_id='', actor_name='Sistema', metadata.system_trigger=true).
   async finishCourierRoute(
     courierId: string,
     orderIds?: string[],
@@ -2943,10 +2977,48 @@ export const deliveryService = {
       odometro_final?: number
       foto_odometro_final?: File | null
     },
-  ): Promise<{ success: boolean; updatedCount: number }> {
+    routeBatchKey?: string,
+  ): Promise<{ success: boolean; updatedCount: number; pendingPingsRemaining?: number }> {
     try {
       const now = new Date().toISOString()
       let ordersToUpdate: OrderRecord[] = []
+
+      // (G) FLUSH FORÇADO COM RETRIES DETERMINÍSTICOS (buffer REAL em IndexedDB/400 pings)
+      let remainingPings = 0
+      try {
+        const { offlineTelemetryBuffer } = await import('@/services/offlineTelemetryBuffer')
+        let flushSuccess = false
+        const maxRetries = 3
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const flushResult = await offlineTelemetryBuffer.flush(courierId)
+            remainingPings = flushResult.remaining
+            if (remainingPings === 0) {
+              flushSuccess = true
+              break
+            }
+          } catch (eFlush) {
+            console.warn(
+              `[deliveryService] Tentativa ${attempt} de flush antes de finalizar lote falhou:`,
+              eFlush,
+            )
+          }
+          if (attempt < maxRetries) {
+            // Pequeno intervalo determinístico antes da próxima tentativa
+            await new Promise((res) => setTimeout(res, 500 * attempt))
+          }
+        }
+
+        // Se após retries ainda restar pings no buffer offline
+        if (!flushSuccess && remainingPings > 0) {
+          console.warn(
+            `[deliveryService] Finalização de lote com ${remainingPings} pings offline retidos no buffer. Gravando flag e audit_trail.`,
+          )
+        }
+      } catch (eBuffer) {
+        console.warn('[deliveryService] Erro ao tentar forçar flush de telemetria:', eBuffer)
+      }
 
       if (orderIds && orderIds.length > 0) {
         const filter = orderIds.map((id) => `id='${id}'`).join(' || ')
@@ -2971,6 +3043,11 @@ export const deliveryService = {
         // Regra de ouro estrutural: NENHUMA parada não entregue pode ser marcada como delivered.
         // Paradas não confirmadas voltam para pending, courier_id: null, sequence: null,
         // route_released: false, route_started: false (mesma regra de devolução de cancelamento de rota).
+        const pendingNote =
+          remainingPings > 0
+            ? `${order.notes || ''} [pings_offline_pendentes: ${remainingPings}]`.trim()
+            : order.notes
+
         if (!isDelivered) {
           await pb.collection('orders').update(order.id, {
             courier_id: null,
@@ -2988,6 +3065,9 @@ export const deliveryService = {
             const formData = new FormData()
             formData.append('route_finished', 'true')
             formData.append('route_finished_at', now)
+            if (pendingNote) {
+              formData.append('notes', pendingNote)
+            }
             if (hasOdom) {
               formData.append('odometro_final', String(odomFinal))
               const odomInit = order.odometro_inicial || 0
@@ -3004,10 +3084,46 @@ export const deliveryService = {
             await pb.collection('orders').update(order.id, {
               route_finished: true,
               route_finished_at: now,
+              notes: pendingNote,
             })
           }
         }
         updatedCount++
+      }
+
+      // (G) Se sobrar ping não enviado: registro em audit_trail com user_id='', actor_name='Sistema', metadata.system_trigger=true
+      if (remainingPings > 0) {
+        try {
+          const bKey =
+            routeBatchKey ||
+            ordersToUpdate[0]?.route_batch_key ||
+            `batch_${courierId}_${now.slice(0, 10)}`
+          const firstOrdId = ordersToUpdate[0]?.id || ''
+          await pb.collection('audit_trail').create({
+            user_id: '',
+            collection: 'orders',
+            record_id: firstOrdId,
+            courier_id: courierId,
+            action: 'telemetria_pings_offline_pendentes',
+            field: 'telemetria_buffer',
+            old_value: `${remainingPings} pings retidos no buffer IndexedDB`,
+            new_value: 'Lote concluído com pings pendentes de sincronização',
+            timestamp: now,
+            metadata: {
+              system_trigger: true,
+              actor_name: 'Sistema',
+              alerta: 'PING OFFLINE PENDENTE',
+              route_batch_key: bKey,
+              remaining_pings: remainingPings,
+              note: 'Buffer de telemetria retido no aparelho do entregador após retries determinísticos',
+            },
+          })
+        } catch (eAudit) {
+          console.warn(
+            '[deliveryService] Falha ao registrar audit_trail de pings pendentes:',
+            eAudit,
+          )
+        }
       }
 
       // Liberar o entregador de volta para disponível ('active')
@@ -3019,7 +3135,7 @@ export const deliveryService = {
         console.warn('Não foi possível atualizar status do entregador para active:', userErr)
       }
 
-      return { success: true, updatedCount }
+      return { success: true, updatedCount, pendingPingsRemaining: remainingPings }
     } catch (err) {
       console.error('Error finishing courier route:', err)
       throw err

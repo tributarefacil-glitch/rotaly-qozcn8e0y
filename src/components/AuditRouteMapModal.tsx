@@ -66,6 +66,15 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
     return [...batchOrders].sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
   }, [batchOrders])
 
+  // Item (E2): pernas com origem 'estimada_1.3x' usam tolerância 120m em vez de 50m
+  const hasEstimatedLegs = useMemo(() => {
+    return sortedBatchOrders.some(
+      (o) =>
+        o.calculation_source === 'estimada_1.3x' ||
+        o.calculation_source === 'estimated_straight_line',
+    )
+  }, [sortedBatchOrders])
+
   // Identificar coordenadas da base e paradas de clientes sanitizadas
   const baseCoords: CleanCoords = useMemo(() => {
     const firstWithBase = sortedBatchOrders.find((o) => o.start_base_lat && o.start_base_lng)
@@ -374,8 +383,10 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
       // 3. PINGS REAIS DE TELEMETRIA DO LOTE:
       // Desenhados como segmentos entre pings consecutivos (ordenados por created).
       // Cada segmento colorido pela distância PERPENDICULAR do ping ao SEGMENTO mais próximo da rota planejada:
-      // ponto-segmento (pointToSegmentDistanceMeters): ≤50 m = verde #10B981, >50 m = vermelho #dc2626.
-      // Proibido interpolar traçado onde não há gravação de pings!
+      // Item (E2): pernas com origem 'estimada_1.3x' usam tolerância 120m em vez de 50m na coloração verde/vermelho dos segmentos.
+      // Pernas viárias normais mantêm 50m.
+      const deviationToleranceMeters = hasEstimatedLegs ? 120 : 50
+
       let onTrack = 0
       let deviated = 0
       let maxDevM = 0
@@ -413,10 +424,10 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
             maxDevM = Math.round(minPerpDistance)
           }
 
-          // Regra de estilo Vuupt:
-          // ≤50 m = verde #10B981
-          // >50 m = vermelho #dc2626
-          const isDeviatedSegment = minPerpDistance > 50
+          // Regra adaptativa Item (E2):
+          // Pernas com origem 'estimada_1.3x': tolerância 120m (≤120m = verde, >120m = vermelho)
+          // Pernas viárias normais: tolerância 50m (≤50m = verde, >50m = vermelho)
+          const isDeviatedSegment = minPerpDistance > deviationToleranceMeters
           if (isDeviatedSegment) {
             deviated++
           } else {
@@ -424,7 +435,6 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
           }
 
           const strokeColor = isDeviatedSegment ? '#dc2626' : '#10B981'
-
           const segPolyline = new winGoogle.maps.Polyline({
             path: [
               { lat: p1.lat, lng: p1.lng },
@@ -567,14 +577,30 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               {/* Segmento Verde */}
               <div className="flex items-center gap-1.5">
                 <span className="w-5 h-1.5 rounded-full bg-[#10B981] shadow-xs" />
-                <span className="font-semibold text-emerald-700">Seguiu o planejado (≤50m)</span>
+                <span className="font-semibold text-emerald-700">
+                  Seguiu o planejado ({hasEstimatedLegs ? '≤120m' : '≤50m'})
+                </span>
               </div>
 
               {/* Segmento Vermelho */}
               <div className="flex items-center gap-1.5">
                 <span className="w-5 h-1.5 rounded-full bg-[#dc2626] shadow-xs" />
-                <span className="font-semibold text-rose-700">Desvio do Entregador (&gt;50m)</span>
+                <span className="font-semibold text-rose-700">
+                  Desvio do Entregador ({hasEstimatedLegs ? '&gt;120m' : '&gt;50m'})
+                </span>
               </div>
+
+              {/* Entrada na Legenda Item (E2): Tolerância estendida (perna estimada) */}
+              {hasEstimatedLegs && (
+                <div className="flex items-center gap-1.5">
+                  <Badge
+                    variant="outline"
+                    className="border-amber-400 bg-amber-50 text-amber-800 text-[10px] font-bold py-0.5 px-2"
+                  >
+                    ⚡ Tolerância estendida (perna estimada: 120m)
+                  </Badge>
+                </div>
+              )}
 
               {/* Pin Base */}
               <div className="flex items-center gap-1">
@@ -655,7 +681,7 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
             </span>
             <span>•</span>
             <span>
-              Pings fora (&gt;50m):{' '}
+              Pings fora ({hasEstimatedLegs ? '&gt;120m' : '&gt;50m'}):{' '}
               <strong className="text-rose-700">{deviationStats.deviatedCount}</strong>
             </span>
             {deviationStats.maxDeviationMeters > 0 && (

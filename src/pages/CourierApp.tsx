@@ -102,6 +102,89 @@ export default function CourierApp() {
     lng?: number
   } | null>(null)
 
+  // Estado de envio das macros de ocorrência de 1 clique (Item O)
+  const [isSubmittingMacro, setIsSubmittingMacro] = useState<string | null>(null)
+
+  // Disparo de macro de ocorrência de 1 clique
+  const handleSendMacroOccurrence = async (
+    type: 'blitz_transito' | 'rua_bloqueada' | 'beco_a_pe',
+    label: string,
+  ) => {
+    if (!user?.id) {
+      toast.error('Entregador não identificado.')
+      return
+    }
+    const currentBatchKey =
+      currentRouteOrders[0]?.route_batch_key ||
+      orders[0]?.route_batch_key ||
+      `batch_${user.id}_${new Date().toISOString().slice(0, 10)}`
+
+    setIsSubmittingMacro(type)
+    try {
+      let lat = -22.6977499
+      let lng = -43.2936013
+      try {
+        const coords = await getUserGeolocation()
+        if (coords?.lat && coords?.lng) {
+          lat = coords.lat
+          lng = coords.lng
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+
+      const nowIso = new Date().toISOString()
+      const firstOrderId = currentRouteOrders[0]?.id || orders[0]?.id || ''
+
+      // Gravar na coleção off_route_events vinculando ao route_batch_key
+      await pb.collection('off_route_events').create({
+        courier_id: user.id,
+        order_id: firstOrderId,
+        event_type: type,
+        deviation_distance_meters: 0,
+        address: `Macro 1 clique: ${label} [lote: ${currentBatchKey}]`,
+        notes: `Sinalização do entregador: ${label} vinculada ao lote ${currentBatchKey}`,
+        location_lat: lat,
+        location_lng: lng,
+      })
+
+      // Gravar no audit_trail para trilha transparente
+      try {
+        await pb.collection('audit_trail').create({
+          user_id: user.id,
+          collection: 'off_route_events',
+          record_id: firstOrderId,
+          courier_id: user.id,
+          action: 'ocorrencia_macro_entregador',
+          field: 'event_type',
+          old_value: '',
+          new_value: label,
+          timestamp: nowIso,
+          metadata: {
+            system_trigger: false,
+            actor_name: user.name || user.email || 'Entregador',
+            route_batch_key: currentBatchKey,
+            macro_type: type,
+            lat,
+            lng,
+          },
+        })
+      } catch {
+        /* intentionally ignored */
+      }
+
+      toast.success(`✅ Ocorrência "${label}" registrada!`, {
+        description: 'Sua sinalização foi gravada para a triagem e fechamento das 21h30.',
+        duration: 5000,
+      })
+    } catch (err: any) {
+      console.warn('[CourierApp] Erro ao registrar macro:', err)
+      toast.error('Falha ao registrar ocorrência. Tente novamente.')
+    } finally {
+      setIsSubmittingMacro(null)
+    }
+  }
+
   // Alerta com Presença Forçada em Tela Cheia Vermelha (Bloco 1)
   const [forcedAlertOpen, setForcedAlertOpen] = useState(false)
   const [forcedAlertReason, setForcedAlertReason] = useState<ForcedPresenceReason>('off_route')
@@ -1679,8 +1762,33 @@ export default function CourierApp() {
 
     try {
       const orderIdsToFinish = currentRouteOrders.map((o) => o.id)
+      const currentBatchKey = currentRouteOrders[0]?.route_batch_key || ''
 
-      await deliveryService.finishCourierRoute(user.id, orderIdsToFinish)
+      // Forçar offlineTelemetryBuffer.flush() antes de finalizar rota
+      setIsFlushingBuffer(true)
+      isFlushingBufferRef.current = true
+      try {
+        await offlineTelemetryBuffer.flush(user.id)
+      } catch (eF) {
+        console.warn('[CourierApp] Tentativa inicial de flush antes de finalizar falhou:', eF)
+      } finally {
+        setIsFlushingBuffer(false)
+        isFlushingBufferRef.current = false
+      }
+
+      const finishResult = await deliveryService.finishCourierRoute(
+        user.id,
+        orderIdsToFinish,
+        undefined,
+        currentBatchKey,
+      )
+
+      if (finishResult.pendingPingsRemaining && finishResult.pendingPingsRemaining > 0) {
+        toast.warning(
+          `Aviso: ${finishResult.pendingPingsRemaining} pontos de GPS ficaram salvos no celular e serão sincronizados assim que tiver sinal estável.`,
+          { duration: 8000 },
+        )
+      }
 
       if (isAutomatic) {
         toast.success(
@@ -1815,6 +1923,46 @@ export default function CourierApp() {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* MACROS DE OCORRÊNCIA DE 1 CLIQUE (Item O) */}
+        {/* Barra com 3 botões rápidos: 🚦 Blitz/Trânsito, ❌ Rua Bloqueada, 🏃 Beco a Pé */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-md">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+            <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+              <span>⚡</span> Sinalizar Ocorrência (1 Clique)
+            </span>
+            <span className="text-[10px] text-slate-400 font-medium">Geolocalizado no lote</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              disabled={isSubmittingMacro !== null}
+              onClick={() => handleSendMacroOccurrence('blitz_transito', 'Blitz/Trânsito')}
+              className="flex flex-col items-center justify-center p-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center"
+            >
+              <span className="text-lg">🚦</span>
+              <span className="text-[11px] font-bold mt-0.5 leading-tight">Blitz/Trânsito</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSubmittingMacro !== null}
+              onClick={() => handleSendMacroOccurrence('rua_bloqueada', 'Rua Bloqueada')}
+              className="flex flex-col items-center justify-center p-2 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center"
+            >
+              <span className="text-lg">❌</span>
+              <span className="text-[11px] font-bold mt-0.5 leading-tight">Rua Bloqueada</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSubmittingMacro !== null}
+              onClick={() => handleSendMacroOccurrence('beco_a_pe', 'Beco a Pé')}
+              className="flex flex-col items-center justify-center p-2 rounded-xl border border-blue-300 bg-blue-50 hover:bg-blue-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center"
+            >
+              <span className="text-lg">🏃</span>
+              <span className="text-[11px] font-bold mt-0.5 leading-tight">Beco a Pé</span>
+            </button>
           </div>
         </div>
 
