@@ -49,6 +49,7 @@ import {
   OffRouteEventRecord,
   AppSettingsRecord,
   RouteKmApprovalRecord,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import {
@@ -115,6 +116,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
   // Estado de aprovações
   const [approvals, setApprovals] = useState<RouteKmApprovalRecord[]>([])
   const [isLoadingApprovals, setIsLoadingApprovals] = useState<boolean>(false)
+  const [batchTelemetryMap, setBatchTelemetryMap] = useState<
+    Map<string, RouteBatchTelemetryRecord>
+  >(new Map())
 
   // Modal de Aprovação / Ajuste de KM
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false)
@@ -255,6 +259,23 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       const data = await deliveryService.getRouteKmApprovals(currentCompanyId, options)
       setApprovals(data)
       await fetchPeriodOrders()
+
+      // Buscar registros canônicos de telemetria da tabela route_batch_telemetry
+      try {
+        const canonicalTelemList = await deliveryService.listRouteBatchTelemetry()
+        const telemMap = new Map<string, RouteBatchTelemetryRecord>()
+        canonicalTelemList.forEach((rec) => {
+          if (rec.route_batch_key) {
+            telemMap.set(rec.route_batch_key, rec)
+          }
+          if (rec.id) {
+            telemMap.set(rec.id, rec)
+          }
+        })
+        setBatchTelemetryMap(telemMap)
+      } catch (errTelem) {
+        console.warn('Erro ao carregar route_batch_telemetry:', errTelem)
+      }
     } catch (err) {
       console.warn('Erro ao carregar aprovações de KM:', err)
     } finally {
@@ -321,6 +342,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       gpsKm: number
       telemetryStatus?: 'suficiente' | 'insuficiente'
       telemetryPingsCount: number
+      hasRelevantGaps?: boolean
+      canonicalBatchTelem?: RouteBatchTelemetryRecord
       deviationMeters: number
       deviationTimeStr: string
       offRoadEventsCount: number
@@ -429,6 +452,15 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         const bKey = orderToBatchKey.get(order.id) || `single_${order.id}`
         const batchDisplay = getRouteBatchDisplay(order)
 
+        // REGRA DE TELEMETRIA CANÔNICA (MOTOR CANÔNICO DE TELEMETRIA - RODADA 2):
+        // Buscar registro gravado em route_batch_telemetry pelo servidor
+        const canonicalBatchTelem =
+          batchTelemetryMap.get(bKey) ||
+          (order.route_batch_key ? batchTelemetryMap.get(order.route_batch_key) : undefined) ||
+          ((order as any).batch_telemetry_id
+            ? batchTelemetryMap.get((order as any).batch_telemetry_id)
+            : undefined)
+
         // Buscar eventos de telemetria específicos deste trecho / pedido
         const orderEvents = offRouteEvents.filter(
           (ev) => ev.courier_id === courierId && ev.order_id === order.id,
@@ -484,6 +516,23 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         const roadKmOriginal = originalOrderMap.get(order.id) ?? calc.officialKm
         const officialAfterApprovalKm = calc.officialKm
 
+        // Motor Canônico: GPS gravado no lote
+        const canonicalGpsKm =
+          canonicalBatchTelem && typeof canonicalBatchTelem.km_gps_total === 'number'
+            ? canonicalBatchTelem.km_gps_total
+            : calc.totalGpsKm
+
+        const canonicalPingsCount =
+          canonicalBatchTelem && typeof canonicalBatchTelem.pings_count === 'number'
+            ? canonicalBatchTelem.pings_count
+            : (calc.telemetryPingsCount ?? 0)
+
+        const hasRelevantGaps = Boolean(
+          canonicalBatchTelem &&
+          canonicalBatchTelem.telemetry_gaps &&
+          canonicalBatchTelem.telemetry_gaps.length > 0,
+        )
+
         // Odômetro registrado no pedido ou lote
         let orderOdometerKm = 0
         if (typeof order.km_odometro === 'number' && order.km_odometro > 0) {
@@ -513,7 +562,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           approval?.status === 'pending' ||
           (isRedirected && !approval)
 
-        const diffGpsRoad = Math.abs(calc.totalGpsKm - roadKmOriginal)
+        const diffGpsRoad = Math.abs(canonicalGpsKm - roadKmOriginal)
 
         // REGRA DE TRIAGEM DE DIVERGÊNCIA SOLICITADA PELO USUÁRIO:
         // 1. Tolerância para ruído de arredondamento: 0.1 km
@@ -579,9 +628,15 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           batchKey: bKey,
           batchDisplay,
           roadKm: roadKmOriginal,
-          gpsKm: calc.totalGpsKm,
-          telemetryStatus: calc.telemetryStatus,
-          telemetryPingsCount: calc.telemetryPingsCount ?? 0,
+          gpsKm: canonicalGpsKm,
+          telemetryStatus: canonicalBatchTelem
+            ? hasRelevantGaps
+              ? 'insuficiente'
+              : 'suficiente'
+            : calc.telemetryStatus,
+          telemetryPingsCount: canonicalPingsCount,
+          hasRelevantGaps,
+          canonicalBatchTelem,
           deviationMeters: maxDevMeters,
           deviationTimeStr: devTimeStr,
           offRoadEventsCount: offRouteCount,
@@ -615,6 +670,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     settings,
     approvals,
     approvalsMap,
+    batchTelemetryMap,
   ])
 
   // Resumos globais do escopo (calculados considerando filtros de entregador/data/lote/busca,
@@ -1636,28 +1692,45 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna B: GPS Telemetria */}
-                        {/* REGRA OBRIGATÓRIA DA CORREÇÃO 2: */}
-                        {/* Coluna B mostra a soma haversine real do lote OU o rótulo "sem telemetria suficiente (N pings)" — NUNCA copiar Coluna A */}
+                        {/* Coluna B: GPS Telemetria (MOTOR CANÔNICO DE TELEMETRIA) */}
+                        {/* REGRA OBRIGATÓRIA: */}
+                        {/* Exibir km_gps_total gravado pelo motor para o lote; NUNCA copiar Coluna A. */}
+                        {/* Quando o lote tiver lacunas relevantes (telemetry_gaps não vazio), rotular a perna */}
+                        {/* "sem telemetria suficiente (N pings)" conforme os dados gravados. Comparação sempre lote×lote. */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
                             {(() => {
-                              const hasBatchGps =
-                                row.telemetryStatus === 'suficiente' &&
-                                typeof row.gpsKm === 'number' &&
-                                row.gpsKm > 0
+                              // Se tem lacunas relevantes gravadas pelo motor
+                              if (row.hasRelevantGaps) {
+                                return (
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <span className="font-mono text-sm font-bold text-amber-600">
+                                        {typeof row.gpsKm === 'number' && row.gpsKm > 0
+                                          ? `${row.gpsKm.toFixed(2)} km`
+                                          : '—'}
+                                      </span>
+                                    </div>
+                                    <span className="text-[9px] text-amber-700 font-semibold block">
+                                      sem telemetria suficiente ({row.telemetryPingsCount} pings)
+                                    </span>
+                                  </div>
+                                )
+                              }
+
+                              const hasBatchGps = typeof row.gpsKm === 'number' && row.gpsKm > 0
 
                               if (hasBatchGps) {
                                 return (
                                   <div className="flex items-center justify-center gap-1">
                                     <span className="font-mono text-sm font-black text-purple-700 dark:text-purple-300">
-                                      {row.gpsKm.toFixed(1)} km
+                                      {row.gpsKm.toFixed(2)} km
                                     </span>
                                     <Badge
                                       variant="outline"
                                       className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
                                     >
-                                      GPS Lote
+                                      GPS Canônico
                                     </Badge>
                                   </div>
                                 )
@@ -1681,15 +1754,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                         {/* Desvio %: Badge verde/neutro se ≤20%, vermelho com alerta se >20% */}
                         <td className="py-3 px-3 align-top text-center">
                           {(() => {
-                            const roadKm = row.roadKm || 0
-                            const gpsKm =
-                              typeof row.order.km_real_perna === 'number' &&
-                              Number.isFinite(row.order.km_real_perna) &&
-                              row.order.km_real_perna > 0
-                                ? row.order.km_real_perna
-                                : null
+                            // COMPARAÇÃO SEMPRE LOTE × LOTE (Regra do Motor Canônico de Telemetria):
+                            // Nunca comparar perna × lote. Se temos dados do lote (canonicalBatchTelem ou row.gpsKm do lote e roadKm do lote),
+                            // avalia lote × lote.
+                            const batchRoadKm =
+                              row.canonicalBatchTelem?.km_viario_total ?? row.roadKm ?? 0
+                            const batchGpsKm =
+                              row.canonicalBatchTelem?.km_gps_total ??
+                              (typeof row.gpsKm === 'number' && row.gpsKm > 0 ? row.gpsKm : null)
 
-                            if (gpsKm === null || roadKm <= 0) {
+                            if (batchGpsKm === null || batchRoadKm <= 0) {
                               return (
                                 <Badge
                                   variant="outline"
@@ -1700,7 +1774,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                               )
                             }
 
-                            const diffPct = Math.round((Math.abs(gpsKm - roadKm) / roadKm) * 100)
+                            const diffPct = Math.round(
+                              (Math.abs(batchGpsKm - batchRoadKm) / batchRoadKm) * 100,
+                            )
                             const isWithinTolerance = diffPct <= 20
 
                             return (
@@ -1735,7 +1811,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                           batchOrders:
                                             batchOrders.length > 0 ? batchOrders : [row.order],
                                           courier: row.courier,
-                                          divergenceKm: Math.abs(gpsKm - roadKm),
+                                          divergenceKm: Math.abs(batchGpsKm - batchRoadKm),
                                           divergencePct: diffPct,
                                         })
                                         setIsAuditMapModalOpen(true)

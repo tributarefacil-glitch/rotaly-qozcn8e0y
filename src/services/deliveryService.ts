@@ -5838,4 +5838,81 @@ export const deliveryService = {
       console.warn('[deliveryService] Falha silenciosa na validação preventiva de CEP:', err)
     }
   },
+
+  /**
+   * MOTOR CANÔNICO DE TELEMETRIA:
+   * Busca o registro canônico de telemetria processado no servidor para o lote (route_batch_key)
+   * Coleção: route_batch_telemetry
+   */
+  async getRouteBatchTelemetry(routeBatchKey: string): Promise<RouteBatchTelemetryRecord | null> {
+    if (!routeBatchKey) return null
+    try {
+      const rec = await pb
+        .collection('route_batch_telemetry')
+        .getFirstListItem<RouteBatchTelemetryRecord>(`route_batch_key = "${routeBatchKey}"`, {
+          expand: 'courier_id,empresa_id',
+        })
+      return rec
+    } catch (err: any) {
+      // Se não encontrou (404), retorna null sem estourar exceção
+      if (err?.status === 404) {
+        return null
+      }
+      console.warn('[deliveryService] Falha ao buscar route_batch_telemetry:', err)
+      return null
+    }
+  },
+
+  /**
+   * MOTOR CANÔNICO DE TELEMETRIA:
+   * Dispara o endpoint HTTP backend para reprocessar a telemetria canônica do lote sob demanda
+   * POST /backend/v1/telemetria-lote/processar
+   */
+  async reprocessRouteBatchTelemetry(routeBatchKey: string): Promise<{
+    success: boolean
+    data?: any
+    error?: string
+  }> {
+    if (!routeBatchKey) {
+      return { success: false, error: 'Chave de lote route_batch_key não informada' }
+    }
+    try {
+      const baseUrl = import.meta.env.VITE_POCKETBASE_URL || ''
+      const res = await pb.send('/backend/v1/telemetria-lote/processar', {
+        method: 'POST',
+        body: { route_batch_key: routeBatchKey },
+      })
+      return { success: true, data: res }
+    } catch (err: any) {
+      console.warn('[deliveryService] Falha ao acionar endpoint telemetria-lote/processar:', err)
+      return {
+        success: false,
+        error: err?.message || 'Falha ao reprocessar telemetria canônica do lote',
+      }
+    }
+  },
+
+  /**
+   * MOTOR CANÔNICO DE TELEMETRIA:
+   * Lista todos os registros de telemetria de lotes (ou filtrado por chaves)
+   */
+  async listRouteBatchTelemetry(batchKeys?: string[]): Promise<RouteBatchTelemetryRecord[]> {
+    try {
+      let filter = ''
+      if (batchKeys && batchKeys.length > 0) {
+        filter = batchKeys.map((k) => `route_batch_key = "${k}"`).join(' || ')
+      }
+      const records = await pb
+        .collection('route_batch_telemetry')
+        .getFullList<RouteBatchTelemetryRecord>({
+          filter: filter || undefined,
+          sort: '-created',
+          expand: 'courier_id,empresa_id',
+        })
+      return records
+    } catch (err) {
+      console.warn('[deliveryService] Falha ao listar route_batch_telemetry:', err)
+      return []
+    }
+  },
 }

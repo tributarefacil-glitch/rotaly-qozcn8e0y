@@ -8,12 +8,18 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Route, MapPin, AlertTriangle, CheckCircle2, RefreshCw, X } from 'lucide-react'
-import { OrderRecord, UserRecord, LocationRecord } from '@/types/delivery'
-import { MapDataService, CleanCoords, OFFICIAL_FALLBACK_BASE_COORDS } from '@/lib/mapDataService'
+import { Route, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react'
+import {
+  OrderRecord,
+  UserRecord,
+  LocationRecord,
+  RouteBatchTelemetryRecord,
+  TelemetryGap,
+  TelemetryDeviationSection,
+} from '@/types/delivery'
+import { MapDataService, CleanCoords } from '@/lib/mapDataService'
 import { loadGoogleMapsScript } from '@/lib/googleMaps'
 import { fetchStreetRoute, LatLngPoint } from '@/services/osrmRoutingService'
-import { pointToSegmentDistanceMeters } from '@/lib/telemetryKmEngine'
 import { safeSetMap, safeExtendBounds } from '@/lib/safeMapOps'
 import { deliveryService } from '@/services/deliveryService'
 
@@ -47,33 +53,15 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
 
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [loadingError, setLoadingError] = useState<string | null>(null)
+  const [isReprocessing, setIsReprocessing] = useState<boolean>(false)
+  const [telemetryRecord, setTelemetryRecord] = useState<RouteBatchTelemetryRecord | null>(null)
   const [telemetryPings, setTelemetryPings] = useState<LocationRecord[]>([])
   const [plannedRoutePoints, setPlannedRoutePoints] = useState<LatLngPoint[]>([])
-  const [deviationStats, setDeviationStats] = useState<{
-    totalPings: number
-    onTrackCount: number
-    deviatedCount: number
-    maxDeviationMeters: number
-  }>({
-    totalPings: 0,
-    onTrackCount: 0,
-    deviatedCount: 0,
-    maxDeviationMeters: 0,
-  })
 
   // Ordenar pedidos do lote por sequence
   const sortedBatchOrders = useMemo(() => {
     return [...batchOrders].sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
   }, [batchOrders])
-
-  // Item (E2): pernas com origem 'estimada_1.3x' usam tolerância 120m em vez de 50m
-  const hasEstimatedLegs = useMemo(() => {
-    return sortedBatchOrders.some(
-      (o) =>
-        o.calculation_source === 'estimada_1.3x' ||
-        o.calculation_source === 'estimated_straight_line',
-    )
-  }, [sortedBatchOrders])
 
   // Identificar coordenadas da base: sempre a Base Pilar (-22.6977499, -43.2936013) como origem oficial
   const baseCoords: CleanCoords = useMemo(() => {
@@ -100,22 +88,36 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
       return stops
     }, [sortedBatchOrders])
 
-  // Buscar pings reais de telemetria do lote
-  useEffect(() => {
-    if (!isOpen || !batchKey) return
-
-    let isMounted = true
+  // Carregar dados canônicos gravados em route_batch_telemetry
+  const loadCanonicalTelemetry = async () => {
+    if (!batchKey) return
     setIsLoading(true)
     setLoadingError(null)
 
-    const loadData = async () => {
-      try {
-        const courierId = courier?.id || sortedBatchOrders[0]?.courier_id
-        if (!courierId) {
-          throw new Error('Entregador não identificado para este lote.')
-        }
+    try {
+      // 1. Tentar ler registro canônico já processado no servidor pelo motor
+      let canonicalRec = await deliveryService.getRouteBatchTelemetry(batchKey)
 
-        // Determinar janela temporal do lote a partir dos pedidos
+      // Fallback: se os pedidos têm batch_telemetry_id gravado, tentar por id direto
+      if (!canonicalRec && sortedBatchOrders.length > 0) {
+        const orderWithTelemetry = sortedBatchOrders.find((o) => (o as any).batch_telemetry_id)
+        if (orderWithTelemetry && (orderWithTelemetry as any).batch_telemetry_id) {
+          try {
+            const byId = await deliveryService.getRouteBatchTelemetry(
+              (orderWithTelemetry as any).batch_telemetry_id,
+            )
+            if (byId) canonicalRec = byId
+          } catch {
+            /* intentionally ignored */
+          }
+        }
+      }
+
+      setTelemetryRecord(canonicalRec)
+
+      // 2. Buscar pings reais de telemetria apenas se o registro existir ou para desenhar traçado
+      const courierId = courier?.id || sortedBatchOrders[0]?.courier_id
+      if (courierId) {
         const startedTimes = sortedBatchOrders
           .map((o) => (o.route_started_at ? new Date(o.route_started_at).getTime() : 0))
           .filter((t) => t > 0)
@@ -143,18 +145,13 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               ? new Date(sortedBatchOrders[0].created).getTime() + 4 * 60 * 60 * 1000
               : Date.now()
 
-        // 1. Verificar pings de locations correspondentes ao entregador (courier_id / user_id)
-        // e janela temporal DO LOTE (não minutesWindow fixa)
-        const poolMatches = locationsPool.filter((loc) => {
+        let rawPings: LocationRecord[] = locationsPool.filter((loc) => {
           const locCourierId = (loc as any).courier_id || loc.user_id
           if (locCourierId !== courierId) return false
           const t = new Date(loc.created).getTime()
           return t >= startTs && t <= endTs
         })
 
-        let rawPings: LocationRecord[] = poolMatches
-
-        // Buscar no backend pela janela temporal exata DO LOTE (startTs a endTs)
         try {
           const startDate = new Date(startTs).toISOString()
           const endDate = new Date(endTs).toISOString()
@@ -164,7 +161,6 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
             endDate,
           )
           if (directLocs && directLocs.length > 0) {
-            // Unir pings do pool e do backend evitando duplicatas por id
             const existingIds = new Set(rawPings.map((p) => p.id))
             directLocs.forEach((dl) => {
               if (!existingIds.has(dl.id)) {
@@ -173,12 +169,10 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               }
             })
           }
-        } catch (fetchErr) {
-          console.warn('[AuditRouteMapModal] Erro ao buscar telemetria sob demanda:', fetchErr)
+        } catch {
+          /* intentionally ignored */
         }
 
-        // Sanitização e ordenação estrita em ordem cronológica (+created)
-        // Regras: descartar accuracy > 100m, saltos > 90 km/h, jitter < 12m em < 45s
         const chronologicalPings = [...rawPings].sort(
           (a, b) => new Date(a.created).getTime() - new Date(b.created).getTime(),
         )
@@ -187,112 +181,80 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
         for (const loc of chronologicalPings) {
           const clean = MapDataService.cleanCoords(loc.lat, loc.lng)
           if (!clean) continue
-
-          // Descartar accuracy > 100m
-          if (typeof loc.accuracy === 'number' && loc.accuracy > 100) {
-            continue
-          }
-
-          if (sanitizedPings.length === 0) {
-            sanitizedPings.push({
-              ...loc,
-              lat: clean.lat,
-              lng: clean.lng,
-            })
-            continue
-          }
-
-          const prev = sanitizedPings[sanitizedPings.length - 1]
-          const tPrev = new Date(prev.created).getTime()
-          const tCurr = new Date(loc.created).getTime()
-          const dtSeconds = Math.max(0.1, (tCurr - tPrev) / 1000)
-
-          const dx =
-            (clean.lng - prev.lng) * Math.cos((((clean.lat + prev.lat) / 2) * Math.PI) / 180)
-          const dy = clean.lat - prev.lat
-          const distMeters = Math.sqrt(dx * dx + dy * dy) * 111319.5
-
-          // Descartar jitter: < 12m em < 45s
-          if (distMeters < 12 && dtSeconds < 45) {
-            continue
-          }
-
-          // Descartar saltos > 90 km/h
-          const speedKmh = (distMeters / dtSeconds) * 3.6
-          if (speedKmh > 90 && !loc.offline_buffered) {
-            continue
-          }
-
+          if (typeof loc.accuracy === 'number' && loc.accuracy > 100) continue
           sanitizedPings.push({
             ...loc,
             lat: clean.lat,
             lng: clean.lng,
           })
         }
+        setTelemetryPings(sanitizedPings)
+      }
 
-        // 2. Traçado viário planejado completo da rota otimizada (partindo sempre da Base Pilar -22.6977499, -43.2936013):
-        // Base oficial Pilar -> Clientes na sequência otimizada -> Retorno à Base Pilar
-        const pilarBasePoint: LatLngPoint = { lat: baseCoords.lat, lng: baseCoords.lng }
-        const plannedWaypoints: LatLngPoint[] = [
-          pilarBasePoint,
-          ...clientStops.map((s) => ({ lat: s.coords.lat, lng: s.coords.lng })),
-        ]
+      // 3. Traçado viário planejado da rota otimizada (Base Pilar -> Clientes -> Volta à Base Pilar)
+      const pilarBasePoint: LatLngPoint = { lat: baseCoords.lat, lng: baseCoords.lng }
+      const plannedWaypoints: LatLngPoint[] = [
+        pilarBasePoint,
+        ...clientStops.map((s) => ({ lat: s.coords.lat, lng: s.coords.lng })),
+        pilarBasePoint, // Volta à base
+      ]
 
-        // Adicionar volta única à Base Pilar
-        plannedWaypoints.push(pilarBasePoint)
-
-        // Calcular traçado viário via fetchStreetRoute entre waypoints consecutivos
-        // Proibido traçar linha reta ou interpolar fallback reto entre pins! NUNCA fallback em linha reta.
-        const fullRoadSegments: LatLngPoint[] = []
-
-        if (plannedWaypoints.length >= 2) {
-          for (let i = 0; i < plannedWaypoints.length - 1; i++) {
-            const pFrom = plannedWaypoints[i]
-            const pTo = plannedWaypoints[i + 1]
-            try {
-              const leg = await fetchStreetRoute(pFrom, pTo)
-              // Apenas aceita geometria viária real de ruas; NUNCA fallback em linha reta
-              if (leg.isRealStreetRoute && leg.coordinates && leg.coordinates.length >= 2) {
-                if (fullRoadSegments.length > 0) {
-                  fullRoadSegments.push(...leg.coordinates.slice(1))
-                } else {
-                  fullRoadSegments.push(...leg.coordinates)
-                }
+      const fullRoadSegments: LatLngPoint[] = []
+      if (plannedWaypoints.length >= 2) {
+        for (let i = 0; i < plannedWaypoints.length - 1; i++) {
+          const pFrom = plannedWaypoints[i]
+          const pTo = plannedWaypoints[i + 1]
+          try {
+            const leg = await fetchStreetRoute(pFrom, pTo)
+            if (leg.isRealStreetRoute && leg.coordinates && leg.coordinates.length >= 2) {
+              if (fullRoadSegments.length > 0) {
+                fullRoadSegments.push(...leg.coordinates.slice(1))
+              } else {
+                fullRoadSegments.push(...leg.coordinates)
               }
-            } catch (errStreet) {
-              console.warn('[AuditRouteMapModal] Falha ao obter trecho viário OSRM:', errStreet)
-              // NUNCA fallback em linha reta: não adicionar coordenadas artificiais
             }
+          } catch {
+            /* intentionally ignored */
           }
         }
-
-        if (isMounted) {
-          setTelemetryPings(sanitizedPings)
-          setPlannedRoutePoints(fullRoadSegments)
-          setIsLoading(false)
-        }
-      } catch (err: any) {
-        console.warn('[AuditRouteMapModal] Erro ao carregar mapa de auditoria:', err)
-        if (isMounted) {
-          setLoadingError(err?.message || 'Falha ao carregar dados do lote para auditoria.')
-          setIsLoading(false)
-        }
       }
+      setPlannedRoutePoints(fullRoadSegments)
+    } catch (err: any) {
+      console.warn('[AuditRouteMapModal] Erro ao carregar dados:', err)
+      setLoadingError(err?.message || 'Falha ao carregar dados do lote.')
+    } finally {
+      setIsLoading(false)
     }
+  }
 
-    loadData()
+  useEffect(() => {
+    if (!isOpen || !batchKey) return
+    loadCanonicalTelemetry()
+  }, [isOpen, batchKey])
 
-    return () => {
-      isMounted = false
+  // Disparar reprocessamento pelo endpoint canônico
+  const handleReprocessBatch = async () => {
+    if (!batchKey || isReprocessing) return
+    setIsReprocessing(true)
+    try {
+      const res = await deliveryService.reprocessRouteBatchTelemetry(batchKey)
+      if (res.success) {
+        await loadCanonicalTelemetry()
+      } else {
+        setLoadingError(res.error || 'Falha ao processar lote no servidor')
+      }
+    } catch (err: any) {
+      setLoadingError(err?.message || 'Erro inesperado ao reprocessar lote')
+    } finally {
+      setIsReprocessing(false)
     }
-  }, [isOpen, batchKey, sortedBatchOrders, courier, baseCoords, clientStops, locationsPool])
+  }
 
-  // Inicializar e desenhar no Google Maps
+  // Renderizar o mapa Google Maps usando os dados canônicos
   useEffect(() => {
     if (!isOpen || isLoading || loadingError) return
-    // REGRA CRÍTICA DO PASSO 1: A rota viária OSRM (plannedRoutePoints >= 2) deve carregar ANTES de qualquer classificação.
-    // Enquanto não completa: aguardar rota planejada viária completa — sem classificar pings, sem calcular desvio.
-    if (plannedRoutePoints.length < 2 && clientStops.length > 0) return
+    // Se ainda está aguardando processamento no motor e não tem registro, não desenha mapa vazio de classificação
+    if (!telemetryRecord && !plannedRoutePoints.length) return
     if (!mapContainerRef.current) return
 
     let isDisposed = false
@@ -304,13 +266,12 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
       const winGoogle = (window as any).google
       if (!winGoogle?.maps) return
 
-      // Limpar polilinhas e marcadores anteriores
+      // Limpar objetos anteriores
       polylinesRef.current.forEach((poly) => safeSetMap(poly, null))
       polylinesRef.current = []
       markersRef.current.forEach((m) => safeSetMap(m, null))
       markersRef.current = []
 
-      // Criar instância do mapa se ainda não existir
       let map = mapInstanceRef.current
       if (!map) {
         map = new winGoogle.maps.Map(mapContainerRef.current, {
@@ -335,7 +296,7 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
       const bounds = new winGoogle.maps.LatLngBounds()
       let hasCoordsInBounds = false
 
-      // 1. PIN 🏠 BASE em (-22.6977499, -43.2936013) ou base do lote
+      // 1. PIN 🏠 BASE em (-22.6977499, -43.2936013)
       const baseClean = MapDataService.cleanCoords(baseCoords.lat, baseCoords.lng)
       if (baseClean) {
         const baseMarker = new winGoogle.maps.Marker({
@@ -390,11 +351,10 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
       if (plannedRoutePoints.length >= 2) {
         const plannedPath = plannedRoutePoints.map((pt) => ({ lat: pt.lat, lng: pt.lng }))
 
-        // Linha externa azul
         const plannedPolyline = new winGoogle.maps.Polyline({
           path: plannedPath,
           geodesic: false,
-          strokeColor: '#2563EB', // Azul #2563EB / #0052CC
+          strokeColor: '#2563EB', // Azul #2563EB
           strokeOpacity: 0.85,
           strokeWeight: 5,
           zIndex: 100,
@@ -402,7 +362,6 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
         })
         polylinesRef.current.push(plannedPolyline)
 
-        // Linha interna de destaque azul claro
         const innerPlannedPolyline = new winGoogle.maps.Polyline({
           path: plannedPath,
           geodesic: false,
@@ -418,70 +377,122 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
         hasCoordsInBounds = true
       }
 
-      // 3. PINGS REAIS DE TELEMETRIA DO LOTE:
-      // Desenhados como segmentos entre pings consecutivos (ordenados por created).
-      // REGRA CRÍTICA CORREÇÃO 1: Condicionar TODA classificação/cálculo de desvio à existência de plannedRoutePoints.length > 0 (e >= 2).
-      // Se não há rota viária planejada carregada, não calcula desvio nem rotula segmentos como no corredor ou fora.
-      const hasPlannedGeometry = plannedRoutePoints.length >= 2
-      const deviationToleranceMeters = hasEstimatedLegs ? 120 : 50
+      // 3. TRILHA REAL DO ENTREGADOR (LINHA VERMELHA) + LACUNAS COMO BURACO / TRACEJADO CINZA
+      // Se houver registro canônico route_batch_telemetry:
+      // Identificar intervalos de lacuna registrados em telemetry_gaps.
+      // Entre pings separados por lacuna (>90s): NUNCA linha contínua, desenhar tracejado cinza "lacuna de telemetria"
+      const recordedGaps: TelemetryGap[] = telemetryRecord?.telemetry_gaps || []
+      const recordedDeviations: TelemetryDeviationSection[] =
+        telemetryRecord?.deviation_classification || []
 
-      let onTrack = 0
-      let deviated = 0
-      let maxDevM = 0
+      function isGapBetween(t1Iso: string, t2Iso: string): TelemetryGap | undefined {
+        const ms1 = new Date(t1Iso).getTime()
+        const ms2 = new Date(t2Iso).getTime()
+        return recordedGaps.find((g) => {
+          const gStart = new Date(g.start_iso).getTime()
+          const gEnd = new Date(g.end_iso).getTime()
+          return (
+            (ms1 >= gStart - 2000 && ms2 <= gEnd + 2000) ||
+            Math.abs(ms2 - ms1) >= (g.duration_seconds - 5) * 1000
+          )
+        })
+      }
+
+      function isDeviatedTime(tIso: string): boolean {
+        const tMs = new Date(tIso).getTime()
+        return recordedDeviations.some((dev) => {
+          const sMs = new Date(dev.start_iso).getTime()
+          const eMs = new Date(dev.end_iso).getTime()
+          return tMs >= sMs && tMs <= eMs
+        })
+      }
 
       if (telemetryPings.length >= 2) {
         for (let i = 0; i < telemetryPings.length - 1; i++) {
           const p1 = telemetryPings[i]
           const p2 = telemetryPings[i + 1]
+          const t1 = new Date(p1.created).getTime()
+          const t2 = new Date(p2.created).getTime()
+          const dtSec = Math.max(0, (t2 - t1) / 1000)
 
-          let isDeviatedSegment = false
-          let strokeColor = '#94A3B8' // Neutro cinza se ainda sem geometria viária
+          const gapInfo =
+            isGapBetween(p1.created, p2.created) ||
+            (dtSec > 90 ? { duration_minutes: Math.round(dtSec / 60) } : null)
 
-          // Condiciona TODA classificação à existência de geometria planejada válida
-          if (hasPlannedGeometry) {
-            let minPerpDistance = Infinity
-            for (let rIdx = 0; rIdx < plannedRoutePoints.length - 1; rIdx++) {
-              const a = plannedRoutePoints[rIdx]
-              const b = plannedRoutePoints[rIdx + 1]
-              const dist = pointToSegmentDistanceMeters(p2.lat, p2.lng, a.lat, a.lng, b.lat, b.lng)
-              if (dist < minPerpDistance) {
-                minPerpDistance = dist
-              }
+          if (gapInfo) {
+            // LACUNA DE TELEMETRIA: DESENHADA COMO BURACO (tracejado cinza com rótulo, nunca linha reta sólida vermelha)
+            const lineSymbol = {
+              path: 'M 0,-1 0,1',
+              strokeOpacity: 0.8,
+              strokeColor: '#94A3B8',
+              scale: 3,
             }
+            const gapPolyline = new winGoogle.maps.Polyline({
+              path: [
+                { lat: p1.lat, lng: p1.lng },
+                { lat: p2.lat, lng: p2.lng },
+              ],
+              strokeOpacity: 0,
+              icons: [
+                {
+                  icon: lineSymbol,
+                  offset: '0',
+                  repeat: '15px',
+                },
+              ],
+              zIndex: 150,
+              map,
+            })
+            polylinesRef.current.push(gapPolyline)
 
-            if (minPerpDistance > maxDevM && Number.isFinite(minPerpDistance)) {
-              maxDevM = Math.round(minPerpDistance)
-            }
+            // Marcador visual de lacuna no ponto médio
+            const midLat = (p1.lat + p2.lat) / 2
+            const midLng = (p1.lng + p2.lng) / 2
+            const gapMarker = new winGoogle.maps.Marker({
+              position: { lat: midLat, lng: midLng },
+              map,
+              title: `Lacuna de Telemetria (~${gapInfo.duration_minutes || Math.round(dtSec / 60)} min sem sinal GPS)`,
+              zIndex: 300,
+              icon: {
+                url: `data:image/svg+xml;utf-8,${encodeURIComponent(`
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" fill="#F59E0B" stroke="#FFFFFF" stroke-width="2"/>
+                    <text x="12" y="16" font-size="12" font-family="sans-serif" font-weight="bold" text-anchor="middle" fill="#FFFFFF">⚠️</text>
+                  </svg>
+                `)}`,
+                scaledSize: new winGoogle.maps.Size(24, 24),
+                anchor: new winGoogle.maps.Point(12, 12),
+              },
+            })
+            markersRef.current.push(gapMarker)
+          } else {
+            // SEGMENTO REAL CONTÍNUO:
+            // Vermelho = pings reais cronológicos com desvio classificado pelo motor,
+            // ou verde se dentro do corredor canônico
+            const isOff = isDeviatedTime(p2.created)
+            const strokeColor = isOff ? '#DC2626' : '#10B981'
 
-            isDeviatedSegment = minPerpDistance > deviationToleranceMeters
-            if (isDeviatedSegment) {
-              deviated++
-            } else {
-              onTrack++
-            }
-            strokeColor = isDeviatedSegment ? '#dc2626' : '#10B981'
+            const segPolyline = new winGoogle.maps.Polyline({
+              path: [
+                { lat: p1.lat, lng: p1.lng },
+                { lat: p2.lat, lng: p2.lng },
+              ],
+              geodesic: false,
+              strokeColor,
+              strokeOpacity: 0.95,
+              strokeWeight: 4,
+              zIndex: 200,
+              map,
+            })
+            polylinesRef.current.push(segPolyline)
           }
-
-          const segPolyline = new winGoogle.maps.Polyline({
-            path: [
-              { lat: p1.lat, lng: p1.lng },
-              { lat: p2.lat, lng: p2.lng },
-            ],
-            geodesic: false,
-            strokeColor,
-            strokeOpacity: 0.95,
-            strokeWeight: 4,
-            zIndex: 200,
-            map,
-          })
-          polylinesRef.current.push(segPolyline)
 
           safeExtendBounds(bounds, p1)
           safeExtendBounds(bounds, p2)
           hasCoordsInBounds = true
         }
 
-        // Marcador do início do trajeto de telemetria
+        // Marcadores de início e fim da trilha
         const firstPing = telemetryPings[0]
         const lastPing = telemetryPings[telemetryPings.length - 1]
 
@@ -520,28 +531,8 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
           },
         })
         markersRef.current.push(endPingMarker)
-      } else if (telemetryPings.length === 1) {
-        // Apenas um ping isolado registrado
-        const single = telemetryPings[0]
-        const singleMarker = new winGoogle.maps.Marker({
-          position: { lat: single.lat, lng: single.lng },
-          map,
-          title: `Ping Telemetria: ${new Date(single.created).toLocaleTimeString('pt-BR')}`,
-          zIndex: 850,
-        })
-        markersRef.current.push(singleMarker)
-        safeExtendBounds(bounds, single)
-        hasCoordsInBounds = true
       }
 
-      setDeviationStats({
-        totalPings: telemetryPings.length,
-        onTrackCount: hasPlannedGeometry ? onTrack : 0,
-        deviatedCount: hasPlannedGeometry ? deviated : 0,
-        maxDeviationMeters: hasPlannedGeometry ? maxDevM : 0,
-      })
-
-      // Ajustar visualização do mapa para englobar toda a rota e pings
       if (hasCoordsInBounds && !bounds.isEmpty()) {
         try {
           map.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 })
@@ -560,7 +551,24 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
       markersRef.current.forEach((m) => safeSetMap(m, null))
       markersRef.current = []
     }
-  }, [isOpen, isLoading, loadingError, baseCoords, clientStops, plannedRoutePoints, telemetryPings])
+  }, [
+    isOpen,
+    isLoading,
+    loadingError,
+    baseCoords,
+    clientStops,
+    plannedRoutePoints,
+    telemetryPings,
+    telemetryRecord,
+  ])
+
+  const gapsCount = telemetryRecord?.gaps_count || telemetryRecord?.telemetry_gaps?.length || 0
+  const deviationsCount = telemetryRecord?.deviation_classification?.length || 0
+  const maxDevRecorded =
+    telemetryRecord?.deviation_classification?.reduce(
+      (m, d) => Math.max(m, d.max_deviation_meters || 0),
+      0,
+    ) || 0
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -572,11 +580,22 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               <div className="flex items-center gap-2">
                 <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <Route className="h-5 w-5 text-[#0052CC]" />
-                  Mapa de Auditoria de Desvio de Rota (Estilo Vuupt)
+                  Mapa de Auditoria Canônica de Desvio e Telemetria
                 </DialogTitle>
-                <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-mono font-bold text-xs">
-                  {divergencePct !== undefined ? `+${divergencePct}% desvio` : 'Desvio >20%'}
-                </Badge>
+                {telemetryRecord ? (
+                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono font-bold text-xs">
+                    Motor Canônico v0.0.444
+                  </Badge>
+                ) : (
+                  <Badge className="bg-amber-100 text-amber-800 border-amber-300 font-mono font-bold text-xs">
+                    Aguardando Processamento
+                  </Badge>
+                )}
+                {divergencePct !== undefined && (
+                  <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-mono font-bold text-xs">
+                    +{divergencePct}% desvio
+                  </Badge>
+                )}
               </div>
               <DialogDescription className="text-xs text-slate-500 mt-1">
                 Lote:{' '}
@@ -588,46 +607,67 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
                   {courier?.name || courier?.email || 'Entregador'}
                 </strong>{' '}
                 · {batchOrders.length} entregas
+                {telemetryRecord && (
+                  <span className="ml-2 font-mono text-slate-700">
+                    · <strong>{telemetryRecord.km_gps_total?.toFixed(2)} km</strong> GPS /{' '}
+                    <strong>{telemetryRecord.km_viario_total?.toFixed(2)} km</strong> viário
+                    (Oficial:{' '}
+                    <strong className="text-emerald-700">
+                      {telemetryRecord.km_oficial?.toFixed(2)} km
+                    </strong>
+                    )
+                  </span>
+                )}
               </DialogDescription>
+            </div>
+
+            {/* BOTÃO PARA DISPARAR ENDPOINT DE REPROCESSAMENTO SE NÃO PROCESSADO OU DESEJADO */}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleReprocessBatch}
+                disabled={isReprocessing}
+                className="h-8 text-xs font-semibold gap-1.5 border-slate-300 text-slate-700 hover:bg-slate-100"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${isReprocessing ? 'animate-spin text-[#0052CC]' : ''}`}
+                />
+                {isReprocessing ? 'Reprocessando...' : 'Reprocessar Lote'}
+              </Button>
             </div>
           </div>
 
-          {/* LEGENDA OBRIGATÓRIA ESTILO VUUPT */}
+          {/* LEGENDA OBRIGATÓRIA CANÔNICA */}
           <div className="mt-3 pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex flex-wrap items-center gap-4">
-              {/* Linha Azul */}
+              {/* Linha Azul = Rota Viária Planejada */}
               <div className="flex items-center gap-1.5">
                 <span className="w-5 h-1.5 rounded-full bg-[#2563EB] shadow-xs" />
-                <span className="font-semibold text-slate-700">Rota Otimizada Planejada</span>
+                <span className="font-semibold text-slate-700">Rota Viária Planejada (OSRM)</span>
               </div>
 
-              {/* Segmento Verde */}
+              {/* Segmento Verde = No Corredor */}
               <div className="flex items-center gap-1.5">
                 <span className="w-5 h-1.5 rounded-full bg-[#10B981] shadow-xs" />
-                <span className="font-semibold text-emerald-700">
-                  Seguiu o planejado ({hasEstimatedLegs ? '≤120m' : '≤50m'})
-                </span>
+                <span className="font-semibold text-emerald-700">Trilha no Corredor</span>
               </div>
 
-              {/* Segmento Vermelho */}
+              {/* Linha Vermelha = Pings Reais Cronológicos / Desvio */}
               <div className="flex items-center gap-1.5">
-                <span className="w-5 h-1.5 rounded-full bg-[#dc2626] shadow-xs" />
+                <span className="w-5 h-1.5 rounded-full bg-[#DC2626] shadow-xs" />
                 <span className="font-semibold text-rose-700">
-                  Desvio do Entregador ({hasEstimatedLegs ? '&gt;120m' : '&gt;50m'})
+                  Pings Reais Cronológicos / Desvio
                 </span>
               </div>
 
-              {/* Entrada na Legenda Item (E2): Tolerância estendida (perna estimada) */}
-              {hasEstimatedLegs && (
-                <div className="flex items-center gap-1.5">
-                  <Badge
-                    variant="outline"
-                    className="border-amber-400 bg-amber-50 text-amber-800 text-[10px] font-bold py-0.5 px-2"
-                  >
-                    ⚡ Tolerância estendida (perna estimada: 120m)
-                  </Badge>
-                </div>
-              )}
+              {/* Lacuna de Telemetria = Tracejado Cinza / Buraco */}
+              <div className="flex items-center gap-1.5">
+                <span className="w-5 h-1 border-b-2 border-dashed border-slate-400" />
+                <span className="font-semibold text-slate-600">
+                  Lacuna de Telemetria (sem sinal)
+                </span>
+              </div>
 
               {/* Pin Base */}
               <div className="flex items-center gap-1">
@@ -636,21 +676,25 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               </div>
             </div>
 
-            {/* Resumo de pings */}
+            {/* Resumo canônico gravado */}
             <div className="flex items-center gap-2 text-[11px] font-mono text-slate-500">
-              <span>{deviationStats.totalPings} pings GPS</span>
-              {isLoading || plannedRoutePoints.length < 2 ? (
-                <span className="text-amber-600 font-sans italic text-[11px]">
-                  aguardando rota planejada...
-                </span>
-              ) : deviationStats.deviatedCount > 0 ? (
+              <span>{telemetryRecord?.pings_count || telemetryPings.length} pings gravados</span>
+              {gapsCount > 0 && (
+                <Badge
+                  variant="outline"
+                  className="border-amber-300 text-amber-800 bg-amber-50 text-[10px] font-bold"
+                >
+                  ⚠️ {gapsCount} lacuna(s)
+                </Badge>
+              )}
+              {deviationsCount > 0 && (
                 <Badge
                   variant="outline"
                   className="border-rose-300 text-rose-700 bg-rose-50 text-[10px] font-bold"
                 >
-                  {deviationStats.deviatedCount} segmentos fora
+                  🚨 {deviationsCount} desvio(s) canônico(s)
                 </Badge>
-              ) : null}
+              )}
             </div>
           </div>
         </DialogHeader>
@@ -659,16 +703,44 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
         <div className="relative w-full h-[520px] bg-slate-100">
           <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-0" />
 
-          {/* ESTADO DE CARREGANDO / AGUARDANDO ROTA PLANEJADA */}
-          {(isLoading ||
-            (plannedRoutePoints.length < 2 && clientStops.length > 0 && !loadingError)) && (
+          {/* ESTADO DE CARREGANDO */}
+          {isLoading && (
             <div className="absolute inset-0 z-20 bg-white/85 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center">
               <RefreshCw className="h-8 w-8 text-[#0052CC] animate-spin mb-3" />
-              <p className="font-bold text-slate-800 text-sm">aguardando rota planejada...</p>
+              <p className="font-bold text-slate-800 text-sm">Carregando telemetria canônica...</p>
               <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                Carregando rota viária OSRM a partir da Base Pilar antes da classificação de
-                telemetria.
+                Lendo dados gravados pelo motor canônico do servidor para o lote.
               </p>
+            </div>
+          )}
+
+          {/* ESTADO: AGUARDANDO PROCESSAMENTO (NÃO RECALCULA LOCALMENTE) */}
+          {!isLoading && !loadingError && !telemetryRecord && (
+            <div className="absolute inset-0 z-20 bg-white/95 flex flex-col items-center justify-center p-6 text-center">
+              <AlertTriangle className="h-10 w-10 text-amber-500 mb-3" />
+              <h3 className="text-base font-bold text-slate-900">
+                Aguardando Processamento pelo Motor de Telemetria
+              </h3>
+              <p className="text-xs text-slate-600 mt-1 max-w-md">
+                Este lote ainda não possui registro processado na tabela canônica{' '}
+                <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-800">
+                  route_batch_telemetry
+                </code>
+                . O cálculo local foi desativado conforme especificação do motor canônico.
+              </p>
+              <div className="mt-4 flex items-center gap-3">
+                <Button
+                  onClick={handleReprocessBatch}
+                  disabled={isReprocessing}
+                  className="bg-[#0052CC] hover:bg-[#0043A8] text-white text-xs font-bold gap-2"
+                >
+                  <RefreshCw className={`h-4 w-4 ${isReprocessing ? 'animate-spin' : ''}`} />
+                  {isReprocessing ? 'Processando no Servidor...' : 'Processar Agora no Servidor'}
+                </Button>
+                <Button variant="outline" size="sm" onClick={onClose} className="text-xs">
+                  Fechar
+                </Button>
+              </div>
             </div>
           )}
 
@@ -683,58 +755,51 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               </Button>
             </div>
           )}
-
-          {/* AVISO QUANDO NÃO HÁ PINGS GRAVADOS (< 2 pings válidos) */}
-          {!isLoading && !loadingError && telemetryPings.length < 2 && (
-            <div className="absolute top-4 left-4 right-4 z-10 p-3 bg-amber-50/95 border border-amber-300 rounded-xl shadow-md text-xs text-amber-900 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-                <span>
-                  <strong>sem telemetria</strong>
-                  {telemetryPings.length === 1
-                    ? ' (apenas 1 ping gravado)'
-                    : ' suficiente (<2 pings)'}
-                  . Apenas a rota viária otimizada planejada (linha azul) está sendo exibida.
-                </span>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* RODAPÉ INFORMATIVO */}
         <div className="p-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-3 text-slate-600">
+          <div className="flex flex-wrap items-center gap-3 text-slate-600">
             <span>
               Entregas no lote: <strong>{batchOrders.length}</strong>
             </span>
             <span>•</span>
-            {isLoading || plannedRoutePoints.length < 2 ? (
-              <span className="text-amber-700 font-semibold italic">
-                aguardando rota planejada para calcular desvios...
-              </span>
-            ) : (
+            {telemetryRecord ? (
               <>
                 <span>
-                  Pings no corredor:{' '}
-                  <strong className="text-emerald-700">{deviationStats.onTrackCount}</strong>
+                  KM GPS Canônico:{' '}
+                  <strong className="text-purple-700">
+                    {telemetryRecord.km_gps_total?.toFixed(2)} km
+                  </strong>
                 </span>
                 <span>•</span>
                 <span>
-                  Pings fora ({hasEstimatedLegs ? '&gt;120m' : '&gt;50m'}):{' '}
-                  <strong className="text-rose-700">{deviationStats.deviatedCount}</strong>
+                  KM Viário:{' '}
+                  <strong className="text-blue-700">
+                    {telemetryRecord.km_viario_total?.toFixed(2)} km
+                  </strong>
                 </span>
-                {deviationStats.maxDeviationMeters > 0 && (
+                <span>•</span>
+                <span>
+                  KM Oficial:{' '}
+                  <strong className="text-emerald-700">
+                    {telemetryRecord.km_oficial?.toFixed(2)} km
+                  </strong>
+                </span>
+                {maxDevRecorded > 0 && (
                   <>
                     <span>•</span>
                     <span>
-                      Desvio máx:{' '}
-                      <strong className="text-rose-700">
-                        {deviationStats.maxDeviationMeters} m
-                      </strong>
+                      Desvio Máx Canônico:{' '}
+                      <strong className="text-rose-700">{maxDevRecorded} m</strong>
                     </span>
                   </>
                 )}
               </>
+            ) : (
+              <span className="text-amber-700 italic">
+                Aguardando registro de telemetria processado no servidor...
+              </span>
             )}
           </div>
 

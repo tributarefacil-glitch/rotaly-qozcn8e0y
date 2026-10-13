@@ -748,6 +748,69 @@ export interface PendingOfflineChatMessage {
   status: 'queued' | 'sending' | 'failed'
 }
 
+export interface TelemetryGap {
+  gap_index: number
+  start_iso: string
+  end_iso: string
+  duration_seconds: number
+  duration_minutes: number
+  prev_coords?: { lat: number; lng: number }
+  curr_coords?: { lat: number; lng: number }
+}
+
+export interface TelemetryDeviationSection {
+  start_iso: string
+  end_iso: string
+  max_deviation_meters: number
+  pings_count: number
+  start_coords?: { lat: number; lng: number }
+  end_coords?: { lat: number; lng: number }
+}
+
+export interface TelemetryLegData {
+  leg_index: number
+  from_name: string
+  to_name: string
+  order_id?: string | null
+  tracking_code?: string | null
+  km_viario: number
+  km_gps?: number
+  is_return: boolean
+  address?: string
+}
+
+export interface RouteBatchTelemetryRecord extends RecordModel {
+  route_batch_key: string
+  courier_id: string
+  empresa_id?: string
+  km_gps_total: number
+  km_viario_total: number
+  km_oficial: number
+  legs_data?: TelemetryLegData[]
+  telemetry_gaps?: TelemetryGap[]
+  gaps_count?: number
+  gaps_total_seconds?: number
+  deviation_classification?: TelemetryDeviationSection[]
+  return_to_base_data?: {
+    base_coords?: { lat: number; lng: number }
+    base_name?: string
+    km_viario_retorno?: number
+    km_gps_retorno?: number
+    contado_uma_vez?: boolean
+  }
+  pings_count?: number
+  first_ping_at?: string
+  last_ping_at?: string
+  route_started_at?: string
+  route_finished_at?: string
+  status?: 'processed' | 'yellow_flag' | 'blocked_admin_decision' | string
+  metadata?: Record<string, any>
+  expand?: {
+    courier_id?: UserRecord
+    empresa_id?: EmpresaRecord
+  }
+}
+
 export interface AuditTrailRecord {
   id: string
   collectionId?: string
