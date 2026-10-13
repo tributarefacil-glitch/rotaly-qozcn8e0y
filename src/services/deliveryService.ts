@@ -168,6 +168,10 @@ export function sanitizeLocationPayload(params: {
   return payload
 }
 
+// Cache compartilhado e deduplicação em voo para contagem de alertas de endereço (TTL 15s)
+const _alertsCountCache = new Map<string, { count: number; timestamp: number }>()
+const _alertsCountInFlight = new Map<string, Promise<number>>()
+
 export const deliveryService = {
   // Multi-tenant Empresas & Membros
   async getEmpresas(filter = '', sort = 'nome_razao_social') {
@@ -4723,38 +4727,35 @@ export const deliveryService = {
   /**
    * Obter a contagem de alertas pendentes para badges de navegação com cache compartilhado (in-flight dedupe + TTL 15s).
    */
-  private _alertsCountCache = new Map<string, { count: number; timestamp: number }>()
-  private _alertsCountInFlight = new Map<string, Promise<number>>()
-
   invalidateAddressAlertsCountCache() {
-    this._alertsCountCache.clear()
-    this._alertsCountInFlight.clear()
+    _alertsCountCache.clear()
+    _alertsCountInFlight.clear()
   },
 
   async getPendingAddressAlertsCount(empresaId?: string): Promise<number> {
     const key = empresaId || 'default'
     const now = Date.now()
-    const cached = this._alertsCountCache.get(key)
+    const cached = _alertsCountCache.get(key)
     if (cached && now - cached.timestamp < 15000) {
       return cached.count
     }
 
-    if (this._alertsCountInFlight.has(key)) {
-      return this._alertsCountInFlight.get(key)!
+    if (_alertsCountInFlight.has(key)) {
+      return _alertsCountInFlight.get(key)!
     }
 
     const promise = (async () => {
       try {
         const alerts = await this.getAddressAlerts({ empresaId, status: 'pendente' })
         const count = alerts.length
-        this._alertsCountCache.set(key, { count, timestamp: Date.now() })
+        _alertsCountCache.set(key, { count, timestamp: Date.now() })
         return count
       } finally {
-        this._alertsCountInFlight.delete(key)
+        _alertsCountInFlight.delete(key)
       }
     })()
 
-    this._alertsCountInFlight.set(key, promise)
+    _alertsCountInFlight.set(key, promise)
     return promise
   },
 

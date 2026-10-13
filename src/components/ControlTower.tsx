@@ -773,249 +773,257 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       setLastUpdated(new Date())
     }, 2500)
 
-    // Subscrição SEMPRE ativa para telemetria em tempo real
-    pb.collection('locations')
-      .subscribe('*', (e) => {
-        if (!isSubscribed) return
-        if (e.action === 'create' || e.action === 'update') {
-          const newLoc = e.record as unknown as LocationRecord
-          if (newLoc.user_id) {
-            // 1. Grava no buffer sem disparar setState de locations imediatamente
-            locationBufferRef.current.set(newLoc.user_id, newLoc)
-          }
-
-          // 2. Atualização imediata do pin no mapa nativo para movimento suave em tempo real
-          const cleanLoc = MapDataService.cleanCoords(newLoc?.lat, newLoc?.lng)
-          if (newLoc.user_id && cleanLoc) {
-            try {
-              const existingMarker = courierMarkersMapRef.current.get(newLoc.user_id)
-              if (existingMarker) {
-                const prevPos = existingMarker.getPosition()
-                if (prevPos) {
-                  const sLat = typeof prevPos.lat === 'function' ? prevPos.lat() : prevPos.lat
-                  const sLng = typeof prevPos.lng === 'function' ? prevPos.lng() : prevPos.lng
-                  const dLat = cleanLoc.lat - sLat
-                  const dLng = cleanLoc.lng - sLng
-                  if (Math.abs(dLat) > 0.00001 || Math.abs(dLng) > 0.00001) {
-                    const prevAnim = courierAnimFramesRef.current.get(newLoc.user_id)
-                    if (prevAnim) cancelAnimationFrame(prevAnim)
-                    const startT = performance.now()
-                    const dur = 700
-                    const step = (now: number) => {
-                      const el = now - startT
-                      const prog = Math.min(1, el / dur)
-                      try {
-                        existingMarker.setPosition({
-                          lat: sLat + dLat * prog,
-                          lng: sLng + dLng * prog,
-                        })
-                      } catch (err) {
-                        console.warn(
-                          '[ControlTower] Erro na interpolação de posição do entregador:',
-                          err,
-                        )
-                      }
-                      if (prog < 1) {
-                        const req = requestAnimationFrame(step)
-                        courierAnimFramesRef.current.set(newLoc.user_id, req)
-                      } else {
-                        try {
-                          existingMarker.setPosition({ lat: cleanLoc.lat, lng: cleanLoc.lng })
-                        } catch {
-                          /* safe ignore */
-                        }
-                        courierAnimFramesRef.current.delete(newLoc.user_id)
-                      }
-                    }
-                    const req = requestAnimationFrame(step)
-                    courierAnimFramesRef.current.set(newLoc.user_id, req)
-                  }
-                } else {
-                  try {
-                    existingMarker.setPosition({ lat: cleanLoc.lat, lng: cleanLoc.lng })
-                  } catch {
-                    /* safe ignore */
-                  }
-                }
-              }
-
-              // (1) Auto-follow suave se entregador ativo em rota estiver fora do campo de visão
-              if (mapInstance && isAutoFollow && !isDraggingRef.current && !isDrawerOpen) {
-                const winGoogle = typeof window !== 'undefined' ? (window as any).google : null
-                if (winGoogle?.maps?.LatLng) {
-                  try {
-                    const courierLatLng = new winGoogle.maps.LatLng(cleanLoc.lat, cleanLoc.lng)
-                    const bounds = mapInstance.getBounds?.()
-                    if (bounds && !bounds.contains(courierLatLng)) {
-                      safePanTo(mapInstance, cleanLoc)
-                    }
-                  } catch (err) {
-                    console.warn('[ControlTower] Erro no auto-follow do mapa:', err)
-                  }
-                }
-              }
-            } catch (err) {
-              console.warn('[ControlTower] Erro ao manipular marcador em realtime:', err)
+    // Subscrição a locations condicional: se o componente pai gerencia dados (SellerDashboard),
+    // ele já assina locations via useRealtime e repassa via propLocations. Subscrição autônoma
+    // só ativa quando a Torre opera isolada (AdminDashboard/sem pai).
+    if (shouldFetchAutonomously) {
+      pb.collection('locations')
+        .subscribe('*', (e) => {
+          if (!isSubscribed) return
+          if (e.action === 'create' || e.action === 'update') {
+            const newLoc = e.record as unknown as LocationRecord
+            if (newLoc.user_id) {
+              // 1. Grava no buffer sem disparar setState de locations imediatamente
+              locationBufferRef.current.set(newLoc.user_id, newLoc)
             }
-          }
-        }
-      })
-      .catch((err) => {
-        console.warn('Torre de Controle: erro subscrição locations:', err)
-      })
 
-    // Subscribe to orders (live delivery status updates & delivery alert)
-    pb.collection('orders')
-      .subscribe('*', (e) => {
-        if (!isSubscribed) return
-        const rec = e.record as unknown as OrderRecord
-
-        // Modo Empresa Única (Rotaly Operações): todos os pedidos pertencem à operação unificada
-
-        // Ao receber update com route_finished === true ou status === 'delivered':
-        // remover imediatamente o courier do cache de rotas ativas, remover polilinhas e expurgar de globalInTransitOrders
-        const isRouteFinished = Boolean(rec.route_finished)
-
-        const affectedCourierId = rec.courier_id
-
-        // REQUISITO DO DONO (1):
-        // REMOVER o delete do cache na entrega — o traçado viário azul permanece até route_finished === true.
-        // Apenas expurgar o cache quando o ciclo for finalizado (rec.route_finished === true).
-        if (affectedCourierId && rec.route_finished === true) {
-          const recBatchKey = deriveRouteBatchKey(rec, undefined, affectedCourierId)
-          activeRoutesCacheRef.current.delete(recBatchKey)
-          activeRoutesCacheRef.current.delete(affectedCourierId)
-          courierTelemetryHistoryMapRef.current.delete(affectedCourierId)
-
-          // Limpar notificações e alertas falsos associados ao entregador
-          const devKey = `dev-${affectedCourierId}-${rec.id}`
-          const stopKey = `stop-${affectedCourierId}`
-          const etaKey = `eta-${affectedCourierId}-${rec.id}`
-          notifiedEventsRef.current.delete(devKey)
-          notifiedEventsRef.current.delete(stopKey)
-          notifiedEventsRef.current.delete(etaKey)
-
-          // Disparar atualização imediata de estado
-          setLastUpdated(new Date())
-
-          // Remove polilinhas ativas no Google Maps nativo
-          const existingLines = activePolylinesMapRef.current.get(affectedCourierId)
-          if (existingLines) {
-            try {
-              existingLines.main?.setMap(null)
-              existingLines.inner?.setMap(null)
-              existingLines.returnLeg?.setMap(null)
-              existingLines.dev?.setMap(null)
-            } catch {
-              /* intentionally ignored */
-            }
-            activePolylinesMapRef.current.delete(affectedCourierId)
-          }
-          if (googlePolylinesRef.current && googlePolylinesRef.current.length > 0) {
-            googlePolylinesRef.current.forEach((p) => {
+            // 2. Atualização imediata do pin no mapa nativo para movimento suave em tempo real
+            const cleanLoc = MapDataService.cleanCoords(newLoc?.lat, newLoc?.lng)
+            if (newLoc.user_id && cleanLoc) {
               try {
-                p.setMap(null)
+                const existingMarker = courierMarkersMapRef.current.get(newLoc.user_id)
+                if (existingMarker) {
+                  const prevPos = existingMarker.getPosition()
+                  if (prevPos) {
+                    const sLat = typeof prevPos.lat === 'function' ? prevPos.lat() : prevPos.lat
+                    const sLng = typeof prevPos.lng === 'function' ? prevPos.lng() : prevPos.lng
+                    const dLat = cleanLoc.lat - sLat
+                    const dLng = cleanLoc.lng - sLng
+                    if (Math.abs(dLat) > 0.00001 || Math.abs(dLng) > 0.00001) {
+                      const prevAnim = courierAnimFramesRef.current.get(newLoc.user_id)
+                      if (prevAnim) cancelAnimationFrame(prevAnim)
+                      const startT = performance.now()
+                      const dur = 700
+                      const step = (now: number) => {
+                        const el = now - startT
+                        const prog = Math.min(1, el / dur)
+                        try {
+                          existingMarker.setPosition({
+                            lat: sLat + dLat * prog,
+                            lng: sLng + dLng * prog,
+                          })
+                        } catch (err) {
+                          console.warn(
+                            '[ControlTower] Erro na interpolação de posição do entregador:',
+                            err,
+                          )
+                        }
+                        if (prog < 1) {
+                          const req = requestAnimationFrame(step)
+                          courierAnimFramesRef.current.set(newLoc.user_id, req)
+                        } else {
+                          try {
+                            existingMarker.setPosition({ lat: cleanLoc.lat, lng: cleanLoc.lng })
+                          } catch {
+                            /* safe ignore */
+                          }
+                          courierAnimFramesRef.current.delete(newLoc.user_id)
+                        }
+                      }
+                      const req = requestAnimationFrame(step)
+                      courierAnimFramesRef.current.set(newLoc.user_id, req)
+                    }
+                  } else {
+                    try {
+                      existingMarker.setPosition({ lat: cleanLoc.lat, lng: cleanLoc.lng })
+                    } catch {
+                      /* safe ignore */
+                    }
+                  }
+                }
+
+                // (1) Auto-follow suave se entregador ativo em rota estiver fora do campo de visão
+                if (mapInstance && isAutoFollow && !isDraggingRef.current && !isDrawerOpen) {
+                  const winGoogle = typeof window !== 'undefined' ? (window as any).google : null
+                  if (winGoogle?.maps?.LatLng) {
+                    try {
+                      const courierLatLng = new winGoogle.maps.LatLng(cleanLoc.lat, cleanLoc.lng)
+                      const bounds = mapInstance.getBounds?.()
+                      if (bounds && !bounds.contains(courierLatLng)) {
+                        safePanTo(mapInstance, cleanLoc)
+                      }
+                    } catch (err) {
+                      console.warn('[ControlTower] Erro no auto-follow do mapa:', err)
+                    }
+                  }
+                }
+              } catch (err) {
+                console.warn('[ControlTower] Erro ao manipular marcador em realtime:', err)
+              }
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn('Torre de Controle: erro subscrição locations:', err)
+        })
+    }
+
+    // Subscrição a orders condicional: se o componente pai gerencia dados (SellerDashboard),
+    // ele já assina orders via useRealtime e repassa via initialOrders. Subscrição autônoma
+    // só ativa quando a Torre opera isolada (AdminDashboard/sem pai).
+    if (shouldFetchAutonomously) {
+      pb.collection('orders')
+        .subscribe('*', (e) => {
+          if (!isSubscribed) return
+          const rec = e.record as unknown as OrderRecord
+
+          // Modo Empresa Única (Rotaly Operações): todos os pedidos pertencem à operação unificada
+
+          // Ao receber update com route_finished === true ou status === 'delivered':
+          // remover imediatamente o courier do cache de rotas ativas, remover polilinhas e expurgar de globalInTransitOrders
+          const isRouteFinished = Boolean(rec.route_finished)
+
+          const affectedCourierId = rec.courier_id
+
+          // REQUISITO DO DONO (1):
+          // REMOVER o delete do cache na entrega — o traçado viário azul permanece até route_finished === true.
+          // Apenas expurgar o cache quando o ciclo for finalizado (rec.route_finished === true).
+          if (affectedCourierId && rec.route_finished === true) {
+            const recBatchKey = deriveRouteBatchKey(rec, undefined, affectedCourierId)
+            activeRoutesCacheRef.current.delete(recBatchKey)
+            activeRoutesCacheRef.current.delete(affectedCourierId)
+            courierTelemetryHistoryMapRef.current.delete(affectedCourierId)
+
+            // Limpar notificações e alertas falsos associados ao entregador
+            const devKey = `dev-${affectedCourierId}-${rec.id}`
+            const stopKey = `stop-${affectedCourierId}`
+            const etaKey = `eta-${affectedCourierId}-${rec.id}`
+            notifiedEventsRef.current.delete(devKey)
+            notifiedEventsRef.current.delete(stopKey)
+            notifiedEventsRef.current.delete(etaKey)
+
+            // Disparar atualização imediata de estado
+            setLastUpdated(new Date())
+
+            // Remove polilinhas ativas no Google Maps nativo
+            const existingLines = activePolylinesMapRef.current.get(affectedCourierId)
+            if (existingLines) {
+              try {
+                existingLines.main?.setMap(null)
+                existingLines.inner?.setMap(null)
+                existingLines.returnLeg?.setMap(null)
+                existingLines.dev?.setMap(null)
               } catch {
                 /* intentionally ignored */
               }
+              activePolylinesMapRef.current.delete(affectedCourierId)
+            }
+            if (googlePolylinesRef.current && googlePolylinesRef.current.length > 0) {
+              googlePolylinesRef.current.forEach((p) => {
+                try {
+                  p.setMap(null)
+                } catch {
+                  /* intentionally ignored */
+                }
+              })
+              googlePolylinesRef.current = []
+            }
+
+            // Remove o marcador animado do entregador no Google Maps nativo imediatamente
+            const courierMarker = courierMarkersMapRef.current.get(affectedCourierId)
+            if (courierMarker) {
+              try {
+                courierMarker.setMap(null)
+              } catch {
+                /* intentionally ignored */
+              }
+              courierMarkersMapRef.current.delete(affectedCourierId)
+            }
+            const animId = courierAnimFramesRef.current.get(affectedCourierId)
+            if (animId) {
+              cancelAnimationFrame(animId)
+              courierAnimFramesRef.current.delete(affectedCourierId)
+            }
+          } else if (affectedCourierId && rec.status === 'delivered') {
+            // Quando pedido vira delivered: NÃO deletar cache nem polilinhas!
+            // Limpa alertas pontuais de desvio/eta desta entrega concluída
+            const devKey = `dev-${affectedCourierId}-${rec.id}`
+            const etaKey = `eta-${affectedCourierId}-${rec.id}`
+            notifiedEventsRef.current.delete(devKey)
+            notifiedEventsRef.current.delete(etaKey)
+            setLastUpdated(new Date())
+          }
+
+          // Manter lista global de pedidos em trânsito sempre sincronizada (para todos os lojistas)
+          if (e.action === 'delete') {
+            setGlobalInTransitOrders((prev) => prev.filter((o) => o.id !== rec.id))
+          } else {
+            const isRecActiveRoute =
+              rec.route_started === true &&
+              rec.route_finished !== true &&
+              (rec.route_finished === false ||
+                rec.route_finished === null ||
+                rec.route_finished === undefined)
+
+            setGlobalInTransitOrders((prev) => {
+              if (isRouteFinished || !isRecActiveRoute) {
+                // Expurgar imediatamente o registro defasado
+                return prev.filter((o) => o.id !== rec.id)
+              }
+              const exists = prev.some((o) => o.id === rec.id)
+              return exists
+                ? prev.map((o) => (o.id === rec.id ? { ...o, ...rec } : o))
+                : [rec, ...prev]
             })
-            googlePolylinesRef.current = []
           }
 
-          // Remove o marcador animado do entregador no Google Maps nativo imediatamente
-          const courierMarker = courierMarkersMapRef.current.get(affectedCourierId)
-          if (courierMarker) {
-            try {
-              courierMarker.setMap(null)
-            } catch {
-              /* intentionally ignored */
-            }
-            courierMarkersMapRef.current.delete(affectedCourierId)
+          // Eventos de pedidos da empresa ativa da filial (aceitos sem amarrar em seller_id)
+          if (e.action === 'create') {
+            setOrders((prev) => [rec, ...prev])
+            setLastUpdated(new Date())
+          } else if (e.action === 'update') {
+            setOrders((prev) => {
+              const previousOrder = prev.find((o) => o.id === rec.id)
+              // Se o status mudou para 'delivered' em tempo real -> AVISO DE ENTREGA
+              if (rec.status === 'delivered' && previousOrder?.status !== 'delivered') {
+                const custName =
+                  rec.expand?.customer_id?.name ||
+                  previousOrder?.expand?.customer_id?.name ||
+                  'Cliente'
+                const courierName =
+                  rec.expand?.courier_id?.name ||
+                  previousOrder?.expand?.courier_id?.name ||
+                  'Entregador'
+
+                // Som de sucesso e banner visível
+                playRouteAlertSound()
+                toast({
+                  title: '🎉 ENTREGA CONCLUÍDA EM TEMPO REAL!',
+                  description: `${rec.tracking_code} • ${custName} finalizado por ${courierName}`,
+                })
+
+                setLatestDeliveredNotice({
+                  orderId: rec.id,
+                  trackingCode: rec.tracking_code,
+                  customerName: custName,
+                  courierName,
+                  timestamp: new Date(),
+                })
+              }
+              return prev.map((o) => (o.id === rec.id ? { ...o, ...rec } : o))
+            })
+            // If drawer is open on this order, refresh it
+            setSelectedOrder((curr) => (curr && curr.id === rec.id ? { ...curr, ...rec } : curr))
+            setLastUpdated(new Date())
+          } else if (e.action === 'delete') {
+            setOrders((prev) => prev.filter((o) => o.id !== rec.id))
+            setLastUpdated(new Date())
           }
-          const animId = courierAnimFramesRef.current.get(affectedCourierId)
-          if (animId) {
-            cancelAnimationFrame(animId)
-            courierAnimFramesRef.current.delete(affectedCourierId)
-          }
-        } else if (affectedCourierId && rec.status === 'delivered') {
-          // Quando pedido vira delivered: NÃO deletar cache nem polilinhas!
-          // Limpa alertas pontuais de desvio/eta desta entrega concluída
-          const devKey = `dev-${affectedCourierId}-${rec.id}`
-          const etaKey = `eta-${affectedCourierId}-${rec.id}`
-          notifiedEventsRef.current.delete(devKey)
-          notifiedEventsRef.current.delete(etaKey)
-          setLastUpdated(new Date())
-        }
-
-        // Manter lista global de pedidos em trânsito sempre sincronizada (para todos os lojistas)
-        if (e.action === 'delete') {
-          setGlobalInTransitOrders((prev) => prev.filter((o) => o.id !== rec.id))
-        } else {
-          const isRecActiveRoute =
-            rec.route_started === true &&
-            rec.route_finished !== true &&
-            (rec.route_finished === false ||
-              rec.route_finished === null ||
-              rec.route_finished === undefined)
-
-          setGlobalInTransitOrders((prev) => {
-            if (isRouteFinished || !isRecActiveRoute) {
-              // Expurgar imediatamente o registro defasado
-              return prev.filter((o) => o.id !== rec.id)
-            }
-            const exists = prev.some((o) => o.id === rec.id)
-            return exists
-              ? prev.map((o) => (o.id === rec.id ? { ...o, ...rec } : o))
-              : [rec, ...prev]
-          })
-        }
-
-        // Eventos de pedidos da empresa ativa da filial (aceitos sem amarrar em seller_id)
-        if (e.action === 'create') {
-          setOrders((prev) => [rec, ...prev])
-          setLastUpdated(new Date())
-        } else if (e.action === 'update') {
-          setOrders((prev) => {
-            const previousOrder = prev.find((o) => o.id === rec.id)
-            // Se o status mudou para 'delivered' em tempo real -> AVISO DE ENTREGA
-            if (rec.status === 'delivered' && previousOrder?.status !== 'delivered') {
-              const custName =
-                rec.expand?.customer_id?.name ||
-                previousOrder?.expand?.customer_id?.name ||
-                'Cliente'
-              const courierName =
-                rec.expand?.courier_id?.name ||
-                previousOrder?.expand?.courier_id?.name ||
-                'Entregador'
-
-              // Som de sucesso e banner visível
-              playRouteAlertSound()
-              toast({
-                title: '🎉 ENTREGA CONCLUÍDA EM TEMPO REAL!',
-                description: `${rec.tracking_code} • ${custName} finalizado por ${courierName}`,
-              })
-
-              setLatestDeliveredNotice({
-                orderId: rec.id,
-                trackingCode: rec.tracking_code,
-                customerName: custName,
-                courierName,
-                timestamp: new Date(),
-              })
-            }
-            return prev.map((o) => (o.id === rec.id ? { ...o, ...rec } : o))
-          })
-          // If drawer is open on this order, refresh it
-          setSelectedOrder((curr) => (curr && curr.id === rec.id ? { ...curr, ...rec } : curr))
-          setLastUpdated(new Date())
-        } else if (e.action === 'delete') {
-          setOrders((prev) => prev.filter((o) => o.id !== rec.id))
-          setLastUpdated(new Date())
-        }
-      })
-      .catch((err) => {
-        console.warn('Torre de Controle: erro subscrição orders:', err)
-      })
+        })
+        .catch((err) => {
+          console.warn('Torre de Controle: erro subscrição orders:', err)
+        })
+    }
 
     // Subscribe to off_route_events apenas se o pai NÃO forneceu
     if (!hasParentDeviations) {
@@ -1055,12 +1063,14 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       isSubscribed = false
       clearInterval(flushInterval)
       locationBufferRef.current.clear()
-      pb.collection('locations')
-        .unsubscribe('*')
-        .catch(() => {})
-      pb.collection('orders')
-        .unsubscribe('*')
-        .catch(() => {})
+      if (shouldFetchAutonomously) {
+        pb.collection('locations')
+          .unsubscribe('*')
+          .catch(() => {})
+        pb.collection('orders')
+          .unsubscribe('*')
+          .catch(() => {})
+      }
       if (!hasParentDeviations) {
         pb.collection('off_route_events')
           .unsubscribe('*')
@@ -1072,7 +1082,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           .catch(() => {})
       }
     }
-  }, [user?.id, user?.role, hasParentSettings, hasParentDeviations])
+  }, [user?.id, user?.role, hasParentSettings, hasParentDeviations, shouldFetchAutonomously])
 
   // Load Google Maps Script
   useEffect(() => {
