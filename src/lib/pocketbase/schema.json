@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-13T20:15:15.065Z",
+  "generatedAt": "2026-10-13T20:58:02.771Z",
   "collections": [
     {
       "name": "users",
@@ -703,6 +703,19 @@
           "type": "text",
           "required": false,
           "system": false
+        },
+        {
+          "name": "route_batch_key",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "batch_telemetry_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "route_batch_telemetry"
         }
       ],
       "indexes": [
@@ -2688,6 +2701,155 @@
         "CREATE INDEX idx_chat_messages_recipient_created ON chat_messages (recipient_id, created DESC)",
         "CREATE INDEX idx_chat_messages_pair ON chat_messages (sender_id, recipient_id, created DESC)",
         "CREATE INDEX idx_chat_messages_unread ON chat_messages (recipient_id, read_at)"
+      ]
+    },
+    {
+      "name": "route_batch_telemetry",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "route_batch_key",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "km_gps_total",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "km_viario_total",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "km_oficial",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "legs_data",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "telemetry_gaps",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gaps_count",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gaps_total_seconds",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "deviation_classification",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "return_to_base_data",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "pings_count",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "first_ping_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_ping_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "route_started_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "route_finished_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["processed", "yellow_flag", "blocked_admin_decision"]
+        },
+        {
+          "name": "metadata",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_batch_telemetry_key ON route_batch_telemetry (route_batch_key)",
+        "CREATE INDEX idx_batch_telemetry_courier ON route_batch_telemetry (courier_id, created DESC)",
+        "CREATE INDEX idx_batch_telemetry_created ON route_batch_telemetry (created DESC)"
       ]
     }
   ]

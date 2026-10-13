@@ -277,6 +277,8 @@ export interface OrderRecord extends RecordModel {
   return_trip_km?: number
   total_route_with_return_km?: number
   total_route_fuel_cost?: number
+  route_batch_key?: string
+  batch_telemetry_id?: string
   // Campos de Odômetro Físico (Prioridade 1 de Cálculo)
   odometro_inicial?: number
   odometro_final?: number
@@ -599,6 +601,72 @@ export interface AddressAlertRecord {
 
 export type RouteKmApprovalStatus = 'approved' | 'rejected' | 'pending'
 export type RouteKmApprovalType = 'manual_deviation' | 'redirection_auto' | 'redirection_manual'
+
+export interface RouteBatchTelemetryGap {
+  gap_index: number
+  start_iso: string
+  end_iso: string
+  duration_seconds: number
+  duration_minutes: number
+  prev_coords?: { lat: number; lng: number }
+  curr_coords?: { lat: number; lng: number }
+}
+
+export interface RouteBatchTelemetryLeg {
+  leg_index: number
+  from_name: string
+  to_name: string
+  order_id: string | null
+  tracking_code: string | null
+  km_viario: number
+  km_gps?: number
+  is_return: boolean
+}
+
+export interface RouteBatchDeviationSection {
+  start_iso: string
+  end_iso: string
+  max_deviation_meters: number
+  pings_count: number
+  start_coords: { lat: number; lng: number }
+  end_coords: { lat: number; lng: number }
+}
+
+export interface RouteBatchReturnToBase {
+  base_coords: { lat: number; lng: number }
+  base_name: string
+  km_viario_retorno: number
+  km_gps_retorno?: number
+  contado_uma_vez: boolean
+}
+
+export interface RouteBatchTelemetryRecord extends RecordModel {
+  route_batch_key: string
+  courier_id: string
+  empresa_id?: string
+  km_gps_total?: number
+  km_viario_total?: number
+  km_oficial?: number
+  legs_data?: RouteBatchTelemetryLeg[]
+  telemetry_gaps?: RouteBatchTelemetryGap[]
+  gaps_count?: number
+  gaps_total_seconds?: number
+  deviation_classification?: RouteBatchDeviationSection[]
+  return_to_base_data?: RouteBatchReturnToBase
+  pings_count?: number
+  first_ping_at?: string
+  last_ping_at?: string
+  route_started_at?: string
+  route_finished_at?: string
+  status?: 'processed' | 'yellow_flag' | 'blocked_admin_decision'
+  metadata?: Record<string, any>
+  created?: string
+  updated?: string
+  expand?: {
+    courier_id?: UserRecord
+    empresa_id?: EmpresaRecord
+  }
+}
 
 export interface RouteKmApprovalRecord extends RecordModel {
   order_id: string
