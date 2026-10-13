@@ -141,7 +141,7 @@ class NativeGpsBridgeService {
       isNative,
       isServiceRunning: this.isTracking,
       hasFinePermission: true,
-      hasBackgroundPermission: isNative,
+      hasBackgroundPermission: true,
       hasNotificationPermission: true,
     }
   }
@@ -201,10 +201,10 @@ class NativeGpsBridgeService {
       try {
         const payload = JSON.stringify({
           userId: options.userId,
-          title: options.notificationTitle || 'Rotaly em Operação',
-          text: options.notificationText || 'Rastreando rota em primeiro plano (GPS ativo)',
+          title: options.notificationTitle || 'Rotaly Courier',
+          text: options.notificationText || 'Rotaly Courier está monitorando sua rota de entregas',
           minIntervalMs: options.minIntervalMs || 30000,
-          minDistanceMeters: options.minDistanceMeters || 5,
+          minDistanceMeters: options.minDistanceMeters || 18,
         })
         window.RotalyNativeGps.startForegroundTracking(payload)
         console.info('[NativeGpsBridge] Foreground service nativo iniciado!')
@@ -216,6 +216,46 @@ class NativeGpsBridgeService {
 
     // Fallback Web: se não estiver em nativo, o CourierApp já gerencia watchPosition
     return true
+  }
+
+  /**
+   * Obtém a posição atual com alta precisão e timeout configurado (~15s)
+   */
+  public async getCurrentPosition(options?: {
+    enableHighAccuracy?: boolean
+    timeout?: number
+    maximumAge?: number
+  }): Promise<NativeGpsCoordinate | null> {
+    const opts = {
+      enableHighAccuracy: options?.enableHighAccuracy ?? true,
+      timeout: options?.timeout ?? 15000,
+      maximumAge: options?.maximumAge ?? 0,
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      return null
+    }
+
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          resolve({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            speed: pos.coords.speed,
+            heading: pos.coords.heading,
+            altitude: pos.coords.altitude,
+            timestamp: pos.timestamp,
+          })
+        },
+        (err) => {
+          console.warn('[nativeGpsBridge] getCurrentPosition falhou:', err?.message)
+          resolve(null)
+        },
+        opts,
+      )
+    })
   }
 
   /**

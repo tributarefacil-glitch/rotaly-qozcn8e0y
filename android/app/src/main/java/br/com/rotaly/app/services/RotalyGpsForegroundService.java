@@ -58,9 +58,9 @@ public class RotalyGpsForegroundService extends Service {
     private boolean isTracking = false;
 
     private long intervalMs = 30000;
-    private float minDistanceM = 5f;
-    private String notificationTitle = "Rotaly está rastreando sua rota";
-    private String notificationText = "Rastreamento GPS em primeiro plano ativo (contínuo)";
+    private float minDistanceM = 18f;
+    private String notificationTitle = "Rotaly Courier";
+    private String notificationText = "Rotaly Courier está monitorando sua rota de entregas";
 
     @Override
     public void onCreate() {
@@ -146,9 +146,11 @@ public class RotalyGpsForegroundService extends Service {
 
     private void requestLocationUpdates() {
         try {
-            long minUpdateInterval = Math.max(15000L, intervalMs / 2);
+            // Gatilho de menor entre 30s de intervalo OU 15-20m de deslocamento:
+            // intervalMs é o MÁXIMO (30s). Deslocamentos de >= minDistanceM disparam imediatamente com minUpdateInterval rápido.
+            long minFastestIntervalMs = 5000L;
             LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-                    .setMinUpdateIntervalMillis(minUpdateInterval)
+                    .setMinUpdateIntervalMillis(minFastestIntervalMs)
                     .setMinUpdateDistanceMeters(minDistanceM)
                     .setWaitForAccurateLocation(false)
                     .build();

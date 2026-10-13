@@ -314,21 +314,44 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
         console.log(`[daily_21h30_closing_check] Erro ao buscar locations de ${bKey}:`, eLoc)
       }
 
-      // (B1) Calcular cobertura por TEMPO ATIVO:
-      // primeiro -> último ping do lote ÷ janela de 30s, NUNCA constante fixa!
+      // (B1 / K2) Calcular cobertura de telemetria por TEMPO ATIVO considerando janela variável:
+      // Pings disparados por distância (15-20m) quebram a premissa de 30s fixos.
+      // A medição de cobertura deve avaliar a lacuna por TEMPO desde o último ping (gaps > 90s sem pings durante a rota ativa),
+      // e não por contagem ingênua de janelas de 30s fixas.
       let telemetryCoveragePct = 100
       let activeDurationSec = 0
-      let expectedPings = 0
       let actualPings = pings.length
       let hasTelemetry = actualPings >= 2
+      let totalGapsDurationSec = 0
+      let gapCount = 0
 
       if (hasTelemetry) {
         const firstPingTs = new Date(pings[0].getString('created')).getTime()
         const lastPingTs = new Date(pings[pings.length - 1].getString('created')).getTime()
         activeDurationSec = Math.max(0, (lastPingTs - firstPingTs) / 1000)
-        // Intervalo esperado entre pings no APK nativo = 30 segundos
-        expectedPings = Math.max(1, Math.round(activeDurationSec / 30))
-        telemetryCoveragePct = Math.min(100, Math.round((actualPings / expectedPings) * 100))
+
+        // Medir lacuna por tempo desde o último ping:
+        // Qualquer salto maior que 90s entre pings sucessivos é computado como tempo sem cobertura de telemetria
+        const GAP_THRESHOLD_SEC = 90
+        for (let pi = 1; pi < pings.length; pi++) {
+          const prevPingTs = new Date(pings[pi - 1].getString('created')).getTime()
+          const currPingTs = new Date(pings[pi].getString('created')).getTime()
+          const deltaSec = Math.max(0, (currPingTs - prevPingTs) / 1000)
+          if (deltaSec > GAP_THRESHOLD_SEC) {
+            totalGapsDurationSec += deltaSec - 30 // desconta o intervalo normal de 30s
+            gapCount++
+          }
+        }
+
+        if (activeDurationSec > 0) {
+          const coveredDurationSec = Math.max(0, activeDurationSec - totalGapsDurationSec)
+          telemetryCoveragePct = Math.min(
+            100,
+            Math.max(0, Math.round((coveredDurationSec / activeDurationSec) * 100)),
+          )
+        } else {
+          telemetryCoveragePct = 100
+        }
       } else {
         telemetryCoveragePct = 0
       }
@@ -370,7 +393,7 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
       const hasExcessEstimatedLegs = estimatedLegsPct > 20
 
       console.log(
-        `[daily_21h30_closing_check] Lote ${bKey}: pings=${actualPings}/${expectedPings} (${telemetryCoveragePct}%), ` +
+        `[daily_21h30_closing_check] Lote ${bKey}: pings=${actualPings}, duracao=${Math.round(activeDurationSec)}s, lacunas=${gapCount} (${Math.round(totalGapsDurationSec)}s sem sinal), cobertura=${telemetryCoveragePct}%, ` +
           `pernas_estimadas=${estimatedLegsCount}/${totalLegs} (${estimatedLegsPct}%), submedido=${isSubMedido}, pings_pendentes=${hasPendingOfflinePings}, macros=${courierMacros.length}, inflado=${hasExcessEstimatedLegs}`,
       )
 
@@ -594,8 +617,9 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
               courier_name: courierName,
               cobertura_pct: telemetryCoveragePct,
               pings_recebidos: actualPings,
-              pings_esperados: expectedPings,
               duracao_ativa_segundos: activeDurationSec,
+              duracao_lacunas_segundos: totalGapsDurationSec,
+              quantidade_lacunas: gapCount,
               trechos_com_lacuna: true,
               km_telemetria: telemetriaKm,
               km_viario_planejado: viarioPlanejadoKm,
@@ -624,7 +648,7 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
               <h2 style="color: #dc2626; margin-top: 0;">⚠️ ALERTA: KM SUB-MEDIDO — Fechamento 21h30</h2>
               <p>O entregador <strong>${courierName}</strong> teve cobertura de GPS/telemetria abaixo de 90% no lote <code>${bKey}</code>.</p>
               <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
-                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>Cobertura por Tempo Ativo:</strong></td><td style="padding: 8px; color: #dc2626;"><strong>${telemetryCoveragePct}%</strong> (${actualPings} de ${expectedPings} pings esperados a cada 30s)</td></tr>
+                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>Cobertura por Tempo Ativo:</strong></td><td style="padding: 8px; color: #dc2626;"><strong>${telemetryCoveragePct}%</strong> (${actualPings} pings; ${gapCount} lacuna(s) detectadas totalizando ${Math.round(totalGapsDurationSec / 60)} min sem sinal)</td></tr>
                 <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>Duração Ativa da Rota:</strong></td><td style="padding: 8px;">${Math.round(activeDurationSec / 60)} minutos</td></tr>
                 <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Telemetria Gravado:</strong></td><td style="padding: 8px;">${telemetriaKm.toFixed(1)} km</td></tr>
                 <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Viário Planejado:</strong></td><td style="padding: 8px;">${viarioPlanejadoKm.toFixed(1)} km</td></tr>

@@ -37,6 +37,12 @@ import {
   CourierBatteryGuideModal,
   BATTERY_OPTIMIZATION_ACK_KEY,
 } from '@/components/CourierBatteryGuideModal'
+import {
+  CourierBackgroundPermissionModal,
+  BACKGROUND_PERMISSION_ACK_KEY,
+} from '@/components/CourierBackgroundPermissionModal'
+import pb from '@/lib/pocketbase/client'
+import { getUserGeolocation } from '@/components/BaseAddressAutocomplete'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
@@ -251,8 +257,15 @@ export default function CourierApp() {
   // Status de GPS e rede em tempo real com distinção de motivo
   const [gpsStatus, setGpsStatus] = useState<'active' | 'disabled' | 'offline'>('active')
   const [gpsFailureDetail, setGpsFailureDetail] = useState<
-    'none' | 'permission_denied' | 'weak_signal' | 'position_unavailable' | 'unsupported'
+    | 'none'
+    | 'permission_denied'
+    | 'background_permission_missing'
+    | 'weak_signal'
+    | 'position_unavailable'
+    | 'unsupported'
   >('none')
+  const [hasBackgroundPermission, setHasBackgroundPermission] = useState<boolean>(true)
+  const [isBackgroundPermissionModalOpen, setIsBackgroundPermissionModalOpen] = useState(false)
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   )
@@ -288,6 +301,32 @@ export default function CourierApp() {
   const isOrdersFetchingRef = useRef<boolean>(false)
   const lastLoadFuelTimestampRef = useRef<number>(0)
   const isFuelFetchingRef = useRef<boolean>(false)
+
+  // Health check de permissão de GPS e segundo plano (Item K3)
+  const checkBackgroundPermissionHealth = async (): Promise<boolean> => {
+    if (!nativeGpsBridge.isNativeEnvironment()) {
+      setHasBackgroundPermission(true)
+      return true
+    }
+    try {
+      const status = await nativeGpsBridge.getServiceStatus()
+      if (!status.hasBackgroundPermission) {
+        setHasBackgroundPermission(false)
+        setGpsStatus('disabled')
+        setGpsFailureDetail('background_permission_missing')
+        return false
+      }
+      setHasBackgroundPermission(true)
+      if (gpsFailureDetail === 'background_permission_missing') {
+        setGpsStatus('active')
+        setGpsFailureDetail('none')
+      }
+      return true
+    } catch (err) {
+      console.warn('Erro ao checar permissão de segundo plano:', err)
+      return true
+    }
+  }
 
   // Carregar dados de conta corrente e configurações para manter paridade com o motor de combustível
   const loadFuelAndAccountData = async (options?: { force?: boolean }) => {
@@ -388,6 +427,7 @@ export default function CourierApp() {
   useEffect(() => {
     loadCourierOrders({ force: true })
     loadFuelAndAccountData({ force: true })
+    checkBackgroundPermissionHealth()
 
     // Checar se é a primeira abertura do app do entregador para exibir o tutorial de boas-vindas
     if (typeof window !== 'undefined' && user?.id) {
@@ -425,6 +465,7 @@ export default function CourierApp() {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         loadCourierOrders({ force: true })
         loadFuelAndAccountData({ force: true })
+        checkBackgroundPermissionHealth()
       }
     }
 
@@ -884,8 +925,10 @@ export default function CourierApp() {
       const now = Date.now()
       const last = lastRecordedGpsRef.current
 
-      // ITEM 6: FREQUÊNCIA ADAPTATIVA (10s perto da parada, 30s em deslocamento)
-      // Calcular distância até a parada ativa (se houver)
+      // ITEM K2: GATILHO DE DISTÂNCIA / TEMPO ADAPTATIVO
+      // Disparar ping no MENOR entre 30 segundos de intervalo MÁXIMO OU 15–20 metros de deslocamento.
+      // O intervalo de 30 segundos é MÁXIMO, nunca cadência fixa exclusiva.
+      // Perto da parada (<300m), o tempo máximo reduz para 10s ou 10m de deslocamento.
       let distToTargetStopMeters = 9999
       if (
         currentActiveDelivery &&
@@ -907,21 +950,25 @@ export default function CourierApp() {
         )
       }
 
-      // Se estiver a menos de 300 metros da parada (ou da base de retorno), frequência alta de 10s
-      // Em deslocamento normal na rota: 30s
-      const minIntervalSeconds = distToTargetStopMeters < 300 ? 10 : 30
+      const isNearStop = distToTargetStopMeters < 300
+      const maxTimeIntervalSeconds = isNearStop ? 10 : 30
+      const distanceThresholdMeters = isNearStop ? 10 : 18
 
       if (last && !forceSend) {
         const timeDiffSeconds = (now - last.timestamp) / 1000
         const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
         const isWeakFix = (accuracyVal ?? 2000) >= 500 || (last.accuracy ?? 2000) >= 500
 
-        // Throttle adaptativo: 10s perto da parada (<300m), 30s em deslocamento
-        if (timeDiffSeconds < minIntervalSeconds) {
+        // Dispara se atingiu o deslocamento de 15-20m (distanceThresholdMeters) OU se atingiu o tempo máximo (30s)
+        const triggeredByDistance =
+          distanceDiffMeters >= distanceThresholdMeters && timeDiffSeconds >= 3
+        const triggeredByMaxTime = timeDiffSeconds >= maxTimeIntervalSeconds
+
+        if (!triggeredByDistance && !triggeredByMaxTime) {
           return
         }
 
-        // Se mudou menos de 5m e acurácia continua fraca/sem-fix, rejeita novo envio imediato
+        // Se mudou menos de 5m e acurácia continua fraca/sem-fix, rejeita novo envio imediato antes de 45s
         if (distanceDiffMeters < 5 && isWeakFix && timeDiffSeconds < 45) {
           return
         }
@@ -1097,10 +1144,10 @@ export default function CourierApp() {
       nativeGpsBridge
         .startTracking({
           userId: user.id,
-          notificationTitle: 'Rotaly está rastreando sua rota',
-          notificationText: 'Rastreamento GPS em primeiro plano ativo (contínuo)',
+          notificationTitle: 'Rotaly Courier',
+          notificationText: 'Rotaly Courier está monitorando sua rota de entregas',
           minIntervalMs: 30000,
-          minDistanceMeters: 5,
+          minDistanceMeters: 18,
         })
         .catch((e) => console.warn('Erro ao iniciar native foreground GPS:', e))
     }
@@ -1347,6 +1394,19 @@ export default function CourierApp() {
 
     if (activeDeliveries.length === 0) {
       toast.info('Não há clientes na rota liberada.')
+      return
+    }
+
+    // ITEM K3: HEALTH CHECK DE PERMISSÃO OBRIGATÓRIO ANTES DE INICIAR ROTA
+    // Se a permissão ACCESS_BACKGROUND_LOCATION não estiver concedida no Android nativo, BLOQUEAR
+    const isPermitted = await checkBackgroundPermissionHealth()
+    if (!isPermitted) {
+      setIsBackgroundPermissionModalOpen(true)
+      toast.error('Permissão de segundo plano necessária para iniciar a rota.', {
+        description:
+          'Selecione "Permitir o tempo todo" para que seu trajeto não seja interrompido.',
+        duration: 6000,
+      })
       return
     }
 
@@ -1874,6 +1934,22 @@ export default function CourierApp() {
                   </span>
                   <span className="text-xs font-semibold text-emerald-400">GPS Ativo</span>
                 </div>
+              ) : gpsFailureDetail === 'background_permission_missing' ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500 animate-ping" />
+                  </span>
+                  <span className="text-xs font-semibold text-rose-400 truncate max-w-[170px] sm:max-w-none">
+                    Permissão insuficiente para segundo plano
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsBackgroundPermissionModalOpen(true)}
+                    className="ml-1 text-[11px] font-bold text-rose-300 underline hover:text-white whitespace-nowrap"
+                  >
+                    Liberar
+                  </button>
+                </div>
               ) : gpsFailureDetail === 'permission_denied' ? (
                 <div className="flex items-center gap-1.5">
                   <span className="relative flex h-2.5 w-2.5">
@@ -2350,15 +2426,34 @@ export default function CourierApp() {
               </p>
             </div>
 
-            {/* Botão Principal Aceitar Rota */}
+            {/* Botão Principal Aceitar Rota (Bloqueado se faltar permissão de segundo plano no nativo) */}
             <Button
               type="button"
-              onClick={handleOpenStartRouteModal}
+              onClick={() => {
+                if (!hasBackgroundPermission) {
+                  setIsBackgroundPermissionModalOpen(true)
+                  return
+                }
+                handleOpenStartRouteModal()
+              }}
               disabled={isStartingRoute}
-              className="w-full h-14 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 font-black text-sm uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-950/40 flex items-center justify-center gap-3 border border-emerald-400/40"
+              className={`w-full h-14 font-black text-sm uppercase tracking-wider rounded-2xl shadow-xl flex items-center justify-center gap-3 border transition ${
+                !hasBackgroundPermission
+                  ? 'bg-rose-950/70 border-rose-500 text-rose-300 hover:bg-rose-900/80 shadow-rose-950/50'
+                  : 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-slate-950 border-emerald-400/40 shadow-emerald-950/40'
+              }`}
             >
-              <Play className="h-5 w-5 fill-current" />
-              {isStartingRoute ? 'Aceitando Rota...' : 'Aceitar Rota'}
+              {!hasBackgroundPermission ? (
+                <>
+                  <AlertTriangle className="h-5 w-5 text-rose-400" />
+                  <span>Liberar GPS Segundo Plano para Iniciar</span>
+                </>
+              ) : (
+                <>
+                  <Play className="h-5 w-5 fill-current" />
+                  <span>{isStartingRoute ? 'Aceitando Rota...' : 'Aceitar Rota'}</span>
+                </>
+              )}
             </Button>
 
             <div className="flex items-center justify-between px-1 pt-1">
@@ -2791,6 +2886,40 @@ export default function CourierApp() {
         onClose={() => setIsBatteryGuideOpen(false)}
         onAcknowledge={() => {
           setIsBatteryGuideOpen(false)
+        }}
+      />
+
+      {/* Modal de Instruções de Permissão de Segundo Plano (Item K3) */}
+      <CourierBackgroundPermissionModal
+        open={isBackgroundPermissionModalOpen}
+        onClose={() => setIsBackgroundPermissionModalOpen(false)}
+        onAcknowledge={async () => {
+          setIsBackgroundPermissionModalOpen(false)
+          // Registrar em audit_trail a ciência do entregador
+          if (user?.id) {
+            try {
+              await pb.collection('audit_trail').create({
+                user_id: user.id,
+                collection: 'users',
+                record_id: user.id,
+                courier_id: user.id,
+                action: 'ciencia_permissao_background_location',
+                field: 'status',
+                old_value: 'permissao_insuficiente',
+                new_value: 'orientado_permitir_o_tempo_todo',
+                timestamp: new Date().toISOString(),
+                metadata: {
+                  system_trigger: false,
+                  actor_name: user.name || user.email || 'Entregador',
+                  tutorial_acknowledged_at: new Date().toISOString(),
+                  key: BACKGROUND_PERMISSION_ACK_KEY,
+                },
+              })
+            } catch (auditErr) {
+              console.warn('Erro ao registrar ciência no audit_trail:', auditErr)
+            }
+          }
+          await checkBackgroundPermissionHealth()
         }}
       />
 
