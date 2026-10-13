@@ -4721,11 +4721,41 @@ export const deliveryService = {
   },
 
   /**
-   * Obter a contagem de alertas pendentes para badges de navegação.
+   * Obter a contagem de alertas pendentes para badges de navegação com cache compartilhado (in-flight dedupe + TTL 15s).
    */
+  private _alertsCountCache = new Map<string, { count: number; timestamp: number }>()
+  private _alertsCountInFlight = new Map<string, Promise<number>>()
+
+  invalidateAddressAlertsCountCache() {
+    this._alertsCountCache.clear()
+    this._alertsCountInFlight.clear()
+  },
+
   async getPendingAddressAlertsCount(empresaId?: string): Promise<number> {
-    const alerts = await this.getAddressAlerts({ empresaId, status: 'pendente' })
-    return alerts.length
+    const key = empresaId || 'default'
+    const now = Date.now()
+    const cached = this._alertsCountCache.get(key)
+    if (cached && now - cached.timestamp < 15000) {
+      return cached.count
+    }
+
+    if (this._alertsCountInFlight.has(key)) {
+      return this._alertsCountInFlight.get(key)!
+    }
+
+    const promise = (async () => {
+      try {
+        const alerts = await this.getAddressAlerts({ empresaId, status: 'pendente' })
+        const count = alerts.length
+        this._alertsCountCache.set(key, { count, timestamp: Date.now() })
+        return count
+      } finally {
+        this._alertsCountInFlight.delete(key)
+      }
+    })()
+
+    this._alertsCountInFlight.set(key, promise)
+    return promise
   },
 
   /**

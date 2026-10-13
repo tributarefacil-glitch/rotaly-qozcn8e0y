@@ -71,6 +71,7 @@ export const Header: React.FC = () => {
     const interval = setInterval(checkAlerts, 30000)
 
     const handleAlertsUpdated = () => {
+      deliveryService.invalidateAddressAlertsCountCache()
       checkAlerts()
     }
     window.addEventListener('rotaly:address-alerts-updated', handleAlertsUpdated)

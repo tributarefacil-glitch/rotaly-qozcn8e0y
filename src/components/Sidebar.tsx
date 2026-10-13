@@ -148,9 +148,16 @@ export const Sidebar: React.FC = () => {
     }
     checkAlerts()
     const interval = setInterval(checkAlerts, 30000)
+
+    const handleAlertsUpdated = () => {
+      checkAlerts()
+    }
+    window.addEventListener('rotaly:address-alerts-updated', handleAlertsUpdated)
+
     return () => {
       isMounted = false
       clearInterval(interval)
+      window.removeEventListener('rotaly:address-alerts-updated', handleAlertsUpdated)
     }
   }, [currentCompany?.id, isMaster])
 

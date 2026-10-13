@@ -517,41 +517,23 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }
 
   // Determina se o componente pai (SellerDashboard / AdminDashboard) já está fornecendo os dados via props
-  // Se initialOrders !== undefined || initialCouriers !== undefined, o pai gerencia os dados
+  // Se initialOrders !== undefined || initialCouriers !== undefined, o pai gerencia os dados de forma centralizada
   const hasParentData = initialOrders !== undefined || initialCouriers !== undefined
   const [parentFallbackAutonomous, setParentFallbackAutonomous] = useState(false)
   const parentDataTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Contingência de 3.500 ms: se o pai gerencia os dados mas após 3,5s ainda estiver com 0 registros, a Torre assume busca autônoma
+  // Quando o pai fornece props (mesmo array vazio inicial durante loading do pai), NUNCA disparar fetch autônomo
+  // a menos que o pai não tenha fornecido as props por completo (!hasParentData)
   useEffect(() => {
     if (!hasParentData) return
-    const ordersCount = Array.isArray(initialOrders) ? initialOrders.length : 0
-    const couriersCount = Array.isArray(initialCouriers) ? initialCouriers.length : 0
-
-    if (ordersCount === 0 && couriersCount === 0 && !parentFallbackAutonomous) {
-      parentDataTimeoutRef.current = setTimeout(() => {
-        console.info('Torre de Controle: fallback autônomo ativado após 3.5s sem dados do pai')
-        setParentFallbackAutonomous(true)
-      }, 3500)
-    } else if (ordersCount > 0 || couriersCount > 0) {
-      if (parentDataTimeoutRef.current) {
-        clearTimeout(parentDataTimeoutRef.current)
-        parentDataTimeoutRef.current = null
-      }
-      if (parentFallbackAutonomous) {
-        setParentFallbackAutonomous(false)
-      }
+    // Pai está gerenciando os dados; manter fallback desativado
+    if (parentFallbackAutonomous) {
+      setParentFallbackAutonomous(false)
     }
+  }, [hasParentData, parentFallbackAutonomous])
 
-    return () => {
-      if (parentDataTimeoutRef.current) {
-        clearTimeout(parentDataTimeoutRef.current)
-      }
-    }
-  }, [initialOrders, initialCouriers, hasParentData, parentFallbackAutonomous])
-
-  // Deve buscar de forma autônoma se NÃO houver gerenciamento pelo pai OU se o fallback autônomo foi ativado
-  const shouldFetchAutonomously = !hasParentData || parentFallbackAutonomous
+  // Deve buscar de forma autônoma estritamente quando NÃO houver gerenciamento pelo pai
+  const shouldFetchAutonomously = !hasParentData
 
   // Listener de falha de resequenciamento para alertar a Central (admin/operador)
   useEffect(() => {
@@ -573,6 +555,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Fetch initial/refreshed data: apenas busca o que não foi fornecido via props pelo pai
   const fetchData = async () => {
     try {
+      // Se o componente pai já gerencia os dados, delegar para a função central do pai
+      if (hasParentData && onRefresh) {
+        onRefresh()
+        return
+      }
+
       const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
       const currentOpWindow = getOperationalWindow(new Date())
       const windowStartIso = new Date(currentOpWindow.start).toISOString()
@@ -677,7 +665,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }
 
   // Sincronização inicial e periódica:
-  // Executa busca autônoma apenas se props não foram fornecidas pelo componente pai ou se o fallback ativou
+  // Executa busca autônoma APENAS se props não foram fornecidas pelo componente pai (!hasParentData)
   useEffect(() => {
     if (shouldFetchAutonomously) {
       fetchData()
