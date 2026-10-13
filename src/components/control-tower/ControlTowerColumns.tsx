@@ -170,13 +170,23 @@ export const ControlTowerColumns: React.FC<ControlTowerColumnsProps> = ({
                           <h4 className="text-sm font-bold text-white truncate">
                             {cust?.name || 'Cliente sem nome'}
                           </h4>
-                          <p className="text-[11px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
-                            <MapPin className="h-3 w-3 text-slate-500 shrink-0" />
-                            <span>
-                              {cust?.address || order.end_address_text || 'Endereço não cadastrado'}
-                              {cust?.complement ? ` (${cust.complement})` : ''}
-                            </span>
-                          </p>
+                          <div className="text-[11px] text-slate-300 mt-0.5 space-y-0.5">
+                            <p className="truncate flex items-center gap-1">
+                              <MapPin className="h-3 w-3 text-blue-400 shrink-0" />
+                              <span className="font-medium text-slate-200">
+                                {cust?.address ||
+                                  order.end_address_text ||
+                                  'Endereço não cadastrado'}
+                              </span>
+                            </p>
+                            {cust?.complement && (
+                              <div className="flex items-center gap-1 pl-4">
+                                <span className="inline-block px-1.5 py-0.2 bg-blue-500/15 border border-blue-400/30 text-blue-300 rounded text-[10px] font-semibold">
+                                  {cust.complement}
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {/* Informações do Entregador Responsável */}

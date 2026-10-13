@@ -273,12 +273,17 @@ class NativeGpsBridgeService {
   }
 
   /**
-   * Abrir app de navegação (Waze ou Google Maps) com retorno garantido ao Rotaly.
-   * Em ambiente nativo Android (Capacitor/WebView com RotalyNativeGps), chama SEMPRE
-   * a ponte nativa via Intent do Android e NUNCA cai em window.open.
-   * Quando lat/lng não forem números válidos (null, undefined, NaN ou 0), passa 0, 0
-   * e repassa o endereço/label como destino para a Intent nativa resolver.
+   * Verifica se o runtime do Capacitor está disponível no navegador / WebView.
    */
+  public isCapacitorAvailable(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      typeof (window as any).Capacitor !== 'undefined' &&
+      typeof (window as any).Capacitor.isNativePlatform === 'function' &&
+      (window as any).Capacitor.isNativePlatform()
+    )
+  }
+
   /**
    * Dispara o intent ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (via plugin Capacitor ou nativo)
    */

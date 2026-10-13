@@ -67,6 +67,7 @@ import {
   normalizeBrazilianUF,
   geocodeAddressWithValidation,
 } from '@/lib/googleMaps'
+import { normalizeCustomerAddressFields } from '@/lib/loteQuadraNormalizer'
 import { encodePlusCode } from '@/lib/plusCode'
 import { haversineDistanceMeters } from '@/lib/geo'
 import { MapDataService } from '@/lib/mapDataService'
@@ -1007,6 +1008,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    // Normalização automática no submit (Quadra->Qd, Lote->Lt, Qd antes de Lt, LT/QD da rua migra pro complemento)
+    if (isAddingCustomer) {
+      const normResult = normalizeCustomerAddressFields({
+        street: streetAndNumber,
+        complement: complement,
+        referencePoint: referencePoint,
+      })
+      if (normResult.changed) {
+        setStreetAndNumber(normResult.street)
+        setComplement(normResult.complement)
+        setReferencePoint(normResult.referencePoint)
+      }
+    }
+
     let finalCustomerId = customerId
 
     // Helper para sanitizar telefones (remover máscaras e espaços)
@@ -1847,7 +1862,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                         Complemento / Apto / Bloco
                       </Label>
                       <Input
-                        placeholder="Ex: Apto 42, Bloco B"
+                        placeholder="Ex.: Qd 12, Lt 7 — Casa 2"
                         value={complement}
                         onChange={(e) => setComplement(e.target.value)}
                         className="mt-1 bg-white dark:bg-slate-800 text-xs"

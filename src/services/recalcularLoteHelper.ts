@@ -79,9 +79,9 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
 
   const isBicycle = vehicleType === 'bicicleta' || vehicleType === 'bike'
 
-  // 3. Buscar app_settings para consumo e preço do combustível (elimina fallbacks hardcoded 32 km/L e R$ 5,89)
-  let consumptionKml = 40.0 // moto padrão do app_settings
-  let fuelPrice = 6.09
+  // 3. Buscar app_settings para consumo e preço do combustível (100% app_settings: moto 30 km/L / R$ 6,49)
+  let consumptionKml = 30.0
+  let fuelPrice = 6.49
   try {
     const settingsList = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1)
     if (settingsList.items.length > 0) {

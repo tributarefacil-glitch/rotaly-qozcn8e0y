@@ -1047,11 +1047,15 @@ export const deliveryService = {
         updatePayload.lng = lng
       }
 
-      // Enriquecimento automático estilo Uber via geocodificação reversa
+      // Enriquecimento automático estilo Uber via geocodificação reversa (porta única MapDataService)
+      // REGRA DO DONO: O pin do entregador na 1ª entrega consolida lat/lng + endereço formatado.
+      // FALLBACK S/N: Se o Google NÃO devolver número mas o pin veio de entrega confirmada,
+      // o endereço fica CONFIRMADO com 'S/N' + complemento — NÃO vai para Suspeitos!
+      // Só vai para Endereços Suspeitos quem nunca teve pin de entrega confirmada.
       if (!isDefinitive) {
         try {
-          const { reverseGeocodeUberAddress } = await import('@/lib/uberAddress')
-          const enriched = await reverseGeocodeUberAddress({
+          const { MapDataService } = await import('@/lib/mapDataService')
+          const enriched = await MapDataService.reverseGeocodePin({
             lat,
             lng,
             existingAddress: customer.address,
@@ -1059,42 +1063,37 @@ export const deliveryService = {
           })
 
           if (enriched && enriched.fullAddress) {
-            updatePayload.address = enriched.fullAddress
+            let effectiveNumber = enriched.number
+            // Fallback S/N: confirmada via pin do entregador
+            if (!effectiveNumber || effectiveNumber.trim() === '') {
+              effectiveNumber = 'S/N'
+            }
+
+            // Remonta fullAddress com número garantido
+            let formattedFull = enriched.fullAddress
+            if (effectiveNumber === 'S/N' && !formattedFull.includes('S/N')) {
+              formattedFull =
+                `${enriched.street || 'Rua'}, S/N, ${enriched.neighborhood || ''}, ${enriched.city || ''} - ${enriched.state || 'RJ'}, CEP ${enriched.postalCode || ''}`
+                  .replace(/,\s*,/g, ',')
+                  .replace(/^,\s*/, '')
+                  .trim()
+            }
+
+            updatePayload.address = formattedFull
             if (enriched.street) updatePayload.street = enriched.street
-            if (enriched.number) updatePayload.number = enriched.number
+            updatePayload.number = effectiveNumber
             if (enriched.complement) updatePayload.complement = enriched.complement
             if (enriched.neighborhood) updatePayload.neighborhood = enriched.neighborhood
             if (enriched.city) updatePayload.city = enriched.city
             if (enriched.state) updatePayload.state = enriched.state
             if (enriched.postalCode) updatePayload.postal_code = enriched.postalCode
 
-            // Se o Google não encontrou número, gerar alerta pendente
-            if (!enriched.number || enriched.number === 'S/N') {
-              try {
-                await pb.collection('address_alerts').create({
-                  customer: customerId,
-                  company: customer.empresa_id || '',
-                  origin: 'pin_entregador',
-                  status: 'pendente',
-                  distance_meters: 0,
-                  marked_at: new Date().toISOString(),
-                  suggested_address: JSON.stringify({
-                    address: enriched.fullAddress,
-                    lat,
-                    lng,
-                    reason: 'Local sem número oficial ou interpolado retornado pelo geocoder',
-                  }),
-                  notes:
-                    'Endereço estilo Uber pendente de numeração oficial/interpolada pelo Google.',
-                })
-              } catch {
-                /* intentionally ignored */
-              }
-            }
+            // NOTA: Como veio de entrega confirmada pelo entregador, NÃO gera alerta de Suspeito com S/N!
+            // Endereço é CONFIRMADO automaticamente com S/N + complemento.
           }
         } catch (enrichErr) {
           console.warn(
-            '[deliveryService] Enriquecimento reverso Uber falhou, prosseguindo com lat/lng:',
+            '[deliveryService] Enriquecimento reverso Uber via MapDataService falhou, prosseguindo com lat/lng:',
             enrichErr,
           )
         }

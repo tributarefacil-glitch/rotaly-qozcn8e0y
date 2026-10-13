@@ -3991,8 +3991,15 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                       )}
                                     </div>
                                   </td>
-                                  <td className="py-3 px-3 text-slate-600 dark:text-slate-300 max-w-xs truncate">
-                                    {c.address || c.street || 'Não informado'}
+                                  <td className="py-3 px-3 text-slate-600 dark:text-slate-300 max-w-xs">
+                                    <p className="truncate text-xs font-medium text-slate-800 dark:text-slate-200">
+                                      {c.address || c.street || 'Não informado'}
+                                    </p>
+                                    {c.complement && (
+                                      <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-[10px] font-semibold text-blue-700 dark:text-blue-300">
+                                        {c.complement}
+                                      </span>
+                                    )}
                                   </td>
                                   <td className="py-3 px-3">
                                     {hasCoords ? (

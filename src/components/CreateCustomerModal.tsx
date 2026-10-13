@@ -27,6 +27,7 @@ import {
   reverseGeocodeCoordinates,
   loadGoogleMapsScript,
 } from '@/lib/googleMaps'
+import { normalizeCustomerAddressFields } from '@/lib/loteQuadraNormalizer'
 import { encodePlusCode } from '@/lib/plusCode'
 import { haversineDistanceMeters } from '@/lib/geo'
 import {
@@ -1088,6 +1089,22 @@ export function CreateCustomerModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    // Normalização canônica obrigatória de lote/quadra no submit (Qd antes de Lt, migra LT/QD de rua/ref)
+    const normResult = normalizeCustomerAddressFields({
+      street: streetAndNumber,
+      complement: complement,
+      referencePoint: referencePoint,
+    })
+    let effectiveStreet = normResult.street
+    let effectiveComplement = normResult.complement
+    let effectiveRefPoint = normResult.referencePoint
+
+    if (normResult.changed) {
+      setStreetAndNumber(effectiveStreet)
+      setComplement(effectiveComplement)
+      setReferencePoint(effectiveRefPoint)
+    }
+
     const trimmedName = name.trim()
     const mainPhone = phone.trim()
 
@@ -1101,32 +1118,32 @@ export function CreateCustomerModal({
       return
     }
 
-    const fullAddress = getFullFormattedAddress() || streetAndNumber.trim()
+    const fullAddress = getFullFormattedAddress() || effectiveStreet.trim()
     const hasAnyAddressInput = Boolean(
-      streetAndNumber.trim() ||
+      effectiveStreet.trim() ||
       neighborhood.trim() ||
       city.trim() ||
       postalCode.trim() ||
-      complement.trim() ||
+      effectiveComplement.trim() ||
       addressSearchQuery.trim() ||
       locationLinkInput.trim(),
     )
 
     // Validação de endereço: só bloqueia se endereço PARCIAL foi iniciado
     // Nome + telefone sem NENHUM campo de endereço salvam normalmente
-    if (hasAnyAddressInput && !streetAndNumber.trim() && !fullAddress.trim()) {
+    if (hasAnyAddressInput && !effectiveStreet.trim() && !fullAddress.trim()) {
       toast.error('Preencha a Rua e Número ou busque pelo endereço/CEP.')
       return
     }
 
     // ITEM 11: Campo 'Ponto de referência' OBRIGATÓRIO somente quando rua foi digitada sem número (lote/quadra/comunidade/s/n)
-    const hasStreetTyped = Boolean(streetAndNumber.trim())
+    const hasStreetTyped = Boolean(effectiveStreet.trim())
     const hasNoNumber =
       hasStreetTyped &&
-      (/\b(s\/n|sn|sem\s+n[uú]mero|lote|quadra|qd|lt|comunidade)\b/i.test(streetAndNumber) ||
-        !/\d+/.test(streetAndNumber))
+      (/\b(s\/n|sn|sem\s+n[uú]mero|lote|quadra|qd|lt|comunidade)\b/i.test(effectiveStreet) ||
+        !/\d+/.test(effectiveStreet))
 
-    if (hasNoNumber && !referencePoint.trim()) {
+    if (hasNoNumber && !effectiveRefPoint.trim()) {
       toast.error(
         'Endereço sem número detectado (lote/quadra/comunidade/s/n): o Ponto de Referência é OBRIGATÓRIO.',
       )
@@ -1271,13 +1288,13 @@ export function CreateCustomerModal({
       id: addressesList[activeAddressTab]?.id || `addr_${Date.now()}`,
       label: addressesList[activeAddressTab]?.label || `Endereço ${activeAddressTab + 1}`,
       address: fullAddress,
-      street: streetAndNumber.trim(),
+      street: effectiveStreet.trim(),
       neighborhood: neighborhood.trim(),
       city: city.trim(),
       state: ufState.trim(),
       postal_code: postalCode.trim(),
-      complement: complement.trim(),
-      reference_point: referencePoint.trim(),
+      complement: effectiveComplement.trim(),
+      reference_point: effectiveRefPoint.trim(),
       plus_code:
         (finalLat && finalLng ? encodePlusCode(finalLat, finalLng) : plusCode) || undefined,
       lat: finalLat,
@@ -1308,13 +1325,13 @@ export function CreateCustomerModal({
       phone2: phone2.trim() || undefined,
       phone3: phone3.trim() || undefined,
       address: defaultAddress.address || fullAddress,
-      street: defaultAddress.street || streetAndNumber.trim(),
+      street: defaultAddress.street || effectiveStreet.trim(),
       neighborhood: defaultAddress.neighborhood || neighborhood.trim(),
       city: defaultAddress.city || city.trim(),
       state: defaultAddress.state || ufState.trim(),
       postal_code: defaultAddress.postal_code || postalCode.trim(),
-      complement: defaultAddress.complement || complement.trim(),
-      reference_point: defaultAddress.reference_point || referencePoint.trim(),
+      complement: defaultAddress.complement || effectiveComplement.trim(),
+      reference_point: defaultAddress.reference_point || effectiveRefPoint.trim(),
       plus_code:
         defaultAddress.plus_code ||
         (finalLat && finalLng ? encodePlusCode(finalLat, finalLng) : plusCode) ||
@@ -1806,7 +1823,7 @@ export function CreateCustomerModal({
               <div className="sm:col-span-4">
                 <Label className="text-xs font-semibold text-slate-300">Complemento / Apto</Label>
                 <Input
-                  placeholder="Ex: Sala 42, Bloco B"
+                  placeholder="Ex.: Qd 12, Lt 7 — Casa 2"
                   value={complement}
                   onChange={(e) => setComplement(e.target.value)}
                   className="mt-1 h-9 text-xs bg-[#070D1E] border-[#1E2B58] text-white placeholder:text-slate-500"

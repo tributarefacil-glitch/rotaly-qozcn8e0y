@@ -187,30 +187,32 @@ export function calculateCourierFuelMetrics(params: {
   }
 
   const defaultFuelParams = deliveryService.getVehicleFuelParams(settings, courier.vehicle_type)
-  // Combustível por escopo: moto 40 km/L e R$ 6,49 (taxa do app_settings), bicicleta R$ 0
+  // Combustível por escopo 100% app_settings: moto 30 km/L e R$ 6,49 (taxa do app_settings), bicicleta R$ 0
   const isBicycleCourier = defaultFuelParams.category === 'bicicleta'
-  const fallbackMotoConsumption = 40.0
-  const fallbackMotoPrice = 6.49
+  const appSettingsMotoConsumption =
+    typeof settings?.moto_consumption_kml === 'number' && settings.moto_consumption_kml > 0
+      ? settings.moto_consumption_kml
+      : typeof settings?.fuel_consumption_kml === 'number' && settings.fuel_consumption_kml > 0
+        ? settings.fuel_consumption_kml
+        : 30.0
+  const appSettingsMotoPrice =
+    typeof settings?.moto_fuel_price === 'number' && settings.moto_fuel_price > 0
+      ? settings.moto_fuel_price
+      : typeof settings?.fuel_price_per_liter === 'number' && settings.fuel_price_per_liter > 0
+        ? settings.fuel_price_per_liter
+        : 6.49
 
   const courierConsumption = isBicycleCourier
     ? 0
     : typeof courier.consumption_kml === 'number' && courier.consumption_kml > 0
       ? courier.consumption_kml
-      : typeof settings?.moto_consumption_kml === 'number' && settings.moto_consumption_kml > 0
-        ? settings.moto_consumption_kml
-        : typeof settings?.fuel_consumption_kml === 'number' && settings.fuel_consumption_kml > 0
-          ? settings.fuel_consumption_kml
-          : fallbackMotoConsumption
+      : appSettingsMotoConsumption
 
   const pricePerLiter = isBicycleCourier
     ? 0
     : typeof courier.fuel_price === 'number' && courier.fuel_price > 0
       ? courier.fuel_price
-      : typeof settings?.moto_fuel_price === 'number' && settings.moto_fuel_price > 0
-        ? settings.moto_fuel_price
-        : typeof settings?.fuel_price_per_liter === 'number' && settings.fuel_price_per_liter > 0
-          ? settings.fuel_price_per_liter
-          : fallbackMotoPrice
+      : appSettingsMotoPrice
 
   const consumptionKml = courierConsumption
   const category = defaultFuelParams.category

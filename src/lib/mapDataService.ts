@@ -39,6 +39,28 @@ export const MapDataService = {
   },
 
   /**
+   * Geocodificação reversa estilo Uber via MapDataService (porta única).
+   * Consolida endereço Uber: Rua, número interpolado, bairro, cidade - UF, CEP.
+   * Lote/quadra é mantido no complemento padrão "Qd N, Lt N".
+   */
+  async reverseGeocodePin(params: {
+    lat: number
+    lng: number
+    existingAddress?: string
+    existingComplement?: string
+  }) {
+    const clean = toLatLngSegura(params.lat, params.lng)
+    if (!clean) return null
+    const { reverseGeocodeUberAddress } = await import('./uberAddress')
+    return reverseGeocodeUberAddress({
+      lat: clean.lat,
+      lng: clean.lng,
+      existingAddress: params.existingAddress,
+      existingComplement: params.existingComplement,
+    })
+  },
+
+  /**
    * Sanitiza um objeto de localização ou registro de telemetria.
    * Retorna { lat, lng } seguro ou null se inválido.
    */
