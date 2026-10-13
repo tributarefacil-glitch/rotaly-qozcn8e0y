@@ -134,6 +134,10 @@ export interface RealKmCalculationResult {
   samplingCurvatureFactor?: number
   /** Detalhes textuais da auditoria matemática */
   auditNotes?: string
+  /** Indica se a telemetria GPS possui dados suficientes (>= 2 pontos) */
+  telemetryStatus?: 'suficiente' | 'insuficiente'
+  /** Quantidade real de pings de GPS no lote/janela */
+  telemetryPingsCount?: number
   /** Fonte de verdade utilizada no KM Oficial ('odometro' | 'historico_viario' | 'gps') */
   calculationSource?: 'odometro' | 'historico_viario' | 'gps'
   /** Odômetro calculado se houver */
@@ -577,8 +581,8 @@ export function calculateRealKmForOrder(params: {
 
   // Se não houver telemetria GPS suficiente (< 2 pontos válidos)
   if (validPoints.length < 2) {
-    // Regra oficial do Rotaly: trajeto viário planejado é a única fonte oficial.
-    // Odômetro foi aposentado como fonte de cálculo.
+    // Regra oficial do Rotaly: trajeto viário planejado é a única fonte oficial (Coluna A).
+    // Para Coluna B (GPS Telemetria): NUNCA copiar o valor viário da Coluna A. Retornar 0 e status 'insuficiente'.
     let officialKmFallback = 0
     let source: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
     let hasData = false
@@ -596,9 +600,11 @@ export function calculateRealKmForOrder(params: {
     return {
       officialRealKm: officialKmFallback,
       deviationKm: 0,
-      totalGpsKm: officialKmFallback,
+      totalGpsKm: 0, // NUNCA copiar officialKmFallback para totalGpsKm quando faltam pings
       discardedNoiseKm,
       isRealTelemetry: false,
+      telemetryStatus: 'insuficiente',
+      telemetryPingsCount: validPoints.length,
       gpsPointsCount: validPoints.length,
       filteredNoisePointsCount: noiseCount,
       offRouteCount: offRouteEventsList.length,
@@ -608,7 +614,7 @@ export function calculateRealKmForOrder(params: {
       calculationSource: source,
       odometerKm: undefined,
       auditNotes: hasData
-        ? 'Cálculo via Trajeto Viário Oficial das Paradas.'
+        ? 'Trajeto Viário Oficial (Coluna B sem telemetria suficiente).'
         : 'Sem trajeto viário gravado.',
     }
   }
@@ -623,17 +629,26 @@ export function calculateRealKmForOrder(params: {
   let rawDeviationMeters = 0
 
   // 6. Percorrer os pontos de GPS consecutivos somando os deslocamentos reais (Haversine)
-  // REGRA CRÍTICA: Tratar o flush do buffer offline como QUEBRA DE SEGMENTO.
-  // Nunca somar distância entre um ponto offline_buffered=true e um ponto offline_buffered=false (nos dois sentidos).
-  // Somar distância apenas DENTRO de cada segmento contíguo (live com live; offline com offline).
+  // REGRA CRÍTICA: Tratar o flush do buffer offline e lacunas temporais > 300s como QUEBRA DE SEGMENTO.
+  // - Nunca somar distância entre um ponto offline_buffered=true e um ponto offline_buffered=false (nos dois sentidos).
+  // - Lacunas temporais > 300 segundos entre pings quebram o segmento (não interpola em linha reta salto temporal).
+  // Somar distância apenas DENTRO de cada segmento contíguo.
   for (let i = 1; i < validPoints.length; i++) {
     const p1 = validPoints[i - 1]
     const p2 = validPoints[i]
 
-    // Quebra de segmento se houver transição live <-> buffer offline
+    // Quebra de segmento se houver transição live <-> buffer offline (offline_buffered false -> true ou true -> false)
     const isP1Offline = Boolean(p1.offline_buffered)
     const isP2Offline = Boolean(p2.offline_buffered)
     if (isP1Offline !== isP2Offline) {
+      continue
+    }
+
+    // Quebra de segmento se houver lacuna > 300s (5 minutos) entre leituras consecutivas
+    const t1 = new Date(p1.created).getTime()
+    const t2 = new Date(p2.created).getTime()
+    const dtSeconds = Math.abs(t2 - t1) / 1000
+    if (dtSeconds > 300) {
       continue
     }
 
@@ -725,6 +740,8 @@ export function calculateRealKmForOrder(params: {
     totalGpsKm: Number(finalTotalGpsKm.toFixed(1)),
     discardedNoiseKm,
     isRealTelemetry: true,
+    telemetryStatus: 'suficiente',
+    telemetryPingsCount: validPoints.length,
     gpsPointsCount: validPoints.length,
     filteredNoisePointsCount: noiseCount,
     offRouteCount: offRouteEventsList.length,

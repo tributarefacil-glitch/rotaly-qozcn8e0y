@@ -319,6 +319,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       batchDisplay: string
       roadKm: number
       gpsKm: number
+      telemetryStatus?: 'suficiente' | 'insuficiente'
+      telemetryPingsCount: number
       deviationMeters: number
       deviationTimeStr: string
       offRoadEventsCount: number
@@ -578,6 +580,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           batchDisplay,
           roadKm: roadKmOriginal,
           gpsKm: calc.totalGpsKm,
+          telemetryStatus: calc.telemetryStatus,
+          telemetryPingsCount: calc.telemetryPingsCount ?? 0,
           deviationMeters: maxDevMeters,
           deviationTimeStr: devTimeStr,
           offRoadEventsCount: offRouteCount,
@@ -1635,23 +1639,60 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                         {/* Coluna B: GPS Telemetria */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
-                            {typeof row.order.km_real_perna === 'number' &&
-                            Number.isFinite(row.order.km_real_perna) &&
-                            row.order.km_real_perna > 0 ? (
-                              <div className="flex items-center justify-center gap-1">
-                                <span className="font-mono text-sm font-black text-purple-700 dark:text-purple-300">
-                                  {row.order.km_real_perna.toFixed(1)} km
-                                </span>
-                                <Badge
-                                  variant="outline"
-                                  className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
-                                >
-                                  GPS
-                                </Badge>
-                              </div>
-                            ) : (
-                              <span className="font-mono text-sm font-bold text-slate-400">—</span>
-                            )}
+                            {(() => {
+                              // Se houver km_real_perna explícito gravado e válido
+                              const hasPernaKm =
+                                typeof row.order.km_real_perna === 'number' &&
+                                Number.isFinite(row.order.km_real_perna) &&
+                                row.order.km_real_perna > 0
+                              const hasBatchGps =
+                                row.telemetryStatus === 'suficiente' &&
+                                typeof row.gpsKm === 'number' &&
+                                row.gpsKm > 0
+
+                              if (hasPernaKm) {
+                                return (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <span className="font-mono text-sm font-black text-purple-700 dark:text-purple-300">
+                                      {row.order.km_real_perna!.toFixed(1)} km
+                                    </span>
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
+                                    >
+                                      GPS
+                                    </Badge>
+                                  </div>
+                                )
+                              }
+
+                              if (hasBatchGps) {
+                                return (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <span className="font-mono text-sm font-black text-purple-700 dark:text-purple-300">
+                                      {row.gpsKm.toFixed(1)} km
+                                    </span>
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
+                                    >
+                                      GPS Lote
+                                    </Badge>
+                                  </div>
+                                )
+                              }
+
+                              return (
+                                <div className="space-y-0.5">
+                                  <span className="font-mono text-sm font-bold text-slate-400">
+                                    —
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block">
+                                    sem telemetria suficiente ({row.telemetryPingsCount} pings)
+                                  </span>
+                                </div>
+                              )
+                            })()}
                             <span className="text-[9px] text-slate-400 block">{row.dateStr}</span>
                           </div>
                         </td>

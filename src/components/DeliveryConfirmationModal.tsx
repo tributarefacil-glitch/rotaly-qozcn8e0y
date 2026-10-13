@@ -528,36 +528,9 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       }
     }
 
-    // Calcular km_real_perna (distância desde a parada anterior ou base usando a posição capturada)
-    let kmRealPerna: number | undefined = undefined
-    if (currentLoc) {
-      // Procurar a parada imediatamente anterior neste lote
-      const batchKey = order.route_batch_key
-      const sameBatch = allOrders
-        .filter((o) => (batchKey ? o.route_batch_key === batchKey : true) && o.id !== order.id)
-        .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0))
-
-      const mySeq = order.sequence ?? 1
-      const prevOrder = sameBatch
-        .filter((o) => (o.sequence ?? 0) < mySeq)
-        .sort((a, b) => (b.sequence ?? 0) - (a.sequence ?? 0))[0]
-
-      const prevLat =
-        prevOrder?.expand?.customer_id?.lat ||
-        prevOrder?.end_address_lat ||
-        order.start_base_lat ||
-        -22.9068
-      const prevLng =
-        prevOrder?.expand?.customer_id?.lng ||
-        prevOrder?.end_address_lng ||
-        order.start_base_lng ||
-        -43.1729
-
-      if (prevLat && prevLng) {
-        const meters = haversineDistanceMeters(prevLat, prevLng, currentLoc.lat, currentLoc.lng)
-        kmRealPerna = parseFloat((meters / 1000).toFixed(2))
-      }
-    }
+    // REGRA SOBERANA: Não inventar km_real_perna na baixa da entrega.
+    // Gravar vazio/nulo se não houver pings imediatos e deixar o motor da Coluna B apurar depois.
+    const kmRealPerna: number | undefined = undefined
 
     const effectiveReceiverName =
       receiverName.trim() || order.expand?.customer_id?.name || 'Cliente'

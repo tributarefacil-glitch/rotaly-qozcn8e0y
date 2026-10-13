@@ -44,6 +44,8 @@ export interface CourierOrderTelemetryCalculation {
   offRouteCount: number
   unexpectedStopsCount: number
   calculationSource?: 'odometro' | 'historico_viario' | 'gps'
+  telemetryStatus?: 'suficiente' | 'insuficiente'
+  telemetryPingsCount?: number
   odometerKm?: number
   // Metadados de entrega conjunta / múltipla no mesmo ponto
   isJointDelivery?: boolean
@@ -826,6 +828,8 @@ export function calculateCourierFuelMetrics(params: {
       km_real_perna: kmRealPernaVal,
       discardedNoiseKm: batchTelemetry.discardedNoiseKm,
       isRealTelemetry: batchTelemetry.isRealTelemetry,
+      telemetryStatus: batchTelemetry.telemetryStatus,
+      telemetryPingsCount: batchTelemetry.telemetryPingsCount,
       hasReturnKm: batchTelemetry.hasReturnKm,
       fuelCost: Number(fuelCost.toFixed(2)),
       litersSpent: Number(litersSpent.toFixed(2)),

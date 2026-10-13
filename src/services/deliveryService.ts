@@ -2195,7 +2195,9 @@ export const deliveryService = {
   },
 
   // Locations
-  async getLatestLocations(filter = '', sort = '-created', minutesWindow = 60) {
+  // minutesWindow padrão ampliado para 1440 min (24h) para cobrir integralmente lotes auditados do dia
+  // Se minutesWindow for 0 ou nulo, busca sem restrição de janela temporal relativa
+  async getLatestLocations(filter = '', sort = '-created', minutesWindow = 1440) {
     // Sanitização técnica: a coleção PocketBase 'locations' usa 'user_id', NÃO 'courier_id'
     const sanitizedFilter = (filter || '').replace(/\bcourier_id\b/g, 'user_id')
     let finalFilter = sanitizedFilter

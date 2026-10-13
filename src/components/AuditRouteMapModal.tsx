@@ -158,41 +158,78 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
           return t >= startTs && t <= endTs
         })
 
-        let fetchedLocations: LocationRecord[] = poolMatches
+        let rawPings: LocationRecord[] = poolMatches
 
-        // Se o pool local tiver poucos ou nenhum ping, buscar sob demanda no backend
-        if (fetchedLocations.length < 5) {
+        // Se o pool local tiver menos de 2 pings ou estiver vazio, buscar no backend pela janela exata do lote
+        if (rawPings.length < 2) {
           try {
-            const startDate = new Date(startTs).toISOString().replace('T', ' ').substring(0, 19)
-            const endDate = new Date(endTs).toISOString().replace('T', ' ').substring(0, 19)
+            const startDate = new Date(startTs).toISOString()
+            const endDate = new Date(endTs).toISOString()
             const directLocs = await deliveryService.getCourierLocations(
               courierId,
               startDate,
               endDate,
             )
             if (directLocs && directLocs.length > 0) {
-              fetchedLocations = directLocs
+              rawPings = directLocs
             }
           } catch (fetchErr) {
             console.warn('[AuditRouteMapModal] Erro ao buscar telemetria sob demanda:', fetchErr)
           }
         }
 
-        // Sanitização estrita via MapDataService.cleanCoords (porta única)
-        // Ordenados por created cronológico
+        // Sanitização e ordenação estrita em ordem cronológica (+created)
+        // Regras: descartar accuracy > 100m, saltos > 90 km/h, jitter < 12m em < 45s
+        const chronologicalPings = [...rawPings].sort(
+          (a, b) => new Date(a.created).getTime() - new Date(b.created).getTime(),
+        )
+
         const sanitizedPings: LocationRecord[] = []
-        fetchedLocations.forEach((loc) => {
+        for (const loc of chronologicalPings) {
           const clean = MapDataService.cleanCoords(loc.lat, loc.lng)
-          if (clean) {
+          if (!clean) continue
+
+          // Descartar accuracy > 100m
+          if (typeof loc.accuracy === 'number' && loc.accuracy > 100) {
+            continue
+          }
+
+          if (sanitizedPings.length === 0) {
             sanitizedPings.push({
               ...loc,
               lat: clean.lat,
               lng: clean.lng,
             })
+            continue
           }
-        })
 
-        sanitizedPings.sort((a, b) => new Date(a.created).getTime() - new Date(b.created).getTime())
+          const prev = sanitizedPings[sanitizedPings.length - 1]
+          const tPrev = new Date(prev.created).getTime()
+          const tCurr = new Date(loc.created).getTime()
+          const dtSeconds = Math.max(0.1, (tCurr - tPrev) / 1000)
+
+          const dx =
+            (clean.lng - prev.lng) * Math.cos((((clean.lat + prev.lat) / 2) * Math.PI) / 180)
+          const dy = clean.lat - prev.lat
+          const distMeters = Math.sqrt(dx * dx + dy * dy) * 111319.5
+
+          // Descartar jitter: < 12m em < 45s
+          if (distMeters < 12 && dtSeconds < 45) {
+            continue
+          }
+
+          // Descartar saltos > 90 km/h
+          const speedKmh = (distMeters / dtSeconds) * 3.6
+          if (speedKmh > 90 && !loc.offline_buffered) {
+            continue
+          }
+
+          sanitizedPings.push({
+            ...loc,
+            lat: clean.lat,
+            lng: clean.lng,
+          })
+        }
 
         // 2. Traçado viário planejado completo da rota otimizada:
         // Base oficial -> Clientes na sequência otimizada -> Retorno à base
@@ -255,6 +292,9 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
   // Inicializar e desenhar no Google Maps
   useEffect(() => {
     if (!isOpen || isLoading || loadingError) return
+    // REGRA CRÍTICA: Se a rota OSRM ainda não estiver carregada (plannedRoutePoints < 2) e temos clientes a visitar,
+    // aguardar a resolução viária antes de desenhar e classificar qualquer ping. NUNCA classificar contra a base.
+    if (plannedRoutePoints.length < 2 && clientStops.length > 0) return
     if (!mapContainerRef.current) return
 
     let isDisposed = false
@@ -409,15 +449,9 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               }
             }
           } else {
-            // Se não houver rota planejada viária por fallback, calcula distância à base
-            minPerpDistance = pointToSegmentDistanceMeters(
-              p2.lat,
-              p2.lng,
-              baseCoords.lat,
-              baseCoords.lng,
-              baseCoords.lat,
-              baseCoords.lng,
-            )
+            // NUNCA classificar contra a base isolada (evita falso "desvio máx 9918 m" Pilar -> Caxias)
+            // Se a rota viária não tiver pontos suficientes, o segmento é neutro (distância 0)
+            minPerpDistance = 0
           }
 
           if (minPerpDistance > maxDevM && Number.isFinite(minPerpDistance)) {
@@ -654,14 +688,15 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
             </div>
           )}
 
-          {/* AVISO QUANDO NÃO HÁ PINGS GRAVADOS */}
-          {!isLoading && !loadingError && telemetryPings.length === 0 && (
+          {/* AVISO QUANDO NÃO HÁ PINGS GRAVADOS (< 2 pings válidos) */}
+          {!isLoading && !loadingError && telemetryPings.length < 2 && (
             <div className="absolute top-4 left-4 right-4 z-10 p-3 bg-amber-50/95 border border-amber-300 rounded-xl shadow-md text-xs text-amber-900 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                 <span>
-                  <strong>Atenção:</strong> Nenhum ping de GPS gravado neste lote na janela temporal
-                  informada. Apenas a rota otimizada planejada está sendo exibida.
+                  <strong>Atenção: Nenhum ping de GPS gravado neste lote</strong>
+                  {telemetryPings.length === 1 ? ' (apenas 1 ping isolado gravado)' : ''}. Apenas a
+                  rota viária otimizada planejada (linha azul) está sendo exibida.
                 </span>
               </div>
             </div>
