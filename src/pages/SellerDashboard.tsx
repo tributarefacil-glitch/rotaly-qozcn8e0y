@@ -27,6 +27,8 @@ import { Suspense, lazy } from 'react'
 import type { MapMarkerItem } from '@/components/LiveMap'
 import { CreateOrderModal } from '@/components/CreateOrderModal'
 import { CreateCourierModal } from '@/components/CreateCourierModal'
+import { SellerChatPanelModal } from '@/components/SellerChatPanelModal'
+import { chatService } from '@/services/chatService'
 import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import { CustomerSearchModal } from '@/components/CustomerSearchModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
@@ -163,6 +165,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   const [customerToEdit, setCustomerToEdit] = useState<CustomerRecord | null>(null)
   const [customerTabSearch, setCustomerTabSearch] = useState('')
   const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false)
+  const [isChatPanelModalOpen, setIsChatPanelModalOpen] = useState(false)
+  const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [mainViewTab, setMainViewTab] = useState<
@@ -260,8 +264,19 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     window.open(`https://wa.me/${finalNumber}?text=${msgEncoded}`, '_blank')
   }
 
+  const loadUnreadChatCount = async () => {
+    if (!user?.id) return
+    try {
+      const cnt = await chatService.getUnreadCount(user.id)
+      setUnreadChatCount(cnt)
+    } catch {
+      /* ignore */
+    }
+  }
+
   const loadData = async () => {
     try {
+      loadUnreadChatCount()
       setResolvedCompanySource('Rotaly Operações (Matriz)')
       const currentOpWindow = getOperationalWindow(new Date())
       const windowStart =
@@ -377,6 +392,18 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
   useEffect(() => {
     loadData()
   }, [user?.id, user?.role])
+
+  // Realtime hook para atualizar contagem de chat não lido
+  useRealtime<any>(
+    'chat_messages',
+    (e) => {
+      if (!user?.id) return
+      if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
+        loadUnreadChatCount()
+      }
+    },
+    !!user?.id,
+  )
 
   useEffect(() => {
     const handleCompanyChange = () => {
@@ -996,6 +1023,19 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
               >
                 <Truck className="h-4 w-4 text-[#00A3FF]" />
                 <span>+ Entregador</span>
+              </Button>
+              <Button
+                onClick={() => setIsChatPanelModalOpen(true)}
+                className="relative h-10 min-h-[44px] gap-1.5 bg-gradient-to-r from-[#002855] to-[#0052CC] hover:from-[#001D3D] hover:to-[#002855] text-white font-bold text-xs shadow-xs rounded-xl"
+                title="Abrir Central de Chat Rápido com os Entregadores"
+              >
+                <MessageCircle className="h-4 w-4 text-[#00A3FF]" />
+                <span>Chat Entregadores</span>
+                {unreadChatCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
+                    {unreadChatCount} não lida{unreadChatCount > 1 ? 's' : ''}
+                  </span>
+                )}
               </Button>
               <Button
                 onClick={() => setIsOptimizerModalOpen(true)}
@@ -2187,6 +2227,18 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
         onOpenChange={setIsCreateCourierModalOpen}
         onCourierCreated={loadData}
       />
+
+      {/* Modal do Painel Central de Chat Rápido Vendedor ↔ Entregadores */}
+      {user && (
+        <SellerChatPanelModal
+          open={isChatPanelModalOpen}
+          onOpenChange={(v) => {
+            setIsChatPanelModalOpen(v)
+            if (!v) loadUnreadChatCount()
+          }}
+          currentSeller={user as any}
+        />
+      )}
 
       {/* Modal para Cadastro / Edição Direta de Cliente pelo Vendedor */}
       <CreateCustomerModal

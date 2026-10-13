@@ -13,14 +13,15 @@
  * 4. Fallback automático para localStorage caso o navegador/ambiente restrinja IndexedDB (ex: modo anônimo restritivo).
  */
 
-import type { OrderRecord } from '@/types/delivery'
+import type { OrderRecord, PendingOfflineChatMessage } from '@/types/delivery'
 
 const DB_NAME = 'rotaly_offline_db'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 const STORE_ROUTE_CACHE = 'route_cache'
 const STORE_TELEMETRY_QUEUE = 'telemetry_queue'
 const STORE_DELIVERY_QUEUE = 'delivery_queue'
+const STORE_CHAT_QUEUE = 'chat_queue'
 
 export interface CachedRoutePayload {
   courierId: string
@@ -100,6 +101,12 @@ class OfflineRouteStorageService {
 
             if (!db.objectStoreNames.contains(STORE_DELIVERY_QUEUE)) {
               db.createObjectStore(STORE_DELIVERY_QUEUE, { keyPath: 'id' })
+            }
+
+            if (!db.objectStoreNames.contains(STORE_CHAT_QUEUE)) {
+              const chatStore = db.createObjectStore(STORE_CHAT_QUEUE, { keyPath: 'localId' })
+              chatStore.createIndex('by_sender', 'sender_id', { unique: false })
+              chatStore.createIndex('by_timestamp', 'timestamp', { unique: false })
             }
           }
 
@@ -417,6 +424,114 @@ class OfflineRouteStorageService {
 
     actions.sort((a, b) => a.timestamp - b.timestamp)
     return actions
+  }
+
+  // -------------------------------------------------------------
+  // FILA PERSISTENTE DE CHAT RÁPIDO OFFLINE (IndexedDB + fallback localStorage)
+  // -------------------------------------------------------------
+
+  async enqueueChatMessage(msg: PendingOfflineChatMessage): Promise<void> {
+    try {
+      const db = await this.getDB()
+      if (db) {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(STORE_CHAT_QUEUE, 'readwrite')
+          const store = tx.objectStore(STORE_CHAT_QUEUE)
+          const req = store.put(msg)
+          req.onsuccess = () => resolve()
+          req.onerror = () => reject(req.error)
+        })
+        return
+      }
+    } catch (err) {
+      console.warn('[OfflineStorage] Falha ao enfileirar chat no IndexedDB:', err)
+    }
+
+    try {
+      const key = `rotaly_offline_chat_${msg.sender_id}`
+      const existingRaw = localStorage.getItem(key)
+      const list: PendingOfflineChatMessage[] = existingRaw ? JSON.parse(existingRaw) : []
+      list.push(msg)
+      localStorage.setItem(key, JSON.stringify(list))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async getPendingChatMessages(senderId: string): Promise<PendingOfflineChatMessage[]> {
+    if (!senderId) return []
+    let list: PendingOfflineChatMessage[] = []
+    try {
+      const db = await this.getDB()
+      if (db) {
+        list = await new Promise<PendingOfflineChatMessage[]>((resolve) => {
+          const tx = db.transaction(STORE_CHAT_QUEUE, 'readonly')
+          const store = tx.objectStore(STORE_CHAT_QUEUE)
+          const req = store.getAll()
+          req.onsuccess = () => {
+            const all = (req.result || []) as PendingOfflineChatMessage[]
+            const filtered = all.filter((m) => m.sender_id === senderId)
+            filtered.sort((a, b) => a.timestamp - b.timestamp)
+            resolve(filtered)
+          }
+          req.onerror = () => resolve([])
+        })
+      }
+    } catch (err) {
+      console.warn('[OfflineStorage] Falha ao ler mensagens de chat do IndexedDB:', err)
+    }
+
+    try {
+      const key = `rotaly_offline_chat_${senderId}`
+      const raw = localStorage.getItem(key)
+      if (raw) {
+        const fbList: PendingOfflineChatMessage[] = JSON.parse(raw)
+        if (Array.isArray(fbList) && fbList.length > 0) {
+          const existingIds = new Set(list.map((m) => m.localId))
+          for (const item of fbList) {
+            if (!existingIds.has(item.localId)) list.push(item)
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    list.sort((a, b) => a.timestamp - b.timestamp)
+    return list
+  }
+
+  async removeChatMessages(senderId: string, localIdsToRemove: string[]): Promise<void> {
+    if (localIdsToRemove.length === 0) return
+    const idSet = new Set(localIdsToRemove)
+    try {
+      const db = await this.getDB()
+      if (db) {
+        await new Promise<void>((resolve) => {
+          const tx = db.transaction(STORE_CHAT_QUEUE, 'readwrite')
+          const store = tx.objectStore(STORE_CHAT_QUEUE)
+          for (const id of localIdsToRemove) {
+            store.delete(id)
+          }
+          tx.oncomplete = () => resolve()
+          tx.onerror = () => resolve()
+        })
+      }
+    } catch (err) {
+      console.warn('[OfflineStorage] Falha ao deletar chat do IndexedDB:', err)
+    }
+
+    try {
+      const key = `rotaly_offline_chat_${senderId}`
+      const raw = localStorage.getItem(key)
+      if (raw) {
+        const fbList: PendingOfflineChatMessage[] = JSON.parse(raw)
+        const updated = fbList.filter((m) => !idSet.has(m.localId))
+        localStorage.setItem(key, JSON.stringify(updated))
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   async removeRedirectionActions(courierId: string, idsToRemove: string[]): Promise<void> {

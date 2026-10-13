@@ -22,6 +22,9 @@ import { deliveryService } from '@/services/deliveryService'
 import type { NotificationRecord } from '@/types/delivery'
 import { useRealtime } from '@/hooks/use-realtime'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
+import { SellerChatPanelModal } from '@/components/SellerChatPanelModal'
+import { chatService } from '@/services/chatService'
+import { MessageCircle } from 'lucide-react'
 import { shouldDisplayToast } from '@/lib/notificationDedupe'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,6 +50,8 @@ export const Header: React.FC = () => {
   const [notifications, setNotifications] = useState<NotificationRecord[]>([])
   const [isNotifOpen, setIsNotifOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [unreadChatCount, setUnreadChatCount] = useState(0)
+  const [isChatPanelOpen, setIsChatPanelOpen] = useState(false)
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
   const [pendingAddressAlerts, setPendingAddressAlerts] = useState(0)
 
@@ -87,11 +92,34 @@ export const Header: React.FC = () => {
     }
   }
 
+  const loadUnreadChatCount = useCallback(async () => {
+    if (!user?.id) return
+    try {
+      const count = await chatService.getUnreadCount(user.id)
+      setUnreadChatCount(count)
+    } catch (err) {
+      console.warn('Erro ao carregar não lidas do chat no Header:', err)
+    }
+  }, [user?.id])
+
   useEffect(() => {
     if (user) {
       loadNotifications()
+      loadUnreadChatCount()
     }
-  }, [user])
+  }, [user, loadUnreadChatCount])
+
+  // Realtime para contagem de chat não lido no Header
+  useRealtime<any>(
+    'chat_messages',
+    (e) => {
+      if (!user?.id) return
+      if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
+        loadUnreadChatCount()
+      }
+    },
+    !!user?.id,
+  )
 
   // Realtime subscription to notifications
   useRealtime<NotificationRecord>(
@@ -242,6 +270,25 @@ export const Header: React.FC = () => {
 
       {/* Right section: Notifications & User Profile */}
       <div className="flex items-center gap-2 sm:gap-3">
+        {/* Chat Rápido para Vendedor / Admin / Master */}
+        {(role === 'seller' || role === 'admin' || role === 'master') && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsChatPanelOpen(true)}
+            className="relative h-9 w-9 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[#002855]"
+            title="Chat Rápido com Entregadores"
+          >
+            <MessageCircle className="h-4 w-4 text-[#00A3FF]" />
+            {unreadChatCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-black text-white ring-2 ring-white animate-pulse">
+                {unreadChatCount > 9 ? '9+' : unreadChatCount}
+              </span>
+            )}
+          </Button>
+        )}
+
         {/* Notification Bell Popover */}
         <Popover open={isNotifOpen} onOpenChange={setIsNotifOpen}>
           <PopoverTrigger asChild>
@@ -335,6 +382,18 @@ export const Header: React.FC = () => {
             </div>
           </PopoverContent>
         </Popover>
+
+        {/* Modal do Painel de Chat Vendedor/Admin */}
+        {user && (role === 'seller' || role === 'admin' || role === 'master') && (
+          <SellerChatPanelModal
+            open={isChatPanelOpen}
+            onOpenChange={(v) => {
+              setIsChatPanelOpen(v)
+              if (!v) loadUnreadChatCount()
+            }}
+            currentSeller={user as any}
+          />
+        )}
 
         {/* User profile dropdown */}
         <DropdownMenu>

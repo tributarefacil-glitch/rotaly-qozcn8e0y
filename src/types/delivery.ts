@@ -647,6 +647,39 @@ export interface FuelBalanceAlertRecord extends RecordModel {
   }
 }
 
+export type ChatMessageKind = 'text' | 'quick_reply'
+
+export interface ChatMessageRecord extends RecordModel {
+  sender_id: string
+  recipient_id: string
+  route_batch_key?: string
+  order_id?: string
+  order_code?: string
+  text: string
+  kind: ChatMessageKind
+  read_at?: string
+  created?: string
+  updated?: string
+  expand?: {
+    sender_id?: UserRecord
+    recipient_id?: UserRecord
+    order_id?: OrderRecord
+  }
+}
+
+export interface PendingOfflineChatMessage {
+  localId: string
+  sender_id: string
+  recipient_id: string
+  route_batch_key?: string
+  order_id?: string
+  order_code?: string
+  text: string
+  kind: ChatMessageKind
+  timestamp: number
+  status: 'queued' | 'sending' | 'failed'
+}
+
 export interface AuditTrailRecord {
   id: string
   collectionId?: string

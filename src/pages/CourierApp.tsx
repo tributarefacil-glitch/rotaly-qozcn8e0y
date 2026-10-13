@@ -25,6 +25,9 @@ import { Header } from '@/components/Header'
 import { CourierBottomNav } from '@/components/CourierBottomNav'
 import { DeliveryConfirmationModal } from '@/components/DeliveryConfirmationModal'
 import { CancelDeliveryModal } from '@/components/CancelDeliveryModal'
+import { CourierChatModal } from '@/components/CourierChatModal'
+import { chatService } from '@/services/chatService'
+import { MessageCircle } from 'lucide-react'
 import { RedirectDeliveryModal } from '@/components/RedirectDeliveryModal'
 import {
   CourierRedirectionTutorialModal,
@@ -97,6 +100,8 @@ export default function CourierApp() {
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
   const [selectedOrderForRedirect, setSelectedOrderForRedirect] = useState<OrderRecord | null>(null)
   const [isRedirectModalOpen, setIsRedirectModalOpen] = useState(false)
+  const [isChatModalOpen, setIsChatModalOpen] = useState(false)
+  const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [isTutorialModalOpen, setIsTutorialModalOpen] = useState(false)
   const [isStartRouteModalOpen, setIsStartRouteModalOpen] = useState(false)
   const [isFinishRouteModalOpen, setIsFinishRouteModalOpen] = useState(false)
@@ -429,6 +434,14 @@ export default function CourierApp() {
     loadFuelAndAccountData({ force: true })
     checkBackgroundPermissionHealth()
 
+    // Carregar contagem de mensagens não lidas no chat do entregador
+    if (user?.id) {
+      chatService
+        .getUnreadCount(user.id)
+        .then((cnt) => setUnreadChatCount(cnt))
+        .catch(() => {})
+    }
+
     // Checar se é a primeira abertura do app do entregador para exibir o tutorial de boas-vindas
     if (typeof window !== 'undefined' && user?.id) {
       try {
@@ -513,6 +526,17 @@ export default function CourierApp() {
       }
       loadCourierOrders({ force: true })
       loadFuelAndAccountData()
+    }
+  })
+
+  // Realtime para mensagens do chat
+  useRealtime<any>('chat_messages', (e) => {
+    if (!user?.id) return
+    if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
+      chatService
+        .getUnreadCount(user.id)
+        .then((cnt) => setUnreadChatCount(cnt))
+        .catch(() => {})
     }
   })
 
@@ -2865,6 +2889,49 @@ export default function CourierApp() {
         </div>
         <span className="font-mono text-[10px] text-slate-500">{APP_VERSION_LABEL}</span>
       </div>
+
+      {/* BOTÃO FLUTUANTE DE CHAT RÁPIDO DO ENTREGADOR (ACESSÍVEL SEMPRE DURANTE A ROTA) */}
+      <div className="fixed bottom-20 right-4 z-40 sm:bottom-6 sm:right-6">
+        <Button
+          type="button"
+          onClick={() => {
+            setIsChatModalOpen(true)
+            setUnreadChatCount(0)
+          }}
+          className="relative h-14 w-14 rounded-full bg-gradient-to-tr from-[#002855] via-[#0052CC] to-[#00A3FF] hover:from-[#001D3D] hover:to-[#0052CC] text-white shadow-2xl border-2 border-white/20 flex items-center justify-center p-0 transition-transform active:scale-95"
+          title="Chat Rápido com a Base / Vendedor"
+        >
+          <MessageCircle className="h-7 w-7 text-white drop-shadow-md" />
+          {unreadChatCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-500 text-[11px] font-black text-white px-1.5 ring-2 ring-white animate-bounce shadow-md">
+              {unreadChatCount > 9 ? '9+' : unreadChatCount}
+            </span>
+          )}
+        </Button>
+      </div>
+
+      {/* Modal de Chat Rápido do Entregador com as 4 Respostas Rápidas */}
+      {user && (
+        <CourierChatModal
+          open={isChatModalOpen}
+          onOpenChange={(v) => {
+            setIsChatModalOpen(v)
+            if (!v && user?.id) {
+              chatService
+                .getUnreadCount(user.id)
+                .then((cnt) => setUnreadChatCount(cnt))
+                .catch(() => {})
+            }
+          }}
+          currentUser={user as any}
+          currentActiveDelivery={currentActiveDelivery}
+          currentRouteBatchKey={
+            currentActiveDelivery?.route_batch_key ||
+            currentRouteOrders[0]?.route_batch_key ||
+            orders[0]?.route_batch_key
+          }
+        />
+      )}
 
       {/* Navegação Inferior Mobile Mantida Intacta */}
       <CourierBottomNav />
