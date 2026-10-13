@@ -187,7 +187,17 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
     const courierId = courier.id
     const courierName = courier.getString('name') || 'Entregador'
     const vehicleType = (courier.getString('vehicle_type') || 'moto').toLowerCase()
-    const isBicycle = vehicleType === 'bicicleta' || vehicleType === 'bike'
+    const isBicycle =
+      vehicleType === 'bicicleta' || vehicleType === 'bike' || vehicleType === 'bicycle'
+
+    // REGRA DO DONO: Entregador com vehicle_type 'bicicleta' não tem pagamento por km.
+    // Excluir entregadores de bicicleta da apuração de km pago do fechamento diário.
+    if (isBicycle) {
+      console.log(
+        `[daily_21h30_closing_check] Entregador ${courierName} (${vehicleType}) ignorado: bicicleta não tem pagamento por km.`,
+      )
+      continue
+    }
 
     // Buscar ordens do dia civil de SP (hoje)
     // Janela das 05h SP (08h UTC) às 23h59 SP (02h59 UTC do dia seguinte)

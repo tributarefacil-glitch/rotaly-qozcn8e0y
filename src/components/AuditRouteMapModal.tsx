@@ -667,14 +667,14 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
           <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-0" />
 
           {/* ESTADO DE CARREGANDO / AGUARDANDO ROTA PLANEJADA */}
-          {(isLoading || (plannedRoutePoints.length < 2 && clientStops.length > 0 && !loadingError)) && (
+          {(isLoading ||
+            (plannedRoutePoints.length < 2 && clientStops.length > 0 && !loadingError)) && (
             <div className="absolute inset-0 z-20 bg-white/85 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center">
               <RefreshCw className="h-8 w-8 text-[#0052CC] animate-spin mb-3" />
-              <p className="font-bold text-slate-800 text-sm">
-                aguardando rota planejada...
-              </p>
+              <p className="font-bold text-slate-800 text-sm">aguardando rota planejada...</p>
               <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                Carregando rota viária OSRM a partir da Base Pilar antes da classificação de telemetria.
+                Carregando rota viária OSRM a partir da Base Pilar antes da classificação de
+                telemetria.
               </p>
             </div>
           )}
@@ -698,8 +698,10 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
                 <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                 <span>
                   <strong>sem telemetria</strong>
-                  {telemetryPings.length === 1 ? ' (apenas 1 ping gravado)' : ' suficiente (<2 pings)'}. Apenas a
-                  rota viária otimizada planejada (linha azul) está sendo exibida.
+                  {telemetryPings.length === 1
+                    ? ' (apenas 1 ping gravado)'
+                    : ' suficiente (<2 pings)'}
+                  . Apenas a rota viária otimizada planejada (linha azul) está sendo exibida.
                 </span>
               </div>
             </div>

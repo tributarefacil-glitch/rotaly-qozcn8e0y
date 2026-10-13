@@ -5352,7 +5352,24 @@ export const deliveryService = {
     pointBLng?: number
     newAddress?: string
     calculationMethod?: string
-  }): Promise<RouteKmApprovalRecord> {
+  }): Promise<RouteKmApprovalRecord | null> {
+    // REGRA DO DONO: Entregador com vehicle_type 'bicicleta' / 'bike' NÃO pode gerar registros
+    // na coleção route_km_approvals (bicicleta não tem pagamento por km).
+    if (params.courierId) {
+      try {
+        const courierUser = await pb.collection<UserRecord>('users').getOne(params.courierId, {
+          fields: 'id,vehicle_type',
+          requestKey: null,
+        })
+        const vCat = this.normalizeVehicleCategory(courierUser?.vehicle_type)
+        if (vCat === 'bicicleta') {
+          return null
+        }
+      } catch (errCourier) {
+        console.warn('[saveRouteKmApproval] Falha ao verificar veículo do entregador:', errCourier)
+      }
+    }
+
     const roadKm = Number((params.originalRoadKm ?? 0).toFixed(1))
     const gpsKm =
       params.originalGpsKm !== undefined ? Number(params.originalGpsKm.toFixed(1)) : undefined
@@ -5525,7 +5542,7 @@ export const deliveryService = {
     notes?: string
     extraKmCalculated?: number
     calculationMethod?: 'telemetry_gps' | 'haversine_road_factor'
-  }): Promise<{ order: OrderRecord; approval: RouteKmApprovalRecord; extraKm: number }> {
+  }): Promise<{ order: OrderRecord; approval: RouteKmApprovalRecord | null; extraKm: number }> {
     const order = params.order
     const authUser = pb.authStore.record as any
     const now = params.pointBAt || new Date().toISOString()
