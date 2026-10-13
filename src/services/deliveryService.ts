@@ -37,6 +37,7 @@ import type {
   RouteKmApprovalStatus,
   RouteKmApprovalType,
   AuditTrailRecord,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 
 /**
