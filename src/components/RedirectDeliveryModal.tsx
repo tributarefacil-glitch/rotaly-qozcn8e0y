@@ -15,6 +15,7 @@ import { MapPin, Navigation, ArrowRight, Compass, AlertCircle, CheckCircle2 } fr
 import { toast } from 'sonner'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
+import { MapDataService } from '@/lib/mapDataService'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 import type { OrderRecord } from '@/types/delivery'
 
@@ -108,11 +109,10 @@ export const RedirectDeliveryModal: React.FC<RedirectDeliveryModalProps> = ({
         gpsErr,
       )
       // Fallback gracioso: usar coordenadas planejadas do pedido se o hardware falhar
-      const fallbackLat = order.end_address_lat || order.expand?.customer_id?.lat || -22.699
-      const fallbackLng = order.end_address_lng || order.expand?.customer_id?.lng || -43.296
+      const destCoords = MapDataService.getOrderDestination(order)
       coords = {
-        lat: fallbackLat,
-        lng: fallbackLng,
+        lat: destCoords ? destCoords.lat : -22.699,
+        lng: destCoords ? destCoords.lng : -43.296,
         at: new Date().toISOString(),
       }
       setCapturedPointA(coords)

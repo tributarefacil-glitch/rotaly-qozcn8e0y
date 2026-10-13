@@ -28,6 +28,7 @@ import {
   haversineDistanceMeters,
   isSuspectPin,
 } from '@/lib/geo'
+import { MapDataService } from '@/lib/mapDataService'
 
 export {
   DEVIATION_THRESHOLD_METERS,
@@ -48,11 +49,10 @@ export function getOrderRoadDistanceFromBase(
   const fallbackLng = activeBaseCoords?.lng ?? -43.2982834
   const baseLat = order.start_base_lat || fallbackLat
   const baseLng = order.start_base_lng || fallbackLng
-  const custLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
-  const custLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
+  const cleanDest = MapDataService.getOrderDestination(order)
 
-  if (custLat !== 0 && custLng !== 0) {
-    const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
+  if (cleanDest) {
+    const directMeters = haversineDistanceMeters(baseLat, baseLng, cleanDest.lat, cleanDest.lng)
     const roadKm = directMeters / 1000
     return Math.max(roadKm, 0.8)
   }
@@ -77,18 +77,12 @@ export function calculateDeliveryRouteWeight(
   const fallbackLng = activeBaseCoords?.lng ?? -43.2982834
   const baseLat = order.start_base_lat || fallbackLat
   const baseLng = order.start_base_lng || fallbackLng
-  const custLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
-  const custLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
-
-  const hasCustomerCoords =
-    typeof order.expand?.customer_id?.lat === 'number' &&
-    typeof order.expand?.customer_id?.lng === 'number' &&
-    order.expand.customer_id.lat !== 0 &&
-    order.expand.customer_id.lng !== 0
+  const cleanDest = MapDataService.getOrderDestination(order)
+  const hasCustomerCoords = Boolean(cleanDest)
 
   let roadDist = 0.8
-  if (custLat !== 0 && custLng !== 0) {
-    const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
+  if (cleanDest) {
+    const directMeters = haversineDistanceMeters(baseLat, baseLng, cleanDest.lat, cleanDest.lng)
     const directKm = directMeters / 1000
     roadDist = Math.max(directKm, 0.8)
   }
@@ -502,8 +496,9 @@ export function calculateRealKmForOrder(params: {
 
   // Verificação de Sanidade de Pin (isSuspectPin):
   // Se a parada estiver com coordenadas suspeitas/não calibradas, ela é excluída do viário e sinalizada
-  const orderCustLatCheck = order.expand?.customer_id?.lat ?? order.end_address_lat ?? null
-  const orderCustLngCheck = order.expand?.customer_id?.lng ?? order.end_address_lng ?? null
+  const cleanDestCheck = MapDataService.getOrderDestination(order)
+  const orderCustLatCheck = cleanDestCheck?.lat ?? null
+  const orderCustLngCheck = cleanDestCheck?.lng ?? null
   const orderCustNotesCheck = order.notes || order.expand?.customer_id?.notes || ''
   const isOrderPinSuspect = isSuspectPin(orderCustLatCheck, orderCustLngCheck, orderCustNotesCheck)
 
@@ -534,8 +529,9 @@ export function calculateRealKmForOrder(params: {
   // Se a entrega tem origem igual ao destino (ex.: malote TRK-2026-670 ou distância base->destino < 100m)
   const orderStartLat = order.start_base_lat || 0
   const orderStartLng = order.start_base_lng || 0
-  const orderCustLat = order.expand?.customer_id?.lat || order.end_address_lat || 0
-  const orderCustLng = order.expand?.customer_id?.lng || order.end_address_lng || 0
+  const cleanDestForBaseCheck = MapDataService.getOrderDestination(order)
+  const orderCustLat = cleanDestForBaseCheck?.lat || 0
+  const orderCustLng = cleanDestForBaseCheck?.lng || 0
   const isDestAtBase =
     orderStartLat !== 0 &&
     orderCustLat !== 0 &&
@@ -622,8 +618,9 @@ export function calculateRealKmForOrder(params: {
   // 5. Coordenadas da rota oficial (origem da base e destino do cliente)
   const startLat = order.start_base_lat || -22.906847
   const startLng = order.start_base_lng || -43.172896
-  const endLat = order.expand?.customer_id?.lat || order.end_address_lat || startLat
-  const endLng = order.expand?.customer_id?.lng || order.end_address_lng || startLng
+  const cleanOrderDest = MapDataService.getOrderDestination(order)
+  const endLat = cleanOrderDest?.lat || startLat
+  const endLng = cleanOrderDest?.lng || startLng
 
   let rawOfficialMeters = 0
   let rawDeviationMeters = 0

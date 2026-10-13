@@ -1546,8 +1546,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     for (const ord of ordersToOptimize) {
       const cust = localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
       const customerName = cust?.name || ord.end_address_name || 'Cliente'
-      const lat = cust?.lat ?? ord.end_address_lat ?? null
-      const lng = cust?.lng ?? ord.end_address_lng ?? null
+      const cleanDest = MapDataService.getOrderDestination(ord)
+      const lat = cleanDest ? cleanDest.lat : null
+      const lng = cleanDest ? cleanDest.lng : null
       const notes = ord.notes || cust?.notes || ''
 
       const isSuspect = isSuspectPin(lat, lng, notes)
@@ -1623,14 +1624,13 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
       for (const ord of ordersToOptimize) {
         const cust = localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
-        const lat = cust?.lat ?? ord.end_address_lat
-        const lng = cust?.lng ?? ord.end_address_lng
+        const cleanDest = MapDataService.getOrderDestination(ord)
 
-        if (lat !== undefined && lng !== undefined && lat !== null && lng !== null) {
+        if (cleanDest) {
           validOrdersWithCoords.push({
             order: ord,
-            lat,
-            lng,
+            lat: cleanDest.lat,
+            lng: cleanDest.lng,
             customer: cust,
           })
         }
@@ -2414,9 +2414,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
         ordersToShow.forEach((o, idx) => {
           const cust = localCustomers.find((c) => c.id === o.customer_id) || o.expand?.customer_id
-          const cleanCust =
-            MapDataService.getOrderDestination(o) ||
-            MapDataService.cleanCoords(cust?.lat, cust?.lng)
+          const cleanCust = MapDataService.getOrderDestination(o)
           if (cleanCust) {
             if (safeExtendBounds(bounds, cleanCust)) {
               hasPoints = true

@@ -59,6 +59,7 @@ import {
   groupOrdersByRouteBatch,
 } from '@/lib/routeBatchHelper'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { MapDataService } from '@/lib/mapDataService'
 import { compararKm, getLoteCanonico } from '@/utils/kmAudit'
 import {
   formatDateInTz,
@@ -502,10 +503,14 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             } else if (ev.event_type === 'unexpected_stop') {
               unexpectedStopsCount++
               // Distância entre parada e o cliente
-              const custLat = cust?.lat || order.end_address_lat || 0
-              const custLng = cust?.lng || order.end_address_lng || 0
-              if (custLat !== 0 && custLng !== 0 && ev.lat && ev.lng) {
-                const stopDist = haversineDistanceMeters(ev.lat, ev.lng, custLat, custLng)
+              const cleanDest = MapDataService.getOrderDestination(order)
+              if (cleanDest && ev.lat && ev.lng) {
+                const stopDist = haversineDistanceMeters(
+                  ev.lat,
+                  ev.lng,
+                  cleanDest.lat,
+                  cleanDest.lng,
+                )
                 if (stopDist > maxStopDistMeters) maxStopDistMeters = Math.round(stopDist)
               }
             }

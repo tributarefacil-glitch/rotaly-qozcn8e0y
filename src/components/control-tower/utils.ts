@@ -93,6 +93,7 @@ export interface ActiveRouteCourierData {
   statusColor: 'green' | 'yellow' | 'red'
   statusLabel: string
   activeOrdersCount: number
+  totalToday?: number
   inTransitCount: number
   pendingCount: number
   problemCount: number

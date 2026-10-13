@@ -3,6 +3,7 @@ import { OrderRecord, AppSettingsRecord, UserRecord } from '@/types/delivery'
 import { snapRouteGpsTrack } from './snapToRoadService'
 import { fetchStreetRoute } from './osrmRoutingService'
 import { isSuspectPin } from '@/lib/geo'
+import { MapDataService } from '@/lib/mapDataService'
 
 export interface RecalcularLoteResult {
   route_batch_key: string
@@ -112,10 +113,9 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
   // Ordenar paradas válidas pela sequência
   const validStops = batchOrders
     .filter((o) => {
-      const lat = o.end_address_lat
-      const lng = o.end_address_lng
+      const cleanDest = MapDataService.getOrderDestination(o)
       const notes = o.notes || ''
-      return lat && lng && !isSuspectPin(lat, lng, notes)
+      return cleanDest && !isSuspectPin(cleanDest.lat, cleanDest.lng, notes)
     })
     .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
 
@@ -126,9 +126,10 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
   if (validStops.length > 0) {
     // Perna 1: Base → Parada 1
     const p1 = validStops[0]
+    const p1Dest = MapDataService.getOrderDestination(p1)!
     const leg1 = await fetchStreetRoute(
       { lat: baseLat, lng: baseLng },
-      { lat: p1.end_address_lat!, lng: p1.end_address_lng! },
+      { lat: p1Dest.lat, lng: p1Dest.lng },
     )
     let leg1Km = 1.0
     let leg1Source: 'google' | 'osrm' | 'estimada_1.3x' = 'estimada_1.3x'
@@ -147,9 +148,11 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
     for (let i = 0; i < validStops.length - 1; i++) {
       const curr = validStops[i]
       const next = validStops[i + 1]
+      const currDest = MapDataService.getOrderDestination(curr)!
+      const nextDest = MapDataService.getOrderDestination(next)!
       const leg = await fetchStreetRoute(
-        { lat: curr.end_address_lat!, lng: curr.end_address_lng! },
-        { lat: next.end_address_lat!, lng: next.end_address_lng! },
+        { lat: currDest.lat, lng: currDest.lng },
+        { lat: nextDest.lat, lng: nextDest.lng },
       )
       let legKm = 1.0
       let legSrc: 'google' | 'osrm' | 'estimada_1.3x' = 'estimada_1.3x'
@@ -167,8 +170,9 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
 
     // Perna Final: Última Parada → Volta à Base (UMA ÚNICA VEZ no fim do lote)
     const lastStop = validStops[validStops.length - 1]
+    const lastDest = MapDataService.getOrderDestination(lastStop)!
     const returnLeg = await fetchStreetRoute(
-      { lat: lastStop.end_address_lat!, lng: lastStop.end_address_lng! },
+      { lat: lastDest.lat, lng: lastDest.lng },
       { lat: baseLat, lng: baseLng },
     )
     const returnKm =
@@ -245,7 +249,8 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
   let allocatedFuel = 0
   for (let idx = 0; idx < batchOrders.length; idx++) {
     const ord = batchOrders[idx]
-    const isSuspect = isSuspectPin(ord.end_address_lat, ord.end_address_lng, ord.notes || '')
+    const ordDest = MapDataService.getOrderDestination(ord)
+    const isSuspect = isSuspectPin(ordDest?.lat ?? null, ordDest?.lng ?? null, ord.notes || '')
 
     let ordFuel = 0
     if (!isBicycle && !isSuspect && totalFuelCost > 0) {

@@ -1374,6 +1374,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         statusColor,
         statusLabel,
         activeOrdersCount: inTransitOrders.length + pendingOrders.length,
+        totalToday: finishedOrders.length + inTransitOrders.length,
         inTransitCount: inTransitOrders.length,
         pendingCount: pendingOrders.length,
         problemCount: problemOrders.length,
@@ -1520,10 +1521,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           // mantendo pins e rotas dos clientes com coordenada válida.
           const allBatchStops: LatLngPoint[] = []
           activeRouteOrders.forEach((o) => {
-            const cleanPt =
-              MapDataService.getOrderDestination(o) ||
-              MapDataService.cleanCoords(o.expand?.customer_id?.lat, o.expand?.customer_id?.lng) ||
-              MapDataService.cleanCoords(o.end_address_lat, o.end_address_lng)
+            const cleanPt = MapDataService.getOrderDestination(o)
             if (cleanPt && cleanPt.lat && cleanPt.lng) {
               allBatchStops.push({ lat: cleanPt.lat, lng: cleanPt.lng })
             }
@@ -3374,6 +3372,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   }, [
     isDrawerOpen,
     selectedOrder?.id,
+    selectedOrder?.end_address_lat,
+    selectedOrder?.end_address_lng,
     selectedOrder?.start_base_lat,
     selectedOrder?.start_base_lng,
     selectedOrder?.expand?.customer_id?.lat,
@@ -3781,13 +3781,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       const lastDeliveredOrder = courierRouteOrders
         .filter((o) => o.status === 'delivered')
         .slice(-1)[0]
-      const lastDeliveredPos =
-        lastDeliveredOrder?.expand?.customer_id?.lat && lastDeliveredOrder?.expand?.customer_id?.lng
-          ? {
-              lat: Number(lastDeliveredOrder.expand.customer_id.lat),
-              lng: Number(lastDeliveredOrder.expand.customer_id.lng),
-            }
-          : null
+      const cleanLastDeliveredDest = lastDeliveredOrder
+        ? MapDataService.getOrderDestination(lastDeliveredOrder)
+        : null
+      const lastDeliveredPos = cleanLastDeliveredDest
+        ? {
+            lat: cleanLastDeliveredDest.lat,
+            lng: cleanLastDeliveredDest.lng,
+          }
+        : null
       const isNearLastDeliveredInDrawer = lastDeliveredPos
         ? distanceMeters(courierPoint, lastDeliveredPos) <= UNEXPECTED_STOP_THRESHOLD_METERS
         : false
@@ -3917,10 +3919,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const copyTracking = (code: string, order?: OrderRecord) => {
     // Validar pin do cliente se order foi fornecido ou a partir do selectedOrder
     const targetOrder = order || (selectedOrder?.tracking_code === code ? selectedOrder : undefined)
-    const custLat = targetOrder?.expand?.customer_id?.lat ?? targetOrder?.end_address_lat
-    const custLng = targetOrder?.expand?.customer_id?.lng ?? targetOrder?.end_address_lng
+    const cleanDest = targetOrder ? MapDataService.getOrderDestination(targetOrder) : null
 
-    if (targetOrder && !toLatLngSegura(custLat, custLng)) {
+    if (targetOrder && !cleanDest) {
       toast({
         title: 'Cliente sem pin válido',
         description: 'O cliente não possui coordenadas geográficas válidas cadastradas.',
@@ -3944,9 +3945,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
   // Compartilhamento com o cliente via WhatsApp com mensagem pronta
   const shareTrackingViaWhatsApp = (order: OrderRecord) => {
-    const custLat = order.expand?.customer_id?.lat ?? order.end_address_lat
-    const custLng = order.expand?.customer_id?.lng ?? order.end_address_lng
-    if (!toLatLngSegura(custLat, custLng)) {
+    const cleanDest = MapDataService.getOrderDestination(order)
+    if (!cleanDest) {
       toast({
         title: 'Cliente sem pin válido',
         description: 'O cliente não possui coordenadas geográficas válidas cadastradas.',

@@ -83,19 +83,27 @@ export const MapDataService = {
   getOrderDestination(order: any): CleanCoords | null {
     if (!order) return null
 
-    // 1. Campos padrão de destino do pedido
     const candidates = [
+      { lat: order.end_address_lat, lng: order.end_address_lng },
+      { lat: order.expand?.customer_id?.lat, lng: order.expand?.customer_id?.lng },
+      { lat: order.expand?.customer?.lat, lng: order.expand?.customer?.lng },
       { lat: order.customer_latitude, lng: order.customer_longitude },
       { lat: order.destination_latitude, lng: order.destination_longitude },
       { lat: order.lat, lng: order.lng },
       { lat: order.latitude, lng: order.longitude },
-      { lat: order.expand?.customer?.latitude, lng: order.expand?.customer?.longitude },
       { lat: order.expand?.customer_id?.latitude, lng: order.expand?.customer_id?.longitude },
+      { lat: order.expand?.customer?.latitude, lng: order.expand?.customer?.longitude },
     ]
 
     for (const c of candidates) {
       const clean = toLatLngSegura(c.lat, c.lng)
       if (clean) return clean
+    }
+
+    if (order.end_address_lat != null && order.end_address_lng != null) {
+      console.error(
+        `[getOrderDestination] Pedido ${order.id || order.tracking_code} tem end_address preenchido (${order.end_address_lat}, ${order.end_address_lng}) mas a coordenada foi considerada inválida`,
+      )
     }
 
     return null

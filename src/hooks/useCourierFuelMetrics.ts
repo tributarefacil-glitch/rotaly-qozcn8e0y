@@ -16,6 +16,7 @@ import {
   haversineDistanceMeters,
 } from '@/lib/telemetryKmEngine'
 import { isSuspectPin } from '@/lib/geo'
+import { MapDataService } from '@/lib/mapDataService'
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
 import {
   deriveRouteBatchKey,
@@ -456,26 +457,16 @@ export function calculateCourierFuelMetrics(params: {
       const diffMinutes = (nextBatch.startedAtMs - currentBatch.finishedAtMs) / (60 * 1000)
 
       // Distância entre última parada do lote anterior e primeira parada do novo
-      const lastStopLat =
-        currentBatch.lastOrder.expand?.customer_id?.lat ||
-        currentBatch.lastOrder.end_address_lat ||
-        0
-      const lastStopLng =
-        currentBatch.lastOrder.expand?.customer_id?.lng ||
-        currentBatch.lastOrder.end_address_lng ||
-        0
-      const nextStartLat =
-        nextBatch.firstOrder.expand?.customer_id?.lat || nextBatch.firstOrder.end_address_lat || 0
-      const nextStartLng =
-        nextBatch.firstOrder.expand?.customer_id?.lng || nextBatch.firstOrder.end_address_lng || 0
+      const lastStopDest = MapDataService.getOrderDestination(currentBatch.lastOrder)
+      const nextStartDest = MapDataService.getOrderDestination(nextBatch.firstOrder)
 
       let distBetweenStopsMeters = 999999
-      if (lastStopLat && lastStopLng && nextStartLat && nextStartLng) {
+      if (lastStopDest && nextStartDest) {
         distBetweenStopsMeters = haversineDistanceMeters(
-          lastStopLat,
-          lastStopLng,
-          nextStartLat,
-          nextStartLng,
+          lastStopDest.lat,
+          lastStopDest.lng,
+          nextStartDest.lat,
+          nextStartDest.lng,
         )
       }
 
@@ -524,10 +515,9 @@ export function calculateCourierFuelMetrics(params: {
     // Soma viária apenas das pernas de paradas (sem o retorno da última parada à base),
     // desconsiderando paradas com pin suspeito que foram excluídas do viário
     const sumOutboundLegsKm = batchOrders.reduce((sum, ord) => {
-      const cLat = ord.expand?.customer_id?.lat ?? ord.end_address_lat ?? null
-      const cLng = ord.expand?.customer_id?.lng ?? ord.end_address_lng ?? null
+      const cleanDest = MapDataService.getOrderDestination(ord)
       const cNotes = ord.notes || ord.expand?.customer_id?.notes || ''
-      if (isSuspectPin(cLat, cLng, cNotes)) {
+      if (isSuspectPin(cleanDest?.lat, cleanDest?.lng, cNotes)) {
         return sum
       }
       const dist = typeof ord.distance_km === 'number' ? ord.distance_km : 0
@@ -603,30 +593,23 @@ export function calculateCourierFuelMetrics(params: {
   // Regra oficial: ida proporcional ao trecho (distance_km) + retorno rateado uma vez.
   // Paradas com pin suspeito recebem peso 0 para não absorverem quilometragem viária.
   const computeOrderWeight = (ord: OrderRecord): number => {
-    const cLat = ord.expand?.customer_id?.lat ?? ord.end_address_lat ?? null
-    const cLng = ord.expand?.customer_id?.lng ?? ord.end_address_lng ?? null
+    const cleanDest = MapDataService.getOrderDestination(ord)
     const cNotes = ord.notes || ord.expand?.customer_id?.notes || ''
-    if (isSuspectPin(cLat, cLng, cNotes)) {
+    if (isSuspectPin(cleanDest?.lat, cleanDest?.lng, cNotes)) {
       return 0
     }
 
     const baseLat = ord.start_base_lat || baseLatFallback
     const baseLng = ord.start_base_lng || baseLngFallback
-    const custLat = ord.expand?.customer_id?.lat || ord.end_address_lat || 0
-    const custLng = ord.expand?.customer_id?.lng || ord.end_address_lng || 0
-    const hasCustomerCoords =
-      typeof ord.expand?.customer_id?.lat === 'number' &&
-      typeof ord.expand?.customer_id?.lng === 'number' &&
-      ord.expand.customer_id.lat !== 0 &&
-      ord.expand.customer_id.lng !== 0
+    const hasCustomerCoords = Boolean(cleanDest)
 
     let roadDist = 0.8
-    if (custLat !== 0 && custLng !== 0) {
-      const directMeters = haversineDistanceMeters(baseLat, baseLng, custLat, custLng)
+    if (cleanDest) {
+      const directMeters = haversineDistanceMeters(baseLat, baseLng, cleanDest.lat, cleanDest.lng)
       roadDist = Math.max(directMeters / 1000, 0.8)
     }
 
-    // Se o cliente tem coordenadas vigentes no expand, o viário calculado sobre o pin vigente tem soberania.
+    // Se o cliente tem coordenadas vigentes, o viário calculado sobre o pin vigente tem soberania.
     // Math.max com ord.distance_km fica apenas como fallback quando não há coordenadas vigentes no cliente.
     if (!hasCustomerCoords && typeof ord.distance_km === 'number' && ord.distance_km > 0) {
       roadDist = Math.max(roadDist, ord.distance_km)
@@ -780,8 +763,9 @@ export function calculateCourierFuelMetrics(params: {
 
     // REGRA DE PIN SUSPEITO:
     // Parada com isSuspectPin é excluída do viário e sinalizada 'Parada com Pin Suspeito'
-    const custLatToCheck = order.expand?.customer_id?.lat ?? order.end_address_lat ?? null
-    const custLngToCheck = order.expand?.customer_id?.lng ?? order.end_address_lng ?? null
+    const cleanDestToCheck = MapDataService.getOrderDestination(order)
+    const custLatToCheck = cleanDestToCheck?.lat ?? null
+    const custLngToCheck = cleanDestToCheck?.lng ?? null
     const custNotesToCheck = order.notes || order.expand?.customer_id?.notes || ''
     const isSuspect = isSuspectPin(custLatToCheck, custLngToCheck, custNotesToCheck)
 

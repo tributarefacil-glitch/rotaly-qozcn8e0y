@@ -1,6 +1,7 @@
 import pb from '@/lib/pocketbase/client'
 import { getMatrizCompanyId, resolveMatrizCompany } from '@/lib/companyResolver'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { MapDataService } from '@/lib/mapDataService'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { recalcularLote, RecalcularLoteResult } from '@/services/recalcularLoteHelper'
 import { getOperationalWindow } from '../lib/operationalWindow'
@@ -5602,10 +5603,9 @@ export const deliveryService = {
     const authUser = pb.authStore.record as any
     const now = params.pointBAt || new Date().toISOString()
 
-    const pointALat =
-      order.redirection_point_a_lat ?? order.end_address_lat ?? order.expand?.customer_id?.lat ?? 0
-    const pointALng =
-      order.redirection_point_a_lng ?? order.end_address_lng ?? order.expand?.customer_id?.lng ?? 0
+    const orderDestA = MapDataService.getOrderDestination(order)
+    const pointALat = order.redirection_point_a_lat ?? orderDestA?.lat ?? 0
+    const pointALng = order.redirection_point_a_lng ?? orderDestA?.lng ?? 0
     const pointBLat = params.pointBLat
     const pointBLng = params.pointBLng
 

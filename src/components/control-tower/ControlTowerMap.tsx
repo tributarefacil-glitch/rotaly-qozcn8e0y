@@ -213,8 +213,20 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                 <span className="truncate">{courierName}</span>
                               </span>
                               <span className="text-[9.5px] text-slate-400 font-mono shrink-0">
-                                ({item.inTransitCount} entrega
-                                {item.inTransitCount === 1 ? '' : 's'})
+                                (
+                                {(() => {
+                                  const total =
+                                    item.totalToday ?? item.finishedCount + item.inTransitCount
+                                  const totalText = `${total} entrega${total === 1 ? '' : 's'}`
+                                  if (item.inTransitCount > 0 && item.inTransitCount !== total) {
+                                    return `${totalText}, ${item.inTransitCount} em rota`
+                                  }
+                                  if (total > 0 && item.inTransitCount > 0) {
+                                    return `${totalText}, ${item.inTransitCount} em rota`
+                                  }
+                                  return totalText
+                                })()}
+                                )
                               </span>
                             </div>
 
@@ -640,8 +652,20 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                 <span className="truncate">{courierName}</span>
                               </span>
                               <span className="text-[9.5px] text-slate-400 font-mono shrink-0">
-                                ({item.inTransitCount} entrega
-                                {item.inTransitCount === 1 ? '' : 's'})
+                                (
+                                {(() => {
+                                  const total =
+                                    item.totalToday ?? item.finishedCount + item.inTransitCount
+                                  const totalText = `${total} entrega${total === 1 ? '' : 's'}`
+                                  if (item.inTransitCount > 0 && item.inTransitCount !== total) {
+                                    return `${totalText}, ${item.inTransitCount} em rota`
+                                  }
+                                  if (total > 0 && item.inTransitCount > 0) {
+                                    return `${totalText}, ${item.inTransitCount} em rota`
+                                  }
+                                  return totalText
+                                })()}
+                                )
                               </span>
                             </div>
 
