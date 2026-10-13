@@ -2078,42 +2078,39 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       })
     })
 
-    // 2. Destinos de entregas em rota ativa (marcador por cliente numerado [#seq])
-    // B3: Extrair pedidos de activeRouteCouriers[i].allAssignedOrders para não perder entregas do lote ativo
+    // 2. Destinos de entregas do dia (marcador por cliente numerado [#seq])
+    // COMANDO A: Plotar TODOS os pedidos do dia do entregador selecionado ou de todos os entregadores
+    // Marcadores por status: Verde = entregues com indicativo de conclusão/sequência, Laranja = em rota, Azul = pendentes da jornada
     const seenOrderIds = new Set<string>()
     const processOrderMarker = (order: OrderRecord, courierItem?: any) => {
       try {
-        if (
-          order.status === 'cancelled' ||
-          order.route_finished === true ||
-          !order.route_started ||
-          seenOrderIds.has(order.id)
-        ) {
+        if (order.status === 'cancelled' || seenOrderIds.has(order.id)) {
           return
         }
         seenOrderIds.add(order.id)
 
         const cleanDest = MapDataService.getOrderDestination(order)
         if (!cleanDest) {
-          console.warn(
-            '[ControlTower] Cliente sem coordenada válida no pedido:',
-            order.tracking_code,
-            order.id,
-          )
+          // Pedido sem coordenada recebe sinalização no card/lista e não tenta plotar marcador sem lat/lng
           return
         }
 
         const cust = order.expand?.customer_id
         const courier = order.expand?.courier_id || courierItem?.courier
         const isDelivered = order.status === 'delivered'
-        const isTransit = order.status === 'in_transit' || order.route_started
+        const isTransit =
+          !isDelivered && (order.status === 'in_transit' || order.route_started === true)
         const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
         const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
         const seqText = order.sequence ? `[#${order.sequence}] ` : ''
         const courierId = order.courier_id || courier?.id
-        // Pins verde #10B981 entregue / laranja #FF6B35 pendente, na sequência (regra verbatim do dono)
-        const pinColor = isDelivered ? '#10B981' : '#FF6B35'
-        const titlePrefix = isDelivered ? `✓ ${seqText}` : seqText
+        // COMANDO A: Verde #10B981 = entregues, Laranja #F97316 = em rota, Azul #2563EB = pendentes da jornada
+        const pinColor = isDelivered ? '#10B981' : isTransit ? '#F97316' : '#2563EB'
+        const titlePrefix = isDelivered
+          ? `✓ ${seqText}`
+          : isTransit
+            ? `🚗 ${seqText}`
+            : `📦 ${seqText}`
 
         list.push({
           id: `order-${order.id}`,
@@ -2143,9 +2140,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       courierOrders.forEach((order) => processOrderMarker(order, courierItem))
     })
 
-    // Garantir que todos os pedidos em rota ativa do dia (todayOrders em rota iniciada) estejam pinados na Torre
+    // Garantir que TODOS os pedidos do dia sejam incluídos no mapa
     todayOrders.forEach((order) => {
-      if (order.route_started && !order.route_finished && order.status !== 'cancelled') {
+      if (order.status !== 'cancelled') {
         processOrderMarker(order)
       }
     })
@@ -2310,24 +2307,43 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               parseSafeTimestamp(b.created || b.updated),
           )
 
-        const rawDevPath: Array<{ lat: number; lng: number }> = []
+        // COMANDO A: Trilha de desvio (vermelha) alimentada EXCLUSIVAMENTE por pings reais
+        // de locations pelo user_id do entregador no período; lacunas (>90s) = buraco (nunca linha reta).
+        // Se houver lacuna, particionar em múltiplos caminhos sem conectar com linha reta.
+        const devSegments: Array<Array<{ lat: number; lng: number }>> = []
+        let currentDevSegment: Array<{ lat: number; lng: number }> = []
+        let lastPingTs = 0
+
         telemetryPings.forEach((loc) => {
           const cleanPt = MapDataService.cleanCoords(loc.lat, loc.lng)
           if (cleanPt) {
-            // Evitar pontos duplicados idênticos consecutivos
-            const lastAdded = rawDevPath[rawDevPath.length - 1]
+            const ptTs = parseSafeTimestamp(loc.created || loc.updated)
+            if (lastPingTs > 0 && ptTs - lastPingTs > 90 * 1000) {
+              // Lacuna > 90s detectada: quebra de segmento para criar buraco na linha vermelha (nunca linha reta)
+              if (currentDevSegment.length >= 2) {
+                devSegments.push(currentDevSegment)
+              }
+              currentDevSegment = []
+            }
+            lastPingTs = ptTs
+
+            const lastAdded = currentDevSegment[currentDevSegment.length - 1]
             if (
               !lastAdded ||
               Math.abs(lastAdded.lat - cleanPt.lat) > 0.00001 ||
               Math.abs(lastAdded.lng - cleanPt.lng) > 0.00001
             ) {
-              rawDevPath.push(cleanPt)
+              currentDevSegment.push(cleanPt)
             }
           }
         })
+        if (currentDevSegment.length >= 2) {
+          devSegments.push(currentDevSegment)
+        }
 
-        // Atualizar cache de histórico de telemetria
-        courierTelemetryHistoryMapRef.current.set(cId, rawDevPath)
+        // Caminho contínuo achatado para o histórico e para a polyline principal
+        const rawDevPath = devSegments.length > 0 ? devSegments[0] : []
+        courierTelemetryHistoryMapRef.current.set(cId, devSegments.flat())
 
         // Linha vermelha existe apenas se houver pelo menos 2 pings reais gravados
         const hasDev = rawDevPath.length >= 2
@@ -3096,27 +3112,36 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         newMarkers.push(courierMarker)
       })
 
-      // Pins: Destinos das entregas em rota ativa (Google Maps nativo)
-      // REQUISITO ESTRITO: um pedido só gera pin se TODAS as condições:
-      // status !== 'delivered' && status !== 'cancelled' && route_started === true && route_finished !== true
-      // E o courier vinculado está no conjunto de entregadores com rota ativa (activeRouteCouriers)
-      // Pins: Destinos das entregas em rota ativa (Google Maps nativo)
-      // B3: Usar activeRouteCouriers[i].allAssignedOrders para não perder entregas do lote ativo
+      // Pins: Destinos de TODOS os pedidos do dia no Google Maps nativo
+      // COMANDO A: Plotar todos os pedidos do dia do entregador selecionado (ou de todos) com marcadores por status:
+      // Verde = entregues com indicativo de conclusão/sequência, Laranja = em rota, Azul = pendentes da jornada
       const activeTransitOrderIds = new Set<string>()
-      const transitOrdersMap = new Map<string, OrderRecord>()
+      const ordersToMap = new Map<string, OrderRecord>()
+
+      // 1. Pedidos atribuídos a entregadores ativos
       activeRouteCouriers.forEach((courierItem) => {
         const courierOrders = courierItem.allAssignedOrders || []
         courierOrders.forEach((o) => {
-          if (o.status !== 'cancelled' && o.route_started === true && o.route_finished !== true) {
-            transitOrdersMap.set(o.id, o)
+          if (o.status !== 'cancelled') {
+            ordersToMap.set(o.id, o)
           }
         })
       })
-      const transitOrders = Array.from(transitOrdersMap.values())
+
+      // 2. Todos os pedidos do dia (se filtrado por entregador, respeita o filtro)
+      todayOrders.forEach((o) => {
+        if (o.status !== 'cancelled') {
+          if (courierFilter === 'all' || o.courier_id === courierFilter) {
+            ordersToMap.set(o.id, o)
+          }
+        }
+      })
+
+      const displayOrders = Array.from(ordersToMap.values())
 
       // Detecção de clientes com lat/lng idênticas para aplicar offset polar (r≈0,00015°, θ=i·2π/N)
-      const coordBuckets = new Map<string, typeof transitOrders>()
-      transitOrders.forEach((o) => {
+      const coordBuckets = new Map<string, typeof displayOrders>()
+      displayOrders.forEach((o) => {
         const cleanDest = MapDataService.getOrderDestination(o)
         if (cleanDest) {
           const key = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
@@ -3126,16 +3151,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         }
       })
 
-      transitOrders.forEach((order) => {
+      displayOrders.forEach((order) => {
         try {
           const cust = order.expand?.customer_id
           const cleanDest = MapDataService.getOrderDestination(order)
           if (!cleanDest) {
-            console.warn(
-              '[ControlTower] Cliente sem coordenada válida no pedido:',
-              order.tracking_code,
-              order.id,
-            )
+            // Sinalizado nos cards do kanban e na lista: "Endereço sem coordenadas GPS registradas"
             return
           }
 
@@ -3159,15 +3180,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           activeTransitOrderIds.add(order.id)
 
           const isDelivered = order.status === 'delivered'
-          const isTransit = order.status === 'in_transit' || order.route_started
+          const isTransit =
+            !isDelivered && (order.status === 'in_transit' || order.route_started === true)
           const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
           const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
           const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
-          const courierId = order.courier_id || order.expand?.courier_id?.id
-          const courierColor = getCourierRouteColor(courierId)
-          // Pins verde #10B981 entregue / laranja #FF6B35 pendente, na sequência (regra verbatim do dono)
-          const pinColor = isDelivered ? '#10B981' : '#FF6B35'
-          const markerTitle = `${isDelivered ? '✓ Entregue' : '🏁 Destino'}: ${seqText}${cust?.name || 'Cliente'} (${order.tracking_code})${etaText}`
+          // COMANDO A: Verde = entregue (#10B981), Laranja = em rota (#F97316), Azul = pendente da jornada (#2563EB)
+          const pinColor = isDelivered ? '#10B981' : isTransit ? '#F97316' : '#2563EB'
+          const statusPrefix = isDelivered ? '✓ Entregue' : isTransit ? '🚗 Em Rota' : '📦 Pendente'
+          const markerTitle = `${statusPrefix}: ${seqText}${cust?.name || 'Cliente'} (${order.tracking_code})${etaText}`
           const markerIcon = makeNativeCustomerSvg(
             cust?.name,
             order.sequence,

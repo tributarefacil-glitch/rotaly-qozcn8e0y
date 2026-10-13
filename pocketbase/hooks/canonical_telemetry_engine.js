@@ -194,14 +194,15 @@ onRecordAfterUpdateSuccess((e) => {
         finishMs = new Date(lastOrder.getString('updated')).getTime() || Date.now()
       }
 
-      const startIso = new Date(startMs).toISOString()
-      const finishIso = new Date(finishMs).toISOString()
+      // Margem de tolerância temporal ampla para cobrir início e encerramento (10 minutos antes e depois)
+      const queryStartIso = new Date(startMs - 10 * 60000).toISOString()
+      const queryFinishIso = new Date(finishMs + 10 * 60000).toISOString()
 
       let pings = []
       try {
         pings = $app.findRecordsByFilter(
           'locations',
-          `user_id = '${courierId}' && created >= '${startIso}' && created <= '${finishIso}'`,
+          `user_id = '${courierId}' && created >= '${queryStartIso}' && created <= '${queryFinishIso}'`,
           '+created',
           5000,
           0,
@@ -355,26 +356,29 @@ onRecordAfterUpdateSuccess((e) => {
         if (!leg.is_return && stops[l]) {
           const stop = stops[l]
           let legPingsMeters = 0
+          const TOLERANCE_MS = 5 * 60 * 1000
           const prevStopArrival =
             l > 0 && stops[l - 1].actual_arrival
-              ? new Date(stops[l - 1].actual_arrival).getTime()
-              : startMs
-          const thisStopArrival = stop.actual_arrival ? new Date(stop.actual_arrival).getTime() : 0
-          if (thisStopArrival > prevStopArrival) {
-            for (let p = 1; p < pingsCount; p++) {
-              const ptTime = new Date(pings[p].getString('created')).getTime()
-              const prevPtTime = new Date(pings[p - 1].getString('created')).getTime()
-              const deltaSec = Math.max(0, Math.round((ptTime - prevPtTime) / 1000))
-              if (deltaSec <= 90 && ptTime >= prevStopArrival && ptTime <= thisStopArrival) {
-                legPingsMeters += haversineDistMeters(
-                  pings[p - 1].getFloat('lat'),
-                  pings[p - 1].getFloat('lng'),
-                  pings[p].getFloat('lat'),
-                  pings[p].getFloat('lng'),
-                )
-              }
+              ? new Date(stops[l - 1].actual_arrival).getTime() - TOLERANCE_MS
+              : startMs - TOLERANCE_MS
+          const thisStopArrival = stop.actual_arrival
+            ? new Date(stop.actual_arrival).getTime() + TOLERANCE_MS
+            : finishMs + TOLERANCE_MS
+
+          for (let p = 1; p < pingsCount; p++) {
+            const ptTime = new Date(pings[p].getString('created')).getTime()
+            const prevPtTime = new Date(pings[p - 1].getString('created')).getTime()
+            const deltaSec = Math.max(0, Math.round((ptTime - prevPtTime) / 1000))
+            if (deltaSec <= 90 && ptTime >= prevStopArrival && ptTime <= thisStopArrival) {
+              legPingsMeters += haversineDistMeters(
+                pings[p - 1].getFloat('lat'),
+                pings[p - 1].getFloat('lng'),
+                pings[p].getFloat('lat'),
+                pings[p].getFloat('lng'),
+              )
             }
           }
+
           leg.km_gps = Number((legPingsMeters / 1000).toFixed(2))
           accumulatedLegGpsMeters += legPingsMeters
         } else if (leg.is_return) {
@@ -584,18 +588,57 @@ onRecordAfterUpdateSuccess((e) => {
       const courierId = order.getString('courier_id')
       let batchKey = order.getString('route_batch_key')
 
-      if (!batchKey && courierId) {
+      if ((!batchKey || batchKey.indexOf('batch_') === 0) && courierId) {
         const startRaw = order.getString('route_started_at') || order.getString('created')
-        const sTs = new Date(startRaw).getTime()
+        const sDate = new Date(startRaw)
+        const sTs = sDate.getTime()
         const sMin = Math.floor(sTs / 60000)
-        batchKey = `batch_${courierId}_${sMin}`
+        const yyyy = sDate.getFullYear()
+        const mm = String(sDate.getMonth() + 1).padStart(2, '0')
+        const dd = String(sDate.getDate()).padStart(2, '0')
+        batchKey = `rb_${courierId}_${yyyy}${mm}${dd}_${sMin}`
       }
 
       if (batchKey) {
         console.log(
           `[canonical_telemetry_engine] Evento de fechamento detectado para pedido ${order.id}. Lote: ${batchKey}`,
         )
-        processBatch(batchKey, 'order_route_finished_hook')
+        const procResult = processBatch(batchKey, 'order_route_finished_hook')
+        // Correção 3: Guarda de sanidade no motor - Fechamento detectado e nenhum registro gravado = log de erro visível + entrada em audit_trail
+        if (!procResult) {
+          console.error(
+            `[canonical_telemetry_engine:SANITY_GUARD] Fechamento detectado para o lote ${batchKey} do entregador ${courierId}, mas nenhum registro foi processado/gravado em route_batch_telemetry!`,
+          )
+          try {
+            const auditCol = $app.findCollectionByNameOrId('audit_trail')
+            if (auditCol) {
+              const auditRec = new Record(auditCol)
+              auditRec.set('user_id', '') // Ator Sistema (user_id vazio)
+              auditRec.set('collection', 'route_batch_telemetry')
+              auditRec.set('record_id', batchKey)
+              if (courierId) auditRec.set('courier_id', courierId)
+              auditRec.set('action', 'falha_sanidade_fechamento_lote_telemetria')
+              auditRec.set('field', 'route_batch_telemetry')
+              auditRec.set('old_value', `lote=${batchKey}`)
+              auditRec.set('new_value', 'nenhum_registro_gravado')
+              auditRec.set('timestamp', new Date().toISOString())
+              auditRec.set('metadata', {
+                system_trigger: true,
+                actor_name: 'Sistema',
+                route_batch_key: batchKey,
+                courier_id: courierId,
+                order_id: order.id,
+                alerta: 'FALHA_SANIDADE_FECHAMENTO_SEM_TELEMETRIA',
+              })
+              $app.save(auditRec)
+            }
+          } catch (eAudit) {
+            console.error(
+              '[canonical_telemetry_engine] Erro ao gravar audit_trail da guarda:',
+              eAudit,
+            )
+          }
+        }
       }
     }
   } catch (err) {
@@ -790,14 +833,14 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
       finishMs = new Date(lastOrder.getString('updated')).getTime() || Date.now()
     }
 
-    const startIso = new Date(startMs).toISOString()
-    const finishIso = new Date(finishMs).toISOString()
+    const queryStartIso = new Date(startMs - 10 * 60000).toISOString()
+    const queryFinishIso = new Date(finishMs + 10 * 60000).toISOString()
 
     let pings = []
     try {
       pings = $app.findRecordsByFilter(
         'locations',
-        `user_id = '${courierId}' && created >= '${startIso}' && created <= '${finishIso}'`,
+        `user_id = '${courierId}' && created >= '${queryStartIso}' && created <= '${queryFinishIso}'`,
         '+created',
         5000,
         0,
@@ -951,26 +994,30 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
       if (!leg.is_return && stops[l]) {
         const stop = stops[l]
         let legPingsMeters = 0
+        // Tolerância de 5 minutos na janela por perna
+        const TOLERANCE_MS = 5 * 60 * 1000
         const prevStopArrival =
           l > 0 && stops[l - 1].actual_arrival
-            ? new Date(stops[l - 1].actual_arrival).getTime()
-            : startMs
-        const thisStopArrival = stop.actual_arrival ? new Date(stop.actual_arrival).getTime() : 0
-        if (thisStopArrival > prevStopArrival) {
-          for (let p = 1; p < pingsCount; p++) {
-            const ptTime = new Date(pings[p].getString('created')).getTime()
-            const prevPtTime = new Date(pings[p - 1].getString('created')).getTime()
-            const deltaSec = Math.max(0, Math.round((ptTime - prevPtTime) / 1000))
-            if (deltaSec <= 90 && ptTime >= prevStopArrival && ptTime <= thisStopArrival) {
-              legPingsMeters += haversineDistMeters(
-                pings[p - 1].getFloat('lat'),
-                pings[p - 1].getFloat('lng'),
-                pings[p].getFloat('lat'),
-                pings[p].getFloat('lng'),
-              )
-            }
+            ? new Date(stops[l - 1].actual_arrival).getTime() - TOLERANCE_MS
+            : startMs - TOLERANCE_MS
+        const thisStopArrival = stop.actual_arrival
+          ? new Date(stop.actual_arrival).getTime() + TOLERANCE_MS
+          : finishMs + TOLERANCE_MS
+
+        for (let p = 1; p < pingsCount; p++) {
+          const ptTime = new Date(pings[p].getString('created')).getTime()
+          const prevPtTime = new Date(pings[p - 1].getString('created')).getTime()
+          const deltaSec = Math.max(0, Math.round((ptTime - prevPtTime) / 1000))
+          if (deltaSec <= 90 && ptTime >= prevStopArrival && ptTime <= thisStopArrival) {
+            legPingsMeters += haversineDistMeters(
+              pings[p - 1].getFloat('lat'),
+              pings[p - 1].getFloat('lng'),
+              pings[p].getFloat('lat'),
+              pings[p].getFloat('lng'),
+            )
           }
         }
+
         leg.km_gps = Number((legPingsMeters / 1000).toFixed(2))
         accumulatedLegGpsMeters += legPingsMeters
       } else if (leg.is_return) {

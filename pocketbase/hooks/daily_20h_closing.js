@@ -220,16 +220,26 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
       continue
     }
 
-    // Agrupar pedidos por route_batch_key ou aproximação de 2min
+    // Agrupar pedidos por route_batch_key canônica única (rb_{courierId}_{YYYYMMDD}_{startMin})
+    function getCanonicalKey(ord, cId) {
+      const existing = (ord.getString('route_batch_key') || '').trim()
+      if (existing && existing.indexOf('batch_') !== 0) return existing
+      const startRaw = ord.getString('route_started_at') || ord.getString('created')
+      const sDate = new Date(startRaw)
+      const sTs = sDate.getTime()
+      const sMin = Math.floor(sTs / 60000)
+      const yyyy = sDate.getFullYear()
+      const mm = String(sDate.getMonth() + 1).padStart(2, '0')
+      const dd = String(sDate.getDate()).padStart(2, '0')
+      return `rb_${cId}_${yyyy}${mm}${dd}_${sMin}`
+    }
+
     const batchMap = {}
     for (let oIdx = 0; oIdx < orders.length; oIdx++) {
       const ord = orders[oIdx]
       let bKey = ord.getString('route_batch_key')
-      if (!bKey) {
-        const startRaw = ord.getString('route_started_at') || ord.getString('created')
-        const sTs = new Date(startRaw).getTime()
-        const sMin = Math.floor(sTs / 60000)
-        bKey = `batch_${courierId}_${sMin}`
+      if (!bKey || bKey.indexOf('batch_') === 0) {
+        bKey = getCanonicalKey(ord, courierId)
       }
       if (!batchMap[bKey]) {
         batchMap[bKey] = []

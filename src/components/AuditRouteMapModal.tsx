@@ -591,7 +591,7 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
                     Aguardando Processamento
                   </Badge>
                 )}
-                {divergencePct !== undefined && (
+                {telemetryRecord && divergencePct !== undefined && (
                   <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-mono font-bold text-xs">
                     +{divergencePct}% desvio
                   </Badge>

@@ -186,6 +186,17 @@ export const ControlTowerColumns: React.FC<ControlTowerColumnsProps> = ({
                                 </span>
                               </div>
                             )}
+                            {/* Alerta explícito de pedido sem coordenadas GPS registradas */}
+                            {(!order.end_address_lat ||
+                              !order.end_address_lng ||
+                              order.end_address_lat === 0 ||
+                              order.end_address_lng === 0) &&
+                              (!cust?.lat || !cust?.lng) && (
+                                <div className="mt-1 flex items-center gap-1 px-1.5 py-0.5 bg-rose-500/20 border border-rose-500/40 rounded text-[10px] font-bold text-rose-300">
+                                  <AlertTriangle className="h-3 w-3 text-rose-400 shrink-0" />
+                                  <span>Endereço sem coordenadas GPS registradas</span>
+                                </div>
+                              )}
                           </div>
                         </div>
 

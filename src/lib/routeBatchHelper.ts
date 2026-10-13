@@ -76,27 +76,37 @@ export function deriveRouteBatchKey(
     }
 
     const startMin = Math.floor(oStartMs / 60000)
-    return `rb_${effectiveCourier}_${dateStr}_${startMin}`
+    const dateFormatted = dateStr.replace(/-/g, '')
+    return `rb_${effectiveCourier}_${dateFormatted}_${startMin}`
   }
 
   if (order.created) {
     const cTime = new Date(order.created).getTime()
-    const dateStr = order.created.slice(0, 10)
-    if (existingKeys) {
-      for (const existingKey of existingKeys) {
-        if (existingKey.startsWith(`batch_created_${effectiveCourier}_`)) {
-          const parts = existingKey.split('_')
-          const batchTime = Number(parts[parts.length - 1]) * (15 * 60 * 1000)
-          if (Math.abs(cTime - batchTime) <= 15 * 60 * 1000) {
-            return existingKey
-          }
-        }
-      }
-    }
-    return `batch_created_${effectiveCourier}_${dateStr}_${Math.floor(cTime / (15 * 60 * 1000))}`
+    const dateStr = order.created.slice(0, 10).replace(/-/g, '')
+    const startMin = Math.floor(cTime / 60000)
+    return `rb_${effectiveCourier}_${dateStr}_${startMin}`
   }
 
-  return `single_${effectiveCourier}_${order.id}`
+  return `rb_${effectiveCourier}_nodate_${order.id}`
+}
+
+/**
+ * Função única construtora da chave de lote rb_{courierId}_{YYYYMMDD}_{startMin}
+ * Compartilhada pelo fechamento, motor canônico, guarda de sanidade e telas.
+ */
+export function buildCanonicalRouteBatchKey(
+  courierId: string,
+  dateOrTimestamp: string | number | Date,
+): string {
+  const d = new Date(dateOrTimestamp)
+  const ts = d.getTime()
+  const startMin = Math.floor(ts / 60000)
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const dateStr = `${yyyy}${mm}${dd}`
+  const cId = courierId || 'unassigned'
+  return `rb_${cId}_${dateStr}_${startMin}`
 }
 
 /**
