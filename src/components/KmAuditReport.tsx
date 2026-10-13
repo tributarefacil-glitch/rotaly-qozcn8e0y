@@ -1637,34 +1637,15 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                         </td>
 
                         {/* Coluna B: GPS Telemetria */}
+                        {/* REGRA OBRIGATÓRIA DA CORREÇÃO 2: */}
+                        {/* Coluna B mostra a soma haversine real do lote OU o rótulo "sem telemetria suficiente (N pings)" — NUNCA copiar Coluna A */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
                             {(() => {
-                              // Se houver km_real_perna explícito gravado e válido
-                              const hasPernaKm =
-                                typeof row.order.km_real_perna === 'number' &&
-                                Number.isFinite(row.order.km_real_perna) &&
-                                row.order.km_real_perna > 0
                               const hasBatchGps =
                                 row.telemetryStatus === 'suficiente' &&
                                 typeof row.gpsKm === 'number' &&
                                 row.gpsKm > 0
-
-                              if (hasPernaKm) {
-                                return (
-                                  <div className="flex items-center justify-center gap-1">
-                                    <span className="font-mono text-sm font-black text-purple-700 dark:text-purple-300">
-                                      {row.order.km_real_perna!.toFixed(1)} km
-                                    </span>
-                                    <Badge
-                                      variant="outline"
-                                      className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
-                                    >
-                                      GPS
-                                    </Badge>
-                                  </div>
-                                )
-                              }
 
                               if (hasBatchGps) {
                                 return (

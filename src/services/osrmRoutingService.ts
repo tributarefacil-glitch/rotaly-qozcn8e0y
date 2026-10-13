@@ -24,22 +24,74 @@ export interface OsrmRouteResult {
   isRealStreetRoute: boolean
 }
 
-// Cache em memória persistente na sessão para evitar recálculos redundantes e respeitar rate limits públicos
-// Mesma chave de origem-destino (com precisão de ~11m) não recalcula na mesma sessão
+// Coordenadas canônicas da Base Pilar (Drogaria Mais Saudável)
+export const OFFICIAL_PILAR_BASE_COORDS: LatLngPoint = {
+  lat: -22.6977499,
+  lng: -43.2936013,
+}
+
+// Cache persistente das pernas por coordenadas (memória + localStorage com TTL de 24h)
 interface CacheEntry {
   result: OsrmRouteResult
   timestamp: number
 }
 
-// Map global em memória no módulo: dura por toda a sessão do app
+const LOCAL_STORAGE_CACHE_PREFIX = 'rotaly_osrm_leg_cache_'
 const routeCache = new Map<string, CacheEntry>()
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 horas (toda a sessão do navegador)
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 horas
 
 export function getCacheKey(origin: LatLngPoint, destination: LatLngPoint): string {
   // Arredonda para 4 casas decimais (~11m de precisão) para consolidar cache
   return `${origin.lat.toFixed(4)},${origin.lng.toFixed(4)}->${destination.lat.toFixed(4)},${destination.lng.toFixed(4)}`
 }
 
+function readPersistentCache(cacheKey: string): OsrmRouteResult | null {
+  const inMemory = routeCache.get(cacheKey)
+  if (inMemory && Date.now() - inMemory.timestamp < CACHE_TTL_MS) {
+    return inMemory.result
+  }
+
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_STORAGE_CACHE_PREFIX + cacheKey)
+      if (raw) {
+        const parsed = JSON.parse(raw) as CacheEntry
+        if (
+          parsed &&
+          Date.now() - parsed.timestamp < CACHE_TTL_MS &&
+          parsed.result?.coordinates?.length
+        ) {
+          routeCache.set(cacheKey, parsed)
+          return parsed.result
+        }
+      }
+    } catch {
+      // Ignora erro de leitura do localStorage
+    }
+  }
+
+  return null
+}
+
+function writePersistentCache(
+  cacheKey: string,
+  result: OsrmRouteResult,
+  shortTtlMs?: number,
+): void {
+  const entry: CacheEntry = {
+    result,
+    timestamp: shortTtlMs ? Date.now() - (CACHE_TTL_MS - shortTtlMs) : Date.now(),
+  }
+  routeCache.set(cacheKey, entry)
+
+  if (typeof window !== 'undefined' && window.localStorage && result.isRealStreetRoute) {
+    try {
+      window.localStorage.setItem(LOCAL_STORAGE_CACHE_PREFIX + cacheKey, JSON.stringify(entry))
+    } catch {
+      // Ignora se quota cheia
+    }
+  }
+}
 /**
  * Busca a rota com geometria real de ruas entre origem e destino via OSRM público.
  * Fallback para linha direta se falhar.
@@ -117,7 +169,7 @@ export async function fetchOsrmDistanceMatrix(
 
   try {
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 6000) // 6s timeout para a matriz viária
+    const timeoutId = setTimeout(() => controller.abort(), 12000) // 12s timeout para a matriz viária
     const response = await fetch(url, {
       signal: controller.signal,
       headers: { Accept: 'application/json' },
@@ -158,9 +210,9 @@ export async function fetchStreetRoute(
   destination: LatLngPoint,
 ): Promise<OsrmRouteResult> {
   const cacheKey = getCacheKey(origin, destination)
-  const cached = routeCache.get(cacheKey)
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.result
+  const cached = readPersistentCache(cacheKey)
+  if (cached) {
+    return cached
   }
 
   // Validação básica de coordenadas
@@ -180,59 +232,77 @@ export async function fetchStreetRoute(
   // 1. Tentar Google Directions API se disponível na janela
   const googleRoute = await fetchGoogleDirectionsRoute(origin, destination)
   if (googleRoute) {
-    routeCache.set(cacheKey, { result: googleRoute, timestamp: Date.now() })
+    writePersistentCache(cacheKey, googleRoute)
     return googleRoute
   }
 
   // 2. OSRM URL format: /route/v1/driving/{lng1},{lat1};{lng2},{lat2}?overview=full&geometries=geojson
+  // Timeout ajustado para 12s com retry simples (1 retry) e cache persistente
   const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson`
 
-  try {
+  const callOsrm = async (): Promise<OsrmRouteResult> => {
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 2500) // 2.5s timeout para pernas viárias não bloquearem a rede
+    const timeoutId = setTimeout(() => controller.abort(), 12000) // 12s timeout
 
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-      },
-    })
-    clearTimeout(timeoutId)
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+        },
+      })
+      clearTimeout(timeoutId)
 
-    if (!response.ok) {
-      throw new Error(`OSRM request failed with HTTP status ${response.status}`)
-    }
-
-    const data = await response.json()
-    if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
-      const primaryRoute = data.routes[0]
-      const geoCoords: [number, number][] = primaryRoute.geometry?.coordinates || []
-
-      // Convert [lng, lat] GeoJSON coordinates to LatLngPoint { lat, lng }
-      const coordinates: LatLngPoint[] = geoCoords.map(([lng, lat]) => ({
-        lat,
-        lng,
-      }))
-
-      if (coordinates.length >= 2) {
-        const result: OsrmRouteResult = {
-          coordinates,
-          distanceMeters: primaryRoute.distance ?? 0,
-          durationSeconds: primaryRoute.duration ?? 0,
-          isRealStreetRoute: true,
-        }
-        routeCache.set(cacheKey, { result, timestamp: Date.now() })
-        return result
+      if (!response.ok) {
+        throw new Error(`OSRM request failed with HTTP status ${response.status}`)
       }
-    }
 
-    throw new Error('OSRM returned empty or invalid route geometry')
-  } catch (err) {
-    console.warn('OSRM route fetch warning, using fallback geometry:', err)
-    const fallback = createDirectFallback(origin, destination)
-    // Armazena no cache por um curto período (1 min) para não inundar o OSRM se estiver instável
-    routeCache.set(cacheKey, { result: fallback, timestamp: Date.now() - (CACHE_TTL_MS - 60000) })
-    return fallback
+      const data = await response.json()
+      if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+        const primaryRoute = data.routes[0]
+        const geoCoords: [number, number][] = primaryRoute.geometry?.coordinates || []
+
+        // Convert [lng, lat] GeoJSON coordinates to LatLngPoint { lat, lng }
+        const coordinates: LatLngPoint[] = geoCoords.map(([lng, lat]) => ({
+          lat,
+          lng,
+        }))
+
+        if (coordinates.length >= 2) {
+          const result: OsrmRouteResult = {
+            coordinates,
+            distanceMeters: primaryRoute.distance ?? 0,
+            durationSeconds: primaryRoute.duration ?? 0,
+            isRealStreetRoute: true,
+          }
+          writePersistentCache(cacheKey, result)
+          return result
+        }
+      }
+
+      throw new Error('OSRM returned empty or invalid route geometry')
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+
+  try {
+    return await callOsrm()
+  } catch (firstErr) {
+    console.warn(
+      '[osrmRoutingService] 1ª tentativa falhou, executando retry simples (1 retry):',
+      firstErr,
+    )
+    try {
+      // Retry simples (1 retry)
+      return await callOsrm()
+    } catch (retryErr) {
+      console.warn('[osrmRoutingService] Retry falhou, usando fallback geometry:', retryErr)
+      const fallback = createDirectFallback(origin, destination)
+      // Armazena no cache em memória por 1 min para não inundar o OSRM se estiver offline
+      writePersistentCache(cacheKey, fallback, 60000)
+      return fallback
+    }
   }
 }
 

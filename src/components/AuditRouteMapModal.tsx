@@ -75,18 +75,10 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
     )
   }, [sortedBatchOrders])
 
-  // Identificar coordenadas da base e paradas de clientes sanitizadas
+  // Identificar coordenadas da base: sempre a Base Pilar (-22.6977499, -43.2936013) como origem oficial
   const baseCoords: CleanCoords = useMemo(() => {
-    const firstWithBase = sortedBatchOrders.find((o) => o.start_base_lat && o.start_base_lng)
-    if (firstWithBase) {
-      const clean = MapDataService.cleanCoords(
-        firstWithBase.start_base_lat,
-        firstWithBase.start_base_lng,
-      )
-      if (clean) return clean
-    }
     return MapDataService.getOfficialBaseCoords()
-  }, [sortedBatchOrders])
+  }, [])
 
   const clientStops: Array<{ order: OrderRecord; coords: CleanCoords; title: string }> =
     useMemo(() => {
@@ -238,18 +230,19 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
           })
         }
 
-        // 2. Traçado viário planejado completo da rota otimizada (partindo da base Pilar -22.6977499, -43.2936013):
-        // Base oficial -> Clientes na sequência otimizada -> Retorno à base
+        // 2. Traçado viário planejado completo da rota otimizada (partindo sempre da Base Pilar -22.6977499, -43.2936013):
+        // Base oficial Pilar -> Clientes na sequência otimizada -> Retorno à Base Pilar
+        const pilarBasePoint: LatLngPoint = { lat: baseCoords.lat, lng: baseCoords.lng }
         const plannedWaypoints: LatLngPoint[] = [
-          { lat: baseCoords.lat, lng: baseCoords.lng },
+          pilarBasePoint,
           ...clientStops.map((s) => ({ lat: s.coords.lat, lng: s.coords.lng })),
         ]
 
-        // Adicionar volta única à base
-        plannedWaypoints.push({ lat: baseCoords.lat, lng: baseCoords.lng })
+        // Adicionar volta única à Base Pilar
+        plannedWaypoints.push(pilarBasePoint)
 
         // Calcular traçado viário via fetchStreetRoute entre waypoints consecutivos
-        // Proibido traçar linha reta ou interpolar fallback reto entre pins!
+        // Proibido traçar linha reta ou interpolar fallback reto entre pins! NUNCA fallback em linha reta.
         const fullRoadSegments: LatLngPoint[] = []
 
         if (plannedWaypoints.length >= 2) {
@@ -258,7 +251,8 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
             const pTo = plannedWaypoints[i + 1]
             try {
               const leg = await fetchStreetRoute(pFrom, pTo)
-              if (leg.coordinates && leg.coordinates.length >= 2) {
+              // Apenas aceita geometria viária real de ruas; NUNCA fallback em linha reta
+              if (leg.isRealStreetRoute && leg.coordinates && leg.coordinates.length >= 2) {
                 if (fullRoadSegments.length > 0) {
                   fullRoadSegments.push(...leg.coordinates.slice(1))
                 } else {
@@ -267,7 +261,7 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               }
             } catch (errStreet) {
               console.warn('[AuditRouteMapModal] Falha ao obter trecho viário OSRM:', errStreet)
-              // SEM fallback em linha reta: não adicionar pTo/pFrom falsos em caso de erro OSRM
+              // NUNCA fallback em linha reta: não adicionar coordenadas artificiais
             }
           }
         }
@@ -426,9 +420,9 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
 
       // 3. PINGS REAIS DE TELEMETRIA DO LOTE:
       // Desenhados como segmentos entre pings consecutivos (ordenados por created).
-      // Cada segmento colorido pela distância PERPENDICULAR do ping ao SEGMENTO mais próximo da rota planejada:
-      // Item (E2): pernas com origem 'estimada_1.3x' usam tolerância 120m em vez de 50m na coloração verde/vermelho dos segmentos.
-      // Pernas viárias normais mantêm 50m.
+      // REGRA CRÍTICA CORREÇÃO 1: Condicionar TODA classificação/cálculo de desvio à existência de plannedRoutePoints.length > 0 (e >= 2).
+      // Se não há rota viária planejada carregada, não calcula desvio nem rotula segmentos como no corredor ou fora.
+      const hasPlannedGeometry = plannedRoutePoints.length >= 2
       const deviationToleranceMeters = hasEstimatedLegs ? 120 : 50
 
       let onTrack = 0
@@ -440,10 +434,12 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
           const p1 = telemetryPings[i]
           const p2 = telemetryPings[i + 1]
 
-          // Calcular distância perpendicular do ponto p2 à rota planejada (ao segmento mais próximo)
-          let minPerpDistance = Infinity
+          let isDeviatedSegment = false
+          let strokeColor = '#94A3B8' // Neutro cinza se ainda sem geometria viária
 
-          if (plannedRoutePoints.length >= 2) {
+          // Condiciona TODA classificação à existência de geometria planejada válida
+          if (hasPlannedGeometry) {
+            let minPerpDistance = Infinity
             for (let rIdx = 0; rIdx < plannedRoutePoints.length - 1; rIdx++) {
               const a = plannedRoutePoints[rIdx]
               const b = plannedRoutePoints[rIdx + 1]
@@ -452,27 +448,20 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
                 minPerpDistance = dist
               }
             }
-          } else {
-            // NUNCA classificar contra a base isolada (evita falso "desvio máx 9918 m" Pilar -> Caxias)
-            // Se a rota viária não tiver pontos suficientes, o segmento é neutro (distância 0)
-            minPerpDistance = 0
+
+            if (minPerpDistance > maxDevM && Number.isFinite(minPerpDistance)) {
+              maxDevM = Math.round(minPerpDistance)
+            }
+
+            isDeviatedSegment = minPerpDistance > deviationToleranceMeters
+            if (isDeviatedSegment) {
+              deviated++
+            } else {
+              onTrack++
+            }
+            strokeColor = isDeviatedSegment ? '#dc2626' : '#10B981'
           }
 
-          if (minPerpDistance > maxDevM && Number.isFinite(minPerpDistance)) {
-            maxDevM = Math.round(minPerpDistance)
-          }
-
-          // Regra adaptativa Item (E2):
-          // Pernas com origem 'estimada_1.3x': tolerância 120m (≤120m = verde, >120m = vermelho)
-          // Pernas viárias normais: tolerância 50m (≤50m = verde, >50m = vermelho)
-          const isDeviatedSegment = minPerpDistance > deviationToleranceMeters
-          if (isDeviatedSegment) {
-            deviated++
-          } else {
-            onTrack++
-          }
-
-          const strokeColor = isDeviatedSegment ? '#dc2626' : '#10B981'
           const segPolyline = new winGoogle.maps.Polyline({
             path: [
               { lat: p1.lat, lng: p1.lng },
@@ -547,9 +536,9 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
 
       setDeviationStats({
         totalPings: telemetryPings.length,
-        onTrackCount: onTrack,
-        deviatedCount: deviated,
-        maxDeviationMeters: maxDevM,
+        onTrackCount: hasPlannedGeometry ? onTrack : 0,
+        deviatedCount: hasPlannedGeometry ? deviated : 0,
+        maxDeviationMeters: hasPlannedGeometry ? maxDevM : 0,
       })
 
       // Ajustar visualização do mapa para englobar toda a rota e pings
@@ -650,14 +639,18 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
             {/* Resumo de pings */}
             <div className="flex items-center gap-2 text-[11px] font-mono text-slate-500">
               <span>{deviationStats.totalPings} pings GPS</span>
-              {deviationStats.deviatedCount > 0 && (
+              {isLoading || plannedRoutePoints.length < 2 ? (
+                <span className="text-amber-600 font-sans italic text-[11px]">
+                  aguardando rota planejada...
+                </span>
+              ) : deviationStats.deviatedCount > 0 ? (
                 <Badge
                   variant="outline"
                   className="border-rose-300 text-rose-700 bg-rose-50 text-[10px] font-bold"
                 >
                   {deviationStats.deviatedCount} segmentos fora
                 </Badge>
-              )}
+              ) : null}
             </div>
           </div>
         </DialogHeader>
@@ -715,22 +708,32 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               Entregas no lote: <strong>{batchOrders.length}</strong>
             </span>
             <span>•</span>
-            <span>
-              Pings no corredor:{' '}
-              <strong className="text-emerald-700">{deviationStats.onTrackCount}</strong>
-            </span>
-            <span>•</span>
-            <span>
-              Pings fora ({hasEstimatedLegs ? '&gt;120m' : '&gt;50m'}):{' '}
-              <strong className="text-rose-700">{deviationStats.deviatedCount}</strong>
-            </span>
-            {deviationStats.maxDeviationMeters > 0 && (
+            {isLoading || plannedRoutePoints.length < 2 ? (
+              <span className="text-amber-700 font-semibold italic">
+                aguardando rota planejada para calcular desvios...
+              </span>
+            ) : (
               <>
+                <span>
+                  Pings no corredor:{' '}
+                  <strong className="text-emerald-700">{deviationStats.onTrackCount}</strong>
+                </span>
                 <span>•</span>
                 <span>
-                  Desvio máx:{' '}
-                  <strong className="text-rose-700">{deviationStats.maxDeviationMeters} m</strong>
+                  Pings fora ({hasEstimatedLegs ? '&gt;120m' : '&gt;50m'}):{' '}
+                  <strong className="text-rose-700">{deviationStats.deviatedCount}</strong>
                 </span>
+                {deviationStats.maxDeviationMeters > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>
+                      Desvio máx:{' '}
+                      <strong className="text-rose-700">
+                        {deviationStats.maxDeviationMeters} m
+                      </strong>
+                    </span>
+                  </>
+                )}
               </>
             )}
           </div>

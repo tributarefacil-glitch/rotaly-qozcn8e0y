@@ -628,28 +628,29 @@ export function calculateRealKmForOrder(params: {
   let rawOfficialMeters = 0
   let rawDeviationMeters = 0
 
-  // 6. Percorrer os pontos de GPS consecutivos somando os deslocamentos reais (Haversine)
-  // REGRA CRÍTICA: Tratar o flush do buffer offline e lacunas temporais > 300s como QUEBRA DE SEGMENTO.
-  // - Nunca somar distância entre um ponto offline_buffered=true e um ponto offline_buffered=false (nos dois sentidos).
-  // - Lacunas temporais > 300 segundos entre pings quebram o segmento (não interpola em linha reta salto temporal).
-  // Somar distância apenas DENTRO de cada segmento contíguo.
+  // 6. Percorrer os pontos de GPS consecutivos somando os deslocamentos reais (Haversine).
+  // CORREÇÃO CRÍTICA (Coluna B / Telemetria GPS):
+  // REMOVIDO o descarte silencioso de lacunas (ex: dtSeconds > 300 que descartava trechos de 7–14 min em movimento).
+  // A soma haversine ping a ping percorre TODOS os pings do lote sem descartar silenciosamente o trecho.
+  // Se houver lacuna temporal grande entre pings consecutivos (>300s), NÃO interrompe a soma,
+  // mas marca que houve lacuna relevante para fins de auditoria/aviso.
+  let hasLargeGap = false
+  let maxGapSeconds = 0
+
   for (let i = 1; i < validPoints.length; i++) {
     const p1 = validPoints[i - 1]
     const p2 = validPoints[i]
 
-    // Quebra de segmento se houver transição live <-> buffer offline (offline_buffered false -> true ou true -> false)
-    const isP1Offline = Boolean(p1.offline_buffered)
-    const isP2Offline = Boolean(p2.offline_buffered)
-    if (isP1Offline !== isP2Offline) {
-      continue
-    }
-
-    // Quebra de segmento se houver lacuna > 300s (5 minutos) entre leituras consecutivas
     const t1 = new Date(p1.created).getTime()
     const t2 = new Date(p2.created).getTime()
     const dtSeconds = Math.abs(t2 - t1) / 1000
+
     if (dtSeconds > 300) {
-      continue
+      hasLargeGap = true
+      if (dtSeconds > maxGapSeconds) {
+        maxGapSeconds = Math.round(dtSeconds)
+      }
+      // NÃO usar continue: não descartar trechos de movimento silenciosamente
     }
 
     const stepDist = haversineDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
@@ -755,6 +756,8 @@ export function calculateRealKmForOrder(params: {
     suspectPinReason: isOrderPinSuspect ? 'Parada com Pin Suspeito' : undefined,
     auditNotes: isOrderPinSuspect
       ? `Parada com Pin Suspeito: excluída do viário oficial. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km.`
-      : `Fonte: Trajeto Viário Oficial das Paradas. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
+      : hasLargeGap
+        ? `Fonte: Trajeto Viário Oficial. Telemetria GPS com lacuna temporal (máx ${Math.round(maxGapSeconds / 60)} min). Desvios: ${adjustedDeviationKm.toFixed(1)} km.`
+        : `Fonte: Trajeto Viário Oficial das Paradas. Desvios auditados por GPS: ${adjustedDeviationKm.toFixed(1)} km. Ruído filtrado: ${discardedNoiseKm.toFixed(2)} km.`,
   }
 }
