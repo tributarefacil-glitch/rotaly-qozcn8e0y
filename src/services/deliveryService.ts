@@ -1007,6 +1007,20 @@ export const deliveryService = {
     const { customerId, lat, lng, customerAddressId } = params
     if (!customerId || !lat || !lng) return
 
+    // GUARDA DA BASE OFICIAL (ITEM A.2): Se a coordenada estiver dentro do geofence de 150m da base oficial,
+    // abortar sem gravar pin nem atualizar cadastro (evita caso Raquel Lima e outros clientes marcados na base).
+    const OFFICIAL_BASE_LAT = -22.6977499
+    const OFFICIAL_BASE_LNG = -43.2936013
+    const BASE_GEOFENCE_METERS = 150
+
+    const distToBase = haversineDistanceMeters(OFFICIAL_BASE_LAT, OFFICIAL_BASE_LNG, lat, lng)
+    if (!isNaN(distToBase) && distToBase <= BASE_GEOFENCE_METERS) {
+      console.warn(
+        `[deliveryService] updateCustomerDeliveryPin abortado: pin (${lat}, ${lng}) está a ${Math.round(distToBase)}m da base oficial (geofence ${BASE_GEOFENCE_METERS}m). Nenhum pin gravado para customer ${customerId}.`,
+      )
+      return
+    }
+
     try {
       const customer = await pb.collection<CustomerRecord>('customers').getOne(customerId)
       if (!customer) return
@@ -4843,10 +4857,53 @@ export const deliveryService = {
     suggested_address: Record<string, unknown>
     distance_meters?: number
     notes?: string
-  }): Promise<AddressAlertRecord> {
+  }): Promise<AddressAlertRecord | null> {
     const authUser = pb.authStore.record as any
     const activeCompanyId =
       data.company || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+
+    // ITEM A.3 — GUARDAS ANTI-BASE E ANTI-IMPRECISÃO:
+    // Descartar a criação se:
+    // 1. Coordenada nula/zero/NaN
+    // 2. Coordenada dentro de 150m da base oficial (-22.6977499, -43.2936013)
+    // 3. Accuracy > 50m
+    const OFFICIAL_BASE_LAT = -22.6977499
+    const OFFICIAL_BASE_LNG = -43.2936013
+    const BASE_GEOFENCE_METERS = 150
+    const MAX_ACCURACY_METERS = 50
+
+    const suggested = (data.suggested_address || {}) as Record<string, any>
+    const lat = Number(suggested.lat)
+    const lng = Number(suggested.lng)
+    const accuracy = Number(
+      suggested.accuracy ??
+        suggested.accuracy_meters ??
+        suggested.gps_accuracy ??
+        suggested.accuracyMeters ??
+        0,
+    )
+
+    if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
+      console.warn(
+        `[createAddressAlert] Descartado: coordenadas sugeridas ausentes ou inválidas (lat=${lat}, lng=${lng}).`,
+      )
+      return null
+    }
+
+    const distToBase = haversineDistanceMeters(OFFICIAL_BASE_LAT, OFFICIAL_BASE_LNG, lat, lng)
+    if (!isNaN(distToBase) && distToBase <= BASE_GEOFENCE_METERS) {
+      console.warn(
+        `[createAddressAlert] Descartado: coordenada sugerida (${lat}, ${lng}) está a ${Math.round(distToBase)}m da base oficial (geofence ${BASE_GEOFENCE_METERS}m). Alerta não gerado.`,
+      )
+      return null
+    }
+
+    if (accuracy > MAX_ACCURACY_METERS) {
+      console.warn(
+        `[createAddressAlert] Descartado: precisão GPS (${Math.round(accuracy)}m) excede teto de ${MAX_ACCURACY_METERS}m. Alerta não gerado.`,
+      )
+      return null
+    }
 
     // DEDUPLICAÇÃO DE ALERTA (REGRA ESTRITA CONTRA RECORRÊNCIA):
     // Bloquear criação de novo address_alert para o mesmo cliente enquanto existir alerta PENDENTE para ele.

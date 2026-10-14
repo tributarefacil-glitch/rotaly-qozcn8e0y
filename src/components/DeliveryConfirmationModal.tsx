@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
+import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 import { calculateRedirectionExtraKm } from '@/lib/redirectionKmEngine'
 import { haversineDistanceMeters } from '@/lib/geo'
 import pb from '@/lib/pocketbase/client'
@@ -72,7 +73,11 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
 
   // BLOCO 1 (v0.0.366 / v0.0.371): Geofence com GPS na confirmação de entrega e Correção Real de Endereço
   // Nova Regra Permanente: confirmação NUNCA mais bloqueia por distância (>500m vai para aprovação central)
-  const [capturedGps, setCapturedGps] = useState<{ lat: number; lng: number } | null>(null)
+  const [capturedGps, setCapturedGps] = useState<{
+    lat: number
+    lng: number
+    accuracy?: number
+  } | null>(null)
   const [isCapturingGps, setIsCapturingGps] = useState(false)
   const [proposeAddressCorrection, setProposeAddressCorrection] = useState(false)
   const [addressCorrectionConfirmed, setAddressCorrectionConfirmed] = useState(false)
@@ -161,11 +166,30 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       setAddressCorrectionConfirmed(false)
       setAddressCorrectionDone(false)
 
-      // Capturar GPS imediatamente ao abrir o modal para adiantar precisão
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      // Capturar GPS preliminar ao abrir o modal para adiantar precisão
+      if (nativeGpsBridge.isNativeEnvironment()) {
+        nativeGpsBridge
+          .getCurrentPosition({ enableHighAccuracy: true, timeout: 6000, maximumAge: 15000 })
+          .then((coord) => {
+            if (coord) {
+              setCapturedGps({
+                lat: coord.latitude,
+                lng: coord.longitude,
+                accuracy: coord.accuracy,
+              })
+            }
+          })
+          .catch((err) => {
+            console.warn('[DeliveryConfirmationModal] GPS preliminar nativo indisponível:', err)
+          })
+      } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
-            setCapturedGps({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+            setCapturedGps({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: pos.coords.accuracy,
+            })
           },
           (err) => {
             console.warn('[DeliveryConfirmationModal] GPS preliminar indisponível:', err)
@@ -327,22 +351,79 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  // Captura de GPS precisa sob demanda (promisified)
-  const getFreshLocation = (): Promise<{ lat: number; lng: number } | null> => {
+  // Captura de GPS precisa sob demanda (promisified) com suporte nativo e retorno de accuracy
+  const getFreshLocation = async (): Promise<{
+    latitude: number
+    longitude: number
+    accuracy?: number
+    lat: number
+    lng: number
+  } | null> => {
+    // 1. Caminho nativo com nativeGpsBridge
+    if (nativeGpsBridge.isNativeEnvironment()) {
+      try {
+        const nativeCoord = await nativeGpsBridge.getCurrentPosition({
+          enableHighAccuracy: true,
+          timeout: 8000,
+          maximumAge: 10000,
+        })
+        if (nativeCoord) {
+          const fresh = {
+            latitude: nativeCoord.latitude,
+            longitude: nativeCoord.longitude,
+            accuracy: nativeCoord.accuracy,
+            lat: nativeCoord.latitude,
+            lng: nativeCoord.longitude,
+          }
+          setCapturedGps(fresh)
+          return fresh
+        }
+      } catch (err) {
+        console.warn('[DeliveryConfirmationModal] Falha no GPS nativo sob demanda:', err)
+      }
+    }
+
+    // 2. Fallback do navegador (navigator.geolocation.getCurrentPosition)
     return new Promise((resolve) => {
       if (typeof navigator === 'undefined' || !navigator.geolocation) {
-        resolve(capturedGps)
+        if (capturedGps) {
+          resolve({
+            latitude: capturedGps.lat,
+            longitude: capturedGps.lng,
+            accuracy: capturedGps.accuracy,
+            lat: capturedGps.lat,
+            lng: capturedGps.lng,
+          })
+          return
+        }
+        resolve(null)
         return
       }
       navigator.geolocation.getCurrentPosition(
         (pos) => {
-          const fresh = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+          const fresh = {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          }
           setCapturedGps(fresh)
           resolve(fresh)
         },
         (err) => {
           console.warn('[DeliveryConfirmationModal] Falha na leitura GPS sob demanda:', err)
-          resolve(capturedGps)
+          if (capturedGps) {
+            resolve({
+              latitude: capturedGps.lat,
+              longitude: capturedGps.lng,
+              accuracy: capturedGps.accuracy,
+              lat: capturedGps.lat,
+              lng: capturedGps.lng,
+            })
+          } else {
+            resolve(null)
+          }
         },
         { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 },
       )
@@ -399,64 +480,40 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       if (!hasClientCoords) {
         // CLIENTE SEM COORDENADAS NUNCA BLOQUEIA
         geofenceFlag = 'sem_coordenadas'
-        // Criar/atualizar alerta de pin_entregador automaticamente na coleção address_alerts (DEDUP com snapshot antigo)
+        // Criar/atualizar alerta de pin_entregador automaticamente via createAddressAlert com guardas
         if (currentLoc) {
+          const oldSnapshot = {
+            address: order.expand?.customer_id?.address || order.end_address_text || '',
+            street: order.expand?.customer_id?.street || '',
+            number: order.expand?.customer_id?.number || '',
+            neighborhood: order.expand?.customer_id?.neighborhood || '',
+            city: order.expand?.customer_id?.city || '',
+            state: order.expand?.customer_id?.state || '',
+            postal_code: order.expand?.customer_id?.postal_code || '',
+            lat: null,
+            lng: null,
+          }
+          const suggestedObj = {
+            address: order.expand?.customer_id?.address || order.end_address_text || '',
+            lat: currentLoc.lat,
+            lng: currentLoc.lng,
+            accuracy: currentLoc.accuracy,
+            accuracy_meters: currentLoc.accuracy,
+          }
+          const noteText = `Pin capturado automaticamente pelo entregador na entrega do pedido ${order.tracking_code}`
           try {
-            const customerId = order.customer_id || ''
-            const oldSnapshot = {
-              address: order.expand?.customer_id?.address || order.end_address_text || '',
-              street: order.expand?.customer_id?.street || '',
-              number: order.expand?.customer_id?.number || '',
-              neighborhood: order.expand?.customer_id?.neighborhood || '',
-              city: order.expand?.customer_id?.city || '',
-              state: order.expand?.customer_id?.state || '',
-              postal_code: order.expand?.customer_id?.postal_code || '',
-              lat: null,
-              lng: null,
-            }
-            const suggestedObj = {
-              address: order.expand?.customer_id?.address || order.end_address_text || '',
-              lat: currentLoc.lat,
-              lng: currentLoc.lng,
-            }
-            const noteText = `Pin capturado automaticamente pelo entregador na entrega do pedido ${order.tracking_code}`
-            const markedAtIso = new Date().toISOString()
-
-            let existingAlert = null
-            if (customerId) {
-              const existingList = await pb.collection('address_alerts').getList(1, 1, {
-                filter: `customer = '${customerId}' && status = 'pendente'`,
-                sort: '-created',
-                requestKey: null,
-              })
-              existingAlert = existingList.items[0] || null
-            }
-
-            if (existingAlert) {
-              await pb.collection('address_alerts').update(existingAlert.id, {
-                suggested_address: suggestedObj,
-                distance_meters: 0,
-                marked_at: markedAtIso,
-                notes: noteText,
-                current_address: existingAlert.current_address || oldSnapshot,
-              })
-            } else {
-              await pb.collection('address_alerts').create({
-                customer: customerId,
-                company: order.empresa_id || undefined,
-                origin: 'pin_entregador',
-                status: 'pendente',
-                distance_meters: 0,
-                marked_by: courierId || pb.authStore.record?.id || '',
-                marked_at: markedAtIso,
-                current_address: oldSnapshot,
-                suggested_address: suggestedObj,
-                notes: noteText,
-              })
-            }
+            await deliveryService.createAddressAlert({
+              customer: order.customer_id || '',
+              company: order.empresa_id || undefined,
+              origin: 'pin_entregador',
+              current_address: oldSnapshot,
+              suggested_address: suggestedObj,
+              distance_meters: 0,
+              notes: noteText,
+            })
           } catch (alertErr) {
             console.warn(
-              '[DeliveryConfirmationModal] Aviso ao registrar address_alerts pin_entregador:',
+              '[DeliveryConfirmationModal] Aviso ao criar alerta pin_entregador (cliente sem coords):',
               alertErr,
             )
           }
@@ -476,9 +533,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           // Distância > 500m: marca pendente_aprovacao_gt_500m e encaminha para aprovação da central
           geofenceFlag = 'pendente_aprovacao_gt_500m'
 
-          // Registrar alerta em address_alerts para a central de auditoria (DEDUP com snapshot antigo completo)
+          // Registrar alerta em address_alerts para a central de auditoria via createAddressAlert com guardas
           try {
-            const customerId = order.customer_id || ''
             const oldSnapshot = {
               address: order.expand?.customer_id?.address || order.end_address_text || '',
               street: order.expand?.customer_id?.street || '',
@@ -494,45 +550,23 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               address: order.expand?.customer_id?.address || order.end_address_text || '',
               lat: currentLoc.lat,
               lng: currentLoc.lng,
+              accuracy: currentLoc.accuracy,
+              accuracy_meters: currentLoc.accuracy,
             }
             const noteText = `Entrega realizada a ${(distanceToPinM / 1000).toFixed(1)} km do pin cadastrado no pedido ${order.tracking_code}. Aguarda conferência da central.`
-            const markedAtIso = new Date().toISOString()
 
-            let existingAlert = null
-            if (customerId) {
-              const existingList = await pb.collection('address_alerts').getList(1, 1, {
-                filter: `customer = '${customerId}' && status = 'pendente'`,
-                sort: '-created',
-                requestKey: null,
-              })
-              existingAlert = existingList.items[0] || null
-            }
-
-            if (existingAlert) {
-              await pb.collection('address_alerts').update(existingAlert.id, {
-                suggested_address: suggestedObj,
-                distance_meters: distanceToPinM,
-                marked_at: markedAtIso,
-                notes: noteText,
-                current_address: existingAlert.current_address || oldSnapshot,
-              })
-            } else {
-              await pb.collection('address_alerts').create({
-                customer: customerId,
-                company: order.empresa_id || undefined,
-                origin: 'pin_entregador',
-                status: 'pendente',
-                distance_meters: distanceToPinM,
-                marked_by: courierId || pb.authStore.record?.id || '',
-                marked_at: markedAtIso,
-                current_address: oldSnapshot,
-                suggested_address: suggestedObj,
-                notes: noteText,
-              })
-            }
+            await deliveryService.createAddressAlert({
+              customer: order.customer_id || '',
+              company: order.empresa_id || undefined,
+              origin: 'pin_entregador',
+              current_address: oldSnapshot,
+              suggested_address: suggestedObj,
+              distance_meters: distanceToPinM,
+              notes: noteText,
+            })
           } catch (alertErr) {
             console.warn(
-              '[DeliveryConfirmationModal] Aviso ao criar/atualizar address_alerts para >500m:',
+              '[DeliveryConfirmationModal] Aviso ao criar/atualizar address_alerts para >500m via createAddressAlert:',
               alertErr,
             )
           }
