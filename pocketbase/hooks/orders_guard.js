@@ -350,5 +350,258 @@ onRecordUpdateRequest((e) => {
     )
   }
 
+  // GUARDA SERVIDORA: Bloqueio estrutural de route_finished com pedidos pendentes no lote
+  // Impede que qualquer cliente (app, API, script) grave route_finished=true enquanto houver
+  // pedidos do lote sem desfecho válido (entregue, não atendido com motivo ou cancelado).
+  // Se a última posição do entregador estiver a <150m da base oficial, destaca no log e na mensagem
+  // ("tentativa de confirmação da base"). Registra sempre na audit_trail com padrão do sistema.
+  try {
+    const targetOrder = e.record
+    const originalOrder = targetOrder.original()
+    const incomingRouteFinished = targetOrder.getBool('route_finished')
+    const wasRouteFinished = originalOrder ? originalOrder.getBool('route_finished') : false
+
+    // Disparar somente quando houver transição para route_finished = true
+    if (incomingRouteFinished && !wasRouteFinished) {
+      const courierId = targetOrder.getString('courier_id')
+      const batchKey = targetOrder.getString('route_batch_key')
+      const currentOrderId = targetOrder.id
+
+      // Base oficial Mais Saudavel (Pilar)
+      const BASE_OFICIAL_LAT = -22.6977499
+      const BASE_OFICIAL_LNG = -43.2936013
+      const BASE_GEOFENCE_RADIUS_M = 150
+
+      // Haversine inline para cálculo em metros
+      const calcHaversineMeters = function (lat1, lon1, lat2, lon2) {
+        const R = 6371e3
+        const toRad = function (deg) {
+          return (deg * Math.PI) / 180
+        }
+        const dLat = toRad(lat2 - lat1)
+        const dLon = toRad(lon2 - lon1)
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return Math.round(R * c)
+      }
+
+      // 1. Localizar outros pedidos do mesmo lote/rota
+      // Desfechos válidos que encerram a entrega:
+      // status in ('delivered', 'address_error', 'client_absent', 'cancelled')
+      // Qualquer outro status (pending, assigned, in_transit) ou ausência de desfecho caracteriza pedido pendente.
+      let batchOrders = []
+      try {
+        if (batchKey) {
+          batchOrders = e.app.findRecordsByFilter(
+            'orders',
+            `route_batch_key = '${batchKey}' && id != '${currentOrderId}'`,
+            'sequence,created',
+            100,
+            0,
+          )
+        } else if (courierId) {
+          // Fallback por courierId com rota iniciada e não finalizada
+          batchOrders = e.app.findRecordsByFilter(
+            'orders',
+            `courier_id = '${courierId}' && route_started = true && route_finished = false && id != '${currentOrderId}'`,
+            'sequence,created',
+            100,
+            0,
+          )
+        }
+      } catch (eBatchFind) {
+        console.warn(
+          '[orders_guard] Erro ao buscar pedidos do lote para validação de route_finished:',
+          eBatchFind,
+        )
+      }
+
+      // Função auxiliar para checar se o pedido possui desfecho válido
+      const isOrderResolved = function (ord) {
+        const st = ord.getString('status')
+        const compReason = ord.getString('completion_reason')
+
+        // Status com desfecho conclusivo
+        if (
+          st === 'delivered' ||
+          st === 'cancelled' ||
+          st === 'address_error' ||
+          st === 'client_absent'
+        ) {
+          return true
+        }
+        // Casos onde completionReason já categoriza encerramento válido
+        if (
+          compReason === 'delivered' ||
+          compReason === 'address_error' ||
+          compReason === 'client_absent' ||
+          compReason === 'cancelado_vendedor'
+        ) {
+          return true
+        }
+        return false
+      }
+
+      // Checar se o próprio pedido atual está sem desfecho (caso anômalo de marcar route_finished com status in_transit/pending)
+      const currentOrderResolved = isOrderResolved(targetOrder)
+
+      // Identificar pedidos pendentes no lote
+      const pendingOrdersInBatch = []
+      if (!currentOrderResolved) {
+        pendingOrdersInBatch.push({
+          id: targetOrder.id,
+          tracking_code: targetOrder.getString('tracking_code') || targetOrder.id,
+          status: targetOrder.getString('status') || 'vazio',
+          sequence: targetOrder.get('sequence') || 0,
+        })
+      }
+
+      for (let i = 0; i < batchOrders.length; i++) {
+        const bo = batchOrders[i]
+        if (!isOrderResolved(bo)) {
+          pendingOrdersInBatch.push({
+            id: bo.id,
+            tracking_code: bo.getString('tracking_code') || bo.id,
+            status: bo.getString('status') || 'vazio',
+            sequence: bo.get('sequence') || 0,
+          })
+        }
+      }
+
+      // 2. SE HOUVER PEDIDO PENDENTE: BLOQUEAR A GRAVAÇÃO
+      if (pendingOrdersInBatch.length > 0) {
+        // Verificar última posição conhecida do entregador para destacar caso geofence da base (<150m)
+        let lastCourierLat = null
+        let lastCourierLng = null
+        let distToBaseMeters = null
+        let isAtBaseGeofence = false
+
+        const effectiveUserId = courierId || (e.auth ? e.auth.id : '')
+        if (effectiveUserId) {
+          try {
+            const locRecords = e.app.findRecordsByFilter(
+              'locations',
+              `user_id = '${effectiveUserId}'`,
+              '-created',
+              1,
+              0,
+            )
+            if (locRecords && locRecords.length > 0) {
+              lastCourierLat = locRecords[0].getFloat('lat')
+              lastCourierLng = locRecords[0].getFloat('lng')
+              if (
+                lastCourierLat !== 0 &&
+                lastCourierLng !== 0 &&
+                !isNaN(lastCourierLat) &&
+                !isNaN(lastCourierLng)
+              ) {
+                distToBaseMeters = calcHaversineMeters(
+                  lastCourierLat,
+                  lastCourierLng,
+                  BASE_OFICIAL_LAT,
+                  BASE_OFICIAL_LNG,
+                )
+                if (distToBaseMeters <= BASE_GEOFENCE_RADIUS_M) {
+                  isAtBaseGeofence = true
+                }
+              }
+            }
+          } catch (eLocFind) {
+            console.warn(
+              '[orders_guard] Erro ao buscar última localização do entregador:',
+              eLocFind,
+            )
+          }
+        }
+
+        const pendingCodes = pendingOrdersInBatch.map((p) => p.tracking_code).join(', ')
+        const pendingCount = pendingOrdersInBatch.length
+
+        // Montar mensagem de log com destaque para o caso da base
+        let logMessage = `[orders_guard] [BLOQUEIO_ROUTE_FINISHED] Tentativa de finalizar rota com ${pendingCount} pedido(s) pendente(s): [${pendingCodes}]. Lote=${batchKey || 'sem_lote'}, Entregador=${courierId || 'indefinido'}.`
+        if (isAtBaseGeofence && distToBaseMeters !== null) {
+          logMessage += ` ALERTA_BASE: Entregador parado na base (${distToBaseMeters}m do pin oficial <= 150m) tentando finalizar rota com pedido pendente!`
+        } else if (distToBaseMeters !== null) {
+          logMessage += ` Distância até a base: ${distToBaseMeters}m.`
+        }
+        console.warn(logMessage)
+
+        // Registrar tentativa bloqueada em audit_trail (obrigatório do projeto)
+        // user_id vazio (relation não aceita 'system'), actor_name='Sistema', metadata.system_trigger=true
+        try {
+          const auditCol = e.app.findCollectionByNameOrId('audit_trail')
+          if (auditCol) {
+            const auditRec = new Record(auditCol)
+            auditRec.set('user_id', '') // relation não aceita 'system'
+            auditRec.set('actor_name', 'Sistema')
+            auditRec.set('action', 'bloqueio_route_finished_pedidos_pendentes')
+            auditRec.set('collection', 'orders')
+            auditRec.set('record_id', targetOrder.id)
+            auditRec.set('field', 'route_finished')
+            auditRec.set('old_value', 'false')
+            auditRec.set('new_value', 'bloqueado_com_pedidos_pendentes')
+            if (courierId) auditRec.set('courier_id', courierId)
+            const empresaId = targetOrder.getString('empresa_id')
+            if (empresaId) auditRec.set('empresa_id', empresaId)
+            auditRec.set('timestamp', new Date().toISOString())
+
+            const auditMetadata = {
+              system_trigger: true,
+              actor_role: 'system',
+              route_batch_key: batchKey || '',
+              target_order_id: targetOrder.id,
+              target_tracking_code: targetOrder.getString('tracking_code'),
+              pending_orders_count: pendingCount,
+              pending_orders: pendingOrdersInBatch,
+              courier_id: courierId || '',
+              dist_to_base_meters: distToBaseMeters,
+              is_at_base_geofence: isAtBaseGeofence,
+              last_courier_lat: lastCourierLat,
+              last_courier_lng: lastCourierLng,
+              base_lat: BASE_OFICIAL_LAT,
+              base_lng: BASE_OFICIAL_LNG,
+              block_reason: isAtBaseGeofence
+                ? `Tentativa de finalizar rota direto da base (${distToBaseMeters}m <= 150m) com ${pendingCount} pedido(s) pendente(s)`
+                : `Tentativa de finalizar rota com ${pendingCount} pedido(s) pendente(s)`,
+            }
+            auditRec.set('metadata', auditMetadata)
+            e.app.save(auditRec)
+            console.log(
+              '[orders_guard] audit_trail registrado com sucesso para bloqueio de route_finished:',
+              targetOrder.id,
+            )
+          }
+        } catch (auditErr) {
+          console.warn(
+            '[orders_guard] Erro ao registrar audit_trail do bloqueio de route_finished:',
+            auditErr,
+          )
+        }
+
+        // Lançar BadRequestError com mensagem clara para o chamador (com destaque se estiver na base)
+        let clientErrorMessage = `Não é possível finalizar a rota: existem ${pendingCount} pedido(s) sem desfecho (${pendingCodes}). Todos os pedidos do lote precisam ser entregues ou marcados como não atendidos antes de encerrar a rota.`
+        if (isAtBaseGeofence && distToBaseMeters !== null) {
+          clientErrorMessage = `Não é possível finalizar a rota da base (${distToBaseMeters}m): existem ${pendingCount} pedido(s) sem desfecho (${pendingCodes}). Conclua o desfecho de todos os pedidos antes de finalizar o lote.`
+        }
+        throw new BadRequestError(clientErrorMessage)
+      }
+    }
+  } catch (errRouteFinishedGuard) {
+    if (
+      errRouteFinishedGuard &&
+      (errRouteFinishedGuard.name === 'BadRequestError' ||
+        (errRouteFinishedGuard.message &&
+          errRouteFinishedGuard.message.includes('Não é possível finalizar a rota')))
+    ) {
+      throw errRouteFinishedGuard
+    }
+    console.warn(
+      '[orders_guard] Erro inesperado na guarda de route_finished:',
+      errRouteFinishedGuard,
+    )
+  }
+
   e.next()
 }, 'orders')
