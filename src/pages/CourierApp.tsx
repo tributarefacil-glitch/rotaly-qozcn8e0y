@@ -2373,7 +2373,7 @@ export default function CourierApp() {
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-bold text-white">{baseCoordinates.name}</p>
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      Geofence Ativo (120m)
+                      Geofence Ativo (150m)
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
@@ -2394,31 +2394,20 @@ export default function CourierApp() {
               </div>
             </div>
 
-            {/* Regra de finalização automática explicada */}
-            <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 leading-relaxed space-y-1.5">
-              <p className="font-bold flex items-center gap-1.5 text-emerald-300 text-sm">
-                <CheckCircle className="h-4 w-4 text-emerald-400" />
-                Todas as entregas concluídas! Retorne à base.
-              </p>
-              <p className="text-[11px] text-emerald-100/90 leading-relaxed">
-                Você não precisa clicar em nada. Ao se aproximar da base (~120m), o sistema finaliza
-                a rota inteira automaticamente com o cálculo oficial de km e combustível.
-              </p>
-            </div>
-
             {/* Informação da rota concluída com KM viário oficial */}
             <div className="p-3.5 rounded-2xl border border-emerald-500/30 bg-emerald-950/20 text-xs text-emerald-200 space-y-1">
               <span className="font-bold flex items-center gap-1.5 text-emerald-300">
                 <CheckCircle className="h-4 w-4 text-emerald-400" />
                 Todas as paradas foram concluídas!
               </span>
-              <p className="text-[11px] text-slate-300">
-                Retorne à base para concluir o ciclo viário oficial. O encerramento ocorre
-                automaticamente por proximidade (geofence) ou tocando no botão abaixo.
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                Todas as entregas do lote foram registradas (entregues ou não atendidas). Toque em{' '}
+                <strong>Voltar para base</strong> para iniciar a perna de retorno oficial ou navegar
+                pelo GPS. O encerramento ocorre automaticamente por geofence ao chegar à base.
               </p>
             </div>
 
-            {/* Botões de Ação: Navegar até a base & Finalizar Rota Inteira (Fallback manual) */}
+            {/* Botões de Ação: Voltar para base & Finalizar Manualmente */}
             <div className="space-y-2 pt-1">
               <Button
                 type="button"
@@ -2426,7 +2415,7 @@ export default function CourierApp() {
                 className="w-full h-12 bg-gradient-to-r from-[#0052CC] to-[#0066FF] hover:from-[#0047B3] hover:to-[#0052CC] text-white font-bold text-xs rounded-xl border border-blue-400/30 flex items-center justify-center gap-2 shadow-lg"
               >
                 <Navigation className="h-4 w-4 text-[#60A5FA]" />
-                <span>Navegar até a Base (GPS / Waze)</span>
+                <span>Voltar para base (GPS / Waze)</span>
               </Button>
 
               <Button
@@ -2785,7 +2774,7 @@ export default function CourierApp() {
                   </Button>
                 </div>
 
-                {/* Cancelar Entrega com Motivos Obrigatórios */}
+                {/* Marcar Pedido como Não Atendido (com motivo: ausente, recusa, endereço errado) */}
                 <Button
                   type="button"
                   variant="outline"
@@ -2796,8 +2785,21 @@ export default function CourierApp() {
                   className="w-full h-11 border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition"
                 >
                   <XCircle className="h-4 w-4 text-rose-400" />
-                  <span>Cancelar Entrega (Motivos)</span>
+                  <span>Não Atendido (Ausente / Recusa / Endereço)</span>
                 </Button>
+
+                {/* Banner informativo de bloqueio do botão Voltar para base enquanto houver entregas pendentes */}
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-700/60 flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <div className="flex items-center gap-2">
+                    <Lock className="h-4 w-4 text-amber-400 shrink-0" />
+                    <span>
+                      Voltar para base: <strong>bloqueado</strong>
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-amber-400 font-medium">
+                    Finalize todas as entregas
+                  </span>
+                </div>
               </div>
             )}
 

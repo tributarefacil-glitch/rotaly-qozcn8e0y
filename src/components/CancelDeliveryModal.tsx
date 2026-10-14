@@ -30,7 +30,11 @@ export type CancelDeliveryReasonKey =
 
 export interface CancelOption {
   key: CancelDeliveryReasonKey
-  label: 'Cliente Ausente' | 'Desistência do Cliente' | 'Erro do Vendedor' | 'Rota Errada'
+  label:
+    | 'Cliente Ausente'
+    | 'Recusa / Desistência'
+    | 'Erro de Endereço / Rota'
+    | 'Erro Operacional da Loja'
   description: string
   icon: React.ComponentType<{ className?: string }>
   status: OrderStatus
@@ -41,34 +45,34 @@ export const CANCEL_DELIVERY_OPTIONS: CancelOption[] = [
   {
     key: 'cliente_ausente',
     label: 'Cliente Ausente',
-    description: 'Ninguém atendeu ou respondeu no endereço de entrega.',
+    description: 'Ninguém atendeu ou respondeu no endereço (não atendido).',
     icon: UserX,
     status: 'client_absent',
     completionReason: 'client_absent',
   },
   {
     key: 'desistencia_cliente',
-    label: 'Desistência do Cliente',
-    description: 'O cliente recusou o pedido ou cancelou na hora.',
+    label: 'Recusa / Desistência',
+    description: 'O cliente recusou o pedido ou não quis receber no local.',
     icon: UserMinus,
     status: 'cancelled',
     completionReason: 'other',
   },
   {
-    key: 'erro_vendedor',
-    label: 'Erro do Vendedor',
-    description: 'Pedido trocado, valor divergente ou erro operacional da loja.',
-    icon: AlertTriangle,
-    status: 'cancelled',
-    completionReason: 'other',
-  },
-  {
     key: 'rota_errada',
-    label: 'Rota Errada',
-    description: 'Endereço inconsistente, fora de alcance ou rota incorreta.',
+    label: 'Erro de Endereço / Rota',
+    description: 'Endereço incorreto, inexistente ou local não localizado.',
     icon: MapPinOff,
     status: 'address_error',
     completionReason: 'address_error',
+  },
+  {
+    key: 'erro_vendedor',
+    label: 'Erro Operacional da Loja',
+    description: 'Pedido trocado, valor divergente ou cancelamento pelo vendedor.',
+    icon: AlertTriangle,
+    status: 'cancelled',
+    completionReason: 'cancelado_vendedor',
   },
 ]
 
@@ -99,10 +103,10 @@ export const CancelDeliveryModal: React.FC<CancelDeliveryModalProps> = ({
     try {
       const now = new Date().toISOString()
       const notePrefix = order.notes ? `${order.notes} | ` : ''
-      const cancelDetail = `Cancelamento: [${selectedOption.label}]`
+      const cancelDetail = `Não atendido: [${selectedOption.label}]`
       const finalNotes = `${notePrefix}${cancelDetail}${notes.trim() ? ` - ${notes.trim()}` : ''}`
 
-      // Atualizar status e motivo no pedido
+      // Atualizar status e motivo no pedido com desfecho registrado
       await deliveryService.updateOrder(order.id, {
         status: selectedOption.status,
         completion_reason: selectedOption.completionReason,
@@ -115,7 +119,7 @@ export const CancelDeliveryModal: React.FC<CancelDeliveryModalProps> = ({
       // Gerar notificação interna
       try {
         await deliveryService.createNotification({
-          title: `Entrega Cancelada: ${order.tracking_code}`,
+          title: `Pedido Não Atendido: ${order.tracking_code}`,
           message: `Motivo: "${selectedOption.label}". Cliente: ${order.expand?.customer_id?.name || 'Cliente'}. ${notes.trim() ? `Obs: ${notes.trim()}` : ''}`,
           type: 'warning',
           read: false,
@@ -125,13 +129,15 @@ export const CancelDeliveryModal: React.FC<CancelDeliveryModalProps> = ({
         /* silent catch */
       }
 
-      toast.warning(`Entrega ${order.tracking_code} cancelada: ${selectedOption.label}`)
+      toast.warning(
+        `Pedido ${order.tracking_code} marcado como não atendido (${selectedOption.label})`,
+      )
       setNotes('')
       onOpenChange(false)
       onCancelled()
     } catch (err) {
-      console.error('Erro ao cancelar entrega:', err)
-      toast.error('Erro ao registrar cancelamento da entrega. Tente novamente.')
+      console.error('Erro ao registrar pedido não atendido:', err)
+      toast.error('Erro ao registrar desfecho do pedido. Tente novamente.')
     } finally {
       setIsSubmitting(false)
     }
@@ -145,7 +151,7 @@ export const CancelDeliveryModal: React.FC<CancelDeliveryModalProps> = ({
         <DialogHeader className="space-y-1">
           <DialogTitle className="flex items-center gap-2 text-base font-bold text-rose-400 font-heading">
             <XCircle className="h-5 w-5 text-rose-500" />
-            Cancelar Entrega
+            Marcar como Não Atendido
           </DialogTitle>
           <p className="text-xs text-slate-400">
             Cliente:{' '}
@@ -158,7 +164,7 @@ export const CancelDeliveryModal: React.FC<CancelDeliveryModalProps> = ({
 
         <div className="space-y-3 py-2">
           <Label className="text-xs font-bold text-slate-300 uppercase tracking-wide">
-            Selecione o Motivo do Cancelamento *
+            Selecione o Motivo do Não Atendimento *
           </Label>
 
           {/* EXATAMENTE AS 4 OPÇÕES PEDIDAS */}
@@ -223,8 +229,8 @@ export const CancelDeliveryModal: React.FC<CancelDeliveryModalProps> = ({
           <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-start gap-2 text-[11px] text-amber-300">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-400" />
             <span>
-              Ao cancelar, esta entrega sairá da sua fila ativa e o próximo cliente da rota será
-              desbloqueado automaticamente.
+              Ao registrar o não atendimento com motivo, a entrega é encerrada sem forçar desfecho
+              como entregue e o próximo cliente da rota será desbloqueado.
             </span>
           </div>
         </div>
@@ -245,7 +251,7 @@ export const CancelDeliveryModal: React.FC<CancelDeliveryModalProps> = ({
             disabled={isSubmitting}
             className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs h-10 px-4 rounded-xl shadow-lg shadow-rose-950/50"
           >
-            {isSubmitting ? 'Cancelando...' : 'Confirmar Cancelamento'}
+            {isSubmitting ? 'Registrando...' : 'Confirmar Não Atendido'}
           </Button>
         </DialogFooter>
       </DialogContent>
