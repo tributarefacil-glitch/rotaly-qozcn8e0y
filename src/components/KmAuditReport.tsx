@@ -1801,22 +1801,33 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                             )
                             const isWithinTolerance = diffPct <= 20
 
+                            const isProcessed =
+                              row.canonicalBatchTelem &&
+                              row.canonicalBatchTelem.status === 'processed'
+
                             return (
                               <div className="space-y-1">
-                                <Badge
-                                  className={`text-[10px] font-bold ${
-                                    isWithinTolerance
-                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                                      : 'bg-rose-100 text-rose-800 border-rose-300'
-                                  }`}
-                                >
-                                  {isWithinTolerance ? '✓ ' : '🚨 '}
-                                  {diffPct}% desvio
-                                </Badge>
+                                {isProcessed ? (
+                                  <>
+                                    <Badge
+                                      className={`text-[10px] font-bold ${
+                                        isWithinTolerance
+                                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                          : 'bg-rose-100 text-rose-800 border-rose-300'
+                                      }`}
+                                    >
+                                      {isWithinTolerance ? '✓ ' : '🚨 '}+{diffPct}% desvio
+                                    </Badge>
 
-                                <span className="text-[10px] font-mono text-slate-500 block">
-                                  div: {Math.abs(batchGpsKm - batchRoadKm).toFixed(1)} km
-                                </span>
+                                    <span className="text-[10px] font-mono text-slate-500 block">
+                                      div: {Math.abs(batchGpsKm - batchRoadKm).toFixed(1)} km
+                                    </span>
+                                  </>
+                                ) : (
+                                  <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] font-bold">
+                                    Aguardando Processamento
+                                  </Badge>
+                                )}
 
                                 <div className="flex flex-col items-center justify-center gap-1 pt-0.5">
                                   <Button

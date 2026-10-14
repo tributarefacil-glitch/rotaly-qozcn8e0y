@@ -845,9 +845,64 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
         5000,
         0,
       )
-    } catch (_) {}
+    } catch (findErr) {
+      console.log(
+        '[canonical_telemetry_engine] Erro ao buscar pings em locations por user_id:',
+        findErr,
+      )
+    }
 
     const pingsCount = pings.length
+
+    // GUARDA DA FRENTE 2: pings_count = 0 quando existem pings na janela = log de erro + audit_trail
+    if (pingsCount === 0) {
+      try {
+        const potentialAnyPings = $app.findRecordsByFilter(
+          'locations',
+          `created >= '${queryStartIso}' && created <= '${queryFinishIso}'`,
+          '+created',
+          10,
+          0,
+        )
+        if (potentialAnyPings.length > 0) {
+          console.log(
+            '[canonical_telemetry_engine:GUARDA_ERRO] pings_count=0 para user_id=' +
+              courierId +
+              ' mas existem pings na janela global (' +
+              potentialAnyPings.length +
+              ' encontrados). Registrando auditoria.',
+          )
+          const auditColGuard = $app.findCollectionByNameOrId('audit_trail')
+          if (auditColGuard) {
+            const auditGuard = new Record(auditColGuard)
+            auditGuard.set('user_id', '')
+            auditGuard.set('collection', 'route_batch_telemetry')
+            auditGuard.set('record_id', batchKey)
+            if (courierId) auditGuard.set('courier_id', courierId)
+            auditGuard.set('action', 'telemetria_pings_zero_divergencia')
+            auditGuard.set('field', 'pings_count')
+            auditGuard.set('old_value', '0')
+            auditGuard.set('new_value', 'pings_presentes_janela_sem_match_user_id')
+            auditGuard.set('timestamp', new Date().toISOString())
+            auditGuard.set('metadata', {
+              system_trigger: true,
+              actor_name: 'Sistema',
+              route_batch_key: batchKey,
+              courier_id: courierId,
+              query_start_iso: queryStartIso,
+              query_finish_iso: queryFinishIso,
+              divergence_warning: 'pings_count=0 com telemetria existente na janela temporal',
+            })
+            $app.save(auditGuard)
+          }
+        }
+      } catch (guardErr) {
+        console.log(
+          '[canonical_telemetry_engine:GUARDA_ERRO] Erro na verificação da guarda:',
+          guardErr,
+        )
+      }
+    }
     let firstPingAt = null
     let lastPingAt = null
     if (pingsCount > 0) {

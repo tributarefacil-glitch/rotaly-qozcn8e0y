@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.location.Location;
 import android.os.Build;
@@ -25,42 +26,70 @@ import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import br.com.rotaly.app.MainActivity;
 import br.com.rotaly.app.R;
 
-/**
- * RotalyGpsForegroundService
- *
- * Foreground Service nativo Android que mantém o GPS contínuo e ininterrupto:
- * - Exibe notificação persistente obrigatória "Rotaly em Operação — Rastreando rota"
- * - Executa com foregroundServiceType="location" (exigência Android 14+)
- * - Utiliza FusedLocationProviderClient com PRIORITY_HIGH_ACCURACY
- * - Mantém WakeLock parcial durante rotas ativas para impedir suspensão com tela apagada
- * - Notifica a MainActivity via broadcast/callback para transmissão à coleção 'locations'
- */
 public class RotalyGpsForegroundService extends Service {
-
     private static final String TAG = "RotalyGpsService";
-    public static final String CHANNEL_ID = "rotaly_gps_tracking_channel";
-    public static final int NOTIFICATION_ID = 9001;
+    private static final String CHANNEL_ID = "rotaly_gps_channel_v1";
+    private static final int NOTIFICATION_ID = 91823;
 
-    public static final String ACTION_START = "ACTION_START";
-    public static final String ACTION_STOP = "ACTION_STOP";
-    public static final String EXTRA_OPTIONS_JSON = "EXTRA_OPTIONS_JSON";
+    public static final String ACTION_START = "br.com.rotaly.app.action.START_TRACKING";
+    public static final String ACTION_STOP = "br.com.rotaly.app.action.STOP_TRACKING";
+    public static final String EXTRA_OPTIONS_JSON = "extra_options_json";
+
     public static final String ACTION_LOCATION_BROADCAST = "br.com.rotaly.app.LOCATION_UPDATE";
-    public static final String EXTRA_LOCATION_JSON = "EXTRA_LOCATION_JSON";
+    public static final String EXTRA_LOCATION_JSON = "location_json";
+
+    private static final String PREFS_NAME = "rotaly_gps_prefs";
+    private static final String PREF_IS_TRACKING = "pref_is_tracking";
+    private static final String PREF_BASE_URL = "pref_base_url";
+    private static final String PREF_AUTH_TOKEN = "pref_auth_token";
+    private static final String PREF_USER_ID = "pref_user_id";
+    private static final String PREF_INTERVAL_MS = "pref_interval_ms";
+    private static final String PREF_MIN_DISTANCE_M = "pref_min_distance_m";
+    private static final String PREF_OFFLINE_QUEUE = "pref_offline_queue";
+    private static final String PREF_LAST_PING_TIMESTAMP = "pref_last_ping_timestamp";
 
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
     private PowerManager.WakeLock wakeLock;
-    private boolean isTracking = false;
 
-    private long intervalMs = 30000;
-    private float minDistanceM = 18f;
-    private String notificationTitle = "Rotaly Courier";
-    private String notificationText = "Rotaly Courier está monitorando sua rota de entregas";
+    private static volatile boolean isTracking = false;
+    private static volatile long lastPingTimestamp = 0L;
+
+    private long intervalMs = 30000L; // 30s
+    private float minDistanceM = 18f;  // 18m
+    private String notificationTitle = "Rastreamento de Entregas Rotaly";
+    private String notificationText = "GPS em segundo plano ativo para cômputo da rota e segurança";
+
+    private String baseUrl = "";
+    private String authToken = "";
+    private String userId = "";
+
+    private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
+
+    public static boolean isCurrentlyTracking() {
+        return isTracking;
+    }
+
+    public static long getLastPingTimestamp() {
+        return lastPingTimestamp;
+    }
 
     @Override
     public void onCreate() {
@@ -74,7 +103,7 @@ public class RotalyGpsForegroundService extends Service {
                 if (locationResult == null) return;
                 for (Location location : locationResult.getLocations()) {
                     if (location != null) {
-                        broadcastLocation(location);
+                        handleNewLocation(location);
                     }
                 }
             }
@@ -83,21 +112,44 @@ public class RotalyGpsForegroundService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+
         if (intent != null) {
             String action = intent.getAction();
             if (ACTION_START.equals(action)) {
                 String optionsJson = intent.getStringExtra(EXTRA_OPTIONS_JSON);
-                parseOptions(optionsJson);
+                parseOptionsAndPersist(optionsJson, prefs);
                 startTrackingForeground();
             } else if (ACTION_STOP.equals(action)) {
                 stopTrackingForeground();
+                prefs.edit().putBoolean(PREF_IS_TRACKING, false).apply();
+                stopSelf();
+            }
+        } else {
+            // REINICIALIZAÇÃO AUTOMÁTICA START_STICKY PELO ANDROID (após kill do SO)
+            Log.i(TAG, "onStartCommand com intent NULL (START_STICKY após kill). Recuperando estado persistido...");
+            boolean wasTracking = prefs.getBoolean(PREF_IS_TRACKING, false);
+            if (wasTracking) {
+                restoreFromPreferences(prefs);
+                startTrackingForeground();
+            } else {
                 stopSelf();
             }
         }
         return START_STICKY;
     }
 
-    private void parseOptions(String jsonStr) {
+    private void restoreFromPreferences(SharedPreferences prefs) {
+        baseUrl = prefs.getString(PREF_BASE_URL, "");
+        authToken = prefs.getString(PREF_AUTH_TOKEN, "");
+        userId = prefs.getString(PREF_USER_ID, "");
+        intervalMs = prefs.getLong(PREF_INTERVAL_MS, 30000L);
+        minDistanceM = prefs.getFloat(PREF_MIN_DISTANCE_M, 18f);
+        lastPingTimestamp = prefs.getLong(PREF_LAST_PING_TIMESTAMP, 0L);
+        Log.i(TAG, "Estado restaurado SharedPreferences: userId=" + userId + ", baseUrl=" + baseUrl);
+    }
+
+    private void parseOptionsAndPersist(String jsonStr, SharedPreferences prefs) {
         if (jsonStr == null || jsonStr.isEmpty()) return;
         try {
             JSONObject obj = new JSONObject(jsonStr);
@@ -105,6 +157,20 @@ public class RotalyGpsForegroundService extends Service {
             if (obj.has("text")) notificationText = obj.getString("text");
             if (obj.has("minIntervalMs")) intervalMs = obj.getLong("minIntervalMs");
             if (obj.has("minDistanceMeters")) minDistanceM = (float) obj.getDouble("minDistanceMeters");
+            if (obj.has("baseUrl")) baseUrl = obj.getString("baseUrl");
+            if (obj.has("token")) authToken = obj.getString("token");
+            if (obj.has("userId")) userId = obj.getString("userId");
+
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putBoolean(PREF_IS_TRACKING, true);
+            editor.putString(PREF_BASE_URL, baseUrl);
+            editor.putString(PREF_AUTH_TOKEN, authToken);
+            editor.putString(PREF_USER_ID, userId);
+            editor.putLong(PREF_INTERVAL_MS, intervalMs);
+            editor.putFloat(PREF_MIN_DISTANCE_M, minDistanceM);
+            editor.apply();
+
+            Log.i(TAG, "Opções de GPS persistidas com sucesso para userId=" + userId);
         } catch (Exception e) {
             Log.w(TAG, "Erro ao parsear opções do serviço:", e);
         }
@@ -124,6 +190,10 @@ public class RotalyGpsForegroundService extends Service {
 
         acquireWakeLock();
         requestLocationUpdates();
+
+        // Tentar enviar fila offline remanescente se houver
+        flushOfflineQueue();
+
         Log.i(TAG, "Foreground tracking iniciado com sucesso!");
     }
 
@@ -146,8 +216,6 @@ public class RotalyGpsForegroundService extends Service {
 
     private void requestLocationUpdates() {
         try {
-            // Gatilho de menor entre 30s de intervalo OU 15-20m de deslocamento:
-            // intervalMs é o MÁXIMO (30s). Deslocamentos de >= minDistanceM disparam imediatamente com minUpdateInterval rápido.
             long minFastestIntervalMs = 5000L;
             LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
                     .setMinUpdateIntervalMillis(minFastestIntervalMs)
@@ -161,6 +229,189 @@ public class RotalyGpsForegroundService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "Erro ao solicitar updates de GPS:", e);
         }
+    }
+
+    private void handleNewLocation(Location location) {
+        long now = location.getTime() > 0 ? location.getTime() : System.currentTimeMillis();
+        lastPingTimestamp = now;
+
+        // Atualizar timestamp recente no SharedPreferences
+        try {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putLong(PREF_LAST_PING_TIMESTAMP, now)
+                    .apply();
+        } catch (Exception ignored) {}
+
+        // 1. Gravar DIRETAMENTE no PocketBase via HTTP POST em thread assíncrona
+        postLocationDirectly(location, now);
+
+        // 2. Broadcast para a UI (Capacitor/WebView) vira secundário para animação
+        broadcastLocation(location);
+    }
+
+    private void postLocationDirectly(Location location, long originalTimestamp) {
+        networkExecutor.execute(() -> {
+            boolean success = false;
+            try {
+                if (baseUrl == null || baseUrl.isEmpty() || userId == null || userId.isEmpty()) {
+                    // Sem credenciais ainda, enfileirar localmente
+                    enqueueOfflinePing(location, originalTimestamp);
+                    return;
+                }
+
+                String cleanUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+                URL endpoint = new URL(cleanUrl + "/api/collections/locations/records");
+                HttpURLConnection conn = (HttpURLConnection) endpoint.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                if (authToken != null && !authToken.isEmpty()) {
+                    conn.setRequestProperty("Authorization", authToken);
+                }
+                conn.setDoOutput(true);
+
+                JSONObject payload = new JSONObject();
+                payload.put("user_id", userId);
+                payload.put("lat", location.getLatitude());
+                payload.put("lng", location.getLongitude());
+                payload.put("speed", location.hasSpeed() ? location.getSpeed() : 0.0);
+                payload.put("heading", location.hasBearing() ? location.getBearing() : 0.0);
+                payload.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : 10.0);
+                payload.put("gps_status", "active");
+                payload.put("offline_buffered", false);
+
+                // Timestamp original do ping formatado em UTC ISO 8601
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS'Z'", Locale.US);
+                sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+                payload.put("location_timestamp", sdf.format(new Date(originalTimestamp)));
+
+                byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(body);
+                }
+
+                int code = conn.getResponseCode();
+                if (code >= 200 && code < 300) {
+                    success = true;
+                } else {
+                    Log.w(TAG, "POST direto de ping retornou HTTP " + code);
+                }
+                conn.disconnect();
+            } catch (Exception e) {
+                Log.w(TAG, "Falha de rede ao enviar pingo direto:", e);
+            }
+
+            if (!success) {
+                enqueueOfflinePing(location, originalTimestamp);
+            } else {
+                // Ao conseguir enviar com sucesso, tentar esvaziar fila pendente
+                flushOfflineQueue();
+            }
+        });
+    }
+
+    private synchronized void enqueueOfflinePing(Location location, long originalTimestamp) {
+        try {
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            String queueStr = prefs.getString(PREF_OFFLINE_QUEUE, "[]");
+            JSONArray arr = new JSONArray(queueStr);
+
+            JSONObject item = new JSONObject();
+            item.put("lat", location.getLatitude());
+            item.put("lng", location.getLongitude());
+            item.put("speed", location.hasSpeed() ? location.getSpeed() : 0.0);
+            item.put("heading", location.hasBearing() ? location.getBearing() : 0.0);
+            item.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : 10.0);
+            item.put("timestamp", originalTimestamp);
+
+            // Limitar fila a 1000 pings mais recentes para não esgotar memória
+            if (arr.length() > 1000) {
+                JSONArray trimmed = new JSONArray();
+                for (int i = arr.length() - 900; i < arr.length(); i++) {
+                    trimmed.put(arr.get(i));
+                }
+                arr = trimmed;
+            }
+            arr.put(item);
+
+            prefs.edit().putString(PREF_OFFLINE_QUEUE, arr.toString()).apply();
+            Log.i(TAG, "Ping enfileirado na memória offline (total na fila: " + arr.length() + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "Erro ao enfileirar ping offline:", e);
+        }
+    }
+
+    private synchronized void flushOfflineQueue() {
+        networkExecutor.execute(() -> {
+            try {
+                SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                String queueStr = prefs.getString(PREF_OFFLINE_QUEUE, "[]");
+                JSONArray arr = new JSONArray(queueStr);
+                if (arr.length() == 0) return;
+
+                if (baseUrl == null || baseUrl.isEmpty() || userId == null || userId.isEmpty()) return;
+
+                String cleanUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS'Z'", Locale.US);
+                sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+
+                JSONArray remaining = new JSONArray();
+
+                for (int i = 0; i < arr.length(); i++) {
+                    JSONObject item = arr.getJSONObject(i);
+                    try {
+                        URL endpoint = new URL(cleanUrl + "/api/collections/locations/records");
+                        HttpURLConnection conn = (HttpURLConnection) endpoint.openConnection();
+                        conn.setRequestMethod("POST");
+                        conn.setRequestProperty("Content-Type", "application/json");
+                        conn.setConnectTimeout(6000);
+                        conn.setReadTimeout(6000);
+                        if (authToken != null && !authToken.isEmpty()) {
+                            conn.setRequestProperty("Authorization", authToken);
+                        }
+                        conn.setDoOutput(true);
+
+                        JSONObject payload = new JSONObject();
+                        payload.put("user_id", userId);
+                        payload.put("lat", item.getDouble("lat"));
+                        payload.put("lng", item.getDouble("lng"));
+                        payload.put("speed", item.optDouble("speed", 0.0));
+                        payload.put("heading", item.optDouble("heading", 0.0));
+                        payload.put("accuracy", item.optDouble("accuracy", 10.0));
+                        payload.put("gps_status", "active");
+                        payload.put("offline_buffered", true);
+                        payload.put("location_timestamp", sdf.format(new Date(item.getLong("timestamp"))));
+
+                        byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
+                        try (OutputStream os = conn.getOutputStream()) {
+                            os.write(body);
+                        }
+
+                        int code = conn.getResponseCode();
+                        conn.disconnect();
+                        if (code < 200 || code >= 300) {
+                            // Se falhou, manter da posição atual em diante
+                            for (int k = i; k < arr.length(); k++) {
+                                remaining.put(arr.getJSONObject(k));
+                            }
+                            break;
+                        }
+                    } catch (Exception sendErr) {
+                        for (int k = i; k < arr.length(); k++) {
+                            remaining.put(arr.getJSONObject(k));
+                        }
+                        break;
+                    }
+                }
+
+                prefs.edit().putString(PREF_OFFLINE_QUEUE, remaining.toString()).apply();
+                Log.i(TAG, "Flush de fila offline concluído. Restantes: " + remaining.length());
+            } catch (Exception e) {
+                Log.w(TAG, "Erro ao esvaziar fila offline:", e);
+            }
+        });
     }
 
     private void broadcastLocation(Location location) {
@@ -251,6 +502,7 @@ public class RotalyGpsForegroundService extends Service {
     @Override
     public void onDestroy() {
         stopTrackingForeground();
+        networkExecutor.shutdown();
         super.onDestroy();
     }
 

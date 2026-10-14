@@ -2217,24 +2217,57 @@ export const deliveryService = {
     })
   },
 
-  async getCourierLocations(courierId: string, startDate?: string | Date, endDate?: string | Date) {
-    const cleanCourierId = courierId ? String(courierId).trim() : ''
-    const filters: string[] = [`user_id = '${cleanCourierId}'`]
-    if (startDate) {
-      const startIso = typeof startDate === 'string' ? startDate : startDate.toISOString()
+  /**
+   * FUNÇÃO ÚNICA CANÔNICA DE BUSCA DE PINGS DE TELEMETRIA
+   * Filtro estrito em locations por user_id do entregador + janela UTC [route_started_at, route_finished_at].
+   * O campo é user_id, NUNCA courier_id (courier_id gera 400).
+   */
+  async fetchCourierRoutePings(params: {
+    courierUserId: string
+    routeStartedAt?: string | Date | null
+    routeFinishedAt?: string | Date | null
+  }): Promise<LocationRecord[]> {
+    const cleanUserId = params.courierUserId ? String(params.courierUserId).trim() : ''
+    if (!cleanUserId) return []
+
+    const filters: string[] = [`user_id = '${cleanUserId}'`]
+
+    if (params.routeStartedAt) {
+      const startIso =
+        typeof params.routeStartedAt === 'string'
+          ? params.routeStartedAt
+          : params.routeStartedAt.toISOString()
       filters.push(`created >= '${startIso}'`)
     }
-    if (endDate) {
-      const endIso = typeof endDate === 'string' ? endDate : endDate.toISOString()
+
+    if (params.routeFinishedAt) {
+      const endIso =
+        typeof params.routeFinishedAt === 'string'
+          ? params.routeFinishedAt
+          : params.routeFinishedAt.toISOString()
       filters.push(`created <= '${endIso}'`)
     }
 
-    const combinedFilter = filters.join(' && ').replace(/\bcourier_id\b/g, 'user_id')
+    const combinedFilter = filters.join(' && ')
 
-    return pb.collection<LocationRecord>('locations').getFullList({
-      filter: combinedFilter,
-      sort: '+created',
-      requestKey: null,
+    try {
+      const records = await pb.collection<LocationRecord>('locations').getFullList({
+        filter: combinedFilter,
+        sort: '+created',
+        requestKey: null,
+      })
+      return records
+    } catch (err: any) {
+      console.warn('[fetchCourierRoutePings] Erro ao buscar pings por user_id e janela UTC:', err)
+      return []
+    }
+  },
+
+  async getCourierLocations(courierId: string, startDate?: string | Date, endDate?: string | Date) {
+    return this.fetchCourierRoutePings({
+      courierUserId: courierId,
+      routeStartedAt: startDate,
+      routeFinishedAt: endDate,
     })
   },
 

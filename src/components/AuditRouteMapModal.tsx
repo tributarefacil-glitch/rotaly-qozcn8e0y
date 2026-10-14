@@ -18,6 +18,7 @@ import {
   TelemetryDeviationSection,
 } from '@/types/delivery'
 import { MapDataService, CleanCoords } from '@/lib/mapDataService'
+import { SharedRouteMap } from '@/components/SharedRouteMap'
 import { loadGoogleMapsScript } from '@/lib/googleMaps'
 import { fetchStreetRoute, LatLngPoint } from '@/services/osrmRoutingService'
 import { safeSetMap, safeExtendBounds } from '@/lib/safeMapOps'
@@ -115,7 +116,7 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
 
       setTelemetryRecord(canonicalRec)
 
-      // 2. Buscar pings reais de telemetria apenas se o registro existir ou para desenhar traçado
+      // 2. Buscar pings reais com a função canônica unificada (user_id + janela UTC)
       const courierId = courier?.id || sortedBatchOrders[0]?.courier_id
       if (courierId) {
         const startedTimes = sortedBatchOrders
@@ -145,32 +146,21 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
               ? new Date(sortedBatchOrders[0].created).getTime() + 4 * 60 * 60 * 1000
               : Date.now()
 
-        let rawPings: LocationRecord[] = locationsPool.filter((loc) => {
-          const locCourierId = (loc as any).courier_id || loc.user_id
-          if (locCourierId !== courierId) return false
-          const t = new Date(loc.created).getTime()
-          return t >= startTs && t <= endTs
-        })
-
+        let rawPings: LocationRecord[] = []
         try {
           const startDate = new Date(startTs).toISOString()
           const endDate = new Date(endTs).toISOString()
-          const directLocs = await deliveryService.getCourierLocations(
-            courierId,
-            startDate,
-            endDate,
-          )
-          if (directLocs && directLocs.length > 0) {
-            const existingIds = new Set(rawPings.map((p) => p.id))
-            directLocs.forEach((dl) => {
-              if (!existingIds.has(dl.id)) {
-                rawPings.push(dl)
-                existingIds.add(dl.id)
-              }
-            })
-          }
+          rawPings = await deliveryService.fetchCourierRoutePings({
+            courierUserId: courierId,
+            routeStartedAt: startDate,
+            routeFinishedAt: endDate,
+          })
         } catch {
-          /* intentionally ignored */
+          rawPings = locationsPool.filter((loc) => {
+            if (loc.user_id !== courierId) return false
+            const t = new Date(loc.created).getTime()
+            return t >= startTs && t <= endTs
+          })
         }
 
         const chronologicalPings = [...rawPings].sort(
@@ -582,18 +572,20 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
                   <Route className="h-5 w-5 text-[#0052CC]" />
                   Mapa de Auditoria Canônica de Desvio e Telemetria
                 </DialogTitle>
-                {telemetryRecord ? (
-                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono font-bold text-xs">
-                    Motor Canônico v0.0.444
-                  </Badge>
+                {telemetryRecord && telemetryRecord.status === 'processed' ? (
+                  <>
+                    <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 font-mono font-bold text-xs">
+                      Motor Canônico v0.0.451
+                    </Badge>
+                    {divergencePct !== undefined && divergencePct > 0 && (
+                      <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-mono font-bold text-xs">
+                        +{divergencePct}% desvio
+                      </Badge>
+                    )}
+                  </>
                 ) : (
                   <Badge className="bg-amber-100 text-amber-800 border-amber-300 font-mono font-bold text-xs">
                     Aguardando Processamento
-                  </Badge>
-                )}
-                {telemetryRecord && divergencePct !== undefined && (
-                  <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-mono font-bold text-xs">
-                    +{divergencePct}% desvio
                   </Badge>
                 )}
               </div>
@@ -699,57 +691,34 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
           </div>
         </DialogHeader>
 
-        {/* ÁREA DO MAPA GOOGLE MAPS */}
-        <div className="relative w-full h-[520px] bg-slate-100">
-          <div ref={mapContainerRef} className="absolute inset-0 w-full h-full z-0" />
-
-          {/* ESTADO DE CARREGANDO */}
+        {/* ÁREA DO MAPA COMPARTILHADO ÚNICO DE ROTA (1 MAPA POR ROTA) */}
+        <div className="relative w-full p-4 bg-slate-950">
           {isLoading && (
-            <div className="absolute inset-0 z-20 bg-white/85 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-center">
-              <RefreshCw className="h-8 w-8 text-[#0052CC] animate-spin mb-3" />
-              <p className="font-bold text-slate-800 text-sm">Carregando telemetria canônica...</p>
-              <p className="text-xs text-slate-500 mt-1 max-w-sm">
-                Lendo dados gravados pelo motor canônico do servidor para o lote.
-              </p>
+            <div className="p-8 text-center text-slate-300">
+              <RefreshCw className="h-6 w-6 text-blue-400 animate-spin mx-auto mb-2" />
+              <p className="text-xs">Carregando telemetria canônica...</p>
             </div>
           )}
 
-          {/* ESTADO: AGUARDANDO PROCESSAMENTO (NÃO RECALCULA LOCALMENTE) */}
-          {!isLoading && !loadingError && !telemetryRecord && (
-            <div className="absolute inset-0 z-20 bg-white/95 flex flex-col items-center justify-center p-6 text-center">
-              <AlertTriangle className="h-10 w-10 text-amber-500 mb-3" />
-              <h3 className="text-base font-bold text-slate-900">
-                Aguardando Processamento pelo Motor de Telemetria
-              </h3>
-              <p className="text-xs text-slate-600 mt-1 max-w-md">
-                Este lote ainda não possui registro processado na tabela canônica{' '}
-                <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-800">
-                  route_batch_telemetry
-                </code>
-                . O cálculo local foi desativado conforme especificação do motor canônico.
-              </p>
-              <div className="mt-4 flex items-center gap-3">
-                <Button
-                  onClick={handleReprocessBatch}
-                  disabled={isReprocessing}
-                  className="bg-[#0052CC] hover:bg-[#0043A8] text-white text-xs font-bold gap-2"
-                >
-                  <RefreshCw className={`h-4 w-4 ${isReprocessing ? 'animate-spin' : ''}`} />
-                  {isReprocessing ? 'Processando no Servidor...' : 'Processar Agora no Servidor'}
-                </Button>
-                <Button variant="outline" size="sm" onClick={onClose} className="text-xs">
-                  Fechar
-                </Button>
-              </div>
-            </div>
+          {!isLoading && !loadingError && (
+            <SharedRouteMap
+              batchKey={batchKey}
+              batchDisplay={batchDisplay}
+              courier={courier}
+              orders={sortedBatchOrders}
+              pings={telemetryPings}
+              plannedWaypoints={plannedRoutePoints}
+              isFinishedHistorical={true}
+              height={520}
+            />
           )}
 
           {/* ESTADO DE ERRO */}
           {loadingError && !isLoading && (
-            <div className="absolute inset-0 z-20 bg-white/95 flex flex-col items-center justify-center p-6 text-center">
-              <AlertTriangle className="h-10 w-10 text-amber-600 mb-2" />
-              <p className="font-bold text-slate-900 text-sm">Não foi possível carregar o mapa</p>
-              <p className="text-xs text-slate-500 mt-1 max-w-md">{loadingError}</p>
+            <div className="p-8 text-center bg-slate-900 text-white rounded-xl">
+              <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto mb-2" />
+              <p className="font-bold text-sm">Não foi possível carregar o mapa</p>
+              <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">{loadingError}</p>
               <Button variant="outline" size="sm" onClick={onClose} className="mt-4 text-xs">
                 Fechar
               </Button>

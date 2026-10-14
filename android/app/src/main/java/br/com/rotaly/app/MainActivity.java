@@ -245,8 +245,24 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         }
 
         @JavascriptInterface
-        public boolean isTrackingActive() {
-            return true;
+        public String isTrackingActive() {
+            // Retorna JSON com estado real: { isTracking, lastPingAgeSeconds, isDegraded }
+            boolean tracking = RotalyGpsForegroundService.isCurrentlyTracking();
+            long lastPing = RotalyGpsForegroundService.getLastPingTimestamp();
+            long now = System.currentTimeMillis();
+            long ageSec = lastPing > 0 ? Math.max(0, (now - lastPing) / 1000) : -1;
+            boolean degraded = tracking && (ageSec > 120 || ageSec == -1);
+
+            try {
+                org.json.JSONObject obj = new org.json.JSONObject();
+                obj.put("isTracking", tracking);
+                obj.put("lastPingTimestamp", lastPing);
+                obj.put("lastPingAgeSeconds", ageSec);
+                obj.put("isDegraded", degraded);
+                return obj.toString();
+            } catch (Exception e) {
+                return "{\"isTracking\":" + tracking + ",\"lastPingAgeSeconds\":" + ageSec + ",\"isDegraded\":" + degraded + "}";
+            }
         }
 
         @JavascriptInterface

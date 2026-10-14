@@ -44,7 +44,7 @@ declare global {
     RotalyNativeGps?: {
       startForegroundTracking: (optionsJson: string) => boolean | string
       stopForegroundTracking: () => boolean | string
-      isTrackingActive: () => boolean
+      isTrackingActive: () => boolean | string
       requestAllPermissions: () => void
       checkPermissions: () => string // JSON com permissões
       openBatteryOptimizationSettings: () => void
@@ -116,17 +116,55 @@ class NativeGpsBridgeService {
   /**
    * Status das permissões e do Foreground Service
    */
+  public getRealTrackingState(): {
+    isTracking: boolean
+    lastPingTimestamp: number
+    lastPingAgeSeconds: number
+    isDegraded: boolean
+  } {
+    if (this.isNativeEnvironment() && window.RotalyNativeGps?.isTrackingActive) {
+      try {
+        const raw = window.RotalyNativeGps.isTrackingActive()
+        if (typeof raw === 'string') {
+          const parsed = JSON.parse(raw)
+          return {
+            isTracking: Boolean(parsed.isTracking),
+            lastPingTimestamp: Number(parsed.lastPingTimestamp) || 0,
+            lastPingAgeSeconds: Number(parsed.lastPingAgeSeconds) || -1,
+            isDegraded: Boolean(parsed.isDegraded),
+          }
+        }
+        const active = Boolean(raw)
+        return {
+          isTracking: active,
+          lastPingTimestamp: 0,
+          lastPingAgeSeconds: -1,
+          isDegraded: false,
+        }
+      } catch (err) {
+        console.warn('[NativeGpsBridge] Erro ao obter estado real de rastreio:', err)
+      }
+    }
+    return {
+      isTracking: this.isTracking,
+      lastPingTimestamp: 0,
+      lastPingAgeSeconds: -1,
+      isDegraded: false,
+    }
+  }
+
   public async getServiceStatus(): Promise<NativeGpsServiceStatus> {
     const isNative = this.isNativeEnvironment()
 
     if (isNative && window.RotalyNativeGps) {
       try {
         const raw = window.RotalyNativeGps.checkPermissions?.()
+        const trackState = this.getRealTrackingState()
         if (raw) {
           const parsed = JSON.parse(raw)
           return {
             isNative: true,
-            isServiceRunning: !!window.RotalyNativeGps.isTrackingActive?.(),
+            isServiceRunning: trackState.isTracking,
             hasFinePermission: parsed.fineLocation ?? true,
             hasBackgroundPermission: parsed.backgroundLocation ?? true,
             hasNotificationPermission: parsed.notifications ?? true,
@@ -190,6 +228,8 @@ class NativeGpsBridgeService {
    */
   public async startTracking(options: {
     userId: string
+    baseUrl?: string
+    token?: string
     notificationTitle?: string
     notificationText?: string
     minIntervalMs?: number
@@ -199,10 +239,21 @@ class NativeGpsBridgeService {
 
     if (this.isNativeEnvironment() && window.RotalyNativeGps?.startForegroundTracking) {
       try {
+        const effectiveBaseUrl =
+          options.baseUrl ||
+          (typeof window !== 'undefined'
+            ? (window as any).rotalyConfig?.baseUrl || window.location.origin
+            : '')
+        const effectiveToken = options.token || ''
+
         const payload = JSON.stringify({
           userId: options.userId,
-          title: options.notificationTitle || 'Rotaly Courier',
-          text: options.notificationText || 'Rotaly Courier está monitorando sua rota de entregas',
+          baseUrl: effectiveBaseUrl,
+          token: effectiveToken,
+          title: options.notificationTitle || 'Rastreamento de Entregas Rotaly',
+          text:
+            options.notificationText ||
+            'GPS em segundo plano ativo para cômputo da rota e segurança',
           minIntervalMs: options.minIntervalMs || 30000,
           minDistanceMeters: options.minDistanceMeters || 18,
         })

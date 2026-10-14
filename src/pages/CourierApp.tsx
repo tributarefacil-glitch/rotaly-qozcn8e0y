@@ -1165,11 +1165,16 @@ export default function CourierApp() {
 
     // Iniciar Foreground Service nativo Android caso estejamos no APK nativo
     if (hasActiveStartedRoute && nativeGpsBridge.isNativeEnvironment()) {
+      const pbToken = (deliveryService as any).getToken?.() || pb.authStore.token || ''
+      const pbBaseUrl = pb.baseUrl || window.location.origin
+
       nativeGpsBridge
         .startTracking({
           userId: user.id,
-          notificationTitle: 'Rotaly Courier',
-          notificationText: 'Rotaly Courier está monitorando sua rota de entregas',
+          baseUrl: pbBaseUrl,
+          token: pbToken ? `Bearer ${pbToken}` : '',
+          notificationTitle: 'Rastreamento de Entregas Rotaly',
+          notificationText: 'GPS em segundo plano ativo para cômputo da rota e segurança',
           minIntervalMs: 30000,
           minDistanceMeters: 18,
         })
@@ -1356,13 +1361,22 @@ export default function CourierApp() {
 
     const checkStalledPings = () => {
       const now = Date.now()
-      const diffMs = now - lastSuccessfulPingTimestamp
+      let diffMs = now - lastSuccessfulPingTimestamp
+
+      // Consultar estado real retornado pela ponte nativa se em ambiente nativo
+      if (nativeGpsBridge.isNativeEnvironment()) {
+        const state = (nativeGpsBridge as any).getRealTrackingState?.()
+        if (state && state.lastPingAgeSeconds >= 0) {
+          diffMs = state.lastPingAgeSeconds * 1000
+        }
+      }
+
       const diffMins = Math.floor(diffMs / 60000)
       setMinutesSinceLastPing(diffMins)
     }
 
     checkStalledPings()
-    const timer = setInterval(checkStalledPings, 20000)
+    const timer = setInterval(checkStalledPings, 15000)
     return () => clearInterval(timer)
   }, [hasActiveStartedRoute, lastSuccessfulPingTimestamp])
 
@@ -2137,22 +2151,22 @@ export default function CourierApp() {
           </div>
         )}
 
-        {/* AVISO PERSISTENTE E AMIGÁVEL: DETECÇÃO DE PINGS PRESOS (> 3 MINUTOS) EM ROTA ATIVA */}
-        {hasActiveStartedRoute && minutesSinceLastPing >= 3 && (
-          <div className="rounded-xl border-2 border-amber-500 bg-amber-950/70 p-4 space-y-3 text-xs text-amber-100 shadow-2xl animate-pulse">
+        {/* AVISO PERSISTENTE E AMIGÁVEL: DETECÇÃO DE SINAL CAÍDO OU PINGS PARADOS > 2 MINUTOS EM ROTA ATIVA */}
+        {hasActiveStartedRoute && minutesSinceLastPing >= 2 && (
+          <div className="rounded-xl border-2 border-rose-500 bg-rose-950/80 p-4 space-y-3 text-xs text-rose-100 shadow-2xl animate-pulse">
             <div className="flex items-start gap-3">
-              <span className="text-2xl shrink-0">📡</span>
+              <AlertTriangle className="h-6 w-6 text-rose-400 shrink-0 mt-0.5" />
               <div className="min-w-0 flex-1">
                 <p className="font-bold text-white text-sm leading-snug">
-                  Sinal interrompido há {minutesSinceLastPing} min
+                  Atenção: Sinal de GPS parado há {minutesSinceLastPing} min
                 </p>
-                <p className="text-xs text-amber-200/90 mt-1 leading-relaxed">
-                  Abra o app e mantenha a tela ligada para continuar rastreando a entrega em tempo
-                  real na Torre de Controle.
+                <p className="text-xs text-rose-200/90 mt-1 leading-relaxed">
+                  Seus pontos de GPS não estão chegando à Torre de Controle. Verifique se o GPS e a
+                  internet estão ligados e reative o serviço.
                 </p>
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-1 border-t border-amber-500/30">
+            <div className="flex items-center justify-end gap-2 pt-1 border-t border-rose-500/30">
               <Button
                 type="button"
                 size="sm"
@@ -2161,8 +2175,20 @@ export default function CourierApp() {
                     triggerImmediateGpsRef.current()
                     toast.info('Reativando GPS e enviando posição atual...')
                   }
+                  if (nativeGpsBridge.isNativeEnvironment()) {
+                    const pbToken =
+                      (deliveryService as any).getToken?.() || pb.authStore.token || ''
+                    const pbBaseUrl = pb.baseUrl || window.location.origin
+                    nativeGpsBridge.startTracking({
+                      userId: user.id,
+                      baseUrl: pbBaseUrl,
+                      token: pbToken ? `Bearer ${pbToken}` : '',
+                      minIntervalMs: 30000,
+                      minDistanceMeters: 18,
+                    })
+                  }
                 }}
-                className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs h-9 px-4 rounded-xl flex items-center gap-1.5 shadow"
+                className="bg-rose-500 hover:bg-rose-600 text-white font-black text-xs h-9 px-4 rounded-xl flex items-center gap-1.5 shadow"
               >
                 <RotateCcw className="h-4 w-4" />
                 Reativar Rastreamento Agora

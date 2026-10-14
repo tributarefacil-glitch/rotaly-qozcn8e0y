@@ -61,50 +61,39 @@ export const CourierBatteryGuideModal: React.FC<CourierBatteryGuideModalProps> =
         </DialogHeader>
 
         <div className="mt-3 space-y-3 text-sm text-slate-300">
-          <div className="bg-slate-800/80 border border-slate-700/60 rounded-xl p-3.5 space-y-2.5">
+          {/* INSTRUÇÕES ESPECÍFICAS PARA FABRICANTES (XIAOMI, SAMSUNG, MOTOROLA) */}
+          <div className="bg-slate-800/80 border border-slate-700/60 rounded-xl p-3.5 space-y-3">
             <div className="text-xs font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-              <ShieldAlert className="w-4 h-4" /> Passo a Passo no Android
+              <ShieldAlert className="w-4 h-4" /> Instruções por Fabricante
             </div>
+
             <div className="space-y-2 text-xs">
-              <div className="flex items-start gap-2.5">
-                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 font-bold flex items-center justify-center text-[11px]">
-                  1
-                </span>
+              {/* Samsung */}
+              <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-700/50">
+                <strong className="text-blue-400 block mb-1">Samsung:</strong>
                 <span>
-                  Abra as <strong>Configurações</strong> do celular
+                  Configurações → Aplicativos → Rotaly → <strong>Bateria</strong> → Marcar{' '}
+                  <strong>Sem Restrições</strong>. Em "Cuidado do Aparelho", desative suspensão
+                  profunda.
                 </span>
               </div>
-              <div className="flex items-start gap-2.5">
-                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 font-bold flex items-center justify-center text-[11px]">
-                  2
-                </span>
+
+              {/* Xiaomi / Redmi / POCO */}
+              <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-700/50">
+                <strong className="text-amber-400 block mb-1">Xiaomi / Redmi (MIUI):</strong>
                 <span>
-                  Toque em <strong>Aplicativos</strong> (ou Apps)
+                  Configurações → Apps → Gerenciar Apps → Rotaly →{' '}
+                  <strong>Início Automático</strong>: Ativar. Em{' '}
+                  <strong>Economia de Bateria</strong>: escolher <strong>Nenhuma restrição</strong>.
                 </span>
               </div>
-              <div className="flex items-start gap-2.5">
-                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 font-bold flex items-center justify-center text-[11px]">
-                  3
-                </span>
+
+              {/* Motorola */}
+              <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-700/50">
+                <strong className="text-emerald-400 block mb-1">Motorola:</strong>
                 <span>
-                  Localize e selecione <strong>Rotaly</strong>
-                </span>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 font-bold flex items-center justify-center text-[11px]">
-                  4
-                </span>
-                <span>
-                  Vá em <strong>Bateria</strong>
-                </span>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold flex items-center justify-center text-[11px]">
-                  ✓
-                </span>
-                <span>
-                  Selecione <strong className="text-emerald-400">Sem restrições</strong> (ou Não
-                  Otimizar)
+                  Configurações → Apps e Notificações → Rotaly → Avançado → <strong>Bateria</strong>{' '}
+                  → Otimização de bateria → Marcar <strong>Não Otimizar</strong>.
                 </span>
               </div>
             </div>
