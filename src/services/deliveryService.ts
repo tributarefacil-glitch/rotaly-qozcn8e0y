@@ -4905,20 +4905,23 @@ export const deliveryService = {
       return null
     }
 
-    // DEDUPLICAÇÃO DE ALERTA (REGRA ESTRITA CONTRA RECORRÊNCIA):
-    // Bloquear criação de novo address_alert para o mesmo cliente enquanto existir alerta PENDENTE para ele.
-    // Se existir pendente, atualiza o snapshot e a sugestão no existente em vez de criar um alerta conflitante!
+    // DEDUPLICAÇÃO DE ALERTA (REGRA ESTRITA DO ITEM 4):
+    // Checar alerta ativo equivalente (mesmo cliente, coordenada a menos de ~30m, ou janela recente)
+    // Se existir qualquer alerta recente ou equivalente, NÃO criar cópia: atualiza o existente ou descarta a duplicação.
     if (data.customer) {
       try {
-        const existingList = await pb
+        // 1. Verificar se já existe alerta pendente para o mesmo cliente
+        const existingPendingList = await pb
           .collection<AddressAlertRecord>('address_alerts')
-          .getList(1, 1, {
+          .getList(1, 5, {
             filter: `customer = '${data.customer}' && status = 'pendente'`,
             sort: '-created',
             requestKey: null,
           })
-        const existing = existingList.items[0]
-        if (existing) {
+
+        if (existingPendingList.items.length > 0) {
+          const existing = existingPendingList.items[0]
+          console.info(`[createAddressAlert] Deduplicação ativa: cliente ${data.customer} já possui alerta pendente #${existing.id}. Atualizando registro existente.`)
           return await pb.collection<AddressAlertRecord>('address_alerts').update(existing.id, {
             suggested_address: data.suggested_address,
             current_address: existing.current_address || data.current_address || {},
@@ -4926,6 +4929,38 @@ export const deliveryService = {
             marked_at: new Date().toISOString(),
             notes: data.notes || existing.notes,
           })
+        }
+
+        // 2. Verificar se já existe alerta recente para o mesmo cliente (últimas 24h ou coordenada muito próxima < 30m)
+        const recentList = await pb
+          .collection<AddressAlertRecord>('address_alerts')
+          .getList(1, 10, {
+            filter: `customer = '${data.customer}'`,
+            sort: '-created',
+            requestKey: null,
+          })
+
+        const nowMs = Date.now()
+        for (const prevAlert of recentList.items) {
+          const prevCreatedMs = new Date(prevAlert.created).getTime()
+          const diffMinutes = Math.abs(nowMs - prevCreatedMs) / (60 * 1000)
+
+          const prevSugg = (prevAlert.suggested_address || {}) as Record<string, any>
+          const prevLat = Number(prevSugg.lat)
+          const prevLng = Number(prevSugg.lng)
+
+          let coordDistM = Infinity
+          if (!isNaN(prevLat) && !isNaN(prevLng) && prevLat !== 0 && prevLng !== 0 && !isNaN(lat) && !isNaN(lng)) {
+            coordDistM = haversineDistanceMeters(prevLat, prevLng, lat, lng)
+          }
+
+          // Equivalente: coordenada a menos de ~30m OU disparado na janela recente de 30 minutos com status já aprovado/processado
+          if (coordDistM <= 30 || (diffMinutes <= 30 && prevAlert.status === 'aprovado')) {
+            console.info(
+              `[createAddressAlert] Alerta equivalente detectado (dist=${coordDistM.toFixed(1)}m, delta=${diffMinutes.toFixed(1)}min, status=${prevAlert.status}). Evitando criação de duplicata #${prevAlert.id}.`,
+            )
+            return prevAlert
+          }
         }
       } catch (dedupErr) {
         console.warn('[deliveryService] Erro ao verificar duplicata de alerta pendente:', dedupErr)

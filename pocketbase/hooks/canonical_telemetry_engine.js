@@ -194,6 +194,11 @@ onRecordAfterUpdateSuccess((e) => {
         finishMs = new Date(lastOrder.getString('updated')).getTime() || Date.now()
       }
 
+      const startIso = new Date(startMs).toISOString()
+      const finishIso = new Date(finishMs).toISOString()
+      const endIso = finishIso
+      const windowStart = startIso
+
       // Margem de tolerância temporal ampla para cobrir início e encerramento (10 minutos antes e depois)
       // Formatar no padrão canônico PocketBase SQLite datetime ("YYYY-MM-DD HH:mm:ss")
       const formatPbDateStr = (d) => {
@@ -661,7 +666,36 @@ onRecordAfterUpdateSuccess((e) => {
         console.log(
           `[canonical_telemetry_engine] Evento de fechamento detectado para pedido ${order.id}. Lote: ${batchKey}`,
         )
-        const procResult = processBatch(batchKey, 'order_route_finished_hook')
+        let procResult = null
+        try {
+          procResult = processBatch(batchKey, 'order_route_finished_hook')
+        } catch (procErr) {
+          console.error(`[canonical_telemetry_engine:HOOK_PROCESS_ERROR] Erro ao executar processBatch para lote ${batchKey}:`, procErr)
+          try {
+            const auditCol = $app.findCollectionByNameOrId('audit_trail')
+            if (auditCol) {
+              const auditRec = new Record(auditCol)
+              auditRec.set('user_id', '')
+              auditRec.set('collection', 'route_batch_telemetry')
+              auditRec.set('record_id', batchKey)
+              if (courierId) auditRec.set('courier_id', courierId)
+              auditRec.set('action', 'erro_execucao_process_batch_telemetria')
+              auditRec.set('field', 'exception')
+              auditRec.set('old_value', `lote=${batchKey}`)
+              auditRec.set('new_value', String(procErr && procErr.message ? procErr.message : procErr))
+              auditRec.set('timestamp', new Date().toISOString())
+              auditRec.set('metadata', {
+                system_trigger: true,
+                actor_name: 'Sistema',
+                route_batch_key: batchKey,
+                courier_id: courierId,
+                order_id: order.id,
+                error_stack: String(procErr && procErr.stack ? procErr.stack : procErr),
+              })
+              $app.save(auditRec)
+            }
+          } catch (_) {}
+        }
         // Correção 3: Guarda de sanidade no motor - Fechamento detectado e nenhum registro gravado = log de erro visível + entrada em audit_trail
         if (!procResult) {
           console.error(
@@ -700,7 +734,27 @@ onRecordAfterUpdateSuccess((e) => {
       }
     }
   } catch (err) {
-    console.log('[canonical_telemetry_engine] Erro no hook onRecordAfterUpdateSuccess:', err)
+    console.error('[canonical_telemetry_engine] Erro estruturado no hook onRecordAfterUpdateSuccess:', err)
+    try {
+      const auditCol = $app.findCollectionByNameOrId('audit_trail')
+      if (auditCol) {
+        const auditRec = new Record(auditCol)
+        auditRec.set('user_id', '')
+        auditRec.set('collection', 'orders')
+        auditRec.set('record_id', e.record ? e.record.id : 'unknown')
+        auditRec.set('action', 'falha_hook_canonical_telemetry_engine')
+        auditRec.set('field', 'hook_exception')
+        auditRec.set('old_value', '')
+        auditRec.set('new_value', String(err && err.message ? err.message : err))
+        auditRec.set('timestamp', new Date().toISOString())
+        auditRec.set('metadata', {
+          system_trigger: true,
+          actor_name: 'Sistema',
+          error_stack: String(err && err.stack ? err.stack : err),
+        })
+        $app.save(auditRec)
+      }
+    } catch (_) {}
   } finally {
     e.next()
   }
@@ -794,7 +848,7 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
         }
       }
     } catch (err) {
-      console.log('[canonical_telemetry_engine:post] Falha OSRM:', err)
+      console.error('[canonical_telemetry_engine:post] Falha OSRM:', err)
     }
     const directM = haversineDistMeters(originLat, originLng, destLat, destLng)
     return {
@@ -890,6 +944,11 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
     if (finishMs === 0 || finishMs <= startMs) {
       finishMs = new Date(lastOrder.getString('updated')).getTime() || Date.now()
     }
+
+    const startIso = new Date(startMs).toISOString()
+    const finishIso = new Date(finishMs).toISOString()
+    const endIso = finishIso
+    const windowStart = startIso
 
     const formatPbDateStrEndpoint = (d) => {
       return d
