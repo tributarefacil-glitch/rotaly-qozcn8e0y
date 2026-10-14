@@ -218,5 +218,44 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
       updateCustomerSpy.mockRestore()
       createAuditSpy.mockRestore()
     })
+
+    describe('fetchCourierRoutePings - formato de data e user_id', () => {
+      it('formata timestamps ISO no formato canônico PocketBase datetime ("YYYY-MM-DD HH:mm:ss") e consulta com user_id', async () => {
+        const pbModule = await import('@/lib/pocketbase/client')
+        const pb = pbModule.default
+
+        let capturedFilter = ''
+        const getFullListLocationsSpy = vi
+          .spyOn(pb.collection('locations'), 'getFullList')
+          .mockImplementationOnce(async (options: any) => {
+            capturedFilter = options.filter
+            return [
+              {
+                id: '0l1d692a54ua9ja',
+                user_id: 'mxvhhwb5i46zjq2',
+                lat: -22.697695,
+                lng: -43.293582,
+                created: '2026-10-13 22:34:00.173Z',
+              } as any,
+            ]
+          })
+
+        const pings = await deliveryService.fetchCourierRoutePings({
+          courierUserId: 'mxvhhwb5i46zjq2',
+          routeStartedAt: '2026-10-13T22:24:00.000Z',
+          routeFinishedAt: '2026-10-13T23:33:00.000Z',
+        })
+
+        expect(pings.length).toBe(1)
+        expect(pings[0].id).toBe('0l1d692a54ua9ja')
+        // Verifica que o filtro usa user_id e a formatação sem T nem .sssZ
+        expect(capturedFilter).toContain("user_id = 'mxvhhwb5i46zjq2'")
+        expect(capturedFilter).toContain("created >= '2026-10-13 22:24:00'")
+        expect(capturedFilter).toContain("created <= '2026-10-13 23:33:00'")
+        expect(capturedFilter).not.toContain('T')
+
+        getFullListLocationsSpy.mockRestore()
+      })
+    })
   })
 })

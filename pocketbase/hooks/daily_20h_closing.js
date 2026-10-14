@@ -320,12 +320,22 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
         )
       }
 
-      // Buscar pings de telemetria no período
+      // Buscar pings de telemetria no período usando formato canônico PocketBase "YYYY-MM-DD HH:mm:ss"
+      const formatPbDateStrClosing = (dOrStr) => {
+        const d = typeof dOrStr === 'string' ? new Date(dOrStr) : dOrStr
+        return d
+          .toISOString()
+          .replace('T', ' ')
+          .replace(/\.\d+Z?$/, '')
+      }
+      const closingStartStr = formatPbDateStrClosing(startIso)
+      const closingFinishStr = formatPbDateStrClosing(finishIso)
+
       let pings = []
       try {
         pings = $app.findRecordsByFilter(
           'locations',
-          `user_id = '${courierId}' && created >= '${startIso}' && created <= '${finishIso}'`,
+          `user_id = '${courierId}' && created >= '${closingStartStr}' && created <= '${closingFinishStr}'`,
           'created',
           2000,
           0,

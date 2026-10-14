@@ -195,14 +195,21 @@ onRecordAfterUpdateSuccess((e) => {
       }
 
       // Margem de tolerância temporal ampla para cobrir início e encerramento (10 minutos antes e depois)
-      const queryStartIso = new Date(startMs - 10 * 60000).toISOString()
-      const queryFinishIso = new Date(finishMs + 10 * 60000).toISOString()
+      // Formatar no padrão canônico PocketBase SQLite datetime ("YYYY-MM-DD HH:mm:ss")
+      const formatPbDateStr = (d) => {
+        return d
+          .toISOString()
+          .replace('T', ' ')
+          .replace(/\.\d+Z?$/, '')
+      }
+      const queryStartStr = formatPbDateStr(new Date(startMs - 10 * 60000))
+      const queryFinishStr = formatPbDateStr(new Date(finishMs + 10 * 60000))
 
       let pings = []
       try {
         pings = $app.findRecordsByFilter(
           'locations',
-          `user_id = '${courierId}' && created >= '${queryStartIso}' && created <= '${queryFinishIso}'`,
+          `user_id = '${courierId}' && created >= '${queryStartStr}' && created <= '${queryFinishStr}'`,
           '+created',
           5000,
           0,
@@ -210,6 +217,57 @@ onRecordAfterUpdateSuccess((e) => {
       } catch (_) {}
 
       const pingsCount = pings.length
+
+      // GUARDA DE SANIDADE NO FECHAMENTO AUTOMÁTICO:
+      // Se pings_count === 0 mas existem pings na janela temporal global:
+      // Log de erro visível + registro em audit_trail (user_id='', actor_name='Sistema', metadata.system_trigger=true)
+      // O lote NÃO pode passar como processed em silêncio!
+      if (pingsCount === 0) {
+        try {
+          const potentialAnyPings = $app.findRecordsByFilter(
+            'locations',
+            `created >= '${queryStartStr}' && created <= '${queryFinishStr}'`,
+            '+created',
+            10,
+            0,
+          )
+          if (potentialAnyPings.length > 0) {
+            console.error(
+              `[canonical_telemetry_engine:GUARDA_ERRO_SANIDADE] SANITY ERROR: pings_count=0 para user_id=${courierId} no lote ${batchKey}, mas existem ${potentialAnyPings.length} pings na janela temporal [${queryStartStr} -> ${queryFinishStr}]. O registro NÃO pode passar como processed em silêncio!`,
+            )
+            const auditColGuard = $app.findCollectionByNameOrId('audit_trail')
+            if (auditColGuard) {
+              const auditGuard = new Record(auditColGuard)
+              auditGuard.set('user_id', '') // relation aceita vazio
+              auditGuard.set('collection', 'route_batch_telemetry')
+              auditGuard.set('record_id', batchKey)
+              if (courierId) auditGuard.set('courier_id', courierId)
+              auditGuard.set('action', 'telemetria_pings_zero_divergencia')
+              auditGuard.set('field', 'pings_count')
+              auditGuard.set('old_value', '0')
+              auditGuard.set('new_value', 'pings_presentes_janela_sem_match_user_id')
+              auditGuard.set('timestamp', new Date().toISOString())
+              auditGuard.set('metadata', {
+                system_trigger: true,
+                actor_name: 'Sistema',
+                route_batch_key: batchKey,
+                courier_id: courierId,
+                query_start: queryStartStr,
+                query_finish: queryFinishStr,
+                found_pings_in_window: potentialAnyPings.length,
+                divergence_warning: 'pings_count=0 com telemetria existente na janela temporal',
+              })
+              $app.save(auditGuard)
+            }
+          }
+        } catch (guardErr) {
+          console.error(
+            '[canonical_telemetry_engine:GUARDA_ERRO] Erro na verificação da guarda:',
+            guardErr,
+          )
+        }
+      }
+
       let firstPingAt = null
       let lastPingAt = null
       if (pingsCount > 0) {
@@ -833,14 +891,20 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
       finishMs = new Date(lastOrder.getString('updated')).getTime() || Date.now()
     }
 
-    const queryStartIso = new Date(startMs - 10 * 60000).toISOString()
-    const queryFinishIso = new Date(finishMs + 10 * 60000).toISOString()
+    const formatPbDateStrEndpoint = (d) => {
+      return d
+        .toISOString()
+        .replace('T', ' ')
+        .replace(/\.\d+Z?$/, '')
+    }
+    const queryStartStr = formatPbDateStrEndpoint(new Date(startMs - 10 * 60000))
+    const queryFinishStr = formatPbDateStrEndpoint(new Date(finishMs + 10 * 60000))
 
     let pings = []
     try {
       pings = $app.findRecordsByFilter(
         'locations',
-        `user_id = '${courierId}' && created >= '${queryStartIso}' && created <= '${queryFinishIso}'`,
+        `user_id = '${courierId}' && created >= '${queryStartStr}' && created <= '${queryFinishStr}'`,
         '+created',
         5000,
         0,
@@ -854,28 +918,24 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
 
     const pingsCount = pings.length
 
-    // GUARDA DA FRENTE 2: pings_count = 0 quando existem pings na janela = log de erro + audit_trail
+    // GUARDA DA FRENTE 2: pings_count = 0 quando existem pings na janela = log de erro visível + audit_trail (user_id vazio, actor_name='Sistema', metadata.system_trigger=true)
     if (pingsCount === 0) {
       try {
         const potentialAnyPings = $app.findRecordsByFilter(
           'locations',
-          `created >= '${queryStartIso}' && created <= '${queryFinishIso}'`,
+          `created >= '${queryStartStr}' && created <= '${queryFinishStr}'`,
           '+created',
           10,
           0,
         )
         if (potentialAnyPings.length > 0) {
-          console.log(
-            '[canonical_telemetry_engine:GUARDA_ERRO] pings_count=0 para user_id=' +
-              courierId +
-              ' mas existem pings na janela global (' +
-              potentialAnyPings.length +
-              ' encontrados). Registrando auditoria.',
+          console.error(
+            `[canonical_telemetry_engine:GUARDA_ERRO_SANIDADE] SANITY ERROR: pings_count=0 para user_id=${courierId} no lote ${batchKey}, mas existem ${potentialAnyPings.length} pings na janela temporal [${queryStartStr} -> ${queryFinishStr}]. O registro NÃO pode passar como processed em silêncio!`,
           )
           const auditColGuard = $app.findCollectionByNameOrId('audit_trail')
           if (auditColGuard) {
             const auditGuard = new Record(auditColGuard)
-            auditGuard.set('user_id', '')
+            auditGuard.set('user_id', '') // relation aceita vazio
             auditGuard.set('collection', 'route_batch_telemetry')
             auditGuard.set('record_id', batchKey)
             if (courierId) auditGuard.set('courier_id', courierId)
@@ -889,15 +949,16 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
               actor_name: 'Sistema',
               route_batch_key: batchKey,
               courier_id: courierId,
-              query_start_iso: queryStartIso,
-              query_finish_iso: queryFinishIso,
+              query_start: queryStartStr,
+              query_finish: queryFinishStr,
+              found_pings_in_window: potentialAnyPings.length,
               divergence_warning: 'pings_count=0 com telemetria existente na janela temporal',
             })
             $app.save(auditGuard)
           }
         }
       } catch (guardErr) {
-        console.log(
+        console.error(
           '[canonical_telemetry_engine:GUARDA_ERRO] Erro na verificação da guarda:',
           guardErr,
         )

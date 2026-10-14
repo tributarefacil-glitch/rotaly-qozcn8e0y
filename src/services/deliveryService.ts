@@ -2232,20 +2232,29 @@ export const deliveryService = {
 
     const filters: string[] = [`user_id = '${cleanUserId}'`]
 
+    const formatPbDate = (val: string | Date): string => {
+      if (typeof val === 'string') {
+        const trimmed = val.trim()
+        // Converte "2026-10-13T22:34:00.000Z" para "2026-10-13 22:34:00"
+        return trimmed
+          .replace('T', ' ')
+          .replace(/\.\d+Z?$/, '')
+          .replace(/Z$/, '')
+      }
+      return val
+        .toISOString()
+        .replace('T', ' ')
+        .replace(/\.\d+Z?$/, '')
+    }
+
     if (params.routeStartedAt) {
-      const startIso =
-        typeof params.routeStartedAt === 'string'
-          ? params.routeStartedAt
-          : params.routeStartedAt.toISOString()
-      filters.push(`created >= '${startIso}'`)
+      const startStr = formatPbDate(params.routeStartedAt)
+      filters.push(`created >= '${startStr}'`)
     }
 
     if (params.routeFinishedAt) {
-      const endIso =
-        typeof params.routeFinishedAt === 'string'
-          ? params.routeFinishedAt
-          : params.routeFinishedAt.toISOString()
-      filters.push(`created <= '${endIso}'`)
+      const endStr = formatPbDate(params.routeFinishedAt)
+      filters.push(`created <= '${endStr}'`)
     }
 
     const combinedFilter = filters.join(' && ')
@@ -2258,7 +2267,7 @@ export const deliveryService = {
       })
       return records
     } catch (err: any) {
-      console.warn('[fetchCourierRoutePings] Erro ao buscar pings por user_id e janela UTC:', err)
+      console.warn('[fetchCourierRoutePings] Erro ao buscar pings por user_id e janela:', err)
       return []
     }
   },
