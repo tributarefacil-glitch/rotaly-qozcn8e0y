@@ -4921,7 +4921,9 @@ export const deliveryService = {
 
         if (existingPendingList.items.length > 0) {
           const existing = existingPendingList.items[0]
-          console.info(`[createAddressAlert] Deduplicação ativa: cliente ${data.customer} já possui alerta pendente #${existing.id}. Atualizando registro existente.`)
+          console.info(
+            `[createAddressAlert] Deduplicação ativa: cliente ${data.customer} já possui alerta pendente #${existing.id}. Atualizando registro existente.`,
+          )
           return await pb.collection<AddressAlertRecord>('address_alerts').update(existing.id, {
             suggested_address: data.suggested_address,
             current_address: existing.current_address || data.current_address || {},
@@ -4950,7 +4952,14 @@ export const deliveryService = {
           const prevLng = Number(prevSugg.lng)
 
           let coordDistM = Infinity
-          if (!isNaN(prevLat) && !isNaN(prevLng) && prevLat !== 0 && prevLng !== 0 && !isNaN(lat) && !isNaN(lng)) {
+          if (
+            !isNaN(prevLat) &&
+            !isNaN(prevLng) &&
+            prevLat !== 0 &&
+            prevLng !== 0 &&
+            !isNaN(lat) &&
+            !isNaN(lng)
+          ) {
             coordDistM = haversineDistanceMeters(prevLat, prevLng, lat, lng)
           }
 

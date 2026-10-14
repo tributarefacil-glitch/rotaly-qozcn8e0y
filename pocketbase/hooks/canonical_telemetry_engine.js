@@ -670,7 +670,10 @@ onRecordAfterUpdateSuccess((e) => {
         try {
           procResult = processBatch(batchKey, 'order_route_finished_hook')
         } catch (procErr) {
-          console.error(`[canonical_telemetry_engine:HOOK_PROCESS_ERROR] Erro ao executar processBatch para lote ${batchKey}:`, procErr)
+          console.error(
+            `[canonical_telemetry_engine:HOOK_PROCESS_ERROR] Erro ao executar processBatch para lote ${batchKey}:`,
+            procErr,
+          )
           try {
             const auditCol = $app.findCollectionByNameOrId('audit_trail')
             if (auditCol) {
@@ -682,7 +685,10 @@ onRecordAfterUpdateSuccess((e) => {
               auditRec.set('action', 'erro_execucao_process_batch_telemetria')
               auditRec.set('field', 'exception')
               auditRec.set('old_value', `lote=${batchKey}`)
-              auditRec.set('new_value', String(procErr && procErr.message ? procErr.message : procErr))
+              auditRec.set(
+                'new_value',
+                String(procErr && procErr.message ? procErr.message : procErr),
+              )
               auditRec.set('timestamp', new Date().toISOString())
               auditRec.set('metadata', {
                 system_trigger: true,
@@ -734,7 +740,10 @@ onRecordAfterUpdateSuccess((e) => {
       }
     }
   } catch (err) {
-    console.error('[canonical_telemetry_engine] Erro estruturado no hook onRecordAfterUpdateSuccess:', err)
+    console.error(
+      '[canonical_telemetry_engine] Erro estruturado no hook onRecordAfterUpdateSuccess:',
+      err,
+    )
     try {
       const auditCol = $app.findCollectionByNameOrId('audit_trail')
       if (auditCol) {

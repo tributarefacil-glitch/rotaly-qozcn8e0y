@@ -25,7 +25,9 @@ migrate((app) => {
   try {
     app
       .db()
-      .newQuery('SELECT id, customer, status, current_address, suggested_address, created, reviewed_at, reviewed_by, notes FROM address_alerts ORDER BY customer, created DESC')
+      .newQuery(
+        'SELECT id, customer, status, current_address, suggested_address, created, reviewed_at, reviewed_by, notes FROM address_alerts ORDER BY customer, created DESC',
+      )
       .all(rows)
   } catch (err) {
     console.log('[0171_migration] Erro na query raw de address_alerts:', err)
@@ -59,8 +61,12 @@ migrate((app) => {
 
       let pSugg = {}
       let pCurr = {}
-      try { pSugg = JSON.parse(primaryRow.suggested_address || '{}') } catch (_) {}
-      try { pCurr = JSON.parse(primaryRow.current_address || '{}') } catch (_) {}
+      try {
+        pSugg = JSON.parse(primaryRow.suggested_address || '{}')
+      } catch (_) {}
+      try {
+        pCurr = JSON.parse(primaryRow.current_address || '{}')
+      } catch (_) {}
       const pLat = Number(pSugg.lat || pCurr.lat || 0)
       const pLng = Number(pSugg.lng || pCurr.lng || 0)
 
@@ -70,8 +76,12 @@ migrate((app) => {
 
         let cSugg = {}
         let cCurr = {}
-        try { cSugg = JSON.parse(candidateRow.suggested_address || '{}') } catch (_) {}
-        try { cCurr = JSON.parse(candidateRow.current_address || '{}') } catch (_) {}
+        try {
+          cSugg = JSON.parse(candidateRow.suggested_address || '{}')
+        } catch (_) {}
+        try {
+          cCurr = JSON.parse(candidateRow.current_address || '{}')
+        } catch (_) {}
         const cLat = Number(cSugg.lat || cCurr.lat || 0)
         const cLng = Number(cSugg.lng || cCurr.lng || 0)
 
@@ -142,7 +152,9 @@ migrate((app) => {
             app.delete(toDiscardRec)
             discardedIds.add(toDiscardRow.id)
             totalDiscarded++
-            console.log(`[0171_migration] Alerta duplicado #${toDiscardRow.id} descartado (mantido #${keeperRow.id})`)
+            console.log(
+              `[0171_migration] Alerta duplicado #${toDiscardRow.id} descartado (mantido #${keeperRow.id})`,
+            )
           } catch (delErr) {
             console.log(`[0171_migration] Falha ao excluir alerta #${toDiscardRow.id}:`, delErr)
           }
@@ -155,5 +167,7 @@ migrate((app) => {
     }
   }
 
-  console.log(`[0171_migration] Concluída deduplicação. Total de duplicatas descartadas: ${totalDiscarded}`)
+  console.log(
+    `[0171_migration] Concluída deduplicação. Total de duplicatas descartadas: ${totalDiscarded}`,
+  )
 })

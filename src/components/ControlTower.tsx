@@ -309,6 +309,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const [mapsLoaded, setMapsLoaded] = useState(false)
   const [mapsError, setMapsError] = useState(false)
   const [mapInstance, setMapInstance] = useState<any>(null)
+  const [mapZoomLevel, setMapZoomLevel] = useState<number>(14)
   const [markersRef, setMarkersRef] = useState<any[]>([])
   const hasInitialFitRef = useRef(false)
   const hasUserInteractedRef = useRef(false)
@@ -2076,20 +2077,38 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       })
     })
 
-    // 2. Destinos de entregas do dia (marcador por cliente numerado [#seq])
-    // COMANDO A: Plotar TODOS os pedidos do dia do entregador selecionado ou de todos os entregadores
-    // Marcadores por status: Verde = entregues com indicativo de conclusão/sequência, Laranja = em rota, Azul = pendentes da jornada
+    // 2. Destinos de entregas no mapa ao vivo:
+    // FILTRO ESTRITO DO MAPA AO VIVO:
+    // Plotar SOMENTE pedidos pendentes/em trânsito de entregadores com rota ativa (isOrderInActiveRoute/activeRouteCouriers).
+    // Pedido de lote com route_finished === true ou entregador isReturnedToBase NÃO gera marcador no ao vivo.
+    // "Entregues (N)" continua como contador do cartão, NUNCA como pin no mapa ao vivo.
+    const activeRouteCourierIdSet = new Set(activeRouteCouriers.map((c) => c.courier.id))
     const seenOrderIds = new Set<string>()
+
     const processOrderMarker = (order: OrderRecord, courierItem?: any) => {
       try {
-        if (order.status === 'cancelled' || seenOrderIds.has(order.id)) {
+        if (!order || order.status === 'cancelled' || seenOrderIds.has(order.id)) {
           return
         }
+
+        // Se estiver no mapa ao vivo: nunca plotar pedido entregue nem pedido de lote finalizado
+        const currentMode = mapDisplayMode as string
+        if (currentMode !== 'delivered') {
+          if (order.status === 'delivered') return
+          if (order.route_finished === true) return
+          if (!isOrderInActiveRoute(order)) return
+
+          const cId = order.courier_id || courierItem?.courier?.id
+          if (!cId || !activeRouteCourierIdSet.has(cId)) return
+        } else {
+          // No modo 'delivered', apenas entregues do dia
+          if (order.status !== 'delivered') return
+        }
+
         seenOrderIds.add(order.id)
 
         const cleanDest = MapDataService.getOrderDestination(order)
         if (!cleanDest) {
-          // Pedido sem coordenada recebe sinalização no card/lista e não tenta plotar marcador sem lat/lng
           return
         }
 
@@ -2102,7 +2121,6 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         const etaSuffix = routeInfo ? ` • Prazo ETA: ~${routeInfo.etaMinutes} min` : ''
         const seqText = order.sequence ? `[#${order.sequence}] ` : ''
         const courierId = order.courier_id || courier?.id
-        // COMANDO A: Verde #10B981 = entregues, Laranja #F97316 = em rota, Azul #2563EB = pendentes da jornada
         const pinColor = isDelivered ? '#10B981' : isTransit ? '#F97316' : '#2563EB'
         const titlePrefix = isDelivered
           ? `✓ ${seqText}`
@@ -2132,17 +2150,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       }
     }
 
-    // Processar pedidos atribuídos aos entregadores ativos
+    // Processar pedidos atribuídos aos entregadores com rota ativa
     activeRouteCouriers.forEach((courierItem) => {
       const courierOrders = courierItem.allAssignedOrders || []
       courierOrders.forEach((order) => processOrderMarker(order, courierItem))
-    })
-
-    // Garantir que TODOS os pedidos do dia sejam incluídos no mapa
-    todayOrders.forEach((order) => {
-      if (order.status !== 'cancelled') {
-        processOrderMarker(order)
-      }
     })
 
     return list
@@ -2234,6 +2245,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         })
         map.addListener('zoom_changed', () => {
           hasUserInteractedRef.current = true
+          const z = map.getZoom?.()
+          if (typeof z === 'number') {
+            setMapZoomLevel(z)
+          }
         })
         setMapInstance(map)
       } catch (err) {
@@ -2602,13 +2617,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       }
     }
 
+    const currentZoom = map.getZoom?.() ?? 14
+    const showNameLabel = currentZoom >= 16
+
     const makeNativeCustomerSvg = (
       customerName?: string,
       seq?: number,
       isTransit = false,
       pinColorOverride?: string,
     ) => {
-      // Rótulo "[#seq] Nome curto" no pin de entrega, showNameLabel=true por padrão, fundo branco alto contraste
+      // Desembolamento: rótulo de nome só com zoom >= 16; zoom menor exibe pin compacto sem poluição
       const generated = makeCustomerSvgIcon(
         customerName,
         seq,
@@ -2616,7 +2634,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         110,
         46,
         pinColorOverride,
-        true,
+        showNameLabel,
       )
       return {
         url: generated.url,
@@ -2625,6 +2643,29 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           generated.scaledSize.height,
         ),
         anchor: new win.google.maps.Point(generated.anchor.x, generated.anchor.y),
+      }
+    }
+
+    // Helper para badge circular agrupado de clientes a menos de ~35 metros
+    const makeNativeClusterSvg = (count: number, pinColor = '#7C3AED') => {
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38">
+          <defs>
+            <filter id="cluster-shadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#000" flood-opacity="0.4"/>
+            </filter>
+          </defs>
+          <g filter="url(#cluster-shadow)">
+            <circle cx="19" cy="19" r="16" fill="${pinColor}" stroke="#FFFFFF" stroke-width="2.5" />
+            <text x="19" y="24" font-size="13" font-weight="900" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif" text-anchor="middle" fill="#FFFFFF">${count}</text>
+          </g>
+        </svg>
+      `.trim()
+
+      return {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        scaledSize: new win.google.maps.Size(38, 38),
+        anchor: new win.google.maps.Point(19, 19),
       }
     }
 
@@ -3110,151 +3151,236 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         newMarkers.push(courierMarker)
       })
 
-      // Pins: Destinos de TODOS os pedidos do dia no Google Maps nativo
-      // COMANDO A: Plotar todos os pedidos do dia do entregador selecionado (ou de todos) com marcadores por status:
-      // Verde = entregues com indicativo de conclusão/sequência, Laranja = em rota, Azul = pendentes da jornada
+      // Pins: Destinos de entregas no Google Maps nativo
+      // FILTRO ESTRITO DO MAPA AO VIVO:
+      // Plotar SOMENTE pedidos pendentes/em trânsito de entregadores com rota ativa (isOrderInActiveRoute/activeRouteCouriers).
+      // Pedido de lote com route_finished === true ou entregador isReturnedToBase NÃO gera marcador no ao vivo.
+      // "Entregues (N)" continua como contador do cartão, NUNCA como pin no mapa ao vivo.
       const activeTransitOrderIds = new Set<string>()
+      const activeRouteCourierIdSet = new Set(activeRouteCouriers.map((c) => c.courier.id))
       const ordersToMap = new Map<string, OrderRecord>()
 
-      // 1. Pedidos atribuídos a entregadores ativos
+      // 1. Pedidos atribuídos a entregadores com rota ativa
       activeRouteCouriers.forEach((courierItem) => {
         const courierOrders = courierItem.allAssignedOrders || []
         courierOrders.forEach((o) => {
-          if (o.status !== 'cancelled') {
-            ordersToMap.set(o.id, o)
+          if (
+            o.status !== 'cancelled' &&
+            o.status !== 'delivered' &&
+            o.route_finished !== true &&
+            isOrderInActiveRoute(o)
+          ) {
+            if (courierFilter === 'all' || o.courier_id === courierFilter) {
+              ordersToMap.set(o.id, o)
+            }
           }
         })
       })
 
-      // 2. Todos os pedidos do dia (se filtrado por entregador, respeita o filtro)
-      todayOrders.forEach((o) => {
-        if (o.status !== 'cancelled') {
-          if (courierFilter === 'all' || o.courier_id === courierFilter) {
-            ordersToMap.set(o.id, o)
-          }
-        }
-      })
-
       const displayOrders = Array.from(ordersToMap.values())
 
-      // Detecção de clientes com lat/lng idênticas para aplicar offset polar (r≈0,00015°, θ=i·2π/N)
-      const coordBuckets = new Map<string, typeof displayOrders>()
-      displayOrders.forEach((o) => {
-        const cleanDest = MapDataService.getOrderDestination(o)
-        if (cleanDest) {
-          const key = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
-          const arr = coordBuckets.get(key) || []
-          arr.push(o)
-          coordBuckets.set(key, arr)
+      // DESEMBOLAMENTO:
+      // Agrupar pins a menos de ~35 metros (0.00035 graus) em badge circular com contador
+      // que abre/aproxima ao clicar ou com zoom >= 16.
+      // Para pins próximos não agrupados, aplicar offset polar e colisão entre rótulos.
+      interface OrderStopCluster {
+        centerLat: number
+        centerLng: number
+        orders: OrderRecord[]
+      }
+
+      const clusterRadiusDeg = currentZoom >= 16 ? 0.00012 : 0.00035
+      const clusters: OrderStopCluster[] = []
+
+      displayOrders.forEach((order) => {
+        const cleanDest = MapDataService.getOrderDestination(order)
+        if (!cleanDest) return
+
+        let placedInCluster = false
+        for (const cl of clusters) {
+          const dLat = Math.abs(cl.centerLat - cleanDest.lat)
+          const dLng = Math.abs(cl.centerLng - cleanDest.lng)
+          if (dLat < clusterRadiusDeg && dLng < clusterRadiusDeg) {
+            cl.orders.push(order)
+            placedInCluster = true
+            break
+          }
+        }
+        if (!placedInCluster) {
+          clusters.push({
+            centerLat: cleanDest.lat,
+            centerLng: cleanDest.lng,
+            orders: [order],
+          })
         }
       })
 
-      displayOrders.forEach((order) => {
+      clusters.forEach((cluster) => {
         try {
-          const cust = order.expand?.customer_id
-          const cleanDest = MapDataService.getOrderDestination(order)
-          if (!cleanDest) {
-            // Sinalizado nos cards do kanban e na lista: "Endereço sem coordenadas GPS registradas"
-            return
-          }
+          const isMulti = cluster.orders.length > 1
+          const firstOrder = cluster.orders[0]
+          const cust = firstOrder.expand?.customer_id
+          const markerKey = isMulti
+            ? `cluster-${cluster.orders
+                .map((o) => o.id)
+                .sort()
+                .join('-')}`
+            : firstOrder.id
 
-          const bucketKey = `${cleanDest.lat.toFixed(5)}_${cleanDest.lng.toFixed(5)}`
-          const bucket = coordBuckets.get(bucketKey) || []
-          let finalLat = cleanDest.lat
-          let finalLng = cleanDest.lng
-          if (bucket.length > 1) {
-            const idx = bucket.findIndex((b) => b.id === order.id)
-            if (idx > 0) {
-              const r = 0.00015
-              const theta = (idx * 2 * Math.PI) / bucket.length
-              finalLat = cleanDest.lat + r * Math.sin(theta)
-              finalLng = cleanDest.lng + r * Math.cos(theta)
-            }
-          }
-          const destPos = MapDataService.cleanCoords(finalLat, finalLng) || cleanDest
-          if (safeExtendBounds(bounds, destPos)) {
+          activeTransitOrderIds.add(markerKey)
+
+          // Offset polar para desembolamento de colisão se houver múltiplos itens ou sobreposição
+          const clusterPos = { lat: cluster.centerLat, lng: cluster.centerLng }
+          if (safeExtendBounds(bounds, clusterPos)) {
             hasCoords = true
           }
-          activeTransitOrderIds.add(order.id)
 
-          const isDelivered = order.status === 'delivered'
-          const isTransit =
-            !isDelivered && (order.status === 'in_transit' || order.route_started === true)
-          const routeInfo = activeRoutesData.find((r) => r.orderId === order.id)
-          const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
-          const seqText = order.sequence ? `[Parada #${order.sequence}] ` : ''
-          // COMANDO A: Verde = entregue (#10B981), Laranja = em rota (#F97316), Azul = pendente da jornada (#2563EB)
-          const pinColor = isDelivered ? '#10B981' : isTransit ? '#F97316' : '#2563EB'
-          const statusPrefix = isDelivered ? '✓ Entregue' : isTransit ? '🚗 Em Rota' : '📦 Pendente'
-          const markerTitle = `${statusPrefix}: ${seqText}${cust?.name || 'Cliente'} (${order.tracking_code})${etaText}`
-          const markerIcon = makeNativeCustomerSvg(
-            cust?.name,
-            order.sequence,
-            !isDelivered && isTransit,
-            pinColor,
-          )
+          let destMarker = customerMarkersMapRef.current.get(markerKey)
 
-          let destMarker = customerMarkersMapRef.current.get(order.id)
-          if (destMarker) {
-            destMarker.setMap(map)
-            destMarker.setPosition(destPos)
-            destMarker.setTitle(markerTitle)
-            destMarker.setIcon(markerIcon)
-            destMarker.setZIndex?.(100 + (order.sequence || 0))
+          if (isMulti) {
+            // Badge circular com contador de clientes
+            const clusterTitle = `📦 Grupo com ${cluster.orders.length} entregas próximas (clique para aproximar)`
+            const clusterIcon = makeNativeClusterSvg(cluster.orders.length, '#7C3AED')
+
+            if (destMarker) {
+              destMarker.setMap(map)
+              destMarker.setPosition(clusterPos)
+              destMarker.setTitle(clusterTitle)
+              destMarker.setIcon(clusterIcon)
+              destMarker.setZIndex?.(750)
+            } else {
+              destMarker = new win.google.maps.Marker({
+                position: clusterPos,
+                map,
+                title: clusterTitle,
+                icon: clusterIcon,
+                zIndex: 750,
+              })
+              destMarker.setZIndex?.(750)
+
+              // Hover: lista compacta dos clientes agrupados
+              destMarker.addListener('mouseover', () => {
+                const listItemsHtml = cluster.orders
+                  .slice(0, 5)
+                  .map(
+                    (o) =>
+                      `<li style="font-size: 10px; margin-bottom: 2px;"><strong>#${o.sequence || '•'}</strong> ${o.expand?.customer_id?.name || 'Cliente'} (${o.tracking_code})</li>`,
+                  )
+                  .join('')
+                const moreCount = cluster.orders.length - 5
+                const moreHtml =
+                  moreCount > 0
+                    ? `<div style="font-size: 9px; color: #64748b; font-style: italic;">+${moreCount} outros...</div>`
+                    : ''
+
+                const html = `
+                  <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 250px; line-height: 1.3;">
+                    <div style="font-size: 11px; font-weight: 800; color: #7c3aed; margin-bottom: 4px;">
+                      📍 ${cluster.orders.length} Entregas Próximas
+                    </div>
+                    <ul style="padding-left: 14px; margin: 0 0 4px 0; color: #334155;">
+                      ${listItemsHtml}
+                    </ul>
+                    ${moreHtml}
+                    <div style="font-size: 9px; color: #7c3aed; font-weight: 700; border-top: 1px solid #e2e8f0; padding-top: 3px; margin-top: 3px;">
+                      Clique no badge para aproximar zoom
+                    </div>
+                  </div>
+                `
+                hoverInfoWindow.setContent(html)
+                hoverInfoWindow.open(map, destMarker)
+              })
+
+              destMarker.addListener('mouseout', () => {
+                hoverInfoWindow.close()
+              })
+
+              destMarker.addListener('click', () => {
+                hoverInfoWindow.close()
+                const nextZoom = Math.min((map.getZoom() || 14) + 2, 19)
+                map.setZoom(nextZoom)
+                map.panTo(clusterPos)
+              })
+
+              customerMarkersMapRef.current.set(markerKey, destMarker)
+            }
           } else {
-            destMarker = new win.google.maps.Marker({
-              position: destPos,
-              map,
-              title: markerTitle,
-              icon: markerIcon,
-              zIndex: 100 + (order.sequence || 0),
-            })
-            destMarker.setZIndex?.(100 + (order.sequence || 0))
+            // Pin individual de entrega com desembolamento de rótulo (só zoom >= 16)
+            const isTransit =
+              firstOrder.status === 'in_transit' || firstOrder.route_started === true
+            const routeInfo = activeRoutesData.find((r) => r.orderId === firstOrder.id)
+            const etaText = routeInfo ? ` • ETA: ~${routeInfo.etaMinutes} min` : ''
+            const seqText = firstOrder.sequence ? `[Parada #${firstOrder.sequence}] ` : ''
+            const pinColor = isTransit ? '#F97316' : '#2563EB'
+            const statusPrefix = isTransit ? '🚗 Em Rota' : '📦 Pendente'
+            const markerTitle = `${statusPrefix}: ${seqText}${cust?.name || 'Cliente'} (${firstOrder.tracking_code})${etaText}`
+            const markerIcon = makeNativeCustomerSvg(
+              cust?.name,
+              firstOrder.sequence,
+              isTransit,
+              pinColor,
+            )
 
-            // Hover: tooltip compacto de cliente
-            destMarker.addListener('mouseover', () => {
-              const html = `
+            if (destMarker) {
+              destMarker.setMap(map)
+              destMarker.setPosition(clusterPos)
+              destMarker.setTitle(markerTitle)
+              destMarker.setIcon(markerIcon)
+              destMarker.setZIndex?.(100 + (firstOrder.sequence || 0))
+            } else {
+              destMarker = new win.google.maps.Marker({
+                position: clusterPos,
+                map,
+                title: markerTitle,
+                icon: markerIcon,
+                zIndex: 100 + (firstOrder.sequence || 0),
+              })
+              destMarker.setZIndex?.(100 + (firstOrder.sequence || 0))
+
+              destMarker.addListener('mouseover', () => {
+                const html = `
                   <div style="padding: 6px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; max-width: 240px; line-height: 1.3;">
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px;">
                       <strong style="font-size: 11.5px; color: #0f172a;">${cust?.name || 'Cliente'}</strong>
-                      ${order.sequence ? `<span style="font-size: 9px; font-weight: 800; background: ${isDelivered ? '#dcfce7' : '#ffedd5'}; color: ${isDelivered ? '#15803d' : '#c2410c'}; padding: 1px 4px; border-radius: 3px;">#${order.sequence}</span>` : ''}
+                      ${firstOrder.sequence ? `<span style="font-size: 9px; font-weight: 800; background: #ffedd5; color: #c2410c; padding: 1px 4px; border-radius: 3px;">#${firstOrder.sequence}</span>` : ''}
                     </div>
-                    <div style="font-size: 10px; color: ${isDelivered ? '#15803d' : isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
-                      ${isDelivered ? '✓ Concluído' : isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${order.tracking_code})
+                    <div style="font-size: 10px; color: ${isTransit ? '#c2410c' : '#2563eb'}; font-weight: 700; margin-bottom: 3px;">
+                      ${isTransit ? 'Em Trânsito' : 'Aguardando Início'} (${firstOrder.tracking_code})
                     </div>
                     <div style="font-size: 10px; color: #334155; line-height: 1.25; background: #f8fafc; padding: 4px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                      📍 ${cust?.address || cust?.street || (typeof cust?.lat === 'number' && typeof cust?.lng === 'number' ? `${cust.lat.toFixed(4)}, ${cust.lng.toFixed(4)}` : 'Coordenadas não disponíveis')}
+                      📍 ${cust?.address || cust?.street || 'Coordenadas registradas'}
                     </div>
                     ${routeInfo?.etaMinutes ? `<div style="font-size: 9.5px; color: #0369a1; font-weight: 600; margin-top: 3px;">⏱️ ETA estimado: ~${routeInfo.etaMinutes} min</div>` : ''}
                   </div>
                 `
-              hoverInfoWindow.setContent(html)
-              hoverInfoWindow.open(map, destMarker)
-            })
+                hoverInfoWindow.setContent(html)
+                hoverInfoWindow.open(map, destMarker)
+              })
 
-            destMarker.addListener('mouseout', () => {
-              hoverInfoWindow.close()
-            })
+              destMarker.addListener('mouseout', () => {
+                hoverInfoWindow.close()
+              })
 
-            destMarker.addListener('click', () => {
-              hoverInfoWindow.close()
-              handleOpenOrderDetails(order)
-            })
+              destMarker.addListener('click', () => {
+                hoverInfoWindow.close()
+                handleOpenOrderDetails(firstOrder)
+              })
 
-            customerMarkersMapRef.current.set(order.id, destMarker)
+              customerMarkersMapRef.current.set(markerKey, destMarker)
+            }
           }
 
           newMarkers.push(destMarker)
         } catch (err) {
-          console.warn('[ControlTower] Erro no marcador do pedido:', order?.id, err)
+          console.warn('[ControlTower] Erro no marcador do cluster/pedido:', err)
         }
       })
 
-      // Limpar marcadores de destinos que não estão mais nesta exibição
-      customerMarkersMapRef.current.forEach((marker, oId) => {
-        if (!activeTransitOrderIds.has(oId)) {
+      // Limpar marcadores de destinos/clusters que não estão mais nesta exibição
+      customerMarkersMapRef.current.forEach((marker, mKey) => {
+        if (!activeTransitOrderIds.has(mKey)) {
           marker.setMap(null)
-          customerMarkersMapRef.current.delete(oId)
+          customerMarkersMapRef.current.delete(mKey)
         }
       })
     }
@@ -3287,7 +3413,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         win.google.maps.event.removeListener(listener)
       })
     }
-  }, [mapsLoaded, activeRouteCouriers, todayOrders, activeRoutesData, mapDisplayMode])
+  }, [mapsLoaded, activeRouteCouriers, todayOrders, activeRoutesData, mapDisplayMode, mapZoomLevel])
 
   // Open Drawer for Order
   const handleOpenOrderDetails = (order: OrderRecord) => {

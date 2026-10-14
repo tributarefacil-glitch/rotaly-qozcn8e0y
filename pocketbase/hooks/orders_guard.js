@@ -194,45 +194,92 @@ onRecordUpdateRequest((e) => {
         }
 
         // Criar alerta em address_alerts se ainda não existir pendente para este cliente
+        // Checagem atômica prévia (mesmo cliente, janela 6h, <30m ou pendente) antes de $app.save
         const alertsCol = $app.findCollectionByNameOrId('address_alerts')
         if (alertsCol && customerIdVal) {
-          let hasPendingAlert = false
+          let isDuplicate = false
           try {
-            const existingAlert = $app.findFirstRecordByFilter(
+            const sixHoursAgoIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString()
+            const existingAlerts = $app.findRecordsByFilter(
               'address_alerts',
-              `customer = '${customerIdVal}' && status = 'pendente'`,
+              `customer = '${customerIdVal}' && created >= '${sixHoursAgoIso}'`,
+              '-created',
+              10,
+              0,
             )
-            if (existingAlert) {
-              hasPendingAlert = true
+            const targetLat = targetOrder.getFloat('end_address_lat') || 0
+            const targetLng = targetOrder.getFloat('end_address_lng') || 0
+
+            for (let a = 0; a < existingAlerts.length; a++) {
+              const ex = existingAlerts[a]
+              if (ex.getString('status') === 'pendente') {
+                isDuplicate = true
+                break
+              }
+              let exLat = 0
+              let exLng = 0
+              try {
+                const exS = JSON.parse(ex.getString('suggested_address') || '{}')
+                exLat = Number(exS.lat || 0)
+                exLng = Number(exS.lng || 0)
+              } catch (_) {}
+
+              if (targetLat !== 0 && targetLng !== 0 && exLat !== 0 && exLng !== 0) {
+                const dLat = ((exLat - targetLat) * Math.PI) / 180
+                const dLon = ((exLng - targetLng) * Math.PI) / 180
+                const aHarv =
+                  Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos((targetLat * Math.PI) / 180) *
+                    Math.cos((exLat * Math.PI) / 180) *
+                    Math.sin(dLon / 2) *
+                    Math.sin(dLon / 2)
+                const distM = 6371000 * 2 * Math.atan2(Math.sqrt(aHarv), Math.sqrt(1 - aHarv))
+                if (distM <= 30) {
+                  isDuplicate = true
+                  break
+                }
+              }
             }
           } catch (_) {
-            hasPendingAlert = false
+            isDuplicate = false
           }
 
-          if (!hasPendingAlert) {
-            const alertRec = new Record(alertsCol)
-            alertRec.set('customer', customerIdVal)
-            if (empresaId) alertRec.set('company', empresaId)
-            alertRec.set('origin', 'pin_entregador')
-            alertRec.set('status', 'pendente')
-            alertRec.set('distance_meters', distanceM)
-            if (courierIdVal) alertRec.set('marked_by', courierIdVal)
-            alertRec.set('marked_at', new Date().toISOString())
-            alertRec.set(
-              'suggested_address',
-              JSON.stringify({
-                address: targetOrder.getString('end_address_text') || '',
-                lat: targetOrder.getFloat('end_address_lat') || 0,
-                lng: targetOrder.getFloat('end_address_lng') || 0,
-              }),
-            )
-            alertRec.set(
-              'notes',
-              `Entrega realizada a ${(distanceM / 1000).toFixed(1)} km do pin cadastrado no pedido ${trackingCode}. Aguarda conferência da central.`,
-            )
-            $app.save(alertRec)
+          if (!isDuplicate) {
+            try {
+              const alertRec = new Record(alertsCol)
+              alertRec.set('customer', customerIdVal)
+              if (empresaId) alertRec.set('company', empresaId)
+              alertRec.set('origin', 'pin_entregador')
+              alertRec.set('status', 'pendente')
+              alertRec.set('distance_meters', distanceM)
+              if (courierIdVal) alertRec.set('marked_by', courierIdVal)
+              alertRec.set('marked_at', new Date().toISOString())
+              alertRec.set(
+                'suggested_address',
+                JSON.stringify({
+                  address: targetOrder.getString('end_address_text') || '',
+                  lat: targetOrder.getFloat('end_address_lat') || 0,
+                  lng: targetOrder.getFloat('end_address_lng') || 0,
+                }),
+              )
+              alertRec.set(
+                'notes',
+                `Entrega realizada a ${(distanceM / 1000).toFixed(1)} km do pin cadastrado no pedido ${trackingCode}. Aguarda conferência da central.`,
+              )
+              $app.save(alertRec)
+              console.log(
+                '[orders_guard] address_alerts criado com sucesso para cliente:',
+                customerIdVal,
+              )
+            } catch (errSaveAlert) {
+              console.log(
+                '[orders_guard] Criação de address_alerts interceptada pelo dedup guard:',
+                errSaveAlert?.message || errSaveAlert,
+              )
+            }
+          } else {
             console.log(
-              '[orders_guard] address_alerts criado com sucesso para cliente:',
+              '[orders_guard] address_alerts suprimido por deduplicação (alerta existente para cliente):',
               customerIdVal,
             )
           }

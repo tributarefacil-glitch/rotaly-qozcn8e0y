@@ -43,13 +43,7 @@ migrate((app) => {
   // ==========================================
   let allAlerts = []
   try {
-    allAlerts = app.findRecordsByFilter(
-      'address_alerts',
-      'id != ""',
-      '-created',
-      2000,
-      0,
-    )
+    allAlerts = app.findRecordsByFilter('address_alerts', 'id != ""', '-created', 2000, 0)
   } catch (err) {
     console.log('[0169_migration] Erro ao buscar address_alerts:', err)
   }
@@ -107,15 +101,24 @@ migrate((app) => {
           // Escolher qual manter: o que tiver status='aprovado' prevalece.
           let keeper = primary
           let toDiscard = candidate
-          if (candidate.getString('status') === 'aprovado' && primary.getString('status') !== 'aprovado') {
+          if (
+            candidate.getString('status') === 'aprovado' &&
+            primary.getString('status') !== 'aprovado'
+          ) {
             keeper = candidate
             toDiscard = primary
           }
 
           // Mesclar status de aprovação se aplicável
-          if (toDiscard.getString('status') === 'aprovado' && keeper.getString('status') !== 'aprovado') {
+          if (
+            toDiscard.getString('status') === 'aprovado' &&
+            keeper.getString('status') !== 'aprovado'
+          ) {
             keeper.set('status', 'aprovado')
-            keeper.set('reviewed_at', toDiscard.getString('reviewed_at') || new Date().toISOString())
+            keeper.set(
+              'reviewed_at',
+              toDiscard.getString('reviewed_at') || new Date().toISOString(),
+            )
             keeper.set('reviewed_by', toDiscard.getString('reviewed_by') || '')
             app.save(keeper)
           }
@@ -153,9 +156,14 @@ migrate((app) => {
             app.delete(toDiscard)
             discardedIds.add(toDiscard.id)
             totalAlertDuplicatesDiscarded++
-            console.log(`[0169_migration] Alerta duplicado #${toDiscard.id} excluído com sucesso (mantido #${keeper.id}).`)
+            console.log(
+              `[0169_migration] Alerta duplicado #${toDiscard.id} excluído com sucesso (mantido #${keeper.id}).`,
+            )
           } catch (delErr) {
-            console.log(`[0169_migration] Falha ao deletar alerta duplicado #${toDiscard.id}:`, delErr)
+            console.log(
+              `[0169_migration] Falha ao deletar alerta duplicado #${toDiscard.id}:`,
+              delErr,
+            )
           }
 
           if (toDiscard === primary) {
@@ -167,7 +175,9 @@ migrate((app) => {
     }
   }
 
-  console.log(`[0169_migration] Concluída deduplicação de alertas. Total de cópias descartadas: ${totalAlertDuplicatesDiscarded}`)
+  console.log(
+    `[0169_migration] Concluída deduplicação de alertas. Total de cópias descartadas: ${totalAlertDuplicatesDiscarded}`,
+  )
 
   // ==============================================================
   // PARTE 2: REPROCESSAR LOTE rb_u6zr2qtcos1ljxd_20261014_29866420
@@ -277,7 +287,10 @@ migrate((app) => {
   }
 
   // Pre-aprovado no MENOR entre previsto e realizado (regra permanente Rotaly)
-  const kmOficial = kmGpsTotal > 0 && kmViarioTotal > 0 ? Math.min(kmViarioTotal, kmGpsTotal) : kmViarioTotal || kmGpsTotal
+  const kmOficial =
+    kmGpsTotal > 0 && kmViarioTotal > 0
+      ? Math.min(kmViarioTotal, kmGpsTotal)
+      : kmViarioTotal || kmGpsTotal
 
   let telemetryRecord = null
   try {
@@ -295,7 +308,10 @@ migrate((app) => {
 
   if (telemetryRecord) {
     telemetryRecord.set('courier_id', courierId)
-    telemetryRecord.set('empresa_id', orders[0] ? orders[0].getString('empresa_id') : '7wo05iyvfcfh01h')
+    telemetryRecord.set(
+      'empresa_id',
+      orders[0] ? orders[0].getString('empresa_id') : '7wo05iyvfcfh01h',
+    )
     telemetryRecord.set('km_gps_total', kmGpsTotal)
     telemetryRecord.set('km_viario_total', kmViarioTotal)
     telemetryRecord.set('km_oficial', kmOficial)
@@ -323,7 +339,9 @@ migrate((app) => {
     })
 
     app.save(telemetryRecord)
-    console.log(`[0169_migration] route_batch_telemetry atualizado para lote ${batchKey}: km_gps=${kmGpsTotal}, km_viario=${kmViarioTotal}, km_oficial=${kmOficial}, pings=${pingsCount}`)
+    console.log(
+      `[0169_migration] route_batch_telemetry atualizado para lote ${batchKey}: km_gps=${kmGpsTotal}, km_viario=${kmViarioTotal}, km_oficial=${kmOficial}, pings=${pingsCount}`,
+    )
   }
 
   // Atualizar batch_telemetry_id nos orders do lote
@@ -354,7 +372,9 @@ migrate((app) => {
     } catch (_) {}
 
     if (anyPings.length > 0 && auditCol) {
-      console.error(`[0169_migration:SANITY_ERROR] pings_count=0 para lote ${batchKey}, mas há pings na janela!`)
+      console.error(
+        `[0169_migration:SANITY_ERROR] pings_count=0 para lote ${batchKey}, mas há pings na janela!`,
+      )
       const auditRec = new Record(auditCol)
       auditRec.set('user_id', '')
       auditRec.set('collection', 'route_batch_telemetry')
@@ -385,7 +405,10 @@ migrate((app) => {
     auditRec.set('action', 'reprocessamento_lote_telemetria_0169')
     auditRec.set('field', 'km_oficial')
     auditRec.set('old_value', 'inexistente')
-    auditRec.set('new_value', `gps=${kmGpsTotal}km, viario=${kmViarioTotal}km, oficial=${kmOficial}km, pings=${pingsCount}`)
+    auditRec.set(
+      'new_value',
+      `gps=${kmGpsTotal}km, viario=${kmViarioTotal}km, oficial=${kmOficial}km, pings=${pingsCount}`,
+    )
     auditRec.set('timestamp', new Date().toISOString())
     auditRec.set('metadata', {
       system_trigger: true,

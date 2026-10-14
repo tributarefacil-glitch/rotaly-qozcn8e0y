@@ -22,13 +22,7 @@ migrate((app) => {
   const auditCol = app.findCollectionByNameOrId('audit_trail')
   let allAlerts = []
   try {
-    allAlerts = app.findRecordsByFilter(
-      'address_alerts',
-      'created != ""',
-      '-created',
-      2000,
-      0,
-    )
+    allAlerts = app.findRecordsByFilter('address_alerts', 'created != ""', '-created', 2000, 0)
   } catch (err) {
     console.log('[0170_migration] Erro ao buscar address_alerts:', err)
   }
@@ -90,14 +84,23 @@ migrate((app) => {
         if (isDuplicate) {
           let keeper = primary
           let toDiscard = candidate
-          if (candidate.getString('status') === 'aprovado' && primary.getString('status') !== 'aprovado') {
+          if (
+            candidate.getString('status') === 'aprovado' &&
+            primary.getString('status') !== 'aprovado'
+          ) {
             keeper = candidate
             toDiscard = primary
           }
 
-          if (toDiscard.getString('status') === 'aprovado' && keeper.getString('status') !== 'aprovado') {
+          if (
+            toDiscard.getString('status') === 'aprovado' &&
+            keeper.getString('status') !== 'aprovado'
+          ) {
             keeper.set('status', 'aprovado')
-            keeper.set('reviewed_at', toDiscard.getString('reviewed_at') || new Date().toISOString())
+            keeper.set(
+              'reviewed_at',
+              toDiscard.getString('reviewed_at') || new Date().toISOString(),
+            )
             keeper.set('reviewed_by', toDiscard.getString('reviewed_by') || '')
             app.save(keeper)
           }
@@ -133,7 +136,9 @@ migrate((app) => {
             app.delete(toDiscard)
             discardedIds.add(toDiscard.id)
             totalAlertDuplicatesDiscarded++
-            console.log(`[0170_migration] Alerta duplicado #${toDiscard.id} descartado (mantido #${keeper.id})`)
+            console.log(
+              `[0170_migration] Alerta duplicado #${toDiscard.id} descartado (mantido #${keeper.id})`,
+            )
           } catch (delErr) {
             console.log(`[0170_migration] Falha ao excluir alerta #${toDiscard.id}:`, delErr)
           }
@@ -146,5 +151,7 @@ migrate((app) => {
     }
   }
 
-  console.log(`[0170_migration] Concluída deduplicação de alertas do passado. Total descartado: ${totalAlertDuplicatesDiscarded}`)
+  console.log(
+    `[0170_migration] Concluída deduplicação de alertas do passado. Total descartado: ${totalAlertDuplicatesDiscarded}`,
+  )
 })
