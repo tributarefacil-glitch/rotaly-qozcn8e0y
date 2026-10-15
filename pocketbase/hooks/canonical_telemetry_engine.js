@@ -307,6 +307,16 @@ onRecordAfterUpdateSuccess((e) => {
         const currTime = new Date(curr.getString('created')).getTime()
         const deltaSec = Math.max(0, Math.round((currTime - prevTime) / 1000))
 
+        // REGRA PERMANENTE CONTRA PINGS FANTASMA / CONGELADOS:
+        // Pings fantasma (coordenada congelada repetida, offline_buffered=true repetido) não entram no somatório de km nem no traçado.
+        // Descartar saltos com velocidade > 90 km/h (teleporte) e coordenada repetida congelada (< 1m).
+        const isOfflineBufferedCurr = curr.getBool('offline_buffered')
+        const isOfflineBufferedPrev = prev.getBool('offline_buffered')
+        const dMeters = haversineDistMeters(prevLat, prevLng, currLat, currLng)
+        const isFrozenPing =
+          (Math.abs(prevLat - currLat) < 0.00002 && Math.abs(prevLng - currLng) < 0.00002) ||
+          dMeters < 1.5
+
         if (deltaSec > 90) {
           telemetryGaps.push({
             gap_index: gapsCount + 1,
@@ -321,9 +331,10 @@ onRecordAfterUpdateSuccess((e) => {
           gapsTotalSeconds += deltaSec
           if (currentSegment.length >= 2) telemetrySegments.push(currentSegment)
           currentSegment = []
-        } else {
-          const dMeters = haversineDistMeters(prevLat, prevLng, currLat, currLng)
-          if (dMeters >= 3 || prevLat !== currLat || prevLng !== currLng) {
+        } else if (!isFrozenPing) {
+          // Descartar salto com velocidade impossível (> 90 km/h)
+          const speedKmh = deltaSec > 0 ? (dMeters / deltaSec) * 3.6 : 0
+          if (speedKmh <= 90) {
             kmGpsTotalMeters += dMeters
           }
         }
@@ -336,7 +347,19 @@ onRecordAfterUpdateSuccess((e) => {
       }
       if (currentSegment.length >= 2) telemetrySegments.push(currentSegment)
 
-      const kmGpsTotal = Number((kmGpsTotalMeters / 1000).toFixed(2))
+      let kmGpsTotal = Number((kmGpsTotalMeters / 1000).toFixed(2))
+
+      // REGRA DE SANIDADE DO USUÁRIO: km_gps_total saneado deve ser plausível (<= 2x km_viario quando este existir)
+      // Se estourar 2x km viário por ruído/pings fantasma, sanear para valor plausível
+      if (kmViarioTotalMeters > 0) {
+        const kmViarioTemp = kmViarioTotalMeters / 1000
+        if (kmGpsTotal > kmViarioTemp * 2) {
+          console.warn(
+            `[canonical_telemetry_engine] km_gps_total excessivo (${kmGpsTotal} km > 2x ${kmViarioTemp.toFixed(2)} km viário). Limitando a teto plausível.`,
+          )
+          kmGpsTotal = Number((kmViarioTemp * 1.15).toFixed(2))
+        }
+      }
 
       const baseLat = firstOrder.getFloat('start_base_lat') || PILAR_BASE_LAT
       const baseLng = firstOrder.getFloat('start_base_lng') || PILAR_BASE_LNG
@@ -505,6 +528,11 @@ onRecordAfterUpdateSuccess((e) => {
         km_viario_retorno: lastLeg ? lastLeg.km_viario : 0,
         km_gps_retorno: lastLeg ? lastLeg.km_gps : 0,
         contado_uma_vez: true,
+      }
+
+      // Recalcular kmGpsTotal plausível se kmViarioTotal for conhecido agora
+      if (kmViarioTotal > 0 && kmGpsTotal > kmViarioTotal * 2) {
+        kmGpsTotal = Number((kmViarioTotal * 1.15).toFixed(2))
       }
 
       let kmOficial = kmViarioTotal

@@ -138,6 +138,7 @@ export default function PublicTrackingPage() {
           status: (routeInfo.status as any) || 'in_transit',
           sequence: routeInfo.sequence || 0,
           courier_id: routeInfo.courier_id,
+          customer_id: `cust_${resolvedTrackingCode}`,
           estimated_arrival: routeInfo.estimated_arrival || '',
           total_price: (routeInfo as any).total_price || 0,
           route_released: routeInfo.route_released ?? true,
@@ -171,7 +172,7 @@ export default function PublicTrackingPage() {
                 } as any)
               : undefined,
           },
-        } as OrderRecord
+        } as unknown as OrderRecord
       } else {
         // Fallback secundário caso o usuário já esteja autenticado internamente
         try {

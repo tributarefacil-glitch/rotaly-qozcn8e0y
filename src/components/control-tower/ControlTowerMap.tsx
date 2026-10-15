@@ -496,9 +496,14 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                         <span className="h-1.5 w-3 rounded-full bg-[#60A5FA] border border-dashed border-[#2563EB] inline-block" />
                         Volta à base
                       </span>
-                      <span className="flex items-center gap-1 font-medium text-rose-400 border-l border-slate-700/80 pl-2">
-                        <span className="h-1.5 w-3 rounded-full bg-rose-500 inline-block" />
-                        Desvio &gt;600m
+                      <span
+                        className="flex items-center gap-1 font-medium text-rose-400 border-l border-slate-700/80 pl-2"
+                        title="Linha vermelha contínua: traçado real dos pings GPS gravados durante desvio"
+                      >
+                        <span className="h-2 w-4 rounded-full bg-[#EF4444] inline-block shadow-sm" />
+                        <span className="text-rose-400 font-semibold">
+                          Linha vermelha (desvio real)
+                        </span>
                       </span>
                       <span className="border-l border-slate-700/80 pl-2 text-slate-300 flex items-center gap-1">
                         <span>🛵/🚗</span>

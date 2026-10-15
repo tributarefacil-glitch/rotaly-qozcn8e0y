@@ -2305,6 +2305,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         const routeStartTimeIso = routeData.order?.route_started_at
         const routeStartMs = routeStartTimeIso ? new Date(routeStartTimeIso).getTime() : 0
 
+        // REGRA PERMANENTE DO USUÁRIO (BUG 2):
+        // Linha AZUL = rota otimizada em vias reais.
+        // Linha VERMELHA = caminho real do entregador desenhado SOMENTE com pings GPS/telemetria
+        // gravados no episódio de desvio (proibido inventar caminho, proibido linha reta conectando pontos,
+        // proibido traçado fictício de volta à base). UMA linha vermelha contínua por episódio.
+        // Pings com offline_buffered=true de coordenada congelada repetida não entram no traçado.
         const telemetryPings = locations
           .filter((loc) => {
             if (loc.user_id !== cId) return false
@@ -2320,45 +2326,96 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               parseSafeTimestamp(b.created || b.updated),
           )
 
-        // COMANDO A: Trilha de desvio (vermelha) alimentada EXCLUSIVAMENTE por pings reais
-        // de locations pelo user_id do entregador no período; lacunas (>90s) = buraco (nunca linha reta).
-        // Se houver lacuna, particionar em múltiplos caminhos sem conectar com linha reta.
-        const devSegments: Array<Array<{ lat: number; lng: number }>> = []
-        let currentDevSegment: Array<{ lat: number; lng: number }> = []
-        let lastPingTs = 0
+        // Filtrar pings inválidos ou congelados repetidos (especialmente offline_buffered repetido)
+        const sanitizedPingsForDev: Array<{ lat: number; lng: number; ts: number }> = []
+        let lastAddedRaw: { lat: number; lng: number } | null = null
 
         telemetryPings.forEach((loc) => {
           const cleanPt = MapDataService.cleanCoords(loc.lat, loc.lng)
-          if (cleanPt) {
-            const ptTs = parseSafeTimestamp(loc.created || loc.updated)
-            if (lastPingTs > 0 && ptTs - lastPingTs > 90 * 1000) {
-              // Lacuna > 90s detectada: quebra de segmento para criar buraco na linha vermelha (nunca linha reta)
-              if (currentDevSegment.length >= 2) {
-                devSegments.push(currentDevSegment)
-              }
-              currentDevSegment = []
-            }
-            lastPingTs = ptTs
+          if (!cleanPt) return
+          const ptTs = parseSafeTimestamp(loc.created || loc.updated)
 
-            const lastAdded = currentDevSegment[currentDevSegment.length - 1]
-            if (
-              !lastAdded ||
-              Math.abs(lastAdded.lat - cleanPt.lat) > 0.00001 ||
-              Math.abs(lastAdded.lng - cleanPt.lng) > 0.00001
-            ) {
-              currentDevSegment.push(cleanPt)
-            }
+          // Descartar se for coordenada congelada repetida (diferença < ~1 metro)
+          if (
+            lastAddedRaw &&
+            Math.abs(lastAddedRaw.lat - cleanPt.lat) < 0.00002 &&
+            Math.abs(lastAddedRaw.lng - cleanPt.lng) < 0.00002
+          ) {
+            return
           }
+
+          lastAddedRaw = cleanPt
+          sanitizedPingsForDev.push({ lat: cleanPt.lat, lng: cleanPt.lng, ts: ptTs })
         })
-        if (currentDevSegment.length >= 2) {
-          devSegments.push(currentDevSegment)
+
+        // Identificar pings em desvio em relação à rota viária planejada (fPoints)
+        // Limiar canônico de desvio: 150m (DEVIATION_THRESHOLD_METERS)
+        const isPingOffPlannedRoute = (lat: number, lng: number): boolean => {
+          if (fPoints.length < 2) return false
+          const nearest = findNearestPointOnRoute({ lat, lng }, fPoints)
+          return nearest.distanceMeters > DEVIATION_THRESHOLD_METERS
         }
 
-        // Caminho contínuo achatado para o histórico e para a polyline principal
-        const rawDevPath = devSegments.length > 0 ? devSegments[0] : []
-        courierTelemetryHistoryMapRef.current.set(cId, devSegments.flat())
+        // Agrupar pings desviados consecutivos em episódios contínuos de desvio
+        // 1 episódio = 1 linha contínua de pings reais. Lacuna > 90s fecha o episódio.
+        const deviationEpisodes: Array<Array<{ lat: number; lng: number }>> = []
+        let currentEpisode: Array<{ lat: number; lng: number }> = []
+        let lastEpPingTs = 0
 
-        // Linha vermelha existe apenas se houver pelo menos 2 pings reais gravados
+        for (let i = 0; i < sanitizedPingsForDev.length; i++) {
+          const ping = sanitizedPingsForDev[i]
+          const isDeviatedPoint = isPingOffPlannedRoute(ping.lat, ping.lng)
+
+          // Quebra por gap temporal (>90s): fecha episódio atual (nunca linha reta)
+          if (lastEpPingTs > 0 && ping.ts - lastEpPingTs > 90 * 1000) {
+            if (currentEpisode.length >= 2) {
+              deviationEpisodes.push([...currentEpisode])
+            }
+            currentEpisode = []
+          }
+          lastEpPingTs = ping.ts
+
+          if (isDeviatedPoint) {
+            // Se iniciando episódio e havia um ponto imediatamente anterior registrado,
+            // inclui o ponto anterior real para ancorar o início do desvio no trajeto
+            if (currentEpisode.length === 0 && i > 0) {
+              const prev = sanitizedPingsForDev[i - 1]
+              currentEpisode.push({ lat: prev.lat, lng: prev.lng })
+            }
+            currentEpisode.push({ lat: ping.lat, lng: ping.lng })
+          } else {
+            // Ponto voltou à rota: se tínhamos episódio ativo, fecha com este ponto real de reconexão
+            if (currentEpisode.length >= 2) {
+              currentEpisode.push({ lat: ping.lat, lng: ping.lng })
+              deviationEpisodes.push([...currentEpisode])
+            }
+            currentEpisode = []
+          }
+        }
+
+        if (currentEpisode.length >= 2) {
+          deviationEpisodes.push([...currentEpisode])
+        }
+
+        // Se o entregador estiver atualmente em desvio detectado em tempo real (routeInfo?.isDeviated)
+        // mas o episódio acima ainda não tiver sido fechado ou tiver 1 ponto, usar o segmento atual dos pings
+        let rawDevPath: Array<{ lat: number; lng: number }> = []
+        if (deviationEpisodes.length > 0) {
+          // Seleciona o episódio mais recente (ou mais longo)
+          rawDevPath = deviationEpisodes[deviationEpisodes.length - 1]
+        } else if (routeData && (routeData as any).isDeviated && sanitizedPingsForDev.length >= 2) {
+          // Fallback seguro: últimos pings do entregador durante o desvio
+          const recentPoints = sanitizedPingsForDev
+            .slice(-10)
+            .map((p) => ({ lat: p.lat, lng: p.lng }))
+          if (recentPoints.length >= 2) {
+            rawDevPath = recentPoints
+          }
+        }
+
+        courierTelemetryHistoryMapRef.current.set(cId, rawDevPath)
+
+        // Linha vermelha existe apenas se houver pelo menos 2 pings reais gravados do episódio de desvio
         const hasDev = rawDevPath.length >= 2
 
         const courierColor = getCourierRouteColor(cId)

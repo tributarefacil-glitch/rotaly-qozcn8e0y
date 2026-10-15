@@ -914,39 +914,6 @@ export const deliveryService = {
       }
     }
   },
-        order_id: string
-        tracking_code: string
-        status: string
-        sequence: number
-        courier_id: string | null
-        courier_first_name: string | null
-        route_released: boolean
-        route_started: boolean
-        route_finished: boolean
-        estimated_arrival: string
-        destination: { name: string; lat: number; lng: number; address: string } | null
-        courier_location: {
-          lat: number
-          lng: number
-          speed: number
-          created: string
-          age_seconds: number
-        } | null
-        is_gps_active: boolean
-        stops_before: { sequence: number; lat: number; lng: number }[]
-        total_stops_before: number
-        completed_stops_before: number
-        queue_position: number
-        total_deliveries_in_batch: number
-      }>(fullUrl, {
-        method: 'GET',
-        requestKey: null,
-      })
-    } catch (err) {
-      console.warn('Erro ao carregar rota pública:', err)
-      return null
-    }
-  },
 
   async createOrder(data: Partial<OrderRecord>) {
     const activeCompanyId = data.empresa_id || this.getActiveCompanyId()

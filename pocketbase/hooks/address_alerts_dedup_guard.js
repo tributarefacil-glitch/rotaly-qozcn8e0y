@@ -12,6 +12,43 @@ onRecordBeforeCreate((e) => {
     return
   }
 
+  // 0. GUARDA DE REJEIÇÃO IMEDIATA:
+  // Se o alerta estiver a <150m da base ou accuracy >50m, rejeitar imediatamente
+  try {
+    const PILAR_BASE_LAT = -22.6977499
+    const PILAR_BASE_LNG = -43.2936013
+    const parsedSuggInit = JSON.parse(alertRecord.getString('suggested_address') || '{}')
+    const sLat = Number(parsedSuggInit.lat || 0)
+    const sLng = Number(parsedSuggInit.lng || 0)
+    const sAcc = Number(parsedSuggInit.accuracy || parsedSuggInit.accuracy_meters || 0)
+
+    if (sLat !== 0 && sLng !== 0) {
+      // Haversine até a base oficial
+      const R = 6371000
+      const toRad = (d) => (d * Math.PI) / 180
+      const dLatB = toRad(sLat - PILAR_BASE_LAT)
+      const dLonB = toRad(sLng - PILAR_BASE_LNG)
+      const aB =
+        Math.sin(dLatB / 2) * Math.sin(dLatB / 2) +
+        Math.cos(toRad(PILAR_BASE_LAT)) *
+          Math.cos(toRad(sLat)) *
+          Math.sin(dLonB / 2) *
+          Math.sin(dLonB / 2)
+      const distToBase = R * 2 * Math.atan2(Math.sqrt(aB), Math.sqrt(1 - aB))
+
+      if (distToBase < 150) {
+        throw new BadRequestError('Alerta rejeitado: coordenada a menos de 150m da base oficial.')
+      }
+      if (sAcc > 50) {
+        throw new BadRequestError('Alerta rejeitado: precisão GPS insuficiente (accuracy > 50m).')
+      }
+    }
+  } catch (geoCheckErr) {
+    if (geoCheckErr && geoCheckErr.name === 'BadRequestError') {
+      throw geoCheckErr
+    }
+  }
+
   // Haversine inline para cálculo em metros
   const haversineDistMeters = (lat1, lon1, lat2, lon2) => {
     const R = 6371000
@@ -52,7 +89,7 @@ onRecordBeforeCreate((e) => {
 
       let isDuplicate = false
       if (existingStatus === 'pendente') {
-        // Já tem alerta pendente do mesmo cliente: unificar
+        // Já tem alerta pendente do mesmo cliente: unificar sempre
         isDuplicate = true
       } else {
         // Checar proximidade física (< 30 metros) dentro da janela de 6 horas
@@ -69,6 +106,9 @@ onRecordBeforeCreate((e) => {
           if (dist <= 30) {
             isDuplicate = true
           }
+        } else if (newLat === 0 && newLng === 0 && exLat === 0 && exLng === 0) {
+          // Ambos sem coordenadas específicas para o mesmo cliente na janela: duplicação de evento
+          isDuplicate = true
         }
       }
 

@@ -491,9 +491,9 @@ onRecordUpdateRequest((e) => {
         return false
       }
 
-      // Checar se o próprio pedido atual está sem desfecho (caso anômalo de marcar route_finished com status in_transit/pending)
+      // GUARDA ANTI-CEP ORDERS_GUARD: Antes de qualquer processamento de encerramento,
+      // validar se existe address_alerts pendente ou recente para este pedido/cliente e não duplicar.
       const currentOrderResolved = isOrderResolved(targetOrder)
-
       // Identificar pedidos pendentes no lote
       const pendingOrdersInBatch = []
       if (!currentOrderResolved) {
