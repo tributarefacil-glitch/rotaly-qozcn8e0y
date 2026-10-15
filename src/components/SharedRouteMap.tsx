@@ -361,70 +361,126 @@ export const SharedRouteMap: React.FC<SharedRouteMapProps> = ({
       hasCoords = true
     }
 
-    // (D) LINHA DE DESVIO: SOMENTE PINGS REAIS A PARTIR DO PONTO DO DESVIO
-    // Lacuna de telemetria (>90s) = buraco (gap / nunca linha reta)
-    // Se afastamento da rota otimizada for > deviationThresholdMeters, colore em vermelho
-    const sanitizedPings = pings
+    // (D) LINHA DE DESVIO: UMA LINHA VERMELHA CONTÍNUA COM OS PINGS REAIS DO EPISÓDIO
+    // REGRA C:
+    // 1. Desvio desenha UMA linha vermelha única com os pings reais do episódio — PROIBIDO uma linha por evento.
+    // 2. Pings com offline_buffered=true de coordenada congelada repetida não podem entrar no traçado nem no somatório (descartar).
+    // 3. Lacunas de telemetria (>90s) = buraco discreto (gap / nunca linha reta contínua fictícia).
+
+    // Filtrar pings inválidos e remover duplicatas consecutivas de coordenadas congeladas (especialmente offline_buffered repetido)
+    const rawSortedPings = pings
       .filter((p) => typeof p.lat === 'number' && typeof p.lng === 'number' && !isNaN(p.lat))
       .sort((a, b) => new Date(a.created).getTime() - new Date(b.created).getTime())
 
+    const sanitizedPings: LocationRecord[] = []
+    for (const pt of rawSortedPings) {
+      if (sanitizedPings.length === 0) {
+        sanitizedPings.push(pt)
+        continue
+      }
+      const prev = sanitizedPings[sanitizedPings.length - 1]
+      const isIdenticalCoord =
+        Math.abs(prev.lat - pt.lat) < 0.0000001 && Math.abs(prev.lng - pt.lng) < 0.0000001
+
+      // Descartar pings de coordenada congelada repetida (especialmente com offline_buffered)
+      if (isIdenticalCoord) {
+        continue
+      }
+      sanitizedPings.push(pt)
+    }
+
     if (sanitizedPings.length >= 2) {
-      for (let i = 0; i < sanitizedPings.length - 1; i++) {
-        const p1 = sanitizedPings[i]
-        const p2 = sanitizedPings[i + 1]
-        const t1 = new Date(p1.created).getTime()
-        const t2 = new Date(p2.created).getTime()
-        const dtSec = Math.max(0, (t2 - t1) / 1000)
+      // Identificar pings desviados da rota otimizada (> deviationThresholdMeters)
+      const isPingDeviated = (lat: number, lng: number) => {
+        if (roadGeometry.length < 2) return false
+        let minD = Infinity
+        for (let w = 0; w < roadGeometry.length - 1; w++) {
+          const w1 = roadGeometry[w]
+          const w2 = roadGeometry[w + 1]
+          const d = distPointToSegmentMeters(lat, lng, w1.lat, w1.lng, w2.lat, w2.lng)
+          if (d < minD) minD = d
+        }
+        return minD > deviationThresholdMeters
+      }
 
-        // Lacuna de telemetria = buraco (desenha tracejado discreto cinza ou pula; NUNCA linha reta contínua)
-        if (dtSec > 90) {
-          const gapLine = new winGoogle.maps.Polyline({
-            path: [
-              { lat: p1.lat, lng: p1.lng },
-              { lat: p2.lat, lng: p2.lng },
-            ],
-            strokeOpacity: 0,
-            icons: [
-              {
-                icon: {
-                  path: 'M 0,-1 0,1',
-                  strokeOpacity: 0.7,
-                  strokeColor: '#94A3B8',
-                  scale: 2.5,
+      // Agrupar pings desviados consecutivos em episódios contínuos de desvio (1 episódio = 1 polilinha vermelha)
+      const deviationEpisodes: Array<Array<{ lat: number; lng: number }>> = []
+      let currentEpisode: Array<{ lat: number; lng: number }> = []
+
+      for (let i = 0; i < sanitizedPings.length; i++) {
+        const ping = sanitizedPings[i]
+        const ptCoords = { lat: ping.lat, lng: ping.lng }
+        safeExtendBounds(bounds, ptCoords)
+        hasCoords = true
+
+        const ptDeviated = isPingDeviated(ping.lat, ping.lng)
+
+        // Verificar gap temporal com o anterior
+        if (i > 0) {
+          const prevPing = sanitizedPings[i - 1]
+          const t1 = new Date(prevPing.created).getTime()
+          const t2 = new Date(ping.created).getTime()
+          const dtSec = Math.max(0, (t2 - t1) / 1000)
+
+          if (dtSec > 90) {
+            // Lacuna de telemetria: fecha episódio atual de desvio se houver
+            if (currentEpisode.length >= 2) {
+              deviationEpisodes.push([...currentEpisode])
+            }
+            currentEpisode = []
+
+            // Traço pontilhado discreto para o gap
+            const gapLine = new winGoogle.maps.Polyline({
+              path: [
+                { lat: prevPing.lat, lng: prevPing.lng },
+                { lat: ping.lat, lng: ping.lng },
+              ],
+              strokeOpacity: 0,
+              icons: [
+                {
+                  icon: {
+                    path: 'M 0,-1 0,1',
+                    strokeOpacity: 0.7,
+                    strokeColor: '#94A3B8',
+                    scale: 2.5,
+                  },
+                  offset: '0',
+                  repeat: '12px',
                 },
-                offset: '0',
-                repeat: '12px',
-              },
-            ],
-            zIndex: 140,
-            map,
-          })
-          polylinesRef.current.push(gapLine)
-          continue
-        }
-
-        // Medir distância de p2 à rota otimizada
-        let isDeviated = false
-        if (roadGeometry.length >= 2) {
-          let minD = Infinity
-          for (let w = 0; w < roadGeometry.length - 1; w++) {
-            const w1 = roadGeometry[w]
-            const w2 = roadGeometry[w + 1]
-            const d = distPointToSegmentMeters(p2.lat, p2.lng, w1.lat, w1.lng, w2.lat, w2.lng)
-            if (d < minD) minD = d
-          }
-          if (minD > deviationThresholdMeters) {
-            isDeviated = true
+              ],
+              zIndex: 140,
+              map,
+            })
+            polylinesRef.current.push(gapLine)
           }
         }
 
-        // Onde ocorreu o desvio, fica uma nova linha colorida vermelha mostrando o desvio
-        if (isDeviated) {
+        if (ptDeviated) {
+          if (currentEpisode.length === 0 && i > 0) {
+            // Conectar o ponto de transição anterior da rota ao início do desvio
+            const prevPing = sanitizedPings[i - 1]
+            currentEpisode.push({ lat: prevPing.lat, lng: prevPing.lng })
+          }
+          currentEpisode.push(ptCoords)
+        } else {
+          if (currentEpisode.length >= 2) {
+            // Adicionar o ponto de retorno à rota para fechar o traçado do desvio
+            currentEpisode.push(ptCoords)
+            deviationEpisodes.push([...currentEpisode])
+          }
+          currentEpisode = []
+        }
+      }
+
+      if (currentEpisode.length >= 2) {
+        deviationEpisodes.push([...currentEpisode])
+      }
+
+      // Renderizar UMA polilinha vermelha contínua por episódio de desvio
+      deviationEpisodes.forEach((episodePath) => {
+        if (episodePath.length >= 2) {
           const devPolyline = new winGoogle.maps.Polyline({
-            path: [
-              { lat: p1.lat, lng: p1.lng },
-              { lat: p2.lat, lng: p2.lng },
-            ],
+            path: episodePath,
             geodesic: false,
             strokeColor: '#DC2626', // Vermelho desvio
             strokeOpacity: 0.95,
@@ -434,11 +490,7 @@ export const SharedRouteMap: React.FC<SharedRouteMapProps> = ({
           })
           polylinesRef.current.push(devPolyline)
         }
-
-        safeExtendBounds(bounds, { lat: p1.lat, lng: p1.lng })
-        safeExtendBounds(bounds, { lat: p2.lat, lng: p2.lng })
-        hasCoords = true
-      }
+      })
     }
 
     // (E) VEÍCULO ANIMADO EM TEMPO REAL

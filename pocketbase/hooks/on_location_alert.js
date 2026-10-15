@@ -368,10 +368,20 @@ onRecordAfterCreateSuccess((e) => {
   // (a) Avaliar apenas sinais GPS recentes (descartar sinais com mais de 3 minutos)
   // (b) Exigir N (2) pontos consecutivos fora da rota antes de disparar alarme (debounce)
   // (c) Limiar intocável de 600 metros mantido rigorosamente
+  // (d) 1 evento = 1 episódio, dedupe por courier enquanto o episódio estiver aberto (< 5 minutos).
+  //     Em vez de criar dezenas de registros repetidos no mesmo minuto, atualiza o episódio aberto
+  //     (mantendo a maior distância de desvio, atualizando updated e coordenadas finais).
   const nowMs = Date.now()
   const isGpsSignalFresh = nowMs - currentLocTime <= MAX_GPS_SIGNAL_AGE_MS
 
-  if (speedKmh > 10 && prevLat && prevLng && isGpsSignalFresh) {
+  // Pings repetidos de coordenada congelada ou buffer offline não criam eventos de desvio
+  const isFrozenCoordWithPrev =
+    prevLat !== null &&
+    prevLng !== null &&
+    Math.abs(prevLat - lat) < 0.0000001 &&
+    Math.abs(prevLng - lng) < 0.0000001
+
+  if (speedKmh > 10 && prevLat && prevLng && isGpsSignalFresh && !isFrozenCoordWithPrev) {
     if (minDistanceToRouteCorridor >= DEVIATION_THRESHOLD_METERS) {
       // Debounce: verificar se o ponto anterior também estava a >= 600m da rota
       let prevIsDeviated = false
@@ -406,40 +416,88 @@ onRecordAfterCreateSuccess((e) => {
 
       // Disparar apenas se houver pontos consecutivos fora da rota
       if (prevIsDeviated) {
-        // Cooldown de 5 minutos para alertas de desvio de rota do mesmo entregador
-        let recentDevAlerts = []
+        // Formatar timestamp no padrão SQLite/PocketBase: YYYY-MM-DD HH:MM:SS (sem 'T' nem 'Z')
+        const formatDbDate = (d) => {
+          const pad = (n) => String(n).padStart(2, '0')
+          return (
+            d.getUTCFullYear() +
+            '-' +
+            pad(d.getUTCMonth() + 1) +
+            '-' +
+            pad(d.getUTCDate()) +
+            ' ' +
+            pad(d.getUTCHours()) +
+            ':' +
+            pad(d.getUTCMinutes()) +
+            ':' +
+            pad(d.getUTCSeconds())
+          )
+        }
+
+        // Buscar se já existe episódio aberto de route_deviation para este courier nos últimos 5 minutos
+        // (checar por created OU updated >= fiveMinAgoStr)
+        const fiveMinAgoStr = formatDbDate(new Date(currentLocTime - 5 * 60 * 1000))
+        let existingDevEpisode = null
         try {
-          const fiveMinAgo = new Date(currentLocTime - 5 * 60 * 1000).toISOString()
-          recentDevAlerts = $app.findRecordsByFilter(
+          const recentDevAlerts = $app.findRecordsByFilter(
             'off_route_events',
-            `courier_id = '${courierId}' && event_type = 'route_deviation' && created >= '${fiveMinAgo}'`,
-            '-created',
+            `courier_id = '${courierId}' && event_type = 'route_deviation' && updated >= '${fiveMinAgoStr}'`,
+            '-updated',
             1,
             0,
           )
-        } catch (_) {}
+          if (recentDevAlerts && recentDevAlerts.length > 0) {
+            existingDevEpisode = recentDevAlerts[0]
+          }
+        } catch (errFilter) {
+          console.log('Aviso ao consultar recentDevAlerts:', errFilter)
+        }
 
-        if (recentDevAlerts.length === 0) {
+        const currentDevMeters = Math.round(minDistanceToRouteCorridor)
+
+        if (existingDevEpisode) {
+          // EPISÓDIO ABERTO JÁ EXISTE: ATUALIZAR AO INVÉS DE DUPLICAR
+          try {
+            const oldMaxDev = existingDevEpisode.getInt('distance_deviation_meters') || 0
+            if (currentDevMeters > oldMaxDev) {
+              existingDevEpisode.set('distance_deviation_meters', currentDevMeters)
+            }
+            existingDevEpisode.set('lat', lat)
+            existingDevEpisode.set('lng', lng)
+            const episodeCreatedStr = existingDevEpisode.getString('created')
+            const episodeCreatedMs = new Date(episodeCreatedStr).getTime()
+            const elapsedSec = Math.max(1, Math.round((currentLocTime - episodeCreatedMs) / 1000))
+            existingDevEpisode.set('stop_duration_seconds', elapsedSec)
+            existingDevEpisode.set(
+              'notes',
+              `Desvio de rota superior a 600m em andamento (máx +${Math.max(currentDevMeters, oldMaxDev)}m fora do corredor viário, duração do episódio: ${elapsedSec}s). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+            )
+            $app.save(existingDevEpisode)
+          } catch (errUpDev) {
+            console.log('Error updating existing deviation episode:', errUpDev)
+          }
+        } else {
+          // INÍCIO DE UM NOVO EPISÓDIO DE DESVIO (1 evento = 1 episódio)
           try {
             const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
             const ev = new Record(offRouteCol)
             ev.set('courier_id', courierId)
             ev.set('order_id', anchorOrder.id)
             ev.set('event_type', 'route_deviation')
-            ev.set('distance_deviation_meters', Math.round(minDistanceToRouteCorridor))
+            ev.set('distance_deviation_meters', currentDevMeters)
             ev.set('stop_duration_seconds', 0)
             ev.set('lat', lat)
             ev.set('lng', lng)
             ev.set(
               'notes',
-              `Desvio de rota superior a 600m detectado (+${Math.round(minDistanceToRouteCorridor)}m fora do corredor viário após pontos consecutivos). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+              `Desvio de rota superior a 600m detectado (+${currentDevMeters}m fora do corredor viário após pontos consecutivos). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
             )
             $app.save(ev)
           } catch (errDev) {
             console.log('Error saving deviation event:', errDev)
           }
 
-          // Notificação entregador
+          // Notificação entregador (apenas 1 vez por novo episódio de desvio)
           try {
             const notifCol = $app.findCollectionByNameOrId('notifications')
             const notif = new Record(notifCol)
@@ -449,13 +507,13 @@ onRecordAfterCreateSuccess((e) => {
             notif.set('title', '🚨 Alerta de Desvio de Rota (>600m)')
             notif.set(
               'message',
-              `Você está fora do traçado previsto do pedido ${trackingCode} (+${Math.round(minDistanceToRouteCorridor)}m). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+              `Você está fora do traçado previsto do pedido ${trackingCode} (+${currentDevMeters}m). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
             )
             notif.set('is_read', false)
             $app.save(notif)
           } catch (_) {}
 
-          // Notificação vendedor
+          // Notificação vendedor (apenas 1 vez por novo episódio de desvio)
           if (sellerId) {
             try {
               const notifCol = $app.findCollectionByNameOrId('notifications')

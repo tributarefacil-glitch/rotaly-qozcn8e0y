@@ -183,10 +183,15 @@ class OfflineTelemetryBufferService {
       const distMeters = haversineDistanceMeters(last.lat, last.lng, point.lat, point.lng)
       const isWeak = (point.accuracy ?? 2000) >= 500 || (last.accuracy ?? 2000) >= 500
 
+      // REGRA: Nunca empilhar coordenada idêntica consecutiva no buffer offline
+      const isIdenticalCoords =
+        Math.abs(last.lat - point.lat) < 0.0000001 && Math.abs(last.lng - point.lng) < 0.0000001
+
       // Deduplicação defensiva no enfileiramento:
-      // Se a coordenada mudou menos de 10m OU o fix continua fraco/sem-fix (>=500m) em intervalo < 30s:
+      // Se coordenada for idêntica OU mudou menos de 10m OU fix fraco (<30m / 60s):
       // Apenas atualiza o último ponto ao invés de empilhar duplicatas.
       if (
+        isIdenticalCoords ||
         (distMeters < DEDUPLICATION_MAX_DISTANCE_METERS &&
           timeDiff < DEDUPLICATION_MIN_INTERVAL_MS) ||
         (isWeak && distMeters < 30 && timeDiff < 60 * 1000)
@@ -336,7 +341,8 @@ class OfflineTelemetryBufferService {
       // 1. Ordenação cronológica estrita: do mais antigo para o mais recente
       points.sort((a, b) => a.timestamp - b.timestamp)
 
-      // 2. Deduplicação defensiva no envio
+      // 2. Deduplicação defensiva no envio:
+      // NUNCA reenviar coordenada idêntica consecutiva (descarta idênticos e jitter)
       const deduplicatedPoints: OfflineTelemetryPoint[] = []
       for (const pt of points) {
         if (deduplicatedPoints.length === 0) {
@@ -352,7 +358,16 @@ class OfflineTelemetryBufferService {
           pt.lng,
         )
 
-        if (dist < DEDUPLICATION_MAX_DISTANCE_METERS && dt < DEDUPLICATION_MIN_INTERVAL_MS) {
+        const isExactSameCoord =
+          Math.abs(lastSentOrQueued.lat - pt.lat) < 0.0000001 &&
+          Math.abs(lastSentOrQueued.lng - pt.lng) < 0.0000001
+
+        if (
+          isExactSameCoord ||
+          (dist < DEDUPLICATION_MAX_DISTANCE_METERS && dt < DEDUPLICATION_MIN_INTERVAL_MS)
+        ) {
+          // Marca o ID duplicado como consumido para não ficar preso na fila
+          sentIds.push(pt.id)
           lastSentOrQueued.timestamp = Math.max(lastSentOrQueued.timestamp, pt.timestamp)
           continue
         }

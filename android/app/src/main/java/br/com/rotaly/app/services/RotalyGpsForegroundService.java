@@ -318,9 +318,27 @@ public class RotalyGpsForegroundService extends Service {
             String queueStr = prefs.getString(PREF_OFFLINE_QUEUE, "[]");
             JSONArray arr = new JSONArray(queueStr);
 
+            double lat = location.getLatitude();
+            double lng = location.getLongitude();
+
+            // REGRA: Nunca enfileirar coordenada idêntica consecutiva no buffer offline
+            if (arr.length() > 0) {
+                JSONObject lastItem = arr.getJSONObject(arr.length() - 1);
+                double lastLat = lastItem.optDouble("lat", Double.NaN);
+                double lastLng = lastItem.optDouble("lng", Double.NaN);
+                if (Math.abs(lastLat - lat) < 0.0000001 && Math.abs(lastLng - lng) < 0.0000001) {
+                    // Atualizar apenas o timestamp do último item ao invés de duplicar
+                    lastItem.put("timestamp", originalTimestamp);
+                    if (location.hasSpeed()) lastItem.put("speed", location.getSpeed());
+                    if (location.hasAccuracy()) lastItem.put("accuracy", location.getAccuracy());
+                    prefs.edit().putString(PREF_OFFLINE_QUEUE, arr.toString()).apply();
+                    return;
+                }
+            }
+
             JSONObject item = new JSONObject();
-            item.put("lat", location.getLatitude());
-            item.put("lng", location.getLongitude());
+            item.put("lat", lat);
+            item.put("lng", lng);
             item.put("speed", location.hasSpeed() ? location.getSpeed() : 0.0);
             item.put("heading", location.hasBearing() ? location.getBearing() : 0.0);
             item.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : 10.0);
@@ -357,10 +375,25 @@ public class RotalyGpsForegroundService extends Service {
                 SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS'Z'", Locale.US);
                 sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
 
-                JSONArray remaining = new JSONArray();
+                int firstFailedIndex = -1;
+                double lastSentLat = Double.NaN;
+                double lastSentLng = Double.NaN;
 
                 for (int i = 0; i < arr.length(); i++) {
                     JSONObject item = arr.getJSONObject(i);
+                    double itemLat = item.optDouble("lat", Double.NaN);
+                    double itemLng = item.optDouble("lng", Double.NaN);
+
+                    // GUARD: Nunca reenviar coordenada idêntica consecutiva da fila
+                    if (!Double.isNaN(lastSentLat) && !Double.isNaN(lastSentLng)
+                            && Math.abs(lastSentLat - itemLat) < 0.0000001
+                            && Math.abs(lastSentLng - itemLng) < 0.0000001) {
+                        // Descarta/consome duplicata consecutiva idêntica sem disparar requisição ao backend
+                        continue;
+                    }
+
+                    boolean itemSuccess = false;
+                    boolean shouldDiscardOnError = false;
                     try {
                         URL endpoint = new URL(cleanUrl + "/api/collections/locations/records");
                         HttpURLConnection conn = (HttpURLConnection) endpoint.openConnection();
@@ -375,8 +408,8 @@ public class RotalyGpsForegroundService extends Service {
 
                         JSONObject payload = new JSONObject();
                         payload.put("user_id", userId);
-                        payload.put("lat", item.getDouble("lat"));
-                        payload.put("lng", item.getDouble("lng"));
+                        payload.put("lat", itemLat);
+                        payload.put("lng", itemLng);
                         payload.put("speed", item.optDouble("speed", 0.0));
                         payload.put("heading", item.optDouble("heading", 0.0));
                         payload.put("accuracy", item.optDouble("accuracy", 10.0));
@@ -391,25 +424,38 @@ public class RotalyGpsForegroundService extends Service {
 
                         int code = conn.getResponseCode();
                         conn.disconnect();
-                        if (code < 200 || code >= 300) {
-                            // Se falhou, manter da posição atual em diante
-                            for (int k = i; k < arr.length(); k++) {
-                                remaining.put(arr.getJSONObject(k));
-                            }
-                            break;
+                        if (code >= 200 && code < 300) {
+                            itemSuccess = true;
+                            lastSentLat = itemLat;
+                            lastSentLng = itemLng;
+                        } else if (code == 400) {
+                            // 400 Bad Request: payload inválido/rejeitado permanentemente pelo backend — descartar item para evitar loop
+                            shouldDiscardOnError = true;
+                            Log.w(TAG, "Item do buffer rejeitado com HTTP 400 — descartando para evitar loop.");
                         }
                     } catch (Exception sendErr) {
-                        for (int k = i; k < arr.length(); k++) {
-                            remaining.put(arr.getJSONObject(k));
-                        }
+                        Log.w(TAG, "Falha de rede ao descarregar item " + i + " do buffer:", sendErr);
+                    }
+
+                    if (!itemSuccess && !shouldDiscardOnError) {
+                        // Falha de rede / 5xx transitória: interrompe o loop e mantém a partir deste item
+                        firstFailedIndex = i;
                         break;
                     }
                 }
 
+                JSONArray remaining = new JSONArray();
+                if (firstFailedIndex >= 0) {
+                    for (int k = firstFailedIndex; k < arr.length(); k++) {
+                        remaining.put(arr.getJSONObject(k));
+                    }
+                }
+                // Se firstFailedIndex == -1, todos os itens foram consumidos/enviados ou descartados com 400!
+
                 prefs.edit().putString(PREF_OFFLINE_QUEUE, remaining.toString()).apply();
-                Log.i(TAG, "Flush de fila offline concluído. Restantes: " + remaining.length());
+                Log.i(TAG, "Flush de fila offline concluído. Consumidos: " + (arr.length() - remaining.length()) + ", Restantes: " + remaining.length());
             } catch (Exception e) {
-                Log.w(TAG, "Erro ao esvaziar fila offline:", e);
+                Log.e(TAG, "Erro ao esvaziar fila offline:", e);
             }
         });
     }

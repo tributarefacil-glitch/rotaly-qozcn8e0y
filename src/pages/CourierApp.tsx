@@ -983,6 +983,16 @@ export default function CourierApp() {
         const distanceDiffMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
         const isWeakFix = (accuracyVal ?? 2000) >= 500 || (last.accuracy ?? 2000) >= 500
 
+        // REGRA A: NUNCA reenviar coordenada idêntica consecutiva
+        const isExactSameCoord =
+          Math.abs(last.lat - lat) < 0.0000001 && Math.abs(last.lng - lng) < 0.0000001
+
+        if (isExactSameCoord && distanceDiffMeters < 0.5) {
+          // Coordenada congelada/idêntica: apenas atualiza o timestamp da referência local sem emitir ping redundante
+          lastRecordedGpsRef.current = { lat, lng, accuracy: accuracyVal, timestamp: now }
+          return
+        }
+
         // Dispara se atingiu o deslocamento de 15-20m (distanceThresholdMeters) OU se atingiu o tempo máximo (30s)
         const triggeredByDistance =
           distanceDiffMeters >= distanceThresholdMeters && timeDiffSeconds >= 3

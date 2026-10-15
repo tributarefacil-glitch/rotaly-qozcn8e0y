@@ -403,6 +403,14 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
       const prev = segValid[segValid.length - 1]
       const curr = segPts[i]
 
+      // REGRA: Descartar pings de coordenadas idênticas consecutivas congeladas (buffer offline duplicado)
+      const isIdentical =
+        Math.abs(curr.lat - prev.lat) < 0.0000001 && Math.abs(curr.lng - prev.lng) < 0.0000001
+      if (isIdentical) {
+        noiseCount++
+        continue
+      }
+
       const tPrev = new Date(prev.created).getTime()
       const tCurr = new Date(curr.created).getTime()
       const dtSeconds = Math.max(0.1, (tCurr - tPrev) / 1000)
