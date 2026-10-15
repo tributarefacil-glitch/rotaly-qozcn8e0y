@@ -126,23 +126,54 @@ export default function PublicTrackingPage() {
     setErrorMsg(null)
     try {
       // Executa as consultas com tolerância a falhas individuais
+      // BUG 1: O endpoint /backend/v1/public-track/:code é fonte única para anônimos
+      // Executa via backend com privilégio de sistema e devolve DTO sanitizado mínimo.
+      const routeInfo = await deliveryService.getPublicTrackingRoute(resolvedTrackingCode)
       let orderData: OrderRecord | null = null
-      let routeInfo: any = null
 
-      try {
-        const [orderResult, routeResult] = await Promise.allSettled([
-          deliveryService.getOrderByTrackingCode(resolvedTrackingCode),
-          deliveryService.getPublicTrackingRoute(resolvedTrackingCode),
-        ])
-
-        orderData = orderResult.status === 'fulfilled' ? orderResult.value : null
-        routeInfo = routeResult.status === 'fulfilled' ? routeResult.value : null
-      } catch (callErr) {
-        console.warn('Erro na consulta inicial de tracking:', callErr)
-      }
-
-      // Fallback robusto se endpoint /route falhou ou retornou nulo: busca direta por tracking code
-      if (!orderData) {
+      if (routeInfo && (routeInfo.order_id || routeInfo.tracking_code)) {
+        orderData = {
+          id: routeInfo.order_id || `pub_${resolvedTrackingCode}`,
+          tracking_code: routeInfo.tracking_code || resolvedTrackingCode,
+          status: (routeInfo.status as any) || 'in_transit',
+          sequence: routeInfo.sequence || 0,
+          courier_id: routeInfo.courier_id,
+          estimated_arrival: routeInfo.estimated_arrival || '',
+          total_price: (routeInfo as any).total_price || 0,
+          route_released: routeInfo.route_released ?? true,
+          route_started: routeInfo.route_started ?? true,
+          route_finished: routeInfo.route_finished ?? false,
+          created: new Date().toISOString(),
+          updated: new Date().toISOString(),
+          collectionId: 'orders',
+          collectionName: 'orders',
+          expand: {
+            customer_id: routeInfo.destination
+              ? ({
+                  id: `cust_${resolvedTrackingCode}`,
+                  name: routeInfo.destination.name,
+                  address: routeInfo.destination.address,
+                  lat: routeInfo.destination.lat,
+                  lng: routeInfo.destination.lng,
+                  phone: '',
+                  created: '',
+                  updated: '',
+                  collectionId: 'customers',
+                  collectionName: 'customers',
+                } as any)
+              : undefined,
+            courier_id: routeInfo.courier_first_name
+              ? ({
+                  id: routeInfo.courier_id || '',
+                  name: routeInfo.courier_first_name,
+                  collectionId: 'users',
+                  collectionName: 'users',
+                } as any)
+              : undefined,
+          },
+        } as OrderRecord
+      } else {
+        // Fallback secundário caso o usuário já esteja autenticado internamente
         try {
           orderData = await deliveryService.getOrderByTrackingCode(resolvedTrackingCode)
         } catch (fbErr) {

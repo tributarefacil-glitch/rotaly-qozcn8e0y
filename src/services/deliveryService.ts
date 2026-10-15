@@ -775,150 +775,84 @@ export const deliveryService = {
     const code = trackingCode.trim().toUpperCase()
     if (!code) return null
 
+    // 1. Endpoint público canônico /backend/v1/public-track/:code (FONTE ÚNICA segura para anônimos)
+    // Executa via $app no backend com privilégio de sistema e devolve DTO sanitizado mínimo.
     try {
-      // 1. Busca direta exata na coleção orders (com expansão completa)
-      // Nota: o query param tracking_code é passado explicitamente para satisfazer a regra @request.query.tracking_code
-      const list = await pb.collection<OrderRecord>('orders').getList(1, 1, {
-        filter: `tracking_code = '${code}'`,
-        expand: 'customer_id,courier_id,seller_id',
-        tracking_code: code,
-        requestKey: null,
-      } as any)
-      if (list.items[0]) return list.items[0]
-    } catch (err) {
-      console.warn('Erro ao buscar pedido com expand por tracking_code na coleção orders:', err)
-      // Fallback de resiliência: se a expansão falhar (ex: por regra de RLS em coleção relacionada),
-      // busca o pedido puro sem expand para que a tela não quebre.
-      try {
-        const listPure = await pb.collection<OrderRecord>('orders').getList(1, 1, {
-          filter: `tracking_code = '${code}'`,
-          tracking_code: code,
-          requestKey: null,
-        } as any)
-        if (listPure.items[0]) {
-          const rawOrder = listPure.items[0]
-          // Tentar carregar cliente e courier isoladamente de forma tolerante a falhas
-          let cust: CustomerRecord | undefined
-          let cour: UserRecord | undefined
-          let sel: UserRecord | undefined
-
-          if (rawOrder.customer_id) {
-            try {
-              cust = await pb
-                .collection<CustomerRecord>('customers')
-                .getOne(rawOrder.customer_id, { requestKey: null })
-            } catch {
-              /* intentionally ignored */
-            }
-          }
-          if (rawOrder.courier_id) {
-            try {
-              cour = await pb
-                .collection<UserRecord>('users')
-                .getOne(rawOrder.courier_id, { requestKey: null })
-            } catch {
-              /* intentionally ignored */
-            }
-          }
-          if (rawOrder.seller_id) {
-            try {
-              sel = await pb
-                .collection<UserRecord>('users')
-                .getOne(rawOrder.seller_id, { requestKey: null })
-            } catch {
-              /* intentionally ignored */
-            }
-          }
-
-          rawOrder.expand = {
-            ...(rawOrder.expand || {}),
-            ...(cust ? { customer_id: cust } : {}),
-            ...(cour ? { courier_id: cour } : {}),
-            ...(sel ? { seller_id: sel } : {}),
-          }
-          return rawOrder
-        }
-      } catch (pureErr) {
-        console.warn('Erro na busca de pedido sem expand:', pureErr)
-      }
-    }
-
-    try {
-      // 2. Fallback caso a formatação tenha espaçamento ou case ligeiramente diferente
-      const listFuzzy = await pb.collection<OrderRecord>('orders').getList(1, 1, {
-        filter: `tracking_code ~ '${code}' || tracking_code = '${code}'`,
-        expand: 'customer_id,courier_id,seller_id',
-        tracking_code: code,
-        requestKey: null,
-      } as any)
-      if (listFuzzy.items[0]) return listFuzzy.items[0]
-    } catch (err) {
-      console.warn('Erro na busca aproximada por tracking_code:', err)
-      try {
-        const listFuzzyPure = await pb.collection<OrderRecord>('orders').getList(1, 1, {
-          filter: `tracking_code ~ '${code}' || tracking_code = '${code}'`,
-          tracking_code: code,
-          requestKey: null,
-        } as any)
-        if (listFuzzyPure.items[0]) return listFuzzyPure.items[0]
-      } catch {
-        /* intentionally ignored */
-      }
-    }
-
-    // 3. Fallback adicional de alta resiliência: se a busca direta por orders falhou,
-    // tenta obter o pedido com as informações básicas a partir do endpoint público de rota (/backend/v1/public-track/:code/route)
-    try {
-      const publicRoute = await this.getPublicTrackingRoute(code)
-      if (publicRoute && publicRoute.destination) {
-        const orderId = (publicRoute as any).order_id || `pub_${code}`
+      const publicData = await this.getPublicTrackingRoute(code)
+      if (publicData && (publicData.order_id || publicData.tracking_code)) {
         const synthesizedOrder: Partial<OrderRecord> = {
-          id: orderId,
-          tracking_code: code,
-          status: (publicRoute.status as any) || 'in_transit',
-          sequence: publicRoute.sequence,
-          courier_id: publicRoute.courier_id,
-          estimated_arrival: (publicRoute as any).estimated_arrival || '',
-          route_released: (publicRoute as any).route_released ?? true,
-          route_started: (publicRoute as any).route_started ?? true,
+          id: publicData.order_id || `pub_${code}`,
+          tracking_code: publicData.tracking_code || code,
+          status: (publicData.status as any) || 'in_transit',
+          sequence: publicData.sequence || 0,
+          courier_id: publicData.courier_id,
+          estimated_arrival: (publicData as any).estimated_arrival || '',
+          total_price: (publicData as any).total_price || 0,
+          route_released: (publicData as any).route_released ?? true,
+          route_started: (publicData as any).route_started ?? true,
+          route_finished: (publicData as any).route_finished ?? false,
           created: new Date().toISOString(),
           updated: new Date().toISOString(),
           collectionId: 'orders',
           collectionName: 'orders',
           expand: {
-            customer_id: {
-              id: `cust_${code}`,
-              name: publicRoute.destination.name,
-              address: publicRoute.destination.address,
-              lat: publicRoute.destination.lat,
-              lng: publicRoute.destination.lng,
-              phone: '',
-              created: '',
-              updated: '',
-              collectionId: 'customers',
-              collectionName: 'customers',
-            } as any,
+            customer_id: publicData.destination
+              ? ({
+                  id: `cust_${code}`,
+                  name: publicData.destination.name,
+                  address: publicData.destination.address,
+                  lat: publicData.destination.lat,
+                  lng: publicData.destination.lng,
+                  phone: '',
+                  created: '',
+                  updated: '',
+                  collectionId: 'customers',
+                  collectionName: 'customers',
+                } as any)
+              : undefined,
+            courier_id: publicData.courier_first_name
+              ? ({
+                  id: publicData.courier_id || '',
+                  name: publicData.courier_first_name,
+                  collectionId: 'users',
+                  collectionName: 'users',
+                } as any)
+              : undefined,
           },
         }
 
-        // Tenta carregar entregador se courier_id existir
-        if (publicRoute.courier_id) {
+        // Se usuário estiver autenticado internamente (ex: seller/admin), pode tentar carregar seller expand
+        if (pb.authStore.isValid && publicData.courier_id) {
           try {
             const cour = await pb
               .collection<UserRecord>('users')
-              .getOne(publicRoute.courier_id, { requestKey: null })
+              .getOne(publicData.courier_id, { requestKey: null })
             if (cour && synthesizedOrder.expand) {
               synthesizedOrder.expand.courier_id = cour
             }
           } catch {
-            /* intentionally ignored */
+            /* safe ignore */
           }
         }
 
         return synthesizedOrder as OrderRecord
       }
-    } catch (routeFallbackErr) {
-      console.warn('Erro no fallback pelo endpoint público de rota:', routeFallbackErr)
+    } catch (endpointErr) {
+      console.warn('Erro ao consultar endpoint público de tracking:', endpointErr)
+    }
+
+    // 2. Se o usuário estiver autenticado (ex: seller/admin na tela), permite consulta direta à coleção
+    if (pb.authStore.isValid) {
+      try {
+        const list = await pb.collection<OrderRecord>('orders').getList(1, 1, {
+          filter: `tracking_code = '${code}'`,
+          expand: 'customer_id,courier_id,seller_id',
+          requestKey: null,
+        })
+        if (list.items[0]) return list.items[0]
+      } catch (authErr) {
+        console.warn('Erro na consulta direta autenticada de orders:', authErr)
+      }
     }
 
     return null
@@ -932,10 +866,54 @@ export const deliveryService = {
     try {
       const cleanTrackingCode = encodeURIComponent(trackingCode.trim().toUpperCase())
       const baseApiUrl = (pb.baseUrl || '').replace(/\/+$/, '')
-      const endpointPath = `/backend/v1/public-track/${cleanTrackingCode}/route`
+      // Endpoint primário /backend/v1/public-track/:code
+      const endpointPath = `/backend/v1/public-track/${cleanTrackingCode}`
       const fullUrl = baseApiUrl ? `${baseApiUrl}${endpointPath}` : endpointPath
 
       return await pb.send<{
+        order_id: string
+        tracking_code: string
+        status: string
+        sequence: number
+        courier_id: string | null
+        courier_first_name: string | null
+        route_released: boolean
+        route_started: boolean
+        route_finished: boolean
+        estimated_arrival: string
+        total_price?: number
+        destination: { name: string; lat: number; lng: number; address: string } | null
+        courier_location: {
+          lat: number
+          lng: number
+          speed: number
+          created: string
+          age_seconds: number
+        } | null
+        is_gps_active: boolean
+        stops_before: { sequence: number; lat: number; lng: number }[]
+        total_stops_before: number
+        completed_stops_before: number
+        queue_position: number
+        total_deliveries_in_batch: number
+      }>(fullUrl, {
+        method: 'GET',
+        requestKey: null,
+      })
+    } catch (err) {
+      console.warn('Erro ao carregar tracking público por /code, tentando fallback /route:', err)
+      try {
+        const cleanTrackingCode = encodeURIComponent(trackingCode.trim().toUpperCase())
+        const baseApiUrl = (pb.baseUrl || '').replace(/\/+$/, '')
+        const fallbackPath = `/backend/v1/public-track/${cleanTrackingCode}/route`
+        const fullFallbackUrl = baseApiUrl ? `${baseApiUrl}${fallbackPath}` : fallbackPath
+        return await pb.send<any>(fullFallbackUrl, { method: 'GET', requestKey: null })
+      } catch (errFallback) {
+        console.warn('Fallback /route também falhou:', errFallback)
+        return null
+      }
+    }
+  },
         order_id: string
         tracking_code: string
         status: string
