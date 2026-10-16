@@ -781,14 +781,6 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       approvalsMap,
     })
 
-    const totalKm = canonicalCalculation.totalOfficialKm
-    const totalFuelCost = canonicalCalculation.fuelCost
-    const totalLiters =
-      !isBicycle && effectiveKml > 0 ? Number((totalKm / effectiveKml).toFixed(2)) : 0
-
-    const totalDeviations = canonicalCalculation.deviationEpisodesCount
-    const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
-
     // Agregação de conjuntas RESTRITA AO PERÍODO FILTRADO:
     // Identificar secundárias do período filtrado
     const jointSecondaryItems = filteredItems.filter((i) => i.isJointSecondary)
@@ -799,6 +791,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       officialSettings || settings,
       courier?.vehicle_type,
     )
+    const isBicycle =
+      fuelParams.category === 'bicicleta' ||
+      courier?.vehicle_type === 'bicicleta' ||
+      courier?.vehicle_type === 'bicycle'
     const effectiveKml =
       typeof courier?.consumption_kml === 'number' && courier.consumption_kml > 0
         ? courier.consumption_kml
@@ -808,14 +804,24 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         ? courier.fuel_price
         : fuelParams.pricePerLiter || defaultParams.pricePerLiter || 6.09
 
+    const totalKm = canonicalCalculation.totalOfficialKm
+    const totalFuelCost = isBicycle ? 0 : canonicalCalculation.fuelCost
+    const totalLiters =
+      !isBicycle && effectiveKml > 0 ? Number((totalKm / effectiveKml).toFixed(2)) : 0
+
+    const totalDeviations = canonicalCalculation.deviationEpisodesCount
+    const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
+
     const jointSavedKm = jointSecondaryItems.reduce((sum, item) => {
       const planned = Number(item.plannedKm) || 0
       return sum + planned
     }, 0)
-    const jointSavedFuelCost = jointSecondaryItems.reduce((sum, item) => {
-      const pKm = Number(item.plannedKm) || 0
-      return sum + (pKm / effectiveKml) * effectivePrice
-    }, 0)
+    const jointSavedFuelCost = isBicycle
+      ? 0
+      : jointSecondaryItems.reduce((sum, item) => {
+          const pKm = Number(item.plannedKm) || 0
+          return sum + (pKm / effectiveKml) * effectivePrice
+        }, 0)
 
     // ITEM (5) SALDO FIXO NO MODAL:
     // As métricas de período (km oficial, combustível, entregas, desvios, economia) respondem ao periodFilter.

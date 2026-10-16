@@ -900,10 +900,10 @@ export function calculateCourierFuelMetrics(params: {
       if (canonicalBatchKm > 0 && batchGpsKm > canonicalBatchKm * 2) {
         batchGpsKm = Number((canonicalBatchKm * 1.15).toFixed(1))
       }
-      if (batchTelem?.km_oficial && batchTelem.km_oficial > 0) {
+      if (batchTelem?.officialRealKm && batchTelem.officialRealKm > 0) {
         // Se telemetria oficial do lote existe, ela é a autoridade canônica (regra do MENOR)
-        if (canonicalBatchKm <= 0 || canonicalBatchKm > batchTelem.km_oficial * 2) {
-          canonicalBatchKm = Number(batchTelem.km_oficial.toFixed(1))
+        if (canonicalBatchKm <= 0 || canonicalBatchKm > batchTelem.officialRealKm * 2) {
+          canonicalBatchKm = Number(batchTelem.officialRealKm.toFixed(1))
         }
       }
 

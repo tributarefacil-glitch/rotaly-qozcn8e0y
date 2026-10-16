@@ -16,16 +16,18 @@ migrate(
         const auditCollection = app.findCollectionByNameOrId('audit_trail')
         const record = new Record(auditCollection)
         record.set('user_id', '') // Ações automáticas do sistema = user_id vazio
-        record.set('actor_name', 'Sistema')
+        record.set('collection', 'users')
+        record.set('record_id', recordId || '')
         record.set('action', action)
-        record.set('target_id', recordId || '')
-        record.set('field_name', fieldName)
+        record.set('field', fieldName)
         record.set('old_value', String(oldValue ?? ''))
         record.set('new_value', String(newValue ?? ''))
-        record.set('ip_address', '127.0.0.1')
-        record.set('user_agent', 'system/migration-0177-recalculo-canonico')
+        record.set('courier_id', recordId || '')
+        record.set('timestamp', new Date().toISOString())
         record.set('metadata', {
           ...(metadata || {}),
+          actor_name: 'Sistema',
+          actor_role: 'system',
           system_trigger: true,
           migration: '0177_recalculate_canonical_courier_totals',
         })

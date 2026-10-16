@@ -34,6 +34,18 @@ onRecordAfterUpdateSuccess((e) => {
     const PILAR_BASE_LNG = -43.2936013
     const PILAR_BASE_NAME = 'Drogaria Mais Saudável - Pilar'
 
+    function haversineDistMeters(lat1, lon1, lat2, lon2) {
+      if (lat1 === lat2 && lon1 === lon2) return 0
+      const R = 6371000
+      const toRad = Math.PI / 180
+      const dLat = (lat2 - lat1) * toRad
+      const dLon = (lon2 - lon1) * toRad
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
+      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
+    }
+
     /**
      * Saneamento canônico de pings compartilhado e idempotente:
      * - Descarte de coordenada congelada repetida (<1.5m ou diferença angular <0.00002)
