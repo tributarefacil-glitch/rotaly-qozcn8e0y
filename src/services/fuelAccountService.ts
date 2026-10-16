@@ -277,6 +277,42 @@ export class FuelAccountService {
       allPostCutoffOrders,
     } = params
 
+    // GUARDA DE ENTRADA (REGRA DE OURO, v0.0.464):
+    // Nenhum entregador nulo/sem id pode derrubar a tela com "Cannot read properties of null (reading 'id')".
+    // Registro inválido retorna conta zerada segura (km 0, gasto 0, saldos 0) sem lançar exceção.
+    if (!courier || !courier.id) {
+      console.warn(
+        '[FuelAccountService] calculateAccountForCourier ignorado: entregador nulo ou sem id.',
+      )
+      const safeZeroAccount: UnifiedCourierFuelAccount = {
+        courier: (courier || ({} as UserRecord)) as UserRecord,
+        totalAdvances: 0,
+        totalRouteKm: 0,
+        totalSpent: 0,
+        balance: 0,
+        advanceCount: 0,
+        deliveriesCount: 0,
+        advances: [],
+        calculationSource: 'historico_viario',
+        openingBalance: 0,
+        cutoffDate: undefined,
+        periodAdvances: 0,
+        periodAdjustments: 0,
+        periodSpent: 0,
+        carryOverBalance: 0,
+        dailyAverage30d: 0,
+        spent30d: 0,
+        remainingDays: 0,
+        remainingIntervalLabel: '',
+        projectionRemainingMonth: 0,
+        suggestedRecharge: 0,
+        availableBalance: 0,
+        reachedAlertThreshold: false,
+        averageLabel: 'Média 0d (registro inválido ignorado)',
+      }
+      return safeZeroAccount
+    }
+
     // DATA DE CORTE E SALDO DE ABERTURA OFICIAIS
     // (Se não houver cutoff_date gravado, não aplicar corte: saldo = abertura + todos movimentos)
     const cutoffDateStr = courier.cutoff_date || undefined
@@ -349,6 +385,12 @@ export class FuelAccountService {
       metrics.vehicleCategory === 'bicicleta' ||
       courier.vehicle_type === 'bicicleta' ||
       courier.vehicle_type === 'bicycle'
+    // v0.0.464: entregador sem veículo definido NUNCA derruba o cálculo — trata como 'moto' (padrão).
+    if (!courier.vehicle_type) {
+      console.warn(
+        `[FuelAccountService] Entregador ${courier.id} sem vehicle_type; tratando como 'moto'.`,
+      )
+    }
 
     // Alinhar métricas com a FONTE ÚNICA CANÔNICA
     metrics.totalOfficialKm = canonicalTotals.totalOfficialKm
@@ -909,8 +951,8 @@ export class FuelAccountService {
     const targetCompanyId = await this.resolveActiveCompanyId(companyId)
 
     const allCouriers = await this.getCouriers(targetCompanyId)
-    // Filtrar fora couriers com status 'inactive'
-    const couriers = allCouriers.filter((c) => c.status !== 'inactive')
+    // Filtrar fora couriers com status 'inactive' e registros inválidos (REGRA DE OURO, v0.0.464)
+    const couriers = allCouriers.filter((c) => c && c.id && c.status !== 'inactive')
     if (couriers.length === 0) {
       return []
     }

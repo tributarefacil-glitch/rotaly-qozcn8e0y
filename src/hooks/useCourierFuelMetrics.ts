@@ -161,11 +161,13 @@ export function calculateCourierFuelMetrics(params: {
     isPostCutoffComputation = false,
   } = params
 
-  if (!courier?.id) {
+  if (!courier || !courier.id) {
+    // GUARDA DE ENTRADA (REGRA DE OURO, v0.0.464): entregador nulo/sem id nunca derruba a tela.
+    // Métricas zeradas seguras (km 0, gasto 0, saldo = carry-over informado), sem lançar exceção.
     const fuelParams = deliveryService.getVehicleFuelParams(settings, 'moto')
     return {
       courier: null,
-      balance: 0,
+      balance: carryOverBalance ?? 0,
       totalAdvances: 0,
       totalSpent: 0,
       totalOfficialKm: 0,
@@ -189,7 +191,14 @@ export function calculateCourierFuelMetrics(params: {
     }
   }
 
-  const defaultFuelParams = deliveryService.getVehicleFuelParams(settings, courier.vehicle_type)
+  if (!courier.vehicle_type) {
+    console.warn(
+      '[useCourierFuelMetrics] courier sem vehicle_type; aplicando padrão seguro "moto".',
+    )
+  }
+  const courierVehicleTypeSafe = courier.vehicle_type || 'moto'
+
+  const defaultFuelParams = deliveryService.getVehicleFuelParams(settings, courierVehicleTypeSafe)
   // Combustível por escopo 100% app_settings: moto 30 km/L e R$ 6,49 (taxa do app_settings), bicicleta R$ 0
   const isBicycleCourier = defaultFuelParams.category === 'bicicleta'
   const appSettingsMotoConsumption =

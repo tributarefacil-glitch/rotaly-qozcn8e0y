@@ -772,8 +772,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     // respeitando a janela civil de Brasília (activeOperationalWindow), somando os valores
     // já rateados/calculados pelo motor oficial para as entregas visíveis.
     // FONTE ÚNICA CANÔNICA: Calcular totais a partir dos lotes de rota de telemetria
+    // GUARDA v0.0.464: entregador nulo/sem id nunca derruba o modal — totais zerados seguros.
     const canonicalCalculation = calculateCanonicalCourierTotals({
-      courier,
+      courier:
+        courier && courier.id
+          ? courier
+          : ({ id: '', name: courier?.name || 'Entregador' } as UserRecord),
       orders: filteredItems.map((fi) => fi.order),
       advances: allCourierAdvances,
       settings: officialSettings || settings,

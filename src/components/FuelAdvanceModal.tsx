@@ -403,12 +403,14 @@ export const FuelAdvanceModal: React.FC<FuelAdvanceModalProps> = ({
                 <SelectValue placeholder="Selecione o entregador" />
               </SelectTrigger>
               <SelectContent>
-                {couriers.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    🛵 {c.name || c.email} ({c.vehicle_plate || 'Sem placa'} •{' '}
-                    {c.vehicle_type || 'moto'})
-                  </SelectItem>
-                ))}
+                {couriers
+                  .filter((c) => c && c.id)
+                  .map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      🛵 {c.name || c.email} ({c.vehicle_plate || 'Sem placa'} •{' '}
+                      {c.vehicle_type || 'moto'})
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
           </div>

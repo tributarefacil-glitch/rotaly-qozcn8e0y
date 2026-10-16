@@ -102,15 +102,50 @@ export function calculateCanonicalCourierTotals(
     approvalsMap,
   } = params
 
+  // GUARDA DE ENTRADA (REGRA DE OURO, v0.0.464):
+  // Nenhum entregador nulo/sem id pode derrubar a tela com "Cannot read properties of null (reading 'id')".
+  // Registro inválido retorna totais zerados seguros sem lançar exceção.
+  if (!courier || !courier.id) {
+    console.warn(
+      '[CanonicalCourierTotals] calculateCanonicalCourierTotals ignorado: entregador nulo ou sem id.',
+    )
+    const safeDefaultParams = deliveryService.getVehicleFuelParams(
+      settings as AppSettingsRecord | null,
+      'moto',
+    )
+    return {
+      courierId: (courier && courier.id) || '',
+      courierName: (courier && courier.name) || 'Entregador',
+      vehicleCategory: safeDefaultParams.category,
+      consumptionKml: safeDefaultParams.consumptionKml || 30.0,
+      pricePerLiter: safeDefaultParams.pricePerLiter || 6.49,
+      totalOfficialKm: 0,
+      totalSpent: 0,
+      fuelCost: 0,
+      openingBalance: 0,
+      totalAdvances: 0,
+      postCutoffAdvances: 0,
+      postCutoffSpent: 0,
+      balance: 0,
+      deviationEpisodesCount: 0,
+      maxDeviationMeters: 0,
+      batchesCount: 0,
+      deliveriesCount: 0,
+      batchMetrics: [],
+      orderAllocations: new Map(),
+    }
+  }
+
   const now = new Date()
   const opWindow = getOperationalWindow(now)
   const courierId = courier.id || ''
   const courierName = courier.name || 'Entregador'
 
   // 1. Parâmetros de combustível
+  // v0.0.464: vehicle_type ausente/inválido nunca derruba o cálculo — trata como 'moto' (padrão oficial).
   const defaultParams = deliveryService.getVehicleFuelParams(
     settings as AppSettingsRecord | null,
-    courier.vehicle_type,
+    courier.vehicle_type || 'moto',
   )
   const vehicleCategory = defaultParams.category
   const isBicycle =

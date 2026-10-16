@@ -192,7 +192,8 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
               variant="outline"
               className="text-[9px] px-1.5 py-0 font-bold border-indigo-300 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 shrink-0"
             >
-              Recarga: R$ {account.todayAlertSent.suggested_recharge.toFixed(2)}
+              {/* v0.0.464: guarda contra suggested_recharge ausente — nunca derruba o card */}
+              Recarga: R$ {(Number(account.todayAlertSent.suggested_recharge) || 0).toFixed(2)}
             </Badge>
           </div>
         )}

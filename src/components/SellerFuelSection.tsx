@@ -167,37 +167,41 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   // - Gasto Rota Oficial = SOMENTE do mês corrente
   // Meses anteriores ficam acessíveis exclusivamente no Histórico detalhado / Histórico Viário.
   const calculatedAccounts = useMemo(() => {
-    return couriers.map((courier) => {
-      const unifiedAccount = fuelAccountService.calculateAccountForCourier({
-        courier,
-        advances: fuelAdvances,
-        orders: activeFuelOrdersPool,
-        settings,
-        locations,
-        offRouteEvents,
-        periodFilter: fuelPeriodFilter,
+    // REGRA DE OURO (v0.0.464): registro inválido de entregador é pulado — nunca derruba a tela.
+    // fleetTotals e o Exportar CSV herdam a proteção automaticamente (mesma lista filtrada).
+    return couriers
+      .filter((c) => c && c.id)
+      .map((courier) => {
+        const unifiedAccount = fuelAccountService.calculateAccountForCourier({
+          courier,
+          advances: fuelAdvances,
+          orders: activeFuelOrdersPool,
+          settings,
+          locations,
+          offRouteEvents,
+          periodFilter: fuelPeriodFilter,
+        })
+
+        const fuelAccount: CourierFuelAccount = {
+          courier: unifiedAccount.courier,
+          totalAdvances: unifiedAccount.totalAdvances,
+          totalRouteKm: unifiedAccount.totalRouteKm,
+          totalSpent: unifiedAccount.totalSpent,
+          balance: unifiedAccount.balance,
+          advanceCount: unifiedAccount.advanceCount,
+          deliveriesCount: unifiedAccount.deliveriesCount,
+          advances: unifiedAccount.advances,
+          calculationSource: unifiedAccount.calculationSource,
+          carryOverBalance: unifiedAccount.carryOverBalance,
+        }
+
+        return {
+          courier: unifiedAccount.courier,
+          metrics: unifiedAccount.metrics,
+          fuelAccount,
+          unifiedAccount,
+        }
       })
-
-      const fuelAccount: CourierFuelAccount = {
-        courier: unifiedAccount.courier,
-        totalAdvances: unifiedAccount.totalAdvances,
-        totalRouteKm: unifiedAccount.totalRouteKm,
-        totalSpent: unifiedAccount.totalSpent,
-        balance: unifiedAccount.balance,
-        advanceCount: unifiedAccount.advanceCount,
-        deliveriesCount: unifiedAccount.deliveriesCount,
-        advances: unifiedAccount.advances,
-        calculationSource: unifiedAccount.calculationSource,
-        carryOverBalance: unifiedAccount.carryOverBalance,
-      }
-
-      return {
-        courier: unifiedAccount.courier,
-        metrics: unifiedAccount.metrics,
-        fuelAccount,
-        unifiedAccount,
-      }
-    })
   }, [
     couriers,
     fuelAdvances,
@@ -275,7 +279,8 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
 
   // 4. Filtrar lista de adiantamentos vinculados aos entregadores do vendedor
   const filteredAdvances = useMemo(() => {
-    const courierIdSet = new Set(couriers.map((c) => c.id))
+    // REGRA DE OURO (v0.0.464): id só entra no conjunto se o registro for válido.
+    const courierIdSet = new Set(couriers.filter((c) => c && c.id).map((c) => c.id))
 
     return fuelAdvances.filter((adv) => {
       // Garantir escopo: apenas adiantamentos dos entregadores deste vendedor
@@ -531,12 +536,16 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
               <SelectValue placeholder="Entregador" />
             </SelectTrigger>
             <SelectContent className="bg-[#0E1738] border-[#1E2B58] text-white">
-              <SelectItem value="all">Todos os Entregadores ({couriers.length})</SelectItem>
-              {couriers.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name || 'Entregador'} {c.vehicle_plate ? `(${c.vehicle_plate})` : ''}
-                </SelectItem>
-              ))}
+              <SelectItem value="all">
+                Todos os Entregadores ({couriers.filter((c) => c && c.id).length})
+              </SelectItem>
+              {couriers
+                .filter((c) => c && c.id)
+                .map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name || 'Entregador'} {c.vehicle_plate ? `(${c.vehicle_plate})` : ''}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
 

@@ -548,7 +548,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         deliveryService.getLatestLocations().catch(() => [] as LocationRecord[]),
       ])
       setOrders(ordersData)
-      setCouriers(couriersData)
+      // REGRA DE OURO (v0.0.464): nenhum registro inválido (nulo/sem id) entra na lista de entregadores.
+      setCouriers(Array.isArray(couriersData) ? couriersData.filter((c) => c && c.id) : [])
       setLocations(locationsData)
       setIsLoading(false)
 
@@ -1348,18 +1349,21 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   // Regra 2: O card de saldo chama calculateAccountForCourier com o pool COMPLETO pós-corte (independente do filtro),
   // para receber o saldo canônico.
   const currentFuelAccounts = useMemo(() => {
-    return couriers.map((courier) => {
-      return fuelAccountService.calculateAccountForCourier({
-        courier,
-        advances: fuelAdvances,
-        orders: activeFuelOrdersPool,
-        settings,
-        locations,
-        offRouteEvents,
-        periodFilter: fuelPeriodFilter,
-        allPostCutoffOrders: effectiveFullOrdersPool,
+    // REGRA DE OURO (v0.0.464): registro inválido de entregador é pulado — nunca derruba a tela.
+    return couriers
+      .filter((c) => c && c.id)
+      .map((courier) => {
+        return fuelAccountService.calculateAccountForCourier({
+          courier,
+          advances: fuelAdvances,
+          orders: activeFuelOrdersPool,
+          settings,
+          locations,
+          offRouteEvents,
+          periodFilter: fuelPeriodFilter,
+          allPostCutoffOrders: effectiveFullOrdersPool,
+        })
       })
-    })
   }, [
     couriers,
     fuelAdvances,
@@ -1981,7 +1985,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                     variant="outline"
                                     className="text-[9px] px-1.5 py-0 font-bold border-indigo-300 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 shrink-0"
                                   >
-                                    Recarga: R$ {acc.todayAlertSent.suggested_recharge.toFixed(2)}
+                                    {/* v0.0.464: guarda contra suggested_recharge ausente */}
+                                    Recarga: R${' '}
+                                    {(Number(acc.todayAlertSent.suggested_recharge) || 0).toFixed(
+                                      2,
+                                    )}
                                   </Badge>
                                 </div>
                               )}
@@ -2321,11 +2329,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Todos os Entregadores</SelectItem>
-                        {couriers.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            🛵 {c.name}
-                          </SelectItem>
-                        ))}
+                        {couriers
+                          .filter((c) => c && c.id)
+                          .map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              🛵 {c.name}
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
                   </div>
