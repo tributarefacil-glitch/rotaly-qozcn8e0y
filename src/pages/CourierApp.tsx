@@ -1874,7 +1874,7 @@ export default function CourierApp() {
       const orderIdsToFinish = currentRouteOrders.map((o) => o.id)
       const currentBatchKey = currentRouteOrders[0]?.route_batch_key || ''
 
-      // Forçar offlineTelemetryBuffer.flush() antes de finalizar rota
+      // Forçar offlineTelemetryBuffer.flush() antes de finalizar rota sem travar o fechamento
       setIsFlushingBuffer(true)
       isFlushingBufferRef.current = true
       try {
@@ -1886,11 +1886,37 @@ export default function CourierApp() {
         isFlushingBufferRef.current = false
       }
 
+      const hasCoordinates =
+        currentCourierLocation &&
+        typeof currentCourierLocation.lat === 'number' &&
+        typeof currentCourierLocation.lng === 'number'
+
+      const originType = isAutomatic
+        ? 'geofence_automatico'
+        : hasCoordinates
+          ? 'manual_com_gps'
+          : 'manual_sem_gps'
+
+      console.log('[CourierApp] Finalizando rota...', {
+        courierId: user.id,
+        orderIdsCount: orderIdsToFinish.length,
+        batchKey: currentBatchKey,
+        originType,
+        hasCoordinates,
+        distanceToBaseMeters,
+      })
+
       const finishResult = await deliveryService.finishCourierRoute(
         user.id,
         orderIdsToFinish,
         undefined,
         currentBatchKey,
+        {
+          origin: originType,
+          latitude: hasCoordinates ? currentCourierLocation!.lat : null,
+          longitude: hasCoordinates ? currentCourierLocation!.lng : null,
+          distanceToBaseMeters: distanceToBaseMeters ?? null,
+        },
       )
 
       if (finishResult.pendingPingsRemaining && finishResult.pendingPingsRemaining > 0) {
@@ -1920,10 +1946,29 @@ export default function CourierApp() {
       baseGeofenceHitCountRef.current = 0
       await loadCourierOrders({ force: true })
       await loadFuelAndAccountData({ force: true })
-    } catch (err) {
-      console.error('Erro ao finalizar rota inteira:', err)
+    } catch (err: any) {
+      console.error('[CourierApp] Erro ao finalizar rota inteira:', err)
+      const rawMsg = err?.data?.message || err?.message || ''
+      const fieldData = err?.data?.data ? JSON.stringify(err.data.data) : ''
+      const combined = `${rawMsg} ${fieldData}`
+
       if (!isAutomatic) {
-        toast.error('Falha ao finalizar rota. Tente novamente.')
+        if (combined.includes('paradas pendentes') || combined.includes('Conclua ou registre')) {
+          toast.error(
+            'Não é possível finalizar: ainda há paradas pendentes de entrega nesta rota.',
+            { duration: 6000 },
+          )
+        } else if (combined.includes('geolocalização') || combined.includes('GPS')) {
+          toast.error('GPS instável. Toque em "Finalizar manualmente" para concluir sem travar.', {
+            duration: 6000,
+          })
+        } else if (rawMsg) {
+          toast.error(`Falha ao finalizar rota: ${rawMsg}`, { duration: 6000 })
+        } else {
+          toast.error('Falha ao finalizar rota. Verifique sua conexão e tente novamente.', {
+            duration: 6000,
+          })
+        }
       }
     } finally {
       setIsFinishingRoute(false)

@@ -15,8 +15,10 @@ onRecordCreate((e) => {
     const routeStartedAt = order.getString('route_started_at')
     let currentKey = order.getString('route_batch_key')
 
-    // Se há entregador associado, verificar se ele possui uma rota ativa em andamento
-    if (courierId) {
+    // Se há entregador associado e o pedido JÁ está sendo criado com route_started=true,
+    // herdar chave ativa se existir. Se não estiver iniciado (pedido futuro/em fila), NÃO herdar.
+    const isCreatedStarted = order.getBool('route_started')
+    if (courierId && isCreatedStarted && !currentKey) {
       try {
         const activeRouteOrders = e.app.findRecordsByFilter(
           'orders',
@@ -28,11 +30,11 @@ onRecordCreate((e) => {
 
         if (activeRouteOrders && activeRouteOrders.length > 0) {
           const activeKey = activeRouteOrders[0].getString('route_batch_key')
-          if (activeKey && activeKey !== currentKey) {
+          if (activeKey) {
             order.set('route_batch_key', activeKey)
             currentKey = activeKey
             console.log(
-              `[orders_batch_coherence_guard] Pedido ${order.id} herdou route_batch_key '${activeKey}' da rota ativa do entregador ${courierId}.`,
+              `[orders_batch_coherence_guard] Pedido ${order.id} em andamento herdou route_batch_key '${activeKey}' da rota ativa do entregador ${courierId}.`,
             )
           }
         }
@@ -88,13 +90,15 @@ onRecordUpdate((e) => {
     const currentKey = order.getString('route_batch_key')
     const origKey = original ? original.getString('route_batch_key') : ''
 
-    // 1. Pedido atribuído a entregador com rota ativa herda a chave do lote ativo
+    // 1. Coerência de lote: pedidos não iniciados NUNCA devem herdar nem roubar a chave de lote
+    // de uma rota ativa em andamento. Eles pertencem a uma nova rota futura que gerará sua própria chave ao iniciar!
+    // Apenas pedidos que estão de fato iniciados juntos (ou adicionados expressamente em rota em curso com route_started=true) compartilham a chave.
     const origCourierId = original ? original.getString('courier_id') : ''
     const courierChanged = courierId && courierId !== origCourierId
     const isNowStarted = order.getBool('route_started')
     const isNowFinished = order.getBool('route_finished')
 
-    if (courierId && (courierChanged || (!isNowStarted && !currentKey))) {
+    if (courierId && isNowStarted && !currentKey) {
       try {
         const activeRouteOrders = e.app.findRecordsByFilter(
           'orders',
@@ -106,10 +110,10 @@ onRecordUpdate((e) => {
 
         if (activeRouteOrders && activeRouteOrders.length > 0) {
           const activeKey = activeRouteOrders[0].getString('route_batch_key')
-          if (activeKey && activeKey !== currentKey) {
+          if (activeKey) {
             order.set('route_batch_key', activeKey)
             console.log(
-              `[orders_batch_coherence_guard] Pedido ${order.id} herdou route_batch_key '${activeKey}' da rota ativa existente do entregador ${courierId}.`,
+              `[orders_batch_coherence_guard] Pedido ${order.id} em andamento herdou route_batch_key '${activeKey}' da rota ativa do entregador ${courierId}.`,
             )
           }
         }

@@ -2996,6 +2996,12 @@ export const deliveryService = {
       foto_odometro_final?: File | null
     },
     routeBatchKey?: string,
+    options?: {
+      origin?: 'manual_com_gps' | 'manual_sem_gps' | 'geofence_automatico' | string
+      latitude?: number | null
+      longitude?: number | null
+      distanceToBaseMeters?: number | null
+    },
   ): Promise<{ success: boolean; updatedCount: number; pendingPingsRemaining?: number }> {
     try {
       const now = new Date().toISOString()
@@ -3142,6 +3148,48 @@ export const deliveryService = {
             eAudit,
           )
         }
+      }
+
+      // Registrar encerramento da rota em audit_trail (com origem: manual_com_gps, manual_sem_gps ou geofence_automatico)
+      try {
+        const bKey =
+          routeBatchKey ||
+          ordersToUpdate[0]?.route_batch_key ||
+          `batch_${courierId}_${now.slice(0, 10)}`
+        const firstOrdId = ordersToUpdate[0]?.id || ''
+        const closureOrigin = options?.origin || 'manual_sem_gps'
+        await pb.collection('audit_trail').create({
+          user_id: '',
+          collection: 'orders',
+          record_id: firstOrdId,
+          courier_id: courierId,
+          action: 'finalizar_rota',
+          field: 'route_finished',
+          old_value: 'false',
+          new_value: 'true',
+          timestamp: now,
+          metadata: {
+            system_trigger: true,
+            actor_name: 'Sistema',
+            closure_origin: closureOrigin,
+            route_batch_key: bKey,
+            orders_count: updatedCount,
+            latitude: options?.latitude ?? null,
+            longitude: options?.longitude ?? null,
+            distance_to_base_meters: options?.distanceToBaseMeters ?? null,
+            note:
+              closureOrigin === 'manual_sem_gps'
+                ? 'Finalização manual de rota realizada sem coordenadas GPS frescas pelo entregador'
+                : closureOrigin === 'geofence_automatico'
+                  ? 'Finalização automática de rota disparada por geofence ao aproximar da base'
+                  : 'Finalização manual de rota com coordenadas GPS registradas',
+          },
+        })
+      } catch (eAuditClose) {
+        console.warn(
+          '[deliveryService] Falha ao registrar audit_trail de finalização da rota:',
+          eAuditClose,
+        )
       }
 
       // Liberar o entregador de volta para disponível ('active')

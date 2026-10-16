@@ -438,12 +438,15 @@ onRecordUpdateRequest((e) => {
       // Desfechos válidos que encerram a entrega:
       // status in ('delivered', 'address_error', 'client_absent', 'cancelled')
       // Qualquer outro status (pending, assigned, in_transit) ou ausência de desfecho caracteriza pedido pendente.
+      // IMPORTANTE: apenas pedidos que foram de fato INICIADOS nesta rota (route_started = true)
+      // fazem parte da rota em execução. Pedidos atribuídos ou liberados para rotas futuras
+      // (route_started = false) ficam na fila de espera e NUNCA bloqueiam o fechamento da rota atual!
       let batchOrders = []
       try {
         if (batchKey) {
           batchOrders = e.app.findRecordsByFilter(
             'orders',
-            `route_batch_key = '${batchKey}' && id != '${currentOrderId}'`,
+            `route_batch_key = '${batchKey}' && route_started = true && id != '${currentOrderId}'`,
             'sequence,created',
             100,
             0,
