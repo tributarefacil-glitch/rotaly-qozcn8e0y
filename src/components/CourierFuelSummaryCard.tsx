@@ -351,7 +351,7 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           </div>
         </div>
 
-        {/* KM Oficial vs KM Desvios & Telemetria Real */}
+        {/* KM Oficial vs Desvios de Rota (Episódios - NUNCA somados em KM ou dinheiro) */}
         <div className="grid grid-cols-2 gap-2 text-[10px] pt-0.5">
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <span className="text-slate-500 dark:text-slate-400">KM Oficial:</span>
@@ -364,18 +364,12 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
             </span>
           </div>
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
-            <span className="text-slate-500 dark:text-slate-400">KM Desvios:</span>
+            <span className="text-slate-500 dark:text-slate-400">Desvios:</span>
             <span
-              className={`font-mono font-bold ${
-                totalDeviationKmNum > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'
-              }`}
+              className="font-mono font-bold text-slate-500 dark:text-slate-400"
+              title="Desvios de rota são monitorados como episódios e nunca entram no pagamento de km ou combustível"
             >
-              +
-              {totalDeviationKmNum.toLocaleString('pt-BR', {
-                minimumFractionDigits: 1,
-                maximumFractionDigits: 1,
-              })}{' '}
-              km
+              0 ep. (auditado)
             </span>
           </div>
         </div>

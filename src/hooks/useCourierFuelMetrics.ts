@@ -713,7 +713,7 @@ export function calculateCourierFuelMetrics(params: {
         litersSpent = Number(Math.max(0, batchTotalLiters - acc.allocatedLiters).toFixed(2))
       } else {
         officialKm = Number((batchTelemetry.officialRealKm * ratio).toFixed(1))
-        deviationKm = Number((batchTelemetry.deviationKm * ratio).toFixed(1))
+        deviationKm = 0 // Desvio nunca vira km ou dinheiro
         totalGpsKm = Number((batchTelemetry.totalGpsKm * ratio).toFixed(1))
 
         litersSpent =
@@ -893,11 +893,18 @@ export function calculateCourierFuelMetrics(params: {
         canonicalBatchKm = Number(batchCalcs.reduce((sum, c) => sum + c.officialKm, 0).toFixed(1))
       }
 
-      const batchDevKm = batchTelem ? batchTelem.deviationKm : 0
+      // FUTURO: Desvio NUNCA entra em km ou combustível. Usar estritamente o km_oficial do lote
+      const batchDevKm = 0
       // Garantir teto de coerência no GPS do lote caso telemetria bruta venha corrompida
       let batchGpsKm = batchTelem ? batchTelem.totalGpsKm : 0
       if (canonicalBatchKm > 0 && batchGpsKm > canonicalBatchKm * 2) {
         batchGpsKm = Number((canonicalBatchKm * 1.15).toFixed(1))
+      }
+      if (batchTelem?.km_oficial && batchTelem.km_oficial > 0) {
+        // Se telemetria oficial do lote existe, ela é a autoridade canônica (regra do MENOR)
+        if (canonicalBatchKm <= 0 || canonicalBatchKm > batchTelem.km_oficial * 2) {
+          canonicalBatchKm = Number(batchTelem.km_oficial.toFixed(1))
+        }
       }
 
       const batchLit =

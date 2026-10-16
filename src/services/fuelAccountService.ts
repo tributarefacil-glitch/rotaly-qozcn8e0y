@@ -14,6 +14,7 @@ import {
   type CourierFuelCalculationResult,
 } from '@/hooks/useCourierFuelMetrics'
 import { deliveryService } from '@/services/deliveryService'
+import { calculateCanonicalCourierTotals } from '@/services/canonicalCourierTotalsService'
 import { getMatrizCompanyId } from '@/lib/companyResolver'
 import {
   getCivilDateKeyInTz,
@@ -314,6 +315,22 @@ export class FuelAccountService {
     // Pedidos do entregador
     const courierOrders = orders.filter((o) => o && o.courier_id === courier.id)
 
+    // FONTE ÚNICA: Obter totais canônicos auditados via calculateCanonicalCourierTotals
+    // dedup 1x por route_batch_key, respeitando telemetria oficial e regra do MENOR
+    const fullOrderPool =
+      allPostCutoffOrders && allPostCutoffOrders.length > 0
+        ? allPostCutoffOrders.filter((o) => o && o.courier_id === courier.id)
+        : courierOrders
+
+    const canonicalTotals = calculateCanonicalCourierTotals({
+      courier,
+      orders: fullOrderPool,
+      advances: postCutoffAdvances,
+      settings,
+      periodFilter,
+      approvalsMap,
+    })
+
     // Métricas de exibição calculadas sobre os pedidos elegíveis do periodFilter selecionado
     const metrics = calculateCourierFuelMetrics({
       courier,
@@ -333,52 +350,16 @@ export class FuelAccountService {
       courier.vehicle_type === 'bicicleta' ||
       courier.vehicle_type === 'bicycle'
 
-    // Gasto do período selecionado (meramente informativo)
-    const periodSpent = isBicycle ? 0 : metrics.totalSpent
+    // Alinhar métricas com a FONTE ÚNICA CANÔNICA
+    metrics.totalOfficialKm = canonicalTotals.totalOfficialKm
+    metrics.totalSpent = canonicalTotals.totalSpent
+    metrics.balance = canonicalTotals.balance
+    metrics.totalAdvances = canonicalTotals.postCutoffAdvances
+    metrics.totalDeviationKm = 0
 
-    // GASTO PÓS-CORTE CANÔNICO PARA O SALDO (Regra 1b):
-    // Saldo é SEMPRE período-independente: opening_balance + totalPostCutoffAdvances − totalPostCutoffSpent.
-    // O saldo deve ser calculado sobre o HISTÓRICO COMPLETO pós-corte, independente do pool filtrado por período.
-    // Se allPostCutoffOrders foi fornecido, usa-o; caso contrário, usa courierOrders (filtrando por cutoffTime se hasCutoff).
-    const fullOrderPool =
-      allPostCutoffOrders && allPostCutoffOrders.length > 0
-        ? allPostCutoffOrders.filter((o) => o && o.courier_id === courier.id)
-        : courierOrders
-
-    let postCutoffSpent = 0
-    if (!isBicycle) {
-      const postCutoffOrdersList = hasCutoff
-        ? fullOrderPool.filter((o) => {
-            const orderDateVal = o.route_finished_at || o.actual_arrival || o.created
-            const orderTs = new Date(orderDateVal).getTime()
-            return orderTs >= cutoffTime
-          })
-        : fullOrderPool
-
-      if (postCutoffOrdersList.length > 0) {
-        const postCutoffMetrics = calculateCourierFuelMetrics({
-          courier,
-          advances: postCutoffAdvances,
-          orders: postCutoffOrdersList,
-          locations,
-          offRouteEvents,
-          settings,
-          periodFilter: 'all',
-          carryOverBalance: openingBalance,
-          approvalsMap,
-          activeBaseCoords,
-          isPostCutoffComputation: true,
-        })
-        postCutoffSpent = postCutoffMetrics.totalSpent
-      }
-    }
-
-    // FÓRMULA ÚNICA E INVARIANTE DO SALDO (Regra 1b):
-    // Saldo canônico pós-corte = opening_balance + adiantamentos reais (regra 1a) − gasto total pós-corte.
-    // Exclui balance_adjustments legados/duplicados para preservar os saldos canônicos validados.
-    const finalBalance = Number(
-      (openingBalance + totalPostCutoffAdvances - postCutoffSpent).toFixed(2),
-    )
+    const periodSpent = canonicalTotals.totalSpent
+    const postCutoffSpent = canonicalTotals.postCutoffSpent
+    const finalBalance = canonicalTotals.balance
 
     // Parcelas informativas do período selecionado (para exibição em colunas/cards quando aplicável)
     const periodAdvances = Number((metrics.periodAdvances ?? totalPostCutoffAdvances).toFixed(2))

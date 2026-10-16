@@ -49,6 +49,7 @@ import type {
   FuelAdvanceRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
+import { calculateCanonicalCourierTotals } from '@/services/canonicalCourierTotalsService'
 import { fuelAccountService } from '@/services/fuelAccountService'
 import { DEVIATION_THRESHOLD_METERS, haversineDistanceMeters } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
@@ -770,20 +771,23 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     // KM Oficial e Combustível totalizadores derivados ESTRITAMENTE de filteredItems
     // respeitando a janela civil de Brasília (activeOperationalWindow), somando os valores
     // já rateados/calculados pelo motor oficial para as entregas visíveis.
-    const totalKm = filteredItems.reduce((acc, i) => acc + i.kmRodado, 0)
-    const totalFuelCost = filteredItems.reduce((acc, i) => acc + i.fuelCost, 0)
-    const totalLiters = filteredItems.reduce((acc, i) => acc + i.litersSpent, 0)
-
-    const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
-    const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
-
-    // Gasto de combustível pós-corte: apenas entregas com created >= cutoff_date (se houver corte)
-    const postCutoffItems = filteredItems.filter((i) => {
-      if (!hasCutoff) return true
-      const orderTs = new Date(i.order.created).getTime()
-      return orderTs >= cutoffTime
+    // FONTE ÚNICA CANÔNICA: Calcular totais a partir dos lotes de rota de telemetria
+    const canonicalCalculation = calculateCanonicalCourierTotals({
+      courier,
+      orders: filteredItems.map((fi) => fi.order),
+      advances: allCourierAdvances,
+      settings: officialSettings || settings,
+      periodFilter,
+      approvalsMap,
     })
-    const postCutoffFuelCost = postCutoffItems.reduce((acc, i) => acc + i.fuelCost, 0)
+
+    const totalKm = canonicalCalculation.totalOfficialKm
+    const totalFuelCost = canonicalCalculation.fuelCost
+    const totalLiters =
+      !isBicycle && effectiveKml > 0 ? Number((totalKm / effectiveKml).toFixed(2)) : 0
+
+    const totalDeviations = canonicalCalculation.deviationEpisodesCount
+    const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
 
     // Agregação de conjuntas RESTRITA AO PERÍODO FILTRADO:
     // Identificar secundárias do período filtrado
@@ -842,8 +846,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       0,
     )
 
-    const saldoContaCorrenteInvariante =
-      openingBal + totalAdvancesAllPostCutoff - totalFuelSpentAllPostCutoff
+    const saldoContaCorrenteInvariante = canonicalCalculation.balance
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
@@ -882,7 +885,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       'Endereço',
       'Status',
       'KM Real Oficial (Reembolsável)',
-      'KM em Desvios e Paradas (Não Reembolsável)',
+      'Episódios de Desvio (Qtd)',
       'KM Total Rodado (GPS / Telemetria)',
       'KM Descartado por Ruído',
       'Origem Telemetria (GPS Real vs Estimado)',
@@ -901,10 +904,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       `"${item.customerAddress.replace(/"/g, '""')}"`,
       `"${item.statusLabel}"`,
       item.kmRodado.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
-      item.deviationKm.toLocaleString('pt-BR', {
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-      }),
+      item.offRouteCount,
       item.totalGpsKm.toLocaleString('pt-BR', {
         minimumFractionDigits: 1,
         maximumFractionDigits: 1,
@@ -1313,7 +1313,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                     <th className="py-2.5 px-3 font-semibold text-right">KM Real Rodado</th>
                     <th className="py-2.5 px-3 font-semibold text-right">Combustível</th>
                     <th className="py-2.5 px-3 font-semibold text-center">Parada Fora Rota</th>
-                    <th className="py-2.5 px-3 font-semibold text-center">KM Desvios</th>
+                    <th className="py-2.5 px-3 font-semibold text-center">Desvios (Episódios)</th>
                     <th className="py-2.5 px-3 font-semibold text-center">Desvio (&gt;600m)</th>
                     <th className="py-2.5 px-3 font-semibold text-right">Detalhes</th>
                   </tr>
@@ -1458,22 +1458,17 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                           )}
                         </td>
 
-                        {/* KM em Desvios (destacado à parte, não somado) */}
+                        {/* Desvios (Episódios e Distância Máxima - NUNCA km somado) */}
                         <td className="py-2.5 px-3 text-center">
-                          {item.deviationKm > 0 ? (
+                          {item.offRouteCount > 0 ? (
                             <span
                               className="font-mono text-[11px] text-rose-400 font-bold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 inline-block"
-                              title="KM gasto em desvios e paradas fora da rota (não reembolsável)"
+                              title="Contagem de episódios de desvio de rota (não reembolsável, não entra em km pago)"
                             >
-                              +
-                              {item.deviationKm.toLocaleString('pt-BR', {
-                                minimumFractionDigits: 1,
-                                maximumFractionDigits: 1,
-                              })}{' '}
-                              km
+                              {item.offRouteCount} ep.
                             </span>
                           ) : (
-                            <span className="text-slate-500 text-[11px] font-mono">0.0 km</span>
+                            <span className="text-slate-500 text-[11px] font-mono">0 ep.</span>
                           )}
                         </td>
 
