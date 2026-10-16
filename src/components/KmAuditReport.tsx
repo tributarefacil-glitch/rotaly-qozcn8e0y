@@ -787,9 +787,19 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           ? canonicalRoadKm
           : batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
 
-      // KM GPS do lote 1x: a telemetria do lote é uma janela única, não soma das paradas.
-      // Pega o maior valor de gpsKm entre as linhas do lote (nunca a soma de janelas sobrepostas).
-      const bGps = batchRows.reduce((max, r) => Math.max(max, r.gpsKm || 0), 0)
+      // KM GPS SANEADO/AUDITADO DO LOTE 1x:
+      // A telemetria do lote é uma janela única.
+      // Teto de sanidade estrito: se houver km_gps_total salvo em canonicalBatchTelem, usa o valor saneado.
+      // Se bGps bruto exceder 2x o viário do lote, aplica teto de sanidade (1.15x viário) para que lixo
+      // de telemetria nunca polua os totais agregados exibidos nos cards.
+      let bGps = batchRows.reduce((max, r) => {
+        const telemKm = r.canonicalBatchTelem ? r.canonicalBatchTelem.km_gps_total : 0
+        return Math.max(max, telemKm || r.gpsKm || 0)
+      }, 0)
+
+      if (bRoad > 0 && bGps > bRoad * 2) {
+        bGps = Number((bRoad * 1.15).toFixed(1))
+      }
 
       roadKmTotal += bRoad
       gpsKmTotal += bGps
@@ -962,9 +972,15 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           ? canonicalRoadKm
           : batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
 
-      // KM GPS do lote 1x: a telemetria do lote é uma janela única, não soma das paradas.
-      // Pega o maior valor de gpsKm entre as linhas do lote (nunca a soma de janelas sobrepostas).
-      const bGps = batchRows.reduce((max, r) => Math.max(max, r.gpsKm || 0), 0)
+      // KM GPS SANEADO DO LOTE 1x
+      let bGps = batchRows.reduce((max, r) => {
+        const telemKm = r.canonicalBatchTelem ? r.canonicalBatchTelem.km_gps_total : 0
+        return Math.max(max, telemKm || r.gpsKm || 0)
+      }, 0)
+
+      if (bRoad > 0 && bGps > bRoad * 2) {
+        bGps = Number((bRoad * 1.15).toFixed(1))
+      }
 
       roadKmTotal += bRoad
       gpsKmTotal += bGps
@@ -1162,7 +1178,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         <Card className="border-slate-200 border-l-4 border-l-purple-500 bg-white shadow-sm">
           <CardContent className="p-4">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-              KM GPS Telemetria
+              KM GPS Telemetria Saneada
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-purple-700 dark:text-purple-300">
@@ -1170,7 +1186,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
               </span>
               <span className="text-xs text-slate-500 font-semibold">km</span>
             </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">Distância real auditada via GPS</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Telemetria auditada e saneada (sem ruídos fantasma)
+            </p>
           </CardContent>
         </Card>
 

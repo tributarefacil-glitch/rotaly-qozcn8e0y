@@ -34,16 +34,82 @@ onRecordAfterUpdateSuccess((e) => {
     const PILAR_BASE_LNG = -43.2936013
     const PILAR_BASE_NAME = 'Drogaria Mais Saudável - Pilar'
 
-    function haversineDistMeters(lat1, lon1, lat2, lon2) {
-      if (lat1 === lat2 && lon1 === lon2) return 0
-      const R = 6371000
-      const toRad = Math.PI / 180
-      const dLat = (lat2 - lat1) * toRad
-      const dLon = (lon2 - lon1) * toRad
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) * Math.sin(dLon / 2)
-      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
+    /**
+     * Saneamento canônico de pings compartilhado e idempotente:
+     * - Descarte de coordenada congelada repetida (<1.5m ou diferença angular <0.00002)
+     * - Descarte de saltos com velocidade impossível (>90 km/h)
+     * - Detecção de lacunas de telemetria (>90s)
+     */
+    function sanitizePingsAndComputeTelemetry(pingsList, distFn) {
+      let kmGpsTotalMeters = 0
+      const telemetryGaps = []
+      let gapsCount = 0
+      let gapsTotalSeconds = 0
+      const telemetrySegments = []
+      let currentSegment = []
+      const pCount = pingsList ? pingsList.length : 0
+
+      if (pCount >= 1) {
+        currentSegment.push({
+          lat: pingsList[0].getFloat('lat'),
+          lng: pingsList[0].getFloat('lng'),
+          created: pingsList[0].getString('created'),
+          timeMs: new Date(pingsList[0].getString('created')).getTime(),
+        })
+      }
+
+      for (let i = 1; i < pCount; i++) {
+        const prev = pingsList[i - 1]
+        const curr = pingsList[i]
+        const prevLat = prev.getFloat('lat')
+        const prevLng = prev.getFloat('lng')
+        const currLat = curr.getFloat('lat')
+        const currLng = curr.getFloat('lng')
+        const prevTime = new Date(prev.getString('created')).getTime()
+        const currTime = new Date(curr.getString('created')).getTime()
+        const deltaSec = Math.max(0, Math.round((currTime - prevTime) / 1000))
+
+        const dMeters = distFn(prevLat, prevLng, currLat, currLng)
+        const isFrozenPing =
+          (Math.abs(prevLat - currLat) < 0.00002 && Math.abs(prevLng - currLng) < 0.00002) ||
+          dMeters < 1.5
+
+        if (deltaSec > 90) {
+          telemetryGaps.push({
+            gap_index: gapsCount + 1,
+            start_iso: prev.getString('created'),
+            end_iso: curr.getString('created'),
+            duration_seconds: deltaSec,
+            duration_minutes: Number((deltaSec / 60).toFixed(1)),
+            prev_coords: { lat: prevLat, lng: prevLng },
+            curr_coords: { lat: currLat, lng: currLng },
+          })
+          gapsCount++
+          gapsTotalSeconds += deltaSec
+          if (currentSegment.length >= 2) telemetrySegments.push(currentSegment)
+          currentSegment = []
+        } else if (!isFrozenPing) {
+          const speedKmh = deltaSec > 0 ? (dMeters / deltaSec) * 3.6 : 0
+          if (speedKmh <= 90) {
+            kmGpsTotalMeters += dMeters
+          }
+        }
+        currentSegment.push({
+          lat: currLat,
+          lng: currLng,
+          created: curr.getString('created'),
+          timeMs: currTime,
+        })
+      }
+      if (currentSegment.length >= 2) telemetrySegments.push(currentSegment)
+
+      return {
+        kmGpsTotalMeters,
+        telemetryGaps,
+        gapsCount,
+        gapsTotalSeconds,
+        telemetrySegments,
+      }
     }
 
     function distPtToSegMeters(px, py, ax, ay, bx, by) {
@@ -280,86 +346,16 @@ onRecordAfterUpdateSuccess((e) => {
         lastPingAt = pings[pingsCount - 1].getString('created')
       }
 
-      let kmGpsTotalMeters = 0
-      const telemetryGaps = []
-      let gapsCount = 0
-      let gapsTotalSeconds = 0
-      const telemetrySegments = []
-      let currentSegment = []
-
-      if (pingsCount >= 1) {
-        currentSegment.push({
-          lat: pings[0].getFloat('lat'),
-          lng: pings[0].getFloat('lng'),
-          created: pings[0].getString('created'),
-          timeMs: new Date(pings[0].getString('created')).getTime(),
-        })
-      }
-
-      for (let i = 1; i < pingsCount; i++) {
-        const prev = pings[i - 1]
-        const curr = pings[i]
-        const prevLat = prev.getFloat('lat')
-        const prevLng = prev.getFloat('lng')
-        const currLat = curr.getFloat('lat')
-        const currLng = curr.getFloat('lng')
-        const prevTime = new Date(prev.getString('created')).getTime()
-        const currTime = new Date(curr.getString('created')).getTime()
-        const deltaSec = Math.max(0, Math.round((currTime - prevTime) / 1000))
-
-        // REGRA PERMANENTE CONTRA PINGS FANTASMA / CONGELADOS:
-        // Pings fantasma (coordenada congelada repetida, offline_buffered=true repetido) não entram no somatório de km nem no traçado.
-        // Descartar saltos com velocidade > 90 km/h (teleporte) e coordenada repetida congelada (< 1m).
-        const isOfflineBufferedCurr = curr.getBool('offline_buffered')
-        const isOfflineBufferedPrev = prev.getBool('offline_buffered')
-        const dMeters = haversineDistMeters(prevLat, prevLng, currLat, currLng)
-        const isFrozenPing =
-          (Math.abs(prevLat - currLat) < 0.00002 && Math.abs(prevLng - currLng) < 0.00002) ||
-          dMeters < 1.5
-
-        if (deltaSec > 90) {
-          telemetryGaps.push({
-            gap_index: gapsCount + 1,
-            start_iso: prev.getString('created'),
-            end_iso: curr.getString('created'),
-            duration_seconds: deltaSec,
-            duration_minutes: Number((deltaSec / 60).toFixed(1)),
-            prev_coords: { lat: prevLat, lng: prevLng },
-            curr_coords: { lat: currLat, lng: currLng },
-          })
-          gapsCount++
-          gapsTotalSeconds += deltaSec
-          if (currentSegment.length >= 2) telemetrySegments.push(currentSegment)
-          currentSegment = []
-        } else if (!isFrozenPing) {
-          // Descartar salto com velocidade impossível (> 90 km/h)
-          const speedKmh = deltaSec > 0 ? (dMeters / deltaSec) * 3.6 : 0
-          if (speedKmh <= 90) {
-            kmGpsTotalMeters += dMeters
-          }
-        }
-        currentSegment.push({
-          lat: currLat,
-          lng: currLng,
-          created: curr.getString('created'),
-          timeMs: currTime,
-        })
-      }
-      if (currentSegment.length >= 2) telemetrySegments.push(currentSegment)
-
+      // SANEAMENTO IDEMPOTENTE E CANÔNICO DE PINGS:
+      // Descarte de coordenada congelada repetida (<1.5m), descarte de saltos com velocidade impossível (>90 km/h)
+      // e detecção de lacunas de telemetria (>90s).
+      const sanitizedTelemetry = sanitizePingsAndComputeTelemetry(pings, haversineDistMeters)
+      const kmGpsTotalMeters = sanitizedTelemetry.kmGpsTotalMeters
+      const telemetryGaps = sanitizedTelemetry.telemetryGaps
+      const gapsCount = sanitizedTelemetry.gapsCount
+      const gapsTotalSeconds = sanitizedTelemetry.gapsTotalSeconds
+      const telemetrySegments = sanitizedTelemetry.telemetrySegments
       let kmGpsTotal = Number((kmGpsTotalMeters / 1000).toFixed(2))
-
-      // REGRA DE SANIDADE DO USUÁRIO: km_gps_total saneado deve ser plausível (<= 2x km_viario quando este existir)
-      // Se estourar 2x km viário por ruído/pings fantasma, sanear para valor plausível
-      if (kmViarioTotalMeters > 0) {
-        const kmViarioTemp = kmViarioTotalMeters / 1000
-        if (kmGpsTotal > kmViarioTemp * 2) {
-          console.warn(
-            `[canonical_telemetry_engine] km_gps_total excessivo (${kmGpsTotal} km > 2x ${kmViarioTemp.toFixed(2)} km viário). Limitando a teto plausível.`,
-          )
-          kmGpsTotal = Number((kmViarioTemp * 1.15).toFixed(2))
-        }
-      }
 
       const baseLat = firstOrder.getFloat('start_base_lat') || PILAR_BASE_LAT
       const baseLng = firstOrder.getFloat('start_base_lng') || PILAR_BASE_LNG
@@ -456,12 +452,19 @@ onRecordAfterUpdateSuccess((e) => {
             const prevPtTime = new Date(pings[p - 1].getString('created')).getTime()
             const deltaSec = Math.max(0, Math.round((ptTime - prevPtTime) / 1000))
             if (deltaSec <= 90 && ptTime >= prevStopArrival && ptTime <= thisStopArrival) {
-              legPingsMeters += haversineDistMeters(
-                pings[p - 1].getFloat('lat'),
-                pings[p - 1].getFloat('lng'),
-                pings[p].getFloat('lat'),
-                pings[p].getFloat('lng'),
-              )
+              const pPrevLat = pings[p - 1].getFloat('lat')
+              const pPrevLng = pings[p - 1].getFloat('lng')
+              const pCurrLat = pings[p].getFloat('lat')
+              const pCurrLng = pings[p].getFloat('lng')
+              const pDistM = haversineDistMeters(pPrevLat, pPrevLng, pCurrLat, pCurrLng)
+              const pSpeedKmh = deltaSec > 0 ? (pDistM / deltaSec) * 3.6 : 0
+              const isPerezFrozen =
+                (Math.abs(pPrevLat - pCurrLat) < 0.00002 &&
+                  Math.abs(pPrevLng - pCurrLng) < 0.00002) ||
+                pDistM < 1.5
+              if (!isPerezFrozen && pSpeedKmh <= 90) {
+                legPingsMeters += pDistM
+              }
             }
           }
 
@@ -530,8 +533,13 @@ onRecordAfterUpdateSuccess((e) => {
         contado_uma_vez: true,
       }
 
-      // Recalcular kmGpsTotal plausível se kmViarioTotal for conhecido agora
+      // TETO DE COERÊNCIA IDEMPOTENTE:
+      // km_gps_total saneado deve ser plausível (<= 2x km_viario quando este existir)
+      // Se estourar 2x km viário por ruído/pings fantasma, limitar a teto plausível (1.15x km_viario)
       if (kmViarioTotal > 0 && kmGpsTotal > kmViarioTotal * 2) {
+        console.warn(
+          `[canonical_telemetry_engine] Teto de coerência acionado: km_gps_total=${kmGpsTotal} > 2x ${kmViarioTotal} km viário. Limitando a ${(kmViarioTotal * 1.15).toFixed(2)} km.`,
+        )
         kmGpsTotal = Number((kmViarioTotal * 1.15).toFixed(2))
       }
 
@@ -1067,63 +1075,17 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
       lastPingAt = pings[pingsCount - 1].getString('created')
     }
 
-    let kmGpsTotalMeters = 0
-    const telemetryGaps = []
-    let gapsCount = 0
-    let gapsTotalSeconds = 0
-    const telemetrySegments = []
-    let currentSegment = []
-
-    if (pingsCount >= 1) {
-      currentSegment.push({
-        lat: pings[0].getFloat('lat'),
-        lng: pings[0].getFloat('lng'),
-        created: pings[0].getString('created'),
-        timeMs: new Date(pings[0].getString('created')).getTime(),
-      })
-    }
-
-    for (let i = 1; i < pingsCount; i++) {
-      const prev = pings[i - 1]
-      const curr = pings[i]
-      const prevLat = prev.getFloat('lat')
-      const prevLng = prev.getFloat('lng')
-      const currLat = curr.getFloat('lat')
-      const currLng = curr.getFloat('lng')
-      const prevTime = new Date(prev.getString('created')).getTime()
-      const currTime = new Date(curr.getString('created')).getTime()
-      const deltaSec = Math.max(0, Math.round((currTime - prevTime) / 1000))
-
-      if (deltaSec > 90) {
-        telemetryGaps.push({
-          gap_index: gapsCount + 1,
-          start_iso: prev.getString('created'),
-          end_iso: curr.getString('created'),
-          duration_seconds: deltaSec,
-          duration_minutes: Number((deltaSec / 60).toFixed(1)),
-          prev_coords: { lat: prevLat, lng: prevLng },
-          curr_coords: { lat: currLat, lng: currLng },
-        })
-        gapsCount++
-        gapsTotalSeconds += deltaSec
-        if (currentSegment.length >= 2) telemetrySegments.push(currentSegment)
-        currentSegment = []
-      } else {
-        const dMeters = haversineDistMeters(prevLat, prevLng, currLat, currLng)
-        if (dMeters >= 3 || prevLat !== currLat || prevLng !== currLng) {
-          kmGpsTotalMeters += dMeters
-        }
-      }
-      currentSegment.push({
-        lat: currLat,
-        lng: currLng,
-        created: curr.getString('created'),
-        timeMs: currTime,
-      })
-    }
-    if (currentSegment.length >= 2) telemetrySegments.push(currentSegment)
-
-    const kmGpsTotal = Number((kmGpsTotalMeters / 1000).toFixed(2))
+    // SANEAMENTO IDEMPOTENTE E CANÔNICO DE PINGS NO ENDPOINT MANUAL:
+    // Usa exatamente a mesma função compartilhada sanitizePingsAndComputeTelemetry do fechamento automático
+    // Descarte de coordenada congelada repetida (<1.5m), descarte de saltos com velocidade impossível (>90 km/h)
+    // e detecção de lacunas de telemetria (>90s).
+    const sanitizedTelemetry = sanitizePingsAndComputeTelemetry(pings, haversineDistMeters)
+    const kmGpsTotalMeters = sanitizedTelemetry.kmGpsTotalMeters
+    const telemetryGaps = sanitizedTelemetry.telemetryGaps
+    const gapsCount = sanitizedTelemetry.gapsCount
+    const gapsTotalSeconds = sanitizedTelemetry.gapsTotalSeconds
+    const telemetrySegments = sanitizedTelemetry.telemetrySegments
+    let kmGpsTotal = Number((kmGpsTotalMeters / 1000).toFixed(2))
 
     const baseLat = firstOrder.getFloat('start_base_lat') || PILAR_BASE_LAT
     const baseLng = firstOrder.getFloat('start_base_lng') || PILAR_BASE_LNG
@@ -1221,12 +1183,19 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
           const prevPtTime = new Date(pings[p - 1].getString('created')).getTime()
           const deltaSec = Math.max(0, Math.round((ptTime - prevPtTime) / 1000))
           if (deltaSec <= 90 && ptTime >= prevStopArrival && ptTime <= thisStopArrival) {
-            legPingsMeters += haversineDistMeters(
-              pings[p - 1].getFloat('lat'),
-              pings[p - 1].getFloat('lng'),
-              pings[p].getFloat('lat'),
-              pings[p].getFloat('lng'),
-            )
+            const pPrevLat = pings[p - 1].getFloat('lat')
+            const pPrevLng = pings[p - 1].getFloat('lng')
+            const pCurrLat = pings[p].getFloat('lat')
+            const pCurrLng = pings[p].getFloat('lng')
+            const pDistM = haversineDistMeters(pPrevLat, pPrevLng, pCurrLat, pCurrLng)
+            const pSpeedKmh = deltaSec > 0 ? (pDistM / deltaSec) * 3.6 : 0
+            const isPerezFrozen =
+              (Math.abs(pPrevLat - pCurrLat) < 0.00002 &&
+                Math.abs(pPrevLng - pCurrLng) < 0.00002) ||
+              pDistM < 1.5
+            if (!isPerezFrozen && pSpeedKmh <= 90) {
+              legPingsMeters += pDistM
+            }
           }
         }
 
@@ -1284,6 +1253,16 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
         }
         currentDeviation = null
       }
+    }
+
+    // TETO DE COERÊNCIA IDEMPOTENTE NO ENDPOINT MANUAL:
+    // km_gps_total saneado deve ser plausível (<= 2x km_viario quando este existir)
+    // Se estourar 2x km viário por ruído/pings fantasma, limitar a teto plausível (1.15x km_viario)
+    if (kmViarioTotal > 0 && kmGpsTotal > kmViarioTotal * 2) {
+      console.warn(
+        `[canonical_telemetry_engine:post] Teto de coerência acionado: km_gps_total=${kmGpsTotal} > 2x ${kmViarioTotal} km viário. Limitando a ${(kmViarioTotal * 1.15).toFixed(2)} km.`,
+      )
+      kmGpsTotal = Number((kmViarioTotal * 1.15).toFixed(2))
     }
 
     const lastLeg = legsData.find((l) => l.is_return) || null

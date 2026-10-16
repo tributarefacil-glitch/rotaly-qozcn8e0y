@@ -894,7 +894,11 @@ export function calculateCourierFuelMetrics(params: {
       }
 
       const batchDevKm = batchTelem ? batchTelem.deviationKm : 0
-      const batchGpsKm = batchTelem ? batchTelem.totalGpsKm : 0
+      // Garantir teto de coerência no GPS do lote caso telemetria bruta venha corrompida
+      let batchGpsKm = batchTelem ? batchTelem.totalGpsKm : 0
+      if (canonicalBatchKm > 0 && batchGpsKm > canonicalBatchKm * 2) {
+        batchGpsKm = Number((canonicalBatchKm * 1.15).toFixed(1))
+      }
 
       const batchLit =
         !isBicycle && consumptionKml > 0

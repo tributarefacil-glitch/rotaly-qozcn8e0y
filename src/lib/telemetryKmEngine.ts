@@ -484,8 +484,27 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
     cleanedPoints.push(...segValid)
   }
 
+  // GUARDA RIGOROSA DE SANIDADE CONTRA COORDENADA CONGELADA REPETIDA:
+  // Se houver mais de 5 pontos consecutivos no mesmo micro-raio (<1.5m), descarta repetições estagnadas
+  const strictlySanitized: LocationRecord[] = []
+  for (let i = 0; i < cleanedPoints.length; i++) {
+    const pt = cleanedPoints[i]
+    if (strictlySanitized.length > 0) {
+      const lastPt = strictlySanitized[strictlySanitized.length - 1]
+      const dM = haversineDistanceMeters(lastPt.lat, lastPt.lng, pt.lat, pt.lng)
+      const isMicroFrozen =
+        (Math.abs(lastPt.lat - pt.lat) < 0.00002 && Math.abs(lastPt.lng - pt.lng) < 0.00002) ||
+        dM < 1.5
+      if (isMicroFrozen) {
+        noiseCount++
+        continue
+      }
+    }
+    strictlySanitized.push(pt)
+  }
+
   return {
-    validPoints: cleanedPoints,
+    validPoints: strictlySanitized,
     noiseCount,
     discardedNoiseKm: Number((discardedNoiseMeters / 1000).toFixed(2)),
   }

@@ -147,12 +147,27 @@ export function BatchReconciliationSection({
             for (let i = 1; i < validPoints.length; i++) {
               const p1 = validPoints[i - 1]
               const p2 = validPoints[i]
-              // Não somar se quebra de segmento online/offline
+              // Descarte de coordenada congelada repetida e velocidade impossível
+              const isFrozen =
+                (Math.abs(p1.lat - p2.lat) < 0.00002 && Math.abs(p1.lng - p2.lng) < 0.00002) ||
+                haversineDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng) < 1.5
+              if (isFrozen) continue
               if (Boolean(p1.offline_buffered) !== Boolean(p2.offline_buffered)) continue
               const dist = haversineDistanceMeters(p1.lat, p1.lng, p2.lat, p2.lng)
-              totalMeters += dist
+              const dtSec = Math.max(
+                0.1,
+                (new Date(p2.created).getTime() - new Date(p1.created).getTime()) / 1000,
+              )
+              const speed = (dist / dtSec) * 3.6
+              if (speed <= 90) {
+                totalMeters += dist
+              }
             }
-            gpsKm = Number((totalMeters / 1000).toFixed(1))
+            let rawGpsKm = Number((totalMeters / 1000).toFixed(1))
+            if (roadKm > 0 && rawGpsKm > roadKm * 2) {
+              rawGpsKm = Number((roadKm * 1.15).toFixed(1))
+            }
+            gpsKm = rawGpsKm
           }
         }
 
