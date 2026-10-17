@@ -2239,6 +2239,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         map.addListener('dragstart', () => {
           hasUserInteractedRef.current = true
           isDraggingRef.current = true
+          // Ao arrastar o mapa, desativa automaticamente o modo seguir
+          setIsAutoFollow(false)
         })
         map.addListener('dragend', () => {
           isDraggingRef.current = false
@@ -2484,7 +2486,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 lines.returnLeg = new win.google.maps.Polyline({
                   path: rawRetPath,
                   geodesic: true,
-                  strokeColor: courierColor.returnLeg || '#60A5FA',
+                  strokeColor: '#10B981',
                   strokeOpacity: 0.95,
                   strokeWeight: 5,
                   zIndex: 790,
@@ -2501,7 +2503,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
                 lines.returnLeg.setPath(rawRetPath)
                 try {
                   lines.returnLeg.setOptions({
-                    strokeColor: courierColor.returnLeg || '#60A5FA',
+                    strokeColor: '#10B981',
                     strokeOpacity: 0.95,
                     strokeWeight: 5,
                     zIndex: 790,
@@ -2583,7 +2585,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
               returnPolyline = new win.google.maps.Polyline({
                 path: rawRetPath,
                 geodesic: true,
-                strokeColor: courierColor.returnLeg || '#60A5FA',
+                strokeColor: '#10B981',
                 strokeOpacity: 0.95,
                 strokeWeight: 5,
                 zIndex: 790,
@@ -2665,12 +2667,13 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       })
     }
     // Helpers de ícones SVG reaproveitados de LiveMap.tsx com adaptação para win.google.maps
-    const makeNativeCourierSvg = (vehicle?: string, pinColor = '#0052CC') => {
-      const generated = makeCourierSvgIcon(vehicle, pinColor, 46)
+    // Marcador do entregador ampliado para 52px com anel pulsante tipo radar
+    const makeNativeCourierSvg = (vehicle?: string, pinColor = '#2563EB') => {
+      const generated = makeCourierSvgIcon(vehicle, pinColor, 52)
       return {
         url: generated.url,
-        scaledSize: new win.google.maps.Size(46, 46),
-        anchor: new win.google.maps.Point(23, 23),
+        scaledSize: new win.google.maps.Size(52, 52),
+        anchor: new win.google.maps.Point(26, 26),
       }
     }
 

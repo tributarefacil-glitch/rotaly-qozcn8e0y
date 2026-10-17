@@ -633,27 +633,28 @@ export const SharedRouteMap: React.FC<SharedRouteMapProps> = ({
         )}
       </div>
 
-      {/* LEGENDA MÍNIMA CONFORME ESPECIFICAÇÃO DO PRODUTO */}
+      {/* LEGENDA PADRONIZADA: AZUL = ROTA OTIMIZADA | VERMELHO = DESVIO (CAMINHO REAL GRAVADO) | VERDE = VOLTA À BASE */}
       <div className="p-2.5 bg-slate-900 border-t border-slate-800 text-slate-300 flex flex-wrap items-center justify-between gap-3 text-[11px]">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5">
             <span className="h-2 w-5 rounded-full bg-[#2563EB]" />
-            <span>Rota otimizada (vias reais)</span>
+            <span className="font-semibold text-blue-300">Azul: Rota Otimizada</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="h-2 w-5 rounded-full bg-[#DC2626]" />
-            <span>Linha de desvio (pings reais)</span>
+            <span className="font-semibold text-rose-400">
+              Vermelho: Desvio (caminho real gravado)
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="h-2 w-5 rounded-full bg-[#10B981]" />
+            <span className="font-semibold text-emerald-400">Verde: Volta à base</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="h-2 w-4 border-b border-dashed border-slate-400" />
-            <span>Lacuna telemetria (sem sinal)</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full bg-emerald-500 inline-block" />
-            <span>Veículo em tempo real</span>
+            <span className="text-slate-400">Lacuna telemetria (&gt;90s)</span>
           </div>
         </div>
-
         <div className="text-[10px] text-slate-400 font-mono">
           {normalizedStops.length} cliente(s) · {pings.length} pings GPS
         </div>
