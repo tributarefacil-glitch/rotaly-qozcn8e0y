@@ -282,11 +282,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
       const windowStart =
         currentOpWindow.startPbString ||
         new Date(currentOpWindow.start).toISOString().replace('T', ' ')
+      // Na Torre de Controle e acompanhamento em tempo real, pedidos em rota ativa (route_started=true)
+      // devem ser carregados para que a frota e os lotes em trânsito fiquem visíveis tanto para seller quanto para admin.
+      // O vendedor visualiza suas próprias vendas E todos os pedidos com rota ativa da frota.
       let ordersFilter = `created >= '${windowStart}' || (route_started = true && route_finished != true) || (route_released != true && (status = 'pending' || status = 'assigned'))`
 
-      // Regra de visibilidade por perfil: Vendedor visualiza estritamente suas próprias vendas
       if (user?.role === 'seller' && user?.id) {
-        ordersFilter = `seller_id = '${user.id}' && (${ordersFilter})`
+        ordersFilter = `(seller_id = '${user.id}' || (route_started = true && route_finished != true)) && (${ordersFilter})`
       }
 
       // Resolução segura da empresa alvo: currentCompany -> localStorage -> Matriz

@@ -536,6 +536,35 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Deve buscar de forma autônoma estritamente quando NÃO houver gerenciamento pelo pai
   const shouldFetchAutonomously = !hasParentData
 
+  // Assegura que globalInTransitOrders (entregadores em trânsito de toda a frota no dia)
+  // seja carregado mesmo quando a Torre recebe orders da loja/vendedor via props,
+  // permitindo que o perfil seller veja todos os entregadores em rota ativa.
+  useEffect(() => {
+    let isMounted = true
+    const loadGlobalTransit = async () => {
+      try {
+        const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
+        const fetchedGlobal = await deliveryService.getOrders(
+          globalTransitFilter,
+          '-created',
+          'customer_id,courier_id,seller_id',
+        )
+        if (!isMounted) return
+        const currentOpWindow = getOperationalWindow(new Date())
+        const onlyTodayGlobal = (fetchedGlobal || []).filter((o) =>
+          isTodayOrder(o, currentOpWindow),
+        )
+        setGlobalInTransitOrders(onlyTodayGlobal)
+      } catch (err) {
+        console.warn('Torre de Controle: falha ao buscar pedidos em trânsito da frota:', err)
+      }
+    }
+    loadGlobalTransit()
+    return () => {
+      isMounted = false
+    }
+  }, [lastUpdated])
+
   // Listener de falha de resequenciamento para alertar a Central (admin/operador)
   useEffect(() => {
     const handleResequenceFailure = (evt: any) => {
