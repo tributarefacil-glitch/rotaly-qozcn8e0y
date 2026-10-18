@@ -4,33 +4,17 @@
  * Motor oficial de apuração de combustível, conta corrente e alertas de saldo do Rotaly.
  *
  * REGRAS OFICIAIS DE PRODUTO (PARIDADE TOTAL COM O CARD DO PAINEL / FRONTEND):
- * - KM oficial = Trajeto viário da rota planejada (`total_route_with_return_km`) contado UMA VEZ por LOTE de rota;
- * - O combustível da rota é rateado pro-rata entre os pedidos do lote (com absorção de resíduo na última parada);
- * - Entregas conjuntas no mesmo cliente (janela <= 45 minutos no mesmo dia local): a 1ª parada (primária) mantém o KM/combustível;
- *   pedidos secundários têm KM=0 e combustível=0 (viagem já paga, deduplicação);
- * - Parâmetros de combustível (consumo km/l e preço/litro) obtidos das configurações atuais do sistema (`app_settings`),
- *   diferenciados por categoria de veículo (moto, carro/van, caminhão, bicicleta);
- * - NUNCA somar o campo `fuel_cost` individual bruto gravado nos pedidos;
- * - Aprovações de KM vigentes em `route_km_approvals` (status = 'approved') têm soberania sobre o trecho oficial;
- *
- * FRENTE 1 — SALDO NO E-MAIL/REGISTRO:
- *   Se o entregador possuir opening_balance e cutoff_date preenchidos:
- *   Saldo Atual = opening_balance + adiantamentos (status='active' com data civil >= cutoff_date) - gasto oficial pós-cutoff.
- *   Fallback: sem opening_balance/cutoff_date, mantém a apuração de conta corrente padrão (carry-over + adiantamentos - gastos).
- *   Filtrar SEMPRE status='active' para adiantamentos considerados no saldo.
- *
- * FRENTE 2 — NOVA SUGESTÃO DE RECARGA (MÉDIA ÚLTIMOS 30 DIAS):
- *   média_diária = gasto oficial apurado pelo motor nos últimos 30 dias (janela deslizante, fuso America/Sao_Paulo, operacional 05h–23h59) ÷ 30;
- *   dias_restantes = do dia seguinte ao corrente até o último dia do mês civil (ex: alerta em 08/10 -> 09/10 a 31/10 = 23 dias);
- *   projeção = média_diária × dias_restantes;
- *   sugestão = max(0, média_diária × dias_restantes − saldo_atual);
- *   Componentes detalhados no e-mail e no registro: média diária, intervalo e dias restantes, projeção, saldo e sugestão.
- *
- * FRENTE 3 — NOVO DISPARO DO ALERTA (80% DO SALDO DISPONIBILIZADO):
- *   Disparar quando o gasto apurado atingir 80% do saldo disponibilizado (opening_balance + adiantamentos active pós-cutoff),
- *   ou seja, saldo restante <= 20% do disponibilizado; ou imediatamente se saldo < 0.
- *   Substitui o gatilho antigo (80% da média mensal).
- *   Máximo 1 alerta por entregador por dia (coleção `fuel_balance_alerts`), sem apagar histórico.
+ * - Consome EXCLUSIVAMENTE a coleção `route_batch_telemetry` como fonte de km e rotas:
+ *   filtrar por courier_id, dedup 1x por route_batch_key, usar km_oficial auditado
+ *   (fallback min(km_viario_total, km_gps_total) apenas se km_oficial vazio/zerado).
+ * - PROIBIDO: km_gps_total cru somado, km de desvio, orders como fonte de km.
+ * - Gasto = km oficial ÷ taxa de consumo do veículo em app_settings (moto 30 km/L) × preço do litro (R$ 6,49).
+ * - Bicicleta = custo zero (fuel_cost = 0, gasto = 0).
+ * - Média diária = gasto canônico ÷ dias civis efetivamente trabalhados.
+ * - Sugestão de recarga = max(0, média − consumo do período), máx 1 e-mail/dia como já existe.
+ * - Saldo = saldo de abertura + adiantamentos pós-corte − gasto canônico pós-corte.
+ * - Aprovação manual do admin: registros em `route_km_approvals` (status = 'approved') têm soberania sobre o trecho.
+ * - Preserva rigorosamente a ordem de avisos e templates HTML já existentes.
  *
  * NOTA DE ARQUITETURA POCKETBASE (GOJA JSVM):
  * Callbacks em cronAdd e routerAdd rodam em pools isoladas: funções auxiliares declaradas inline.
@@ -123,28 +107,14 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
     return advKey >= cutoffKey
   }
 
-  function haversineMeters(lat1, lon1, lat2, lon2) {
-    if (lat1 === lat2 && lon1 === lon2) return 0
-    var R = 6371e3
-    var p1 = (lat1 * Math.PI) / 180
-    var p2 = (lat2 * Math.PI) / 180
-    var dp = ((lat2 - lat1) * Math.PI) / 180
-    var dl = ((lon2 - lon1) * Math.PI) / 180
-    var a =
-      Math.sin(dp / 2) * Math.sin(dp / 2) +
-      Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2)
-    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    return R * c
-  }
-
   function loadFuelSettings() {
     var s = {
       pricePerLiter: 6.49,
-      consumptionKml: 35.0,
+      consumptionKml: 30.0,
       motoPrice: 6.49,
-      motoKml: 35.0,
+      motoKml: 30.0,
       carroPrice: 6.49,
-      carroKml: 12.0,
+      carroKml: 10.0,
       caminhaoPrice: 6.49,
       caminhaoKml: 7.0,
       alertThresholdPct: 80,
@@ -155,13 +125,13 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       if (recs && recs.length > 0) {
         var r = recs[0]
         var basePrice = Number(r.getFloat('fuel_price_per_liter')) || 6.49
-        var baseKml = Number(r.getFloat('fuel_consumption_kml')) || 35.0
+        var baseKml = Number(r.getFloat('fuel_consumption_kml')) || 30.0
 
         var mPrice = Number(r.getFloat('moto_fuel_price')) || basePrice
         var mKml = Number(r.getFloat('moto_consumption_kml')) || baseKml
 
         var cPrice = Number(r.getFloat('carro_fuel_price')) || basePrice
-        var cKml = Number(r.getFloat('carro_consumption_kml')) || 12.0
+        var cKml = Number(r.getFloat('carro_consumption_kml')) || 10.0
 
         var tPrice = Number(r.getFloat('caminhao_fuel_price')) || basePrice
         var tKml = Number(r.getFloat('caminhao_consumption_kml')) || 7.0
@@ -204,7 +174,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       return {
         category: 'carro',
         price: settings.carroPrice || settings.pricePerLiter,
-        kml: settings.carroKml || 12.0,
+        kml: settings.carroKml || 10.0,
         isBike: false,
       }
     }
@@ -224,294 +194,98 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
     }
   }
 
-  function isCourierEligibleOrder(ord, courierId) {
-    if (ord.getString('courier_id') !== courierId) return false
-    var notes = (ord.getString('notes') || '').toLowerCase()
-    if (notes.indexOf('erro de sistema') !== -1) return false
-    if (ord.getString('completion_reason') === 'cancelado_vendedor') return false
-
-    var baseLat = Number(ord.getFloat('start_base_lat')) || 0
-    var baseLng = Number(ord.getFloat('start_base_lng')) || 0
-    if (
-      baseLat === 0 &&
-      baseLng === 0 &&
-      !ord.getString('start_base_name') &&
-      !ord.getString('start_base_address')
-    ) {
-      return false
+  /**
+   * Processa os lotes dedup 1x por route_batch_key consumindo EXCLUSIVAMENTE route_batch_telemetry.
+   * Regras canônicas:
+   * 1. Dedup 1x por route_batch_key (mantém o mais recente se houver chave duplicada);
+   * 2. KM Oficial canônico: km_oficial auditado. Fallback: min(km_viario_total, km_gps_total) apenas se km_oficial vazio/zerado;
+   * 3. Saneamento: se viario > 0 e gps > 2x viario, limita gps a viario * 1.15; se oficial > 2x viario, recalcula pela regra do MENOR;
+   * 4. Aprovação manual do admin em route_km_approvals tem soberania;
+   * 5. Gasto = km_oficial ÷ consumoKml × pricePerLiter (bicicleta = 0);
+   * 6. PROIBIDO: km_gps_total cru somado, km de desvio, orders como fonte de km.
+   */
+  function buildCanonicalBatches(rawBatches, approvalsByBatch) {
+    var map = {}
+    for (var i = 0; i < rawBatches.length; i++) {
+      var b = rawBatches[i]
+      var k = b.getString('route_batch_key')
+      if (!k) continue
+      var existing = map[k]
+      if (!existing) {
+        map[k] = b
+      } else {
+        var tB = parseSafeTimestamp(b.getString('updated') || b.getString('created'))
+        var tEx = parseSafeTimestamp(existing.getString('updated') || existing.getString('created'))
+        if (tB > tEx) {
+          map[k] = b
+        }
+      }
     }
 
-    var status = ord.getString('status')
-    if (status === 'delivered') return true
-    if (status === 'address_error' || status === 'client_absent') return true
-    return false
-  }
+    var result = []
+    var keys = Object.keys(map)
+    for (var j = 0; j < keys.length; j++) {
+      var bKey = keys[j]
+      var bRec = map[bKey]
 
-  function buildJointDeliveryMetaMap(orders) {
-    var metaMap = {}
-    var JOINT_DELIVERY_WINDOW_MS = 45 * 60 * 1000
+      var viario = Number(bRec.getFloat('km_viario_total')) || 0
+      var gps = Number(bRec.getFloat('km_gps_total')) || 0
+      var kmOficial = Number(bRec.getFloat('km_oficial')) || 0
 
-    var buckets = {}
-    for (var i = 0; i < orders.length; i++) {
-      var o = orders[i]
-      var cId = o.getString('courier_id')
-      var custId = o.getString('customer_id')
-      if (!cId) continue
-
-      var effectiveCustomerKey = custId
-      if (!effectiveCustomerKey) {
-        var rawAddr = (o.getString('end_address_text') || o.getString('start_base_address') || o.id)
-          .toLowerCase()
-          .trim()
-        effectiveCustomerKey = 'addr_' + rawAddr
+      // Guarda de sanidade nos somatórios (teto de coerência)
+      if (viario > 0 && gps > viario * 2) {
+        gps = Number((viario * 1.15).toFixed(2))
+      }
+      if (kmOficial <= 0 || (viario > 0 && kmOficial > viario * 2)) {
+        kmOficial = viario > 0 ? (gps > 0 ? Math.min(viario, gps) : viario) : gps
       }
 
-      var oDateVal =
-        o.getString('actual_arrival') || o.getString('route_finished_at') || o.getString('created')
-      var dayKey = getBrazilDateString(new Date(parseSafeTimestamp(oDateVal)))
-      var bKey = cId + ':::' + effectiveCustomerKey + ':::' + dayKey
+      // Aprovação manual do admin pelo lote
+      var batchApprovals = approvalsByBatch ? approvalsByBatch[bKey] : null
+      if (batchApprovals && batchApprovals.length > 0) {
+        var sumApproved = 0
+        var hasApproved = false
+        for (var ap = 0; ap < batchApprovals.length; ap++) {
+          var apItem = batchApprovals[ap]
+          if (apItem.status === 'approved' && apItem.approvedKm > 0) {
+            sumApproved += apItem.approvedKm
+            hasApproved = true
+          }
+        }
+        if (hasApproved && sumApproved > 0) {
+          kmOficial = sumApproved
+        }
+      }
 
-      if (!buckets[bKey]) buckets[bKey] = []
-      buckets[bKey].push(o)
-    }
+      kmOficial = Number(kmOficial.toFixed(2))
 
-    var bucketKeys = Object.keys(buckets)
-    for (var b = 0; b < bucketKeys.length; b++) {
-      var bOrders = buckets[bucketKeys[b]]
-      if (bOrders.length < 2) continue
+      var dateVal =
+        bRec.getString('route_finished_at') ||
+        bRec.getString('route_started_at') ||
+        bRec.getString('created')
+      var ts = parseSafeTimestamp(dateVal)
+      var civilDay = getCivilDateKey(dateVal)
 
-      bOrders.sort(function (a, bOrd) {
-        var ta =
-          parseSafeTimestamp(a.getString('actual_arrival')) ||
-          parseSafeTimestamp(a.getString('route_finished_at')) ||
-          parseSafeTimestamp(a.getString('created'))
-        var tb =
-          parseSafeTimestamp(bOrd.getString('actual_arrival')) ||
-          parseSafeTimestamp(bOrd.getString('route_finished_at')) ||
-          parseSafeTimestamp(bOrd.getString('created'))
-        if (ta !== tb) return ta - tb
-        return (
-          parseSafeTimestamp(a.getString('created')) - parseSafeTimestamp(bOrd.getString('created'))
-        )
+      result.push({
+        batchKey: bKey,
+        record: bRec,
+        kmOficial: kmOficial,
+        kmViario: viario,
+        kmGps: gps,
+        timestamp: ts,
+        civilDay: civilDay,
       })
-
-      var clusters = []
-      var curCluster = [bOrders[0]]
-
-      for (var j = 1; j < bOrders.length; j++) {
-        var ord = bOrders[j]
-        var prevOrd = curCluster[curCluster.length - 1]
-        var tOrd =
-          parseSafeTimestamp(ord.getString('actual_arrival')) ||
-          parseSafeTimestamp(ord.getString('route_finished_at')) ||
-          parseSafeTimestamp(ord.getString('created'))
-        var tPrev =
-          parseSafeTimestamp(prevOrd.getString('actual_arrival')) ||
-          parseSafeTimestamp(prevOrd.getString('route_finished_at')) ||
-          parseSafeTimestamp(prevOrd.getString('created'))
-
-        if (Math.abs(tOrd - tPrev) <= JOINT_DELIVERY_WINDOW_MS) {
-          curCluster.push(ord)
-        } else {
-          if (curCluster.length >= 2) {
-            clusters.push(curCluster)
-          }
-          curCluster = [ord]
-        }
-      }
-      if (curCluster.length >= 2) {
-        clusters.push(curCluster)
-      }
-
-      for (var k = 0; k < clusters.length; k++) {
-        var cluster = clusters[k]
-        var primary = cluster[0]
-        for (var ci = 0; ci < cluster.length; ci++) {
-          var cOrd = cluster[ci]
-          metaMap[cOrd.id] = {
-            isJointDelivery: true,
-            isJointPrimary: ci === 0,
-            isJointSecondary: ci > 0,
-            primaryId: primary.id,
-          }
-        }
-      }
     }
 
-    return metaMap
-  }
-
-  function computeOrderWeight(ord) {
-    var baseLat = Number(ord.getFloat('start_base_lat')) || -22.7001402
-    var baseLng = Number(ord.getFloat('start_base_lng')) || -43.2982834
-    var endLat = Number(ord.getFloat('end_address_lat')) || 0
-    var endLng = Number(ord.getFloat('end_address_lng')) || 0
-
-    var roadDist = 0.8
-    if (endLat !== 0 && endLng !== 0) {
-      var directMeters = haversineMeters(baseLat, baseLng, endLat, endLng)
-      roadDist = Math.max(directMeters / 1000, 0.8)
-    }
-
-    var dKm = Number(ord.getFloat('distance_km')) || 0
-    if (dKm > 0) {
-      roadDist = Math.max(roadDist, dKm)
-    }
-
-    var rKm = Number(ord.getFloat('return_trip_km')) || 0
-    return Math.max(roadDist + rKm, 0.8)
-  }
-
-  // Motor oficial que computa o gasto de uma lista de pedidos
-  function computeOrdersOfficialSpent(ordersSubset, courier, settings, approvalsMap) {
-    var vehicleType = courier.getString('vehicle_type') || 'moto'
-    var vParams = getVehicleParams(vehicleType, settings)
-    if (vParams.isBike || !ordersSubset || ordersSubset.length === 0) {
-      return 0
-    }
-
-    var jointMetaMap = buildJointDeliveryMetaMap(ordersSubset)
-
-    var routeBatches = {}
-    for (var oIdx = 0; oIdx < ordersSubset.length; oIdx++) {
-      var o = ordersSubset[oIdx]
-      var assignedKey = null
-      var rStart = o.getString('route_started_at')
-      var rFinish = o.getString('route_finished_at')
-
-      if (rStart && rFinish) {
-        assignedKey = 'route_' + rStart + '_' + rFinish
-      } else if (rStart) {
-        var oTime = parseSafeTimestamp(rStart)
-        var batchKeys = Object.keys(routeBatches)
-        for (var bk = 0; bk < batchKeys.length; bk++) {
-          var exKey = batchKeys[bk]
-          if (exKey.indexOf('batch_') === 0 && exKey.indexOf('batch_created_') === -1) {
-            var bTime = Number(exKey.replace('batch_', '')) * (15 * 60 * 1000)
-            if (Math.abs(oTime - bTime) <= 15 * 60 * 1000) {
-              assignedKey = exKey
-              break
-            }
-          }
-        }
-        if (!assignedKey) {
-          assignedKey = 'batch_' + Math.floor(oTime / (15 * 60 * 1000))
-        }
-      } else {
-        var cTime = parseSafeTimestamp(o.getString('created'))
-        if (cTime > 0) {
-          var batchKeysCreated = Object.keys(routeBatches)
-          for (var bkc = 0; bkc < batchKeysCreated.length; bkc++) {
-            var exKeyC = batchKeysCreated[bkc]
-            if (exKeyC.indexOf('batch_created_') === 0) {
-              var bTimeC = Number(exKeyC.replace('batch_created_', '')) * (15 * 60 * 1000)
-              if (Math.abs(cTime - bTimeC) <= 15 * 60 * 1000) {
-                assignedKey = exKeyC
-                break
-              }
-            }
-          }
-          if (!assignedKey) {
-            assignedKey = 'batch_created_' + Math.floor(cTime / (15 * 60 * 1000))
-          }
-        } else {
-          assignedKey = 'single_' + o.id
-        }
-      }
-
-      if (!routeBatches[assignedKey]) routeBatches[assignedKey] = []
-      routeBatches[assignedKey].push(o)
-    }
-
-    var totalSpent = 0
-    var batchKeysAll = Object.keys(routeBatches)
-    for (var bIdx = 0; bIdx < batchKeysAll.length; bIdx++) {
-      var bKey = batchKeysAll[bIdx]
-      var batchOrders = routeBatches[bKey]
-      var batchCount = batchOrders.length
-
-      var maxRoadKmInBatch = 0
-      for (var bi = 0; bi < batchCount; bi++) {
-        var rKm = Number(batchOrders[bi].getFloat('total_route_with_return_km')) || 0
-        if (rKm > maxRoadKmInBatch) maxRoadKmInBatch = rKm
-      }
-
-      var batchTotalOfficialKm = 0
-      if (maxRoadKmInBatch > 0) {
-        batchTotalOfficialKm = Number(maxRoadKmInBatch.toFixed(1))
-      } else {
-        var sumWeights = 0
-        for (var swi = 0; swi < batchCount; swi++) {
-          sumWeights += computeOrderWeight(batchOrders[swi])
-        }
-        batchTotalOfficialKm = Number(sumWeights.toFixed(1))
-      }
-
-      var batchTotalLiters =
-        vParams.kml > 0 ? Number((batchTotalOfficialKm / vParams.kml).toFixed(2)) : 0
-      var batchTotalFuelCost = Number((batchTotalLiters * vParams.price).toFixed(2))
-
-      var totalBatchWeight = 0
-      for (var wi = 0; wi < batchCount; wi++) {
-        totalBatchWeight += computeOrderWeight(batchOrders[wi])
-      }
-
-      var allocatedKm = 0
-      var allocatedFuel = 0
-
-      for (var ordIdx = 0; ordIdx < batchCount; ordIdx++) {
-        var currentOrder = batchOrders[ordIdx]
-        var isLast = ordIdx === batchCount - 1
-        var thisWeight = computeOrderWeight(currentOrder)
-        var ratio = totalBatchWeight > 0 ? thisWeight / totalBatchWeight : 1 / batchCount
-
-        var itemKm = 0
-        var itemFuel = 0
-
-        if (batchCount === 1) {
-          itemKm = batchTotalOfficialKm
-          itemFuel = batchTotalFuelCost
-        } else if (isLast) {
-          itemKm = Number(Math.max(0, batchTotalOfficialKm - allocatedKm).toFixed(1))
-          itemFuel = Number(Math.max(0, batchTotalFuelCost - allocatedFuel).toFixed(2))
-        } else {
-          itemKm = Number((batchTotalOfficialKm * ratio).toFixed(1))
-          var itemLiters = vParams.kml > 0 ? Number((itemKm / vParams.kml).toFixed(2)) : 0
-          itemFuel = Number((itemLiters * vParams.price).toFixed(2))
-
-          allocatedKm += itemKm
-          allocatedFuel += itemFuel
-        }
-
-        var jMeta = jointMetaMap[currentOrder.id]
-        if (jMeta && jMeta.isJointSecondary) {
-          itemKm = 0
-          itemFuel = 0
-        }
-
-        if (approvalsMap && approvalsMap[currentOrder.id] !== undefined) {
-          var approvedVal = approvalsMap[currentOrder.id]
-          if (!(jMeta && jMeta.isJointSecondary)) {
-            itemKm = approvedVal
-            var appLiters = vParams.kml > 0 ? Number((itemKm / vParams.kml).toFixed(2)) : 0
-            itemFuel = Number((appLiters * vParams.price).toFixed(2))
-          }
-        }
-
-        totalSpent += itemFuel
-      }
-    }
-
-    return Number(totalSpent.toFixed(2))
+    return result
   }
 
   try {
     console.log(
-      '[daily_fuel_balance_check] Iniciando verificação diária com motor canônico e nova sugestão 30d...',
+      '[daily_fuel_balance_check] Iniciando verificação com fonte EXCLUSIVA route_batch_telemetry...',
     )
     var now = new Date()
     var todayStr = getBrazilDateString(now)
-    var currentYearMonth = todayStr.substring(0, 7)
 
     var fuelSettings = loadFuelSettings()
 
@@ -548,17 +322,18 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       console.log('[daily_fuel_balance_check] Erro ao buscar fuel_advances:', errAdv)
     }
 
-    var allOrders = []
+    // Carrega EXCLUSIVAMENTE a telemetria auditada
+    var allTelemetryBatches = []
     try {
-      allOrders = $app.findRecordsByFilter(
-        'orders',
-        "(status = 'delivered' || status = 'address_error' || status = 'client_absent') && completion_reason != 'cancelado_vendedor'",
+      allTelemetryBatches = $app.findRecordsByFilter(
+        'route_batch_telemetry',
+        'id != ""',
         '-created',
         10000,
         0,
       )
-    } catch (errOrd) {
-      console.log('[daily_fuel_balance_check] Erro ao buscar orders:', errOrd)
+    } catch (errTelem) {
+      console.log('[daily_fuel_balance_check] Erro ao buscar route_batch_telemetry:', errTelem)
     }
 
     var allMembros = []
@@ -582,9 +357,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       )
     } catch (_) {}
 
-    // Carrega aprovações em route_km_approvals: aprovadas (para substituição de km) e completas (para auditoria de lotes)
-    var approvalsMap = {}
-    var approvalsByOrder = {}
+    // Aprovações de KM vigentes
     var approvalsByBatch = {}
     try {
       var allApprovals = $app.findRecordsByFilter(
@@ -596,31 +369,22 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       )
       for (var ap = 0; ap < allApprovals.length; ap++) {
         var aRec = allApprovals[ap]
-        var aOrderId = aRec.getString('order_id')
         var aBatchKey = aRec.getString('route_batch_key')
         var aStatus = aRec.getString('status') || 'pending'
         var aKm = Number(aRec.getFloat('approved_km')) || 0
 
-        if (aOrderId) {
-          if (!approvalsByOrder[aOrderId]) {
-            approvalsByOrder[aOrderId] = { status: aStatus, approvedKm: aKm, batchKey: aBatchKey }
-          }
-          if (aStatus === 'approved' && approvalsMap[aOrderId] === undefined) {
-            approvalsMap[aOrderId] = aKm
-          }
-        }
         if (aBatchKey) {
           if (!approvalsByBatch[aBatchKey]) {
             approvalsByBatch[aBatchKey] = []
           }
-          approvalsByBatch[aBatchKey].push({ orderId: aOrderId, status: aStatus, approvedKm: aKm })
+          approvalsByBatch[aBatchKey].push({ status: aStatus, approvedKm: aKm })
         }
       }
     } catch (errAp) {
       console.log('[daily_fuel_balance_check] Aviso ao carregar route_km_approvals:', errAp)
     }
-    // Cálculo do calendário civil do mês corrente (fuso America/Sao_Paulo)
-    // Janela deslizante de 30 dias operacionais: de (today - 30 dias) às 05:00 até hoje às 23:59:59.999
+
+    // Janela de calendário civil do mês corrente (fuso America/Sao_Paulo)
     var nowParts = getBrazilParts(now)
     var todayOperationalDay = nowParts.day
     if (nowParts.hour < 5) {
@@ -629,11 +393,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       todayOperationalDay = prevDayParts.day
     }
 
-    // Janela 30 dias: 30 * 24h atrás a partir de agora
     var window30dStartTs = now.getTime() - 30 * 24 * 3600000
-
-    // Dias restantes no mês civil: do dia seguinte até o último dia do mês
-    // Último dia do mês corrente:
     var lastDayOfMonth = new Date(nowParts.year, nowParts.month, 0).getDate()
     var remainingDays = Math.max(0, lastDayOfMonth - todayOperationalDay)
     var nextDayNum = Math.min(todayOperationalDay + 1, lastDayOfMonth)
@@ -659,6 +419,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       var courierName = courier.getString('name') || courier.getString('email') || 'Entregador'
       var vehicleType = (courier.getString('vehicle_type') || 'moto').toLowerCase()
 
+      // Bicicleta = custo zero (fuel_cost=0, gasto=0). Pula envio de alerta financeiro.
       if (vehicleType === 'bicicleta' || vehicleType === 'bicycle') {
         continue
       }
@@ -683,16 +444,24 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         continue
       }
 
-      // 1. Pedidos elegíveis do entregador
-      var courierOrders = []
-      for (var oi = 0; oi < allOrders.length; oi++) {
-        if (isCourierEligibleOrder(allOrders[oi], courierId)) {
-          courierOrders.push(allOrders[oi])
+      // Parâmetros de combustível do veículo
+      var vParams = getVehicleParams(vehicleType, fuelSettings)
+      var consumptionKml = vParams.kml || 30.0
+      var pricePerLiter = vParams.price || 6.49
+
+      // 1. Filtrar lotes de telemetria do entregador e dedup 1x por route_batch_key
+      var courierBatchesRaw = []
+      for (var tbIdx = 0; tbIdx < allTelemetryBatches.length; tbIdx++) {
+        if (allTelemetryBatches[tbIdx].getString('courier_id') === courierId) {
+          courierBatchesRaw.push(allTelemetryBatches[tbIdx])
         }
       }
+      var canonicalBatches = buildCanonicalBatches(courierBatchesRaw, approvalsByBatch)
 
       // 2. Adiantamentos ativos do entregador
-      var courierAdvances = allAdvances.filter((a) => a.getString('courier_id') === courierId)
+      var courierAdvances = allAdvances.filter(function (a) {
+        return a.getString('courier_id') === courierId
+      })
 
       // 3. FRENTE 1: Saldo Canônico com opening_balance e cutoff_date
       var cutoffDateStr = courier.getString('cutoff_date') || ''
@@ -700,129 +469,76 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       var hasCutoff = Boolean(cutoffDateStr && cutoffTs > 0)
       var openingBalance = courier.getFloat('opening_balance')
 
-      var currentBalance = 0
       var postCutoffAdvancesTotal = 0
-      var postCutoffSpent = 0
-      var availableBalance = 0
+      var postCutoffKm = 0
 
-      if (hasCutoff) {
-        // Adiantamentos status='active' com data civil >= cutoff_date
-        var postAdvances = courierAdvances.filter(function (a) {
-          var aDate = a.getString('date') || a.getString('created')
-          return isAdvancePostCutoff(aDate, cutoffDateStr)
-        })
-        for (var pa = 0; pa < postAdvances.length; pa++) {
-          postCutoffAdvancesTotal += Number(postAdvances[pa].getFloat('amount')) || 0
+      // Adiantamentos pós-corte (data civil >= cutoff_date)
+      for (var ai = 0; ai < courierAdvances.length; ai++) {
+        var adv = courierAdvances[ai]
+        var advDate = adv.getString('date') || adv.getString('created')
+        if (!hasCutoff || isAdvancePostCutoff(advDate, cutoffDateStr)) {
+          postCutoffAdvancesTotal += Number(adv.getFloat('amount')) || 0
         }
-
-        // Pedidos pós-cutoff (timestamp >= cutoffTs)
-        var postOrders = courierOrders.filter(function (ord) {
-          var oDateVal =
-            ord.getString('route_finished_at') ||
-            ord.getString('actual_arrival') ||
-            ord.getString('created')
-          return parseSafeTimestamp(oDateVal) >= cutoffTs
-        })
-
-        postCutoffSpent = computeOrdersOfficialSpent(
-          postOrders,
-          courier,
-          fuelSettings,
-          approvalsMap,
-        )
-        currentBalance = Number(
-          (openingBalance + postCutoffAdvancesTotal - postCutoffSpent).toFixed(2),
-        )
-        availableBalance = Number((openingBalance + postCutoffAdvancesTotal).toFixed(2))
-      } else {
-        // Fallback: cálculo padrão de conta corrente se não houver cutoff_date
-        var pastOrdersSpent = 0
-        var currentMonthSpentFallback = 0
-        for (var foi = 0; foi < courierOrders.length; foi++) {
-          var cord = courierOrders[foi]
-          var cordDate =
-            cord.getString('route_finished_at') ||
-            cord.getString('actual_arrival') ||
-            cord.getString('created')
-          var cMonth = (cordDate || '').substring(0, 7)
-          var cSpent = computeOrdersOfficialSpent([cord], courier, fuelSettings, approvalsMap)
-          if (cMonth === currentYearMonth) {
-            currentMonthSpentFallback += cSpent
-          } else if (cMonth && cMonth < currentYearMonth) {
-            pastOrdersSpent += cSpent
-          }
-        }
-
-        var pastAdvTotal = 0
-        var currentMonthAdvTotal = 0
-        for (var fai = 0; fai < courierAdvances.length; fai++) {
-          var fadv = courierAdvances[fai]
-          var fDate = fadv.getString('date') || fadv.getString('created')
-          var fMonth = (fDate || '').substring(0, 7)
-          var fAmt = Number(fadv.getFloat('amount')) || 0
-          if (fMonth === currentYearMonth) {
-            currentMonthAdvTotal += fAmt
-          } else if (fMonth && fMonth < currentYearMonth) {
-            pastAdvTotal += fAmt
-          }
-        }
-
-        var carryOver = pastAdvTotal - pastOrdersSpent
-        currentBalance = Number(
-          (carryOver + currentMonthAdvTotal - currentMonthSpentFallback).toFixed(2),
-        )
-        postCutoffSpent = currentMonthSpentFallback
-        availableBalance = Number((carryOver + currentMonthAdvTotal).toFixed(2))
       }
 
-      // 4. FRENTE 2: Média com janela real e sugestão de recarga (alinhada 100% com o painel)
-      var ordersLast30d = courierOrders.filter(function (ord) {
-        var oDateVal =
-          ord.getString('route_finished_at') ||
-          ord.getString('actual_arrival') ||
-          ord.getString('created')
-        var ts = parseSafeTimestamp(oDateVal)
-        return ts >= window30dStartTs
-      })
+      // KM pós-corte derivado EXCLUSIVAMENTE de route_batch_telemetry
+      for (var bi = 0; bi < canonicalBatches.length; bi++) {
+        var bItem = canonicalBatches[bi]
+        var isPostCutoff = !hasCutoff || bItem.timestamp >= cutoffTs
+        if (isPostCutoff) {
+          postCutoffKm += bItem.kmOficial
+        }
+      }
 
-      var spent30d = computeOrdersOfficialSpent(ordersLast30d, courier, fuelSettings, approvalsMap)
+      // Gasto = km oficial ÷ taxa de consumo do veículo em app_settings × preço do litro
+      var postCutoffSpent = 0
+      if (!vParams.isBike && consumptionKml > 0) {
+        postCutoffSpent = Number(((postCutoffKm / consumptionKml) * pricePerLiter).toFixed(2))
+      }
+
+      // Saldo = saldo de abertura + adiantamentos pós-corte − gasto canônico pós-corte
+      var currentBalance = Number(
+        (openingBalance + postCutoffAdvancesTotal - postCutoffSpent).toFixed(2),
+      )
+      var availableBalance = Number((openingBalance + postCutoffAdvancesTotal).toFixed(2))
+
+      // 4. FRENTE 2: Média diária = gasto canônico ÷ dias civis efetivamente trabalhados
+      // Janela deslizante de 30 dias a partir de route_batch_telemetry
+      var workedDaysSet = {}
+      var spent30dKm = 0
+      for (var b30 = 0; b30 < canonicalBatches.length; b30++) {
+        var cb = canonicalBatches[b30]
+        if (cb.timestamp >= window30dStartTs) {
+          spent30dKm += cb.kmOficial
+          if (cb.civilDay && cb.kmOficial > 0) {
+            workedDaysSet[cb.civilDay] = true
+          }
+        }
+      }
+
+      var spent30d = 0
+      if (!vParams.isBike && consumptionKml > 0) {
+        spent30d = Number(((spent30dKm / consumptionKml) * pricePerLiter).toFixed(2))
+      }
+
+      var workedDaysCount = Object.keys(workedDaysSet).length
       var dailyAverage = 0
       var averageLabel = 'Média 30d'
 
-      if (ordersLast30d.length > 0) {
-        var oldestOrderTs = ordersLast30d.reduce(function (minTs, o) {
-          var oDateVal =
-            o.getString('route_finished_at') ||
-            o.getString('actual_arrival') ||
-            o.getString('created')
-          var t = parseSafeTimestamp(oDateVal)
-          return t > 0 && t < minTs ? t : minTs
-        }, now.getTime())
-
-        var elapsedDays = Math.max(1, Math.ceil((now.getTime() - oldestOrderTs) / (24 * 3600000)))
-        var windowDays = Math.min(30, elapsedDays)
-
-        if (windowDays < 28) {
-          dailyAverage = Number((spent30d / windowDays).toFixed(2))
-          averageLabel = 'Média ' + windowDays + 'd'
-        } else {
-          dailyAverage = Number((spent30d / 30).toFixed(2))
-          averageLabel = 'Média 30d'
-        }
+      if (workedDaysCount > 0 && spent30d > 0) {
+        dailyAverage = Number((spent30d / workedDaysCount).toFixed(2))
+        averageLabel = 'Média ' + workedDaysCount + 'd trab'
       }
 
-      // FÓRMULA OFICIAL DE RECARGA SUGERIDA:
-      // recarga = media - consumo_do_periodo
-      // Com teto: se resultado < 0 -> 0; se resultado > media -> media.
-      // media = dailyAverage
-      // consumo_do_periodo = postCutoffSpent
+      // FÓRMULA OFICIAL DE RECARGA SUGERIDA (PARIDADE COM O PAINEL):
+      // sugestao = max(0, média − consumo do período), com teto na média (nunca > média)
       var rawRecharge = Number((dailyAverage - postCutoffSpent).toFixed(2))
       var suggestedRecharge =
         rawRecharge < 0 ? 0 : rawRecharge > dailyAverage ? dailyAverage : rawRecharge
       suggestedRecharge = Number(suggestedRecharge.toFixed(2))
       var projection = Number((dailyAverage * remainingDays).toFixed(2))
 
-      // 5. FRENTE 3: Disparo do alerta (gasto atingiu limiar de app_settings ou saldo negativo)
+      // 5. FRENTE 3: Disparo do alerta (gasto atingiu limiar de 80% do saldo disponibilizado ou saldo negativo)
       var thresholdPct = fuelSettings.alertThresholdPct || 80
       var triggerHighRatio = thresholdPct / 100
       var triggerLowRatio = (100 - thresholdPct) / 100
@@ -838,7 +554,6 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
           reachedThreshold = true
         }
       } else {
-        // Se availableBalance <= 0 e gastou algo, já atingiu
         if (postCutoffSpent > 0) {
           reachedThreshold = true
         }
@@ -848,16 +563,21 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         continue
       }
 
-      // Destinatários
+      // Ordem rigorosa de avisos preservada:
+      // notifications_email da empresa → admin membro → e-mail comercial da empresa → primeiro admin/master → fallback fixo
       var empresaId = ''
       var empresaNome = 'Rotaly Logística'
       var notificationsEmail = ''
       var commercialEmail = ''
 
-      var courierMembro = allMembros.find((mb) => mb.getString('user_id') === courierId)
+      var courierMembro = allMembros.find(function (mb) {
+        return mb.getString('user_id') === courierId
+      })
       if (courierMembro) {
         empresaId = courierMembro.getString('empresa_id')
-        var emp = allEmpresas.find((e) => e.id === empresaId)
+        var emp = allEmpresas.find(function (e) {
+          return e.id === empresaId
+        })
         if (emp) {
           empresaNome =
             emp.getString('nome_fantasia') || emp.getString('nome_razao_social') || empresaNome
@@ -875,11 +595,13 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
       }
 
       if (!targetAdminEmail && empresaId) {
-        var adminMembro = allMembros.find(
-          (mb) => mb.getString('empresa_id') === empresaId && mb.getString('papel') === 'admin',
-        )
+        var adminMembro = allMembros.find(function (mb) {
+          return mb.getString('empresa_id') === empresaId && mb.getString('papel') === 'admin'
+        })
         if (adminMembro) {
-          var adminUser = adminUsers.find((u) => u.id === adminMembro.getString('user_id'))
+          var adminUser = adminUsers.find(function (u) {
+            return u.id === adminMembro.getString('user_id')
+          })
           if (adminUser) {
             targetAdminEmail = (adminUser.getString('email') || '').trim()
             targetAdminName = adminUser.getString('name') || targetAdminName
@@ -944,7 +666,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
                   <td style="padding: 6px 0; text-align: right; color: #dc2626; font-weight: 700;">${formatCurrency(postCutoffSpent)}</td>
                 </tr>
                 <tr>
-                  <td style="padding: 6px 0; color: #64748b;"><strong>Média Diária (Últimos 30 dias):</strong></td>
+                  <td style="padding: 6px 0; color: #64748b;"><strong>Média Diária (${averageLabel}):</strong></td>
                   <td style="padding: 6px 0; text-align: right; color: #002855; font-weight: 600;">${formatCurrency(dailyAverage)} / dia</td>
                 </tr>
               </table>
@@ -956,7 +678,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
               <div style="font-size: 11px; color: #475569; line-height: 1.5; margin-top: 6px;">
                 <strong>Período:</strong> ${remainingIntervalLabel}<br />
                 <strong>Projeção de Consumo:</strong> ${formatCurrency(dailyAverage)}/dia × ${remainingDays} dias = ${formatCurrency(projection)}<br />
-                <strong>Cálculo:</strong> Projeção (${formatCurrency(projection)}) − Saldo Atual (${formatCurrency(currentBalance)}) = <strong>${formatCurrency(suggestedRecharge)}</strong>
+                <strong>Cálculo:</strong> max(0, Média (${formatCurrency(dailyAverage)}) − Consumo (${formatCurrency(postCutoffSpent)})) = <strong>${formatCurrency(suggestedRecharge)}</strong>
               </div>
             </div>
 
@@ -1011,7 +733,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         alertRec.set('suggested_recharge', suggestedRecharge)
         alertRec.set('recipient_email', targetAdminEmail)
         alertRec.set('status', sendStatus)
-        var detailNote = `${averageLabel}: R$ ${dailyAverage.toFixed(2)}/dia | Período: ${remainingIntervalLabel} | Projeção: R$ ${projection.toFixed(2)}`
+        var detailNote = `${averageLabel}: R$ ${dailyAverage.toFixed(2)}/dia | Período: ${remainingIntervalLabel} | Projeção: R$ ${projection.toFixed(2)} | KM Oficial: ${postCutoffKm.toFixed(1)} km`
         if (sendError) detailNote += ` | Erro: ${sendError}`
         alertRec.set('notes', detailNote)
         $app.save(alertRec)
@@ -1119,28 +841,14 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
     return advKey >= cutoffKey
   }
 
-  function haversineMeters(lat1, lon1, lat2, lon2) {
-    if (lat1 === lat2 && lon1 === lon2) return 0
-    var R = 6371e3
-    var p1 = (lat1 * Math.PI) / 180
-    var p2 = (lat2 * Math.PI) / 180
-    var dp = ((lat2 - lat1) * Math.PI) / 180
-    var dl = ((lon2 - lon1) * Math.PI) / 180
-    var a =
-      Math.sin(dp / 2) * Math.sin(dp / 2) +
-      Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2)
-    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    return R * c
-  }
-
   function loadFuelSettings() {
     var s = {
       pricePerLiter: 6.49,
-      consumptionKml: 35.0,
+      consumptionKml: 30.0,
       motoPrice: 6.49,
-      motoKml: 35.0,
+      motoKml: 30.0,
       carroPrice: 6.49,
-      carroKml: 12.0,
+      carroKml: 10.0,
       caminhaoPrice: 6.49,
       caminhaoKml: 7.0,
       alertThresholdPct: 80,
@@ -1151,13 +859,13 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       if (recs && recs.length > 0) {
         var r = recs[0]
         var basePrice = Number(r.getFloat('fuel_price_per_liter')) || 6.49
-        var baseKml = Number(r.getFloat('fuel_consumption_kml')) || 35.0
+        var baseKml = Number(r.getFloat('fuel_consumption_kml')) || 30.0
 
         var mPrice = Number(r.getFloat('moto_fuel_price')) || basePrice
         var mKml = Number(r.getFloat('moto_consumption_kml')) || baseKml
 
         var cPrice = Number(r.getFloat('carro_fuel_price')) || basePrice
-        var cKml = Number(r.getFloat('carro_consumption_kml')) || 12.0
+        var cKml = Number(r.getFloat('carro_consumption_kml')) || 10.0
 
         var tPrice = Number(r.getFloat('caminhao_fuel_price')) || basePrice
         var tKml = Number(r.getFloat('caminhao_consumption_kml')) || 7.0
@@ -1200,7 +908,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       return {
         category: 'carro',
         price: settings.carroPrice || settings.pricePerLiter,
-        kml: settings.carroKml || 12.0,
+        kml: settings.carroKml || 10.0,
         isBike: false,
       }
     }
@@ -1220,284 +928,79 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
     }
   }
 
-  function isCourierEligibleOrder(ord, courierId) {
-    if (ord.getString('courier_id') !== courierId) return false
-    var notes = (ord.getString('notes') || '').toLowerCase()
-    if (notes.indexOf('erro de sistema') !== -1) return false
-    if (ord.getString('completion_reason') === 'cancelado_vendedor') return false
-
-    var baseLat = Number(ord.getFloat('start_base_lat')) || 0
-    var baseLng = Number(ord.getFloat('start_base_lng')) || 0
-    if (
-      baseLat === 0 &&
-      baseLng === 0 &&
-      !ord.getString('start_base_name') &&
-      !ord.getString('start_base_address')
-    ) {
-      return false
+  function buildCanonicalBatches(rawBatches, approvalsByBatch) {
+    var map = {}
+    for (var i = 0; i < rawBatches.length; i++) {
+      var b = rawBatches[i]
+      var k = b.getString('route_batch_key')
+      if (!k) continue
+      var existing = map[k]
+      if (!existing) {
+        map[k] = b
+      } else {
+        var tB = parseSafeTimestamp(b.getString('updated') || b.getString('created'))
+        var tEx = parseSafeTimestamp(existing.getString('updated') || existing.getString('created'))
+        if (tB > tEx) {
+          map[k] = b
+        }
+      }
     }
 
-    var status = ord.getString('status')
-    if (status === 'delivered') return true
-    if (status === 'address_error' || status === 'client_absent') return true
-    return false
-  }
+    var result = []
+    var keys = Object.keys(map)
+    for (var j = 0; j < keys.length; j++) {
+      var bKey = keys[j]
+      var bRec = map[bKey]
 
-  function buildJointDeliveryMetaMap(orders) {
-    var metaMap = {}
-    var JOINT_DELIVERY_WINDOW_MS = 45 * 60 * 1000
+      var viario = Number(bRec.getFloat('km_viario_total')) || 0
+      var gps = Number(bRec.getFloat('km_gps_total')) || 0
+      var kmOficial = Number(bRec.getFloat('km_oficial')) || 0
 
-    var buckets = {}
-    for (var i = 0; i < orders.length; i++) {
-      var o = orders[i]
-      var cId = o.getString('courier_id')
-      var custId = o.getString('customer_id')
-      if (!cId) continue
-
-      var effectiveCustomerKey = custId
-      if (!effectiveCustomerKey) {
-        var rawAddr = (o.getString('end_address_text') || o.getString('start_base_address') || o.id)
-          .toLowerCase()
-          .trim()
-        effectiveCustomerKey = 'addr_' + rawAddr
+      // Guarda de sanidade nos somatórios (teto de coerência)
+      if (viario > 0 && gps > viario * 2) {
+        gps = Number((viario * 1.15).toFixed(2))
+      }
+      if (kmOficial <= 0 || (viario > 0 && kmOficial > viario * 2)) {
+        kmOficial = viario > 0 ? (gps > 0 ? Math.min(viario, gps) : viario) : gps
       }
 
-      var oDateVal =
-        o.getString('actual_arrival') || o.getString('route_finished_at') || o.getString('created')
-      var dayKey = getBrazilDateString(new Date(parseSafeTimestamp(oDateVal)))
-      var bKey = cId + ':::' + effectiveCustomerKey + ':::' + dayKey
+      var batchApprovals = approvalsByBatch ? approvalsByBatch[bKey] : null
+      if (batchApprovals && batchApprovals.length > 0) {
+        var sumApproved = 0
+        var hasApproved = false
+        for (var ap = 0; ap < batchApprovals.length; ap++) {
+          var apItem = batchApprovals[ap]
+          if (apItem.status === 'approved' && apItem.approvedKm > 0) {
+            sumApproved += apItem.approvedKm
+            hasApproved = true
+          }
+        }
+        if (hasApproved && sumApproved > 0) {
+          kmOficial = sumApproved
+        }
+      }
 
-      if (!buckets[bKey]) buckets[bKey] = []
-      buckets[bKey].push(o)
-    }
+      kmOficial = Number(kmOficial.toFixed(2))
 
-    var bucketKeys = Object.keys(buckets)
-    for (var b = 0; b < bucketKeys.length; b++) {
-      var bOrders = buckets[bucketKeys[b]]
-      if (bOrders.length < 2) continue
+      var dateVal =
+        bRec.getString('route_finished_at') ||
+        bRec.getString('route_started_at') ||
+        bRec.getString('created')
+      var ts = parseSafeTimestamp(dateVal)
+      var civilDay = getCivilDateKey(dateVal)
 
-      bOrders.sort(function (a, bOrd) {
-        var ta =
-          parseSafeTimestamp(a.getString('actual_arrival')) ||
-          parseSafeTimestamp(a.getString('route_finished_at')) ||
-          parseSafeTimestamp(a.getString('created'))
-        var tb =
-          parseSafeTimestamp(bOrd.getString('actual_arrival')) ||
-          parseSafeTimestamp(bOrd.getString('route_finished_at')) ||
-          parseSafeTimestamp(bOrd.getString('created'))
-        if (ta !== tb) return ta - tb
-        return (
-          parseSafeTimestamp(a.getString('created')) - parseSafeTimestamp(bOrd.getString('created'))
-        )
+      result.push({
+        batchKey: bKey,
+        record: bRec,
+        kmOficial: kmOficial,
+        kmViario: viario,
+        kmGps: gps,
+        timestamp: ts,
+        civilDay: civilDay,
       })
-
-      var clusters = []
-      var curCluster = [bOrders[0]]
-
-      for (var j = 1; j < bOrders.length; j++) {
-        var ord = bOrders[j]
-        var prevOrd = curCluster[curCluster.length - 1]
-        var tOrd =
-          parseSafeTimestamp(ord.getString('actual_arrival')) ||
-          parseSafeTimestamp(ord.getString('route_finished_at')) ||
-          parseSafeTimestamp(ord.getString('created'))
-        var tPrev =
-          parseSafeTimestamp(prevOrd.getString('actual_arrival')) ||
-          parseSafeTimestamp(prevOrd.getString('route_finished_at')) ||
-          parseSafeTimestamp(prevOrd.getString('created'))
-
-        if (Math.abs(tOrd - tPrev) <= JOINT_DELIVERY_WINDOW_MS) {
-          curCluster.push(ord)
-        } else {
-          if (curCluster.length >= 2) {
-            clusters.push(curCluster)
-          }
-          curCluster = [ord]
-        }
-      }
-      if (curCluster.length >= 2) {
-        clusters.push(curCluster)
-      }
-
-      for (var k = 0; k < clusters.length; k++) {
-        var cluster = clusters[k]
-        var primary = cluster[0]
-        for (var ci = 0; ci < cluster.length; ci++) {
-          var cOrd = cluster[ci]
-          metaMap[cOrd.id] = {
-            isJointDelivery: true,
-            isJointPrimary: ci === 0,
-            isJointSecondary: ci > 0,
-            primaryId: primary.id,
-          }
-        }
-      }
     }
 
-    return metaMap
-  }
-
-  function computeOrderWeight(ord) {
-    var baseLat = Number(ord.getFloat('start_base_lat')) || -22.7001402
-    var baseLng = Number(ord.getFloat('start_base_lng')) || -43.2982834
-    var endLat = Number(ord.getFloat('end_address_lat')) || 0
-    var endLng = Number(ord.getFloat('end_address_lng')) || 0
-
-    var roadDist = 0.8
-    if (endLat !== 0 && endLng !== 0) {
-      var directMeters = haversineMeters(baseLat, baseLng, endLat, endLng)
-      roadDist = Math.max(directMeters / 1000, 0.8)
-    }
-
-    var dKm = Number(ord.getFloat('distance_km')) || 0
-    if (dKm > 0) {
-      roadDist = Math.max(roadDist, dKm)
-    }
-
-    var rKm = Number(ord.getFloat('return_trip_km')) || 0
-    return Math.max(roadDist + rKm, 0.8)
-  }
-
-  function computeOrdersOfficialSpent(ordersSubset, courier, settings, approvalsMap) {
-    var vehicleType = courier.getString('vehicle_type') || 'moto'
-    var vParams = getVehicleParams(vehicleType, settings)
-    if (vParams.isBike || !ordersSubset || ordersSubset.length === 0) {
-      return 0
-    }
-
-    var jointMetaMap = buildJointDeliveryMetaMap(ordersSubset)
-
-    var routeBatches = {}
-    for (var oIdx = 0; oIdx < ordersSubset.length; oIdx++) {
-      var o = ordersSubset[oIdx]
-      var assignedKey = null
-      var rStart = o.getString('route_started_at')
-      var rFinish = o.getString('route_finished_at')
-
-      if (rStart && rFinish) {
-        assignedKey = 'route_' + rStart + '_' + rFinish
-      } else if (rStart) {
-        var oTime = parseSafeTimestamp(rStart)
-        var batchKeys = Object.keys(routeBatches)
-        for (var bk = 0; bk < batchKeys.length; bk++) {
-          var exKey = batchKeys[bk]
-          if (exKey.indexOf('batch_') === 0 && exKey.indexOf('batch_created_') === -1) {
-            var bTime = Number(exKey.replace('batch_', '')) * (15 * 60 * 1000)
-            if (Math.abs(oTime - bTime) <= 15 * 60 * 1000) {
-              assignedKey = exKey
-              break
-            }
-          }
-        }
-        if (!assignedKey) {
-          assignedKey = 'batch_' + Math.floor(oTime / (15 * 60 * 1000))
-        }
-      } else {
-        var cTime = parseSafeTimestamp(o.getString('created'))
-        if (cTime > 0) {
-          var batchKeysCreated = Object.keys(routeBatches)
-          for (var bkc = 0; bkc < batchKeysCreated.length; bkc++) {
-            var exKeyC = batchKeysCreated[bkc]
-            if (exKeyC.indexOf('batch_created_') === 0) {
-              var bTimeC = Number(exKeyC.replace('batch_created_', '')) * (15 * 60 * 1000)
-              if (Math.abs(cTime - bTimeC) <= 15 * 60 * 1000) {
-                assignedKey = exKeyC
-                break
-              }
-            }
-          }
-          if (!assignedKey) {
-            assignedKey = 'batch_created_' + Math.floor(cTime / (15 * 60 * 1000))
-          }
-        } else {
-          assignedKey = 'single_' + o.id
-        }
-      }
-
-      if (!routeBatches[assignedKey]) routeBatches[assignedKey] = []
-      routeBatches[assignedKey].push(o)
-    }
-
-    var totalSpent = 0
-    var batchKeysAll = Object.keys(routeBatches)
-    for (var bIdx = 0; bIdx < batchKeysAll.length; bIdx++) {
-      var bKey = batchKeysAll[bIdx]
-      var batchOrders = routeBatches[bKey]
-      var batchCount = batchOrders.length
-
-      var maxRoadKmInBatch = 0
-      for (var bi = 0; bi < batchCount; bi++) {
-        var rKm = Number(batchOrders[bi].getFloat('total_route_with_return_km')) || 0
-        if (rKm > maxRoadKmInBatch) maxRoadKmInBatch = rKm
-      }
-
-      var batchTotalOfficialKm = 0
-      if (maxRoadKmInBatch > 0) {
-        batchTotalOfficialKm = Number(maxRoadKmInBatch.toFixed(1))
-      } else {
-        var sumWeights = 0
-        for (var swi = 0; swi < batchCount; swi++) {
-          sumWeights += computeOrderWeight(batchOrders[swi])
-        }
-        batchTotalOfficialKm = Number(sumWeights.toFixed(1))
-      }
-
-      var batchTotalLiters =
-        vParams.kml > 0 ? Number((batchTotalOfficialKm / vParams.kml).toFixed(2)) : 0
-      var batchTotalFuelCost = Number((batchTotalLiters * vParams.price).toFixed(2))
-
-      var totalBatchWeight = 0
-      for (var wi = 0; wi < batchCount; wi++) {
-        totalBatchWeight += computeOrderWeight(batchOrders[wi])
-      }
-
-      var allocatedKm = 0
-      var allocatedFuel = 0
-
-      for (var ordIdx = 0; ordIdx < batchCount; ordIdx++) {
-        var currentOrder = batchOrders[ordIdx]
-        var isLast = ordIdx === batchCount - 1
-        var thisWeight = computeOrderWeight(currentOrder)
-        var ratio = totalBatchWeight > 0 ? thisWeight / totalBatchWeight : 1 / batchCount
-
-        var itemKm = 0
-        var itemFuel = 0
-
-        if (batchCount === 1) {
-          itemKm = batchTotalOfficialKm
-          itemFuel = batchTotalFuelCost
-        } else if (isLast) {
-          itemKm = Number(Math.max(0, batchTotalOfficialKm - allocatedKm).toFixed(1))
-          itemFuel = Number(Math.max(0, batchTotalFuelCost - allocatedFuel).toFixed(2))
-        } else {
-          itemKm = Number((batchTotalOfficialKm * ratio).toFixed(1))
-          var itemLiters = vParams.kml > 0 ? Number((itemKm / vParams.kml).toFixed(2)) : 0
-          itemFuel = Number((itemLiters * vParams.price).toFixed(2))
-
-          allocatedKm += itemKm
-          allocatedFuel += itemFuel
-        }
-
-        var jMeta = jointMetaMap[currentOrder.id]
-        if (jMeta && jMeta.isJointSecondary) {
-          itemKm = 0
-          itemFuel = 0
-        }
-
-        if (approvalsMap && approvalsMap[currentOrder.id] !== undefined) {
-          var approvedVal = approvalsMap[currentOrder.id]
-          if (!(jMeta && jMeta.isJointSecondary)) {
-            itemKm = approvedVal
-            var appLiters = vParams.kml > 0 ? Number((itemKm / vParams.kml).toFixed(2)) : 0
-            itemFuel = Number((appLiters * vParams.price).toFixed(2))
-          }
-        }
-
-        totalSpent += itemFuel
-      }
-    }
-
-    return Number(totalSpent.toFixed(2))
+    return result
   }
 
   try {
@@ -1512,7 +1015,6 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
 
     var now = new Date()
     var todayStr = getBrazilDateString(now)
-    var currentYearMonth = todayStr.substring(0, 7)
 
     var fuelSettings = loadFuelSettings()
 
@@ -1541,11 +1043,12 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       )
     } catch (_) {}
 
-    var allOrders = []
+    // Carrega EXCLUSIVAMENTE a telemetria auditada
+    var allTelemetryBatches = []
     try {
-      allOrders = $app.findRecordsByFilter(
-        'orders',
-        "(status = 'delivered' || status = 'address_error' || status = 'client_absent') && completion_reason != 'cancelado_vendedor'",
+      allTelemetryBatches = $app.findRecordsByFilter(
+        'route_batch_telemetry',
+        'id != ""',
         '-created',
         10000,
         0,
@@ -1573,8 +1076,6 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       )
     } catch (_) {}
 
-    var approvalsMapCheck = {}
-    var approvalsByOrderCheck = {}
     var approvalsByBatchCheck = {}
     try {
       var allApprovalsCheck = $app.findRecordsByFilter(
@@ -1586,35 +1087,19 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       )
       for (var apc = 0; apc < allApprovalsCheck.length; apc++) {
         var aRecC = allApprovalsCheck[apc]
-        var aOrderIdC = aRecC.getString('order_id')
         var aBatchKeyC = aRecC.getString('route_batch_key')
         var aStatusC = aRecC.getString('status') || 'pending'
         var aKmC = Number(aRecC.getFloat('approved_km')) || 0
 
-        if (aOrderIdC) {
-          if (!approvalsByOrderCheck[aOrderIdC]) {
-            approvalsByOrderCheck[aOrderIdC] = {
-              status: aStatusC,
-              approvedKm: aKmC,
-              batchKey: aBatchKeyC,
-            }
-          }
-          if (aStatusC === 'approved' && approvalsMapCheck[aOrderIdC] === undefined) {
-            approvalsMapCheck[aOrderIdC] = aKmC
-          }
-        }
         if (aBatchKeyC) {
           if (!approvalsByBatchCheck[aBatchKeyC]) {
             approvalsByBatchCheck[aBatchKeyC] = []
           }
-          approvalsByBatchCheck[aBatchKeyC].push({
-            orderId: aOrderIdC,
-            status: aStatusC,
-            approvedKm: aKmC,
-          })
+          approvalsByBatchCheck[aBatchKeyC].push({ status: aStatusC, approvedKm: aKmC })
         }
       }
     } catch (_) {}
+
     // Parâmetros de data para sugestão 30d
     var nowParts = getBrazilParts(now)
     var todayOperationalDay = nowParts.day
@@ -1675,16 +1160,21 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         continue
       }
 
-      // Pedidos elegíveis
-      var courierOrders = []
-      for (var oi = 0; oi < allOrders.length; oi++) {
-        if (isCourierEligibleOrder(allOrders[oi], courierId)) {
-          courierOrders.push(allOrders[oi])
+      var vParams = getVehicleParams(vehicleType, fuelSettings)
+      var consumptionKml = vParams.kml || 30.0
+      var pricePerLiter = vParams.price || 6.49
+
+      var courierBatchesRaw = []
+      for (var tb = 0; tb < allTelemetryBatches.length; tb++) {
+        if (allTelemetryBatches[tb].getString('courier_id') === courierId) {
+          courierBatchesRaw.push(allTelemetryBatches[tb])
         }
       }
+      var canonicalBatches = buildCanonicalBatches(courierBatchesRaw, approvalsByBatchCheck)
 
-      // Adiantamentos ativos
-      var courierAdvances = allAdvances.filter((a) => a.getString('courier_id') === courierId)
+      var courierAdvances = allAdvances.filter(function (a) {
+        return a.getString('courier_id') === courierId
+      })
 
       // FRENTE 1: Saldo Canônico
       var cutoffDateStr = courier.getString('cutoff_date') || ''
@@ -1692,81 +1182,68 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       var hasCutoff = Boolean(cutoffDateStr && cutoffTs > 0)
       var openingBalance = courier.getFloat('opening_balance')
 
-      var currentBalance = 0
       var postCutoffAdvancesTotal = 0
-      var postCutoffSpent = 0
-      var availableBalance = 0
+      var postCutoffKm = 0
 
-      if (hasCutoff) {
-        var postAdvances = courierAdvances.filter(function (a) {
-          var aDate = a.getString('date') || a.getString('created')
-          return isAdvancePostCutoff(aDate, cutoffDateStr)
-        })
-        for (var pa = 0; pa < postAdvances.length; pa++) {
-          postCutoffAdvancesTotal += Number(postAdvances[pa].getFloat('amount')) || 0
+      for (var ai = 0; ai < courierAdvances.length; ai++) {
+        var adv = courierAdvances[ai]
+        var advDate = adv.getString('date') || adv.getString('created')
+        if (!hasCutoff || isAdvancePostCutoff(advDate, cutoffDateStr)) {
+          postCutoffAdvancesTotal += Number(adv.getFloat('amount')) || 0
         }
-
-        var postOrders = courierOrders.filter(function (ord) {
-          var oDateVal =
-            ord.getString('route_finished_at') ||
-            ord.getString('actual_arrival') ||
-            ord.getString('created')
-          return parseSafeTimestamp(oDateVal) >= cutoffTs
-        })
-
-        postCutoffSpent = computeOrdersOfficialSpent(
-          postOrders,
-          courier,
-          fuelSettings,
-          approvalsMapCheck,
-        )
-        currentBalance = Number(
-          (openingBalance + postCutoffAdvancesTotal - postCutoffSpent).toFixed(2),
-        )
-        availableBalance = Number((openingBalance + postCutoffAdvancesTotal).toFixed(2))
-      } else {
-        var pastOrdersSpent = 0
-        var currentMonthSpentFallback = 0
-        for (var foi = 0; foi < courierOrders.length; foi++) {
-          var cord = courierOrders[foi]
-          var cordDate =
-            cord.getString('route_finished_at') ||
-            cord.getString('actual_arrival') ||
-            cord.getString('created')
-          var cMonth = (cordDate || '').substring(0, 7)
-          var cSpent = computeOrdersOfficialSpent([cord], courier, fuelSettings, approvalsMapCheck)
-          if (cMonth === currentYearMonth) {
-            currentMonthSpentFallback += cSpent
-          } else if (cMonth && cMonth < currentYearMonth) {
-            pastOrdersSpent += cSpent
-          }
-        }
-
-        var pastAdvTotal = 0
-        var currentMonthAdvTotal = 0
-        for (var fai = 0; fai < courierAdvances.length; fai++) {
-          var fadv = courierAdvances[fai]
-          var fDate = fadv.getString('date') || fadv.getString('created')
-          var fMonth = (fDate || '').substring(0, 7)
-          var fAmt = Number(fadv.getFloat('amount')) || 0
-          if (fMonth === currentYearMonth) {
-            currentMonthAdvTotal += fAmt
-          } else if (fMonth && fMonth < currentYearMonth) {
-            pastAdvTotal += fAmt
-          }
-        }
-
-        var carryOver = pastAdvTotal - pastOrdersSpent
-        currentBalance = Number(
-          (carryOver + currentMonthAdvTotal - currentMonthSpentFallback).toFixed(2),
-        )
-        postCutoffSpent = currentMonthSpentFallback
-        availableBalance = Number((carryOver + currentMonthAdvTotal).toFixed(2))
       }
 
-      // FRENTE 2: Média de DIAS TRABALHADOS com KM AUDITADO e sugestão com teto na média (v0.0.405)
-      // Regra 1: Sugestão = média − consumo do período, com TETO na média (nunca negativa, nunca > média).
-      // Regra 2: Média usa só dias TRABALHADOS (escala 12x36, folga fora) e km AUDITADO (exclui desvio >30% e aprovações pendentes/rejeitadas).
+      for (var bi = 0; bi < canonicalBatches.length; bi++) {
+        var bItem = canonicalBatches[bi]
+        var isPostCutoff = !hasCutoff || bItem.timestamp >= cutoffTs
+        if (isPostCutoff) {
+          postCutoffKm += bItem.kmOficial
+        }
+      }
+
+      var postCutoffSpent = 0
+      if (!vParams.isBike && consumptionKml > 0) {
+        postCutoffSpent = Number(((postCutoffKm / consumptionKml) * pricePerLiter).toFixed(2))
+      }
+
+      var currentBalance = Number(
+        (openingBalance + postCutoffAdvancesTotal - postCutoffSpent).toFixed(2),
+      )
+      var availableBalance = Number((openingBalance + postCutoffAdvancesTotal).toFixed(2))
+
+      // FRENTE 2: Média diária = gasto canônico ÷ dias civis efetivamente trabalhados
+      var workedDaysSet = {}
+      var spent30dKm = 0
+      for (var b30 = 0; b30 < canonicalBatches.length; b30++) {
+        var cb = canonicalBatches[b30]
+        if (cb.timestamp >= window30dStartTs) {
+          spent30dKm += cb.kmOficial
+          if (cb.civilDay && cb.kmOficial > 0) {
+            workedDaysSet[cb.civilDay] = true
+          }
+        }
+      }
+
+      var spent30d = 0
+      if (!vParams.isBike && consumptionKml > 0) {
+        spent30d = Number(((spent30dKm / consumptionKml) * pricePerLiter).toFixed(2))
+      }
+
+      var workedDaysCount = Object.keys(workedDaysSet).length
+      var dailyAverage = 0
+      var averageLabel = 'Média 30d'
+
+      if (workedDaysCount > 0 && spent30d > 0) {
+        dailyAverage = Number((spent30d / workedDaysCount).toFixed(2))
+        averageLabel = 'Média ' + workedDaysCount + 'd trab'
+      }
+
+      var rawRecharge = Number((dailyAverage - postCutoffSpent).toFixed(2))
+      var suggestedRecharge =
+        rawRecharge < 0 ? 0 : rawRecharge > dailyAverage ? dailyAverage : rawRecharge
+      suggestedRecharge = Number(suggestedRecharge.toFixed(2))
+      var projection = Number((dailyAverage * remainingDays).toFixed(2))
+
       // FRENTE 3: Gatilho com limiar configurável de app_settings
       var thresholdPct = fuelSettings.alertThresholdPct || 80
       var triggerHighRatio = thresholdPct / 100
@@ -1796,6 +1273,8 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
           balance: currentBalance,
           availableBalance: availableBalance,
           monthlySpent: postCutoffSpent,
+          officialKm: postCutoffKm,
+          workedDaysCount: workedDaysCount,
           dailyAverage30d: dailyAverage,
           remainingDays: remainingDays,
           suggestedRecharge: suggestedRecharge,
@@ -1808,10 +1287,14 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       var notificationsEmail = ''
       var commercialEmail = ''
 
-      var courierMembro = allMembros.find((mb) => mb.getString('user_id') === courierId)
+      var courierMembro = allMembros.find(function (mb) {
+        return mb.getString('user_id') === courierId
+      })
       if (courierMembro) {
         empresaId = courierMembro.getString('empresa_id')
-        var emp = allEmpresas.find((e) => e.id === empresaId)
+        var emp = allEmpresas.find(function (e) {
+          return e.id === empresaId
+        })
         if (emp) {
           empresaNome =
             emp.getString('nome_fantasia') || emp.getString('nome_razao_social') || empresaNome
@@ -1829,11 +1312,13 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
       }
 
       if (!targetAdminEmail && empresaId) {
-        var adminMembro = allMembros.find(
-          (mb) => mb.getString('empresa_id') === empresaId && mb.getString('papel') === 'admin',
-        )
+        var adminMembro = allMembros.find(function (mb) {
+          return mb.getString('empresa_id') === empresaId && mb.getString('papel') === 'admin'
+        })
         if (adminMembro) {
-          var adminUser = adminUsers.find((u) => u.id === adminMembro.getString('user_id'))
+          var adminUser = adminUsers.find(function (u) {
+            return u.id === adminMembro.getString('user_id')
+          })
           if (adminUser) {
             targetAdminEmail = (adminUser.getString('email') || '').trim()
             targetAdminName = adminUser.getString('name') || targetAdminName
@@ -1896,7 +1381,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
                   <td style="padding: 6px 0; text-align: right; color: #dc2626; font-weight: 700;">${formatCurrency(postCutoffSpent)}</td>
                 </tr>
                 <tr>
-                  <td style="padding: 6px 0; color: #64748b;"><strong>Média Diária (Últimos 30 dias):</strong></td>
+                  <td style="padding: 6px 0; color: #64748b;"><strong>Média Diária (${averageLabel}):</strong></td>
                   <td style="padding: 6px 0; text-align: right; color: #002855; font-weight: 600;">${formatCurrency(dailyAverage)} / dia</td>
                 </tr>
               </table>
@@ -1908,7 +1393,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
               <div style="font-size: 11px; color: #475569; line-height: 1.5; margin-top: 6px;">
                 <strong>Período:</strong> ${remainingIntervalLabel}<br />
                 <strong>Projeção de Consumo:</strong> ${formatCurrency(dailyAverage)}/dia × ${remainingDays} dias = ${formatCurrency(projection)}<br />
-                <strong>Cálculo:</strong> Projeção (${formatCurrency(projection)}) − Saldo Atual (${formatCurrency(currentBalance)}) = <strong>${formatCurrency(suggestedRecharge)}</strong>
+                <strong>Cálculo:</strong> max(0, Média (${formatCurrency(dailyAverage)}) − Consumo (${formatCurrency(postCutoffSpent)})) = <strong>${formatCurrency(suggestedRecharge)}</strong>
               </div>
             </div>
 
@@ -1956,7 +1441,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         alertRec.set('suggested_recharge', suggestedRecharge)
         alertRec.set('recipient_email', targetAdminEmail)
         alertRec.set('status', sendStatus)
-        var detailNote = `${averageLabel}: R$ ${dailyAverage.toFixed(2)}/dia | Período: ${remainingIntervalLabel} | Projeção: R$ ${projection.toFixed(2)}`
+        var detailNote = `${averageLabel}: R$ ${dailyAverage.toFixed(2)}/dia | Período: ${remainingIntervalLabel} | Projeção: R$ ${projection.toFixed(2)} | KM Oficial: ${postCutoffKm.toFixed(1)} km`
         if (sendError) detailNote += ` | Erro: ${sendError}`
         alertRec.set('notes', detailNote)
         $app.save(alertRec)
@@ -1970,6 +1455,8 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         balance: currentBalance,
         availableBalance: availableBalance,
         monthlySpent: postCutoffSpent,
+        officialKm: postCutoffKm,
+        workedDaysCount: workedDaysCount,
         dailyAverage30d: dailyAverage,
         remainingDays: remainingDays,
         averageLabel: averageLabel,
