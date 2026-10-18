@@ -614,96 +614,14 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
         }
       }
 
-      // Se < 90% -> alerta 'KM SUB-MEDIDO' ao admin com km reconciliado
-      // NUNCA aprovar automático acima da telemetria sem essa trilha
+      // BUG 2: ALERTA DE KM SUB-MEDIDO CANCELADO E BLOQUEADO PERMANENTEMENTE A PEDIDO DO USUÁRIO
+      // "bloquear e cancelar o alerta de km sub-medido fechamento, não enviar no email"
+      // Não gerar registro em audit_trail, não disparar e-mail, não notificar.
+      // O dado técnico de km GPS vs viário continua existindo nos lotes de route_batch_telemetry e na Auditoria.
       if (isSubMedido) {
-        const recipient = resolveAdminEmail(companyId)
-        const kmReconciliado = Math.max(viarioPlanejadoKm, telemetriaKm)
-
-        // Registrar trilha em audit_trail do Sistema com detalhe das lacunas
-        if (auditCol) {
-          try {
-            const auditRec = new Record(auditCol)
-            auditRec.set('user_id', '') // relation aceita vazio
-            auditRec.set('collection', 'orders')
-            auditRec.set('record_id', firstOrd.id)
-            auditRec.set('courier_id', courierId)
-            auditRec.set('action', 'alerta_km_sub_medido_lacuna_telemetria')
-            auditRec.set('field', 'km_telemetria,cobertura')
-            auditRec.set(
-              'old_value',
-              `${telemetriaKm.toFixed(1)} km (${telemetryCoveragePct}% cobertura)`,
-            )
-            auditRec.set(
-              'new_value',
-              `Reconciliado pendente aprovação admin: ${kmReconciliado.toFixed(1)} km`,
-            )
-            auditRec.set('timestamp', now.toISOString())
-            auditRec.set('metadata', {
-              system_trigger: true,
-              actor_name: 'Sistema',
-              alerta: 'KM SUB-MEDIDO',
-              route_batch_key: bKey,
-              courier_name: courierName,
-              cobertura_pct: telemetryCoveragePct,
-              pings_recebidos: actualPings,
-              duracao_ativa_segundos: activeDurationSec,
-              duracao_lacunas_segundos: totalGapsDurationSec,
-              quantidade_lacunas: gapCount,
-              trechos_com_lacuna: true,
-              km_telemetria: telemetriaKm,
-              km_viario_planejado: viarioPlanejadoKm,
-              km_reconciliado_sugerido: kmReconciliado,
-              exige_aprovacao_admin: true,
-            })
-            $app.save(auditRec)
-          } catch (eAudit) {
-            console.log(
-              `[daily_20h_closing_check] Erro ao gravar audit_trail de sub-medido para ${bKey}:`,
-              eAudit,
-            )
-          }
-        }
-
-        // Enviar e-mail de alerta ao admin
-        try {
-          const mailer = $app.newMailClient()
-          const senderAddress =
-            ($app.settings().meta && $app.settings().meta.senderAddress) || 'no-reply@goskip.app'
-          const senderName =
-            ($app.settings().meta && $app.settings().meta.senderName) || 'Rotaly Gestão de Entregas'
-
-          const htmlMsg = `
-            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-              <h2 style="color: #dc2626; margin-top: 0;">⚠️ ALERTA: KM SUB-MEDIDO — Fechamento 21h30</h2>
-              <p>O entregador <strong>${courierName}</strong> teve cobertura de GPS/telemetria abaixo de 90% no lote <code>${bKey}</code>.</p>
-              <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
-                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>Cobertura por Tempo Ativo:</strong></td><td style="padding: 8px; color: #dc2626;"><strong>${telemetryCoveragePct}%</strong> (${actualPings} pings; ${gapCount} lacuna(s) detectadas totalizando ${Math.round(totalGapsDurationSec / 60)} min sem sinal)</td></tr>
-                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>Duração Ativa da Rota:</strong></td><td style="padding: 8px;">${Math.round(activeDurationSec / 60)} minutos</td></tr>
-                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Telemetria Gravado:</strong></td><td style="padding: 8px;">${telemetriaKm.toFixed(1)} km</td></tr>
-                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Viário Planejado:</strong></td><td style="padding: 8px;">${viarioPlanejadoKm.toFixed(1)} km</td></tr>
-                <tr style="border-bottom: 1px solid #cbd5e1; background: #fef2f2;"><td style="padding: 8px;"><strong>KM Reconciliado Sugerido:</strong></td><td style="padding: 8px; font-weight: bold; color: #b91c1c;">${kmReconciliado.toFixed(1)} km</td></tr>
-              </table>
-              <p style="color: #475569; font-size: 13px;"><em>Regra de ouro: NUNCA aprovar automático acima da telemetria sem aprovação manual do admin na Auditoria de KM com a trilha registrada.</em></p>
-              <p style="font-size: 13px; color: #64748b;">Fechamento diário automatizado Rotaly — ${todaySp}</p>
-            </div>
-          `
-
-          mailer.send({
-            from: { address: senderAddress, name: senderName },
-            to: [{ address: recipient.toEmail }],
-            subject: `[Rotaly Fechamento 21h30] ALERTA KM SUB-MEDIDO: ${courierName} (${telemetryCoveragePct}% cobertura)`,
-            html: htmlMsg,
-          })
-          console.log(
-            `[daily_21h30_closing_check] Alerta KM SUB-MEDIDO enviado para ${recipient.toEmail} sobre ${courierName}`,
-          )
-        } catch (eMail) {
-          console.log(
-            `[daily_21h30_closing_check] Falha ao enviar e-mail KM SUB-MEDIDO para ${recipient.toEmail}:`,
-            eMail,
-          )
-        }
+        console.log(
+          `[daily_21h30_closing_check] ALERTA KM SUB-MEDIDO BLOQUEADO (regra permanente): lote ${bKey} para ${courierName} (${telemetryCoveragePct}% cobertura). Nenhum e-mail ou notificação disparado.`,
+        )
       }
 
       // Se pernas estimadas > 20% -> avisar 'ROTA COM PERNAS ESTIMADAS'
