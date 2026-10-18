@@ -5023,6 +5023,18 @@ export const deliveryService = {
   async approveAddressAlert(
     alertId: string,
     customNotes?: string,
+    resolvedUberAddress?: {
+      fullAddress?: string
+      street?: string
+      number?: string
+      complement?: string
+      neighborhood?: string
+      city?: string
+      state?: string
+      postalCode?: string
+      lat?: number
+      lng?: number
+    },
   ): Promise<{
     success: boolean
     alert: AddressAlertRecord
@@ -5060,27 +5072,79 @@ export const deliveryService = {
 
     const isVarreduraCep = alert.origin === 'varredura_cep'
 
-    // REGRA DE OURO DO PROJETO:
-    // O endereço textual do cliente permanece o cadastrado (estilo Uber).
-    // O que o pin do entregador corrige é a posição do pin no mapa (lat/lng) e número interpolado se faltar.
-    // Nunca sobrescrever o texto completo do endereço se já existir endereço cadastrado.
-    if (!currentCust?.address && suggested.address) {
-      customerUpdate.address = String(suggested.address)
+    // REGRA SOBERANA DE ENDEREÇO ESTILO UBER NA APROVAÇÃO:
+    // Ao aprovar a correção de pin do entregador, o endereço gravado no cliente é o endereço resolvido
+    // via reverse geocoding Google na coordenada física do pin (método único do produto),
+    // com rua + número interpolado pelo Google + bairro + cidade e preservando o complemento (lote/quadra).
+    let uberData = resolvedUberAddress
+    if (!isVarreduraCep && !uberData && hasValidCourierGps) {
+      if (suggested.uber_resolved && suggested.address) {
+        uberData = {
+          fullAddress: suggested.address,
+          street: suggested.street,
+          number: suggested.number,
+          complement: suggested.complement,
+          neighborhood: suggested.neighborhood,
+          city: suggested.city,
+          state: suggested.state,
+          postalCode: suggested.postal_code,
+        }
+      } else {
+        try {
+          const { MapDataService } = await import('@/lib/mapDataService')
+          const enriched = await MapDataService.reverseGeocodePin({
+            lat: Number(rawCourierLat),
+            lng: Number(rawCourierLng),
+            existingAddress: currentCust?.address,
+            existingComplement: currentCust?.complement,
+          })
+          if (enriched && enriched.fullAddress) {
+            uberData = {
+              fullAddress: enriched.fullAddress,
+              street: enriched.street,
+              number: enriched.number,
+              complement: enriched.complement,
+              neighborhood: enriched.neighborhood,
+              city: enriched.city,
+              state: enriched.state,
+              postalCode: enriched.postalCode,
+            }
+          }
+        } catch (enrichErr) {
+          console.warn('[approveAddressAlert] Falha ao resolver endereço estilo Uber:', enrichErr)
+        }
+      }
     }
-    if (!currentCust?.street && suggested.street) {
-      customerUpdate.street = String(suggested.street)
-    }
-    if (!currentCust?.neighborhood && suggested.neighborhood) {
-      customerUpdate.neighborhood = String(suggested.neighborhood)
-    }
-    if (!currentCust?.city && suggested.city) {
-      customerUpdate.city = String(suggested.city)
-    }
-    if (!currentCust?.state && suggested.state) {
-      customerUpdate.state = String(suggested.state)
-    }
-    if (!currentCust?.postal_code && suggested.postal_code) {
-      customerUpdate.postal_code = String(suggested.postal_code)
+
+    if (!isVarreduraCep && uberData && uberData.fullAddress) {
+      customerUpdate.address = uberData.fullAddress
+      if (uberData.street) customerUpdate.street = uberData.street
+      if (uberData.number) (customerUpdate as any).number = uberData.number
+      const preservedComplement = uberData.complement || currentCust?.complement || ''
+      if (preservedComplement) customerUpdate.complement = preservedComplement
+      if (uberData.neighborhood) customerUpdate.neighborhood = uberData.neighborhood
+      if (uberData.city) customerUpdate.city = uberData.city
+      if (uberData.state) customerUpdate.state = uberData.state
+      if (uberData.postalCode) customerUpdate.postal_code = uberData.postalCode
+    } else {
+      if (!currentCust?.address && suggested.address) {
+        customerUpdate.address = String(suggested.address)
+      }
+      if (!currentCust?.street && suggested.street) {
+        customerUpdate.street = String(suggested.street)
+      }
+      if (!currentCust?.neighborhood && suggested.neighborhood) {
+        customerUpdate.neighborhood = String(suggested.neighborhood)
+      }
+      if (!currentCust?.city && suggested.city) {
+        customerUpdate.city = String(suggested.city)
+      }
+      if (!currentCust?.state && suggested.state) {
+        customerUpdate.state = String(suggested.state)
+      }
+      if (!currentCust?.postal_code && suggested.postal_code) {
+        customerUpdate.postal_code = String(suggested.postal_code)
+      }
     }
 
     if (!isVarreduraCep && !hasDefinitiveCorrection && hasValidCourierGps) {
@@ -5092,7 +5156,7 @@ export const deliveryService = {
     const prevNotes = currentCust?.notes || ''
     const approvalAuditNote = isVarreduraCep
       ? `[ALERTA ANTI-CEP APROVADO ${new Date().toLocaleDateString('pt-BR')}]: CEP/Bairro corrigido para coincidir com o pin real do cliente (alerta #${alertId}). Pin mantido intacto.`
-      : `[ALERTA GPS APROVADO ${new Date().toLocaleDateString('pt-BR')}]: Pin calibrado e endereço completo atualizado via GPS entregador (alerta #${alertId}).`
+      : `[ALERTA GPS APROVADO ${new Date().toLocaleDateString('pt-BR')}]: Pin calibrado e endereço estilo Uber atualizado via GPS entregador (alerta #${alertId}): ${customerUpdate.address || 'Posição GPS'}.`
     customerUpdate.notes = prevNotes ? `${prevNotes} | ${approvalAuditNote}` : approvalAuditNote
 
     // 1. Atualizar cliente - dispara automaticamente sincronização de pedidos e resequenciamento viário de rotas!

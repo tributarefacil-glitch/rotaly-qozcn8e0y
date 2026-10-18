@@ -35,6 +35,24 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
   const [statusFilter, setStatusFilter] = useState<AddressAlertStatus | 'all'>('pendente')
   const [processingAlertId, setProcessingAlertId] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
+  // Cache de endereços estilo Uber resolvidos por alertId
+  const [uberResolvedMap, setUberResolvedMap] = useState<
+    Record<
+      string,
+      {
+        loading: boolean
+        fullAddress?: string
+        street?: string
+        number?: string
+        complement?: string
+        neighborhood?: string
+        city?: string
+        state?: string
+        postalCode?: string
+        error?: boolean
+      }
+    >
+  >({})
 
   const loadAlerts = async () => {
     try {
@@ -58,13 +76,125 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
     loadAlerts()
   }, [empresaId, statusFilter, isMaster])
 
+  // Efeito para carregar o endereço estilo Uber de alertas com coordenadas
+  useEffect(() => {
+    let isCancelled = false
+    const pendingWithGps = alerts.filter((alert) => {
+      const sug = (alert.suggested_address || {}) as Record<string, any>
+      const lat = sug.lat !== undefined && sug.lat !== null ? Number(sug.lat) : null
+      const lng = sug.lng !== undefined && sug.lng !== null ? Number(sug.lng) : null
+      return (
+        alert.origin === 'pin_entregador' &&
+        lat !== null &&
+        !isNaN(lat) &&
+        lng !== null &&
+        !isNaN(lng) &&
+        !uberResolvedMap[alert.id]
+      )
+    })
+
+    if (pendingWithGps.length === 0) return
+
+    pendingWithGps.forEach(async (alert) => {
+      const sug = (alert.suggested_address || {}) as Record<string, any>
+      const lat = Number(sug.lat)
+      const lng = Number(sug.lng)
+      const cust = alert.expand?.customer
+      const cur = (alert.current_address || {}) as Record<string, any>
+
+      // Se o alerta já salvou uber_resolved e address estruturado, usa direto
+      if (sug.uber_resolved && sug.address) {
+        setUberResolvedMap((prev) => ({
+          ...prev,
+          [alert.id]: {
+            loading: false,
+            fullAddress: sug.address,
+            street: sug.street,
+            number: sug.number,
+            complement: sug.complement || cur.complement || cust?.complement,
+            neighborhood: sug.neighborhood,
+            city: sug.city,
+            state: sug.state,
+            postalCode: sug.postal_code,
+          },
+        }))
+        return
+      }
+
+      setUberResolvedMap((prev) => ({
+        ...prev,
+        [alert.id]: { loading: true },
+      }))
+
+      try {
+        const { MapDataService } = await import('@/lib/mapDataService')
+        const enriched = await MapDataService.reverseGeocodePin({
+          lat,
+          lng,
+          existingAddress: cur.address || cust?.address || '',
+          existingComplement: cur.complement || cust?.complement || '',
+        })
+
+        if (!isCancelled) {
+          if (enriched && enriched.fullAddress) {
+            setUberResolvedMap((prev) => ({
+              ...prev,
+              [alert.id]: {
+                loading: false,
+                fullAddress: enriched.fullAddress,
+                street: enriched.street,
+                number: enriched.number,
+                complement: enriched.complement,
+                neighborhood: enriched.neighborhood,
+                city: enriched.city,
+                state: enriched.state,
+                postalCode: enriched.postalCode,
+              },
+            }))
+          } else {
+            setUberResolvedMap((prev) => ({
+              ...prev,
+              [alert.id]: { loading: false, error: true },
+            }))
+          }
+        }
+      } catch (err) {
+        if (!isCancelled) {
+          setUberResolvedMap((prev) => ({
+            ...prev,
+            [alert.id]: { loading: false, error: true },
+          }))
+        }
+      }
+    })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [alerts])
+
   const handleApprove = async (alert: AddressAlertRecord) => {
     try {
       setProcessingAlertId(alert.id)
-      const res = await deliveryService.approveAddressAlert(alert.id)
+      const uber = uberResolvedMap[alert.id]
+      const resolvedParam =
+        uber && !uber.loading && uber.fullAddress
+          ? {
+              fullAddress: uber.fullAddress,
+              street: uber.street,
+              number: uber.number,
+              complement: uber.complement,
+              neighborhood: uber.neighborhood,
+              city: uber.city,
+              state: uber.state,
+              postalCode: uber.postalCode,
+            }
+          : undefined
+
+      const res = await deliveryService.approveAddressAlert(alert.id, undefined, resolvedParam)
       if (res.success) {
         toast.success(
-          'Endereço aprovado! Cadastro atualizado e rotas viárias recalculadas na hora.',
+          'Endereço aprovado no estilo Uber! Cadastro do cliente atualizado com endereço resolvido e rotas recalculadas.',
         )
         await loadAlerts()
         if (onAlertUpdated) onAlertUpdated()
@@ -537,54 +667,149 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                       </div>
 
                       {/* Correção Sugerida */}
-                      <div className="p-2.5 rounded-lg border border-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/30 text-slate-800 dark:text-slate-200">
-                        <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider mb-1">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                          <span>
-                            {alert.origin === 'varredura_cep'
-                              ? 'Correção Cadastral Sugerida'
-                              : 'Correção de Pin (GPS Entregador)'}
-                          </span>
-                        </div>
-                        <p className="font-semibold text-emerald-950 dark:text-emerald-100 leading-snug">
-                          {sug.address ||
-                            [sug.street, sug.neighborhood, sug.city, sug.state]
-                              .filter(Boolean)
-                              .join(', ') ||
-                            'Posição GPS do Entregador'}
-                        </p>
-                        <div className="mt-1.5 text-[11px] text-slate-600 dark:text-slate-400 space-y-0.5">
-                          {sug.neighborhood && (
-                            <p>
-                              Bairro sugerido: <strong>{sug.neighborhood}</strong>
-                            </p>
-                          )}
-                          {sug.postal_code && (
-                            <p>
-                              CEP sugerido: <strong>{sug.postal_code}</strong>
-                            </p>
-                          )}
-                          {alert.origin === 'varredura_cep' ? (
-                            <p className="text-[10px] text-emerald-800 dark:text-emerald-300 font-semibold flex items-center gap-1">
-                              <MapPin className="h-3 w-3 text-emerald-600 shrink-0" />
-                              <span>
-                                Pin do cliente mantido intacto (
-                                {Number(cur.lat || sug.lat).toFixed(6)},{' '}
-                                {Number(cur.lng || sug.lng).toFixed(6)})
-                              </span>
-                            </p>
-                          ) : (
-                            hasNewCoords && (
-                              <p className="font-mono text-[10px] text-slate-500">
-                                Pin novo sugerido: {newLat!.toFixed(6)}, {newLng!.toFixed(6)}
-                                {sug.accuracy_meters
-                                  ? ` (precisão ~${Math.round(sug.accuracy_meters)}m)`
-                                  : ''}
-                              </p>
-                            )
-                          )}
-                        </div>
-                      </div>
+                      {(() => {
+                        const uberItem = uberResolvedMap[alert.id]
+                        const isPinEntregador = alert.origin === 'pin_entregador'
+
+                        // Comparação de via: via cadastrada vs via real interpolada
+                        const registeredStreet = (
+                          cur.street ||
+                          cust?.street ||
+                          (cur.address || cust?.address || '').split(',')[0] ||
+                          ''
+                        )
+                          .trim()
+                          .toLowerCase()
+
+                        const realStreet = (
+                          uberItem?.street ||
+                          sug.street ||
+                          (uberItem?.fullAddress || sug.address || '').split(',')[0] ||
+                          ''
+                        )
+                          .trim()
+                          .toLowerCase()
+
+                        const isStreetDivergent =
+                          Boolean(registeredStreet) &&
+                          Boolean(realStreet) &&
+                          registeredStreet !== realStreet &&
+                          !registeredStreet.includes(realStreet) &&
+                          !realStreet.includes(registeredStreet)
+
+                        return (
+                          <div className="p-2.5 rounded-lg border border-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/30 text-slate-800 dark:text-slate-200 flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                  <span>
+                                    {alert.origin === 'varredura_cep'
+                                      ? 'Correção Cadastral Sugerida'
+                                      : 'Correção de Pin (GPS Entregador)'}
+                                  </span>
+                                </div>
+                                {isPinEntregador && (
+                                  <Badge className="bg-emerald-600/15 text-emerald-800 dark:text-emerald-300 border-emerald-400/40 text-[9px] px-1.5 font-bold uppercase">
+                                    Estilo Uber
+                                  </Badge>
+                                )}
+                              </div>
+
+                              {/* Alerta de Via Divergente */}
+                              {isStreetDivergent && (
+                                <div className="mb-2 p-1.5 rounded bg-rose-100/90 dark:bg-rose-950/70 border border-rose-300 text-rose-900 dark:text-rose-200 text-[11px] font-bold flex items-center gap-1.5 animate-pulse">
+                                  <AlertTriangle className="h-3.5 w-3.5 text-rose-600 shrink-0" />
+                                  <span>
+                                    Atenção: Via divergente! Cadastrada: &ldquo;
+                                    {cur.street || registeredStreet}&rdquo; vs Real: &ldquo;
+                                    {uberItem?.street || realStreet}&rdquo;
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Endereço Resolvido Estilo Uber (com destaque claro) */}
+                              {isPinEntregador ? (
+                                <div className="space-y-1">
+                                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 block">
+                                    Endereço corrigido (estilo Uber):
+                                  </span>
+                                  {uberItem?.loading ? (
+                                    <div className="flex items-center gap-1.5 text-emerald-700 text-xs py-1">
+                                      <RefreshCw className="h-3 w-3 animate-spin" />
+                                      <span>Resolvendo endereço estilo Uber pelo Google...</span>
+                                    </div>
+                                  ) : (
+                                    <p className="font-bold text-xs text-emerald-950 dark:text-emerald-100 leading-snug bg-white/70 dark:bg-slate-900/50 p-1.5 rounded border border-emerald-300/80">
+                                      {uberItem?.fullAddress ||
+                                        sug.address ||
+                                        [sug.street, sug.neighborhood, sug.city, sug.state]
+                                          .filter(Boolean)
+                                          .join(', ') ||
+                                        'Posição GPS do Entregador'}
+                                    </p>
+                                  )}
+                                </div>
+                              ) : (
+                                <p className="font-semibold text-emerald-950 dark:text-emerald-100 leading-snug">
+                                  {sug.address ||
+                                    [sug.street, sug.neighborhood, sug.city, sug.state]
+                                      .filter(Boolean)
+                                      .join(', ') ||
+                                    'Posição GPS do Entregador'}
+                                </p>
+                              )}
+
+                              <div className="mt-1.5 text-[11px] text-slate-600 dark:text-slate-400 space-y-0.5">
+                                {(uberItem?.neighborhood || sug.neighborhood) && (
+                                  <p>
+                                    Bairro:{' '}
+                                    <strong>{uberItem?.neighborhood || sug.neighborhood}</strong>
+                                  </p>
+                                )}
+                                {(uberItem?.complement ||
+                                  sug.complement ||
+                                  cur.complement ||
+                                  cust?.complement) && (
+                                  <p className="text-emerald-800 dark:text-emerald-300">
+                                    Complemento preservado:{' '}
+                                    <strong>
+                                      {uberItem?.complement ||
+                                        sug.complement ||
+                                        cur.complement ||
+                                        cust?.complement}
+                                    </strong>
+                                  </p>
+                                )}
+                                {(uberItem?.postalCode || sug.postal_code) && (
+                                  <p>
+                                    CEP: <strong>{uberItem?.postalCode || sug.postal_code}</strong>
+                                  </p>
+                                )}
+                                {alert.origin === 'varredura_cep' ? (
+                                  <p className="text-[10px] text-emerald-800 dark:text-emerald-300 font-semibold flex items-center gap-1">
+                                    <MapPin className="h-3 w-3 text-emerald-600 shrink-0" />
+                                    <span>
+                                      Pin do cliente mantido intacto (
+                                      {Number(cur.lat || sug.lat).toFixed(6)},{' '}
+                                      {Number(cur.lng || sug.lng).toFixed(6)})
+                                    </span>
+                                  </p>
+                                ) : (
+                                  hasNewCoords && (
+                                    <p className="font-mono text-[10px] text-slate-500">
+                                      Pin novo sugerido: {newLat!.toFixed(6)}, {newLng!.toFixed(6)}
+                                      {sug.accuracy_meters
+                                        ? ` (precisão ~${Math.round(sug.accuracy_meters)}m)`
+                                        : ''}
+                                    </p>
+                                  )
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </div>
                     {/* Motivo / Notas */}
                     {alert.notes && (

@@ -546,8 +546,38 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               lat: clientLat,
               lng: clientLng,
             }
+            let uberAddressResolved = ''
+            let uberComponents: any = null
+            try {
+              const { MapDataService } = await import('@/lib/mapDataService')
+              const enriched = await MapDataService.reverseGeocodePin({
+                lat: currentLoc.lat,
+                lng: currentLoc.lng,
+                existingAddress: order.expand?.customer_id?.address || order.end_address_text || '',
+                existingComplement: order.expand?.customer_id?.complement || '',
+              })
+              if (enriched && enriched.fullAddress) {
+                uberAddressResolved = enriched.fullAddress
+                uberComponents = enriched
+              }
+            } catch (revErr) {
+              console.warn('[DeliveryConfirmationModal] Falha reverse geocode Uber:', revErr)
+            }
+
             const suggestedObj = {
-              address: order.expand?.customer_id?.address || order.end_address_text || '',
+              address:
+                uberAddressResolved ||
+                order.expand?.customer_id?.address ||
+                order.end_address_text ||
+                '',
+              street: uberComponents?.street || '',
+              number: uberComponents?.number || '',
+              complement: uberComponents?.complement || order.expand?.customer_id?.complement || '',
+              neighborhood: uberComponents?.neighborhood || '',
+              city: uberComponents?.city || '',
+              state: uberComponents?.state || '',
+              postal_code: uberComponents?.postalCode || '',
+              uber_resolved: Boolean(uberAddressResolved),
               lat: currentLoc.lat,
               lng: currentLoc.lng,
               accuracy: currentLoc.accuracy,
