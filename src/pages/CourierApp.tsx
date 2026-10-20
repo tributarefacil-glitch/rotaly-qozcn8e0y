@@ -1874,13 +1874,18 @@ export default function CourierApp() {
       const orderIdsToFinish = currentRouteOrders.map((o) => o.id)
       const currentBatchKey = currentRouteOrders[0]?.route_batch_key || ''
 
-      // Forçar offlineTelemetryBuffer.flush() antes de finalizar rota sem travar o fechamento
+      // Forçar offlineTelemetryBuffer.flush() antes de finalizar rota sem travar o fechamento (com timeout de 4s)
       setIsFlushingBuffer(true)
       isFlushingBufferRef.current = true
       try {
-        await offlineTelemetryBuffer.flush(user.id)
+        await Promise.race([
+          offlineTelemetryBuffer.flush(user.id),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('timeout_flush_buffer')), 4000),
+          ),
+        ])
       } catch (eF) {
-        console.warn('[CourierApp] Tentativa inicial de flush antes de finalizar falhou:', eF)
+        console.warn('[CourierApp] Tentativa inicial de flush antes de finalizar:', eF)
       } finally {
         setIsFlushingBuffer(false)
         isFlushingBufferRef.current = false
@@ -1906,7 +1911,8 @@ export default function CourierApp() {
         distanceToBaseMeters,
       })
 
-      const finishResult = await deliveryService.finishCourierRoute(
+      // Timeout defensivo de 12s para garantir que nunca fique preso em spinner infinito
+      const finishPromise = deliveryService.finishCourierRoute(
         user.id,
         orderIdsToFinish,
         undefined,
@@ -1918,6 +1924,19 @@ export default function CourierApp() {
           distanceToBaseMeters: distanceToBaseMeters ?? null,
         },
       )
+      const finishTimeout = new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                'Tempo limite de conexão excedido ao finalizar rota. Verifique sua rede e tente novamente.',
+              ),
+            ),
+          12000,
+        ),
+      )
+
+      const finishResult = await Promise.race([finishPromise, finishTimeout])
 
       if (finishResult.pendingPingsRemaining && finishResult.pendingPingsRemaining > 0) {
         toast.warning(
@@ -1952,23 +1971,21 @@ export default function CourierApp() {
       const fieldData = err?.data?.data ? JSON.stringify(err.data.data) : ''
       const combined = `${rawMsg} ${fieldData}`
 
-      if (!isAutomatic) {
-        if (combined.includes('paradas pendentes') || combined.includes('Conclua ou registre')) {
-          toast.error(
-            'Não é possível finalizar: ainda há paradas pendentes de entrega nesta rota.',
-            { duration: 6000 },
-          )
-        } else if (combined.includes('geolocalização') || combined.includes('GPS')) {
-          toast.error('GPS instável. Toque em "Finalizar manualmente" para concluir sem travar.', {
-            duration: 6000,
-          })
-        } else if (rawMsg) {
-          toast.error(`Falha ao finalizar rota: ${rawMsg}`, { duration: 6000 })
-        } else {
-          toast.error('Falha ao finalizar rota. Verifique sua conexão e tente novamente.', {
-            duration: 6000,
-          })
-        }
+      // Notificar erro real em ambos os casos (manual ou automático) para não silenciar falhas
+      if (combined.includes('paradas pendentes') || combined.includes('Conclua ou registre')) {
+        toast.error('Não é possível finalizar: ainda há paradas pendentes de entrega nesta rota.', {
+          duration: 7000,
+        })
+      } else if (combined.includes('geolocalização') || combined.includes('GPS')) {
+        toast.error('GPS instável. Toque em "Finalizar Manualmente" para concluir a rota.', {
+          duration: 7000,
+        })
+      } else if (rawMsg) {
+        toast.error(`Falha ao finalizar rota: ${rawMsg}`, { duration: 7000 })
+      } else {
+        toast.error('Falha ao finalizar rota. Verifique sua conexão e tente novamente.', {
+          duration: 7000,
+        })
       }
     } finally {
       setIsFinishingRoute(false)
@@ -2478,12 +2495,14 @@ export default function CourierApp() {
                 onClick={() => handleFinishFullRoute(false)}
                 disabled={isFinishingRoute}
                 variant="outline"
-                className="w-full h-11 border-emerald-500/40 bg-emerald-950/20 hover:bg-emerald-900/40 text-emerald-300 font-semibold text-xs rounded-xl flex items-center justify-center gap-2"
+                className="w-full h-12 border-2 border-emerald-500/60 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-200 font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg"
               >
                 <CheckCircle className="h-4 w-4 text-emerald-400" />
                 {isFinishingRoute
                   ? 'Finalizando Rota...'
-                  : 'Finalizar Manualmente (se geofence oscilar)'}
+                  : distanceToBaseMeters !== null && distanceToBaseMeters <= 150
+                    ? 'Encerrar Rota Agora (Na Base)'
+                    : 'Finalizar Manualmente (se geofence oscilar)'}
               </Button>
             </div>
           </div>

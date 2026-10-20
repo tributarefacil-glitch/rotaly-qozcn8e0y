@@ -604,6 +604,112 @@ onRecordAfterCreateSuccess((e) => {
       pendingOrdersInActiveRoute.length === 0 &&
       completedOrdersInActiveRoute.length > 0
 
+    // GUARDA SERVIDORA: AUTO-FECHAMENTO DE SEGURANÇA
+    // Se o entregador está dentro do geofence da base (<= 150m) com sinal fresco
+    // e todas as paradas do lote foram concluídas:
+    // o encerramento do lote deve ocorrer no servidor com segurança caso a última entrega
+    // tenha ocorrido há pelo menos 3 minutos ou se já houver tentativa pendente,
+    // garantindo que o entregador nunca fique travado aguardando o aparelho.
+    if (allStopsFinished) {
+      try {
+        let lastStopDeliveredTime = 0
+        for (let sIdx = 0; sIdx < completedOrdersInActiveRoute.length; sIdx++) {
+          const cOrd = completedOrdersInActiveRoute[sIdx]
+          const arrStr =
+            cOrd.getString('actual_arrival') ||
+            cOrd.getString('updated') ||
+            cOrd.getString('created')
+          const arrTime = new Date(arrStr).getTime()
+          if (arrTime > lastStopDeliveredTime) {
+            lastStopDeliveredTime = arrTime
+          }
+        }
+
+        const minutesSinceLastStop =
+          lastStopDeliveredTime > 0 ? (currentLocTime - lastStopDeliveredTime) / 60000 : 999
+
+        // Se a última parada foi há mais de 3 minutos e o entregador está na base
+        if (minutesSinceLastStop >= 3) {
+          const nowIso = new Date().toISOString()
+          const bKey =
+            openOrdersForBaseAlert[0].getString('route_batch_key') ||
+            `rb_${courierId}_${nowIso.slice(0, 10).replace(/-/g, '')}`
+
+          for (let fIdx = 0; fIdx < openOrdersForBaseAlert.length; fIdx++) {
+            const ordToClose = openOrdersForBaseAlert[fIdx]
+            try {
+              ordToClose.set('route_finished', true)
+              ordToClose.set('route_finished_at', nowIso)
+              $app.save(ordToClose)
+            } catch (errCloseOrd) {
+              console.warn(
+                `[on_location_alert] Erro ao auto-finalizar pedido ${ordToClose.id}:`,
+                errCloseOrd,
+              )
+            }
+          }
+
+          // Liberar status do entregador para 'active'
+          try {
+            const cUser = $app.findRecordById('users', courierId)
+            if (cUser && cUser.getString('status') !== 'active') {
+              cUser.set('status', 'active')
+              $app.save(cUser)
+            }
+          } catch (errUserActive) {
+            console.warn(
+              '[on_location_alert] Erro ao liberar entregador para active:',
+              errUserActive,
+            )
+          }
+
+          // Registrar audit_trail com padrão rigoroso do projeto:
+          // user_id vazio, actor_name='Sistema', metadata.system_trigger=true
+          try {
+            const auditCol = $app.findCollectionByNameOrId('audit_trail')
+            if (auditCol) {
+              const auditRec = new Record(auditCol)
+              auditRec.set('user_id', '')
+              auditRec.set('collection', 'orders')
+              auditRec.set('record_id', openOrdersForBaseAlert[0].id)
+              auditRec.set('courier_id', courierId)
+              auditRec.set('action', 'auto_fechamento_geofence_servidor')
+              auditRec.set('field', 'route_finished')
+              auditRec.set('old_value', 'false')
+              auditRec.set('new_value', 'true')
+              auditRec.set('timestamp', nowIso)
+              auditRec.set('metadata', {
+                system_trigger: true,
+                actor_name: 'Sistema',
+                route_batch_key: bKey,
+                orders_count: openOrdersForBaseAlert.length,
+                distance_to_base_meters: distToBaseMeters,
+                latitude: lat,
+                longitude: lng,
+                minutes_since_last_stop: Math.round(minutesSinceLastStop),
+                note: 'Auto-encerramento executado com segurança no servidor por geofence da base (150m) com paradas concluídas',
+              })
+              $app.save(auditRec)
+            }
+          } catch (errAudit) {
+            console.warn(
+              '[on_location_alert] Erro ao salvar audit_trail do auto-fechamento:',
+              errAudit,
+            )
+          }
+
+          console.log(
+            `[on_location_alert] Rota do lote ${bKey} auto-finalizada no servidor com sucesso para entregador ${courierName} (${distToBaseMeters}m da base).`,
+          )
+        }
+      } catch (errAutoClose) {
+        console.warn(
+          '[on_location_alert] Erro inesperado na guarda de auto-fechamento por geofence:',
+          errAutoClose,
+        )
+      }
+    }
+
     if (allStopsFinished) {
       // Cooldown de 15 minutos para alertas de chegada à base sem encerrar rota
       let recentBaseAlerts = []

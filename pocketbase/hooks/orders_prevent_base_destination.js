@@ -213,10 +213,35 @@ onRecordCreateRequest((e) => {
 
 onRecordUpdateRequest((e) => {
   const order = e.record
+  const originalOrder = order.original()
+  const orderStatus = order.getString('status')
+  const isTransitioningToFinished =
+    order.getBool('route_finished') && (!originalOrder || !originalOrder.getBool('route_finished'))
+
+  // REGRA DE OURO: O encerramento de rota (route_finished = true) e mutações em pedidos já entregues/cancelados
+  // NUNCA alteram o destino do cliente — não devem ser bloqueados pela guarda de destino na base!
+  // Também se o endereço de destino (lat/lng/text) não foi modificado nesta requisição, ignorar checagem.
+  if (isTransitioningToFinished || orderStatus === 'delivered' || orderStatus === 'cancelled') {
+    e.next()
+    return
+  }
+
   const endLat = order.get('end_address_lat')
   const endLng = order.get('end_address_lng')
   const endName = order.getString('end_address_name')
   const endText = order.getString('end_address_text')
+
+  if (originalOrder) {
+    const origLat = originalOrder.get('end_address_lat')
+    const origLng = originalOrder.get('end_address_lng')
+    const origText = originalOrder.getString('end_address_text')
+    const destinationUnchanged = origLat === endLat && origLng === endLng && origText === endText
+    if (destinationUnchanged) {
+      e.next()
+      return
+    }
+  }
+
   const customerId = order.getString('customer_id')
   const empresaId = order.getString('empresa_id')
 
