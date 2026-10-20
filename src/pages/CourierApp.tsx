@@ -1728,6 +1728,22 @@ export default function CourierApp() {
         }
 
         const companyId = order.empresa_id || customer.empresa_id || undefined
+        const isRedir = Boolean(
+          order.is_redirected ||
+          order.redirection_status === 'completed' ||
+          order.redirection_status === 'initiated' ||
+          (order as any).redirection_status === 'in_progress' ||
+          order.redirection_new_address ||
+          order.redirection_point_a_lat,
+        )
+        if (isRedir) {
+          toast.dismiss(toastId)
+          toast.info(
+            'Entrega redirecionada: endereço e coordenadas já aprovados pelo fluxo de redirecionamento.',
+          )
+          setIsSubmittingPin(false)
+          return
+        }
 
         await deliveryService.createAddressAlert({
           company: companyId,
@@ -1737,6 +1753,9 @@ export default function CourierApp() {
           origin: 'pin_entregador',
           distance_meters: distanceMeters,
           notes: `Marcado no local pelo entregador ${user.name || user.email} com desvio de ${distanceMeters}m (>500m, requer aprovação da central). Precisão GPS: ~${accuracy}m. Endereço obtido via GPS reverso: ${resolvedAddressString}`,
+          order_id: order.id,
+          tracking_code: order.tracking_code,
+          is_redirected: isRedir,
         })
 
         toast.dismiss(toastId)

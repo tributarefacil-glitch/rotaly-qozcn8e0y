@@ -4850,10 +4850,47 @@ export const deliveryService = {
     suggested_address: Record<string, unknown>
     distance_meters?: number
     notes?: string
+    order_id?: string
+    tracking_code?: string
+    is_redirected?: boolean
   }): Promise<AddressAlertRecord | null> {
     const authUser = pb.authStore.record as any
     const activeCompanyId =
       data.company || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+
+    // SUPRESSÃO EM ENTREGA REDIRECIONADA:
+    // Se a entrega for redirecionada, NÃO criar alerta de correção de pin.
+    // O ponto B já é aprovado pelo fluxo próprio de redirecionamento.
+    if (data.is_redirected) {
+      console.info(
+        `[createAddressAlert] Suprimido: pedido ${data.tracking_code || data.order_id || ''} é entrega redirecionada. Alerta de correção de pin desnecessário.`,
+      )
+      return null
+    }
+
+    if (data.order_id) {
+      try {
+        const ord = await pb.collection<OrderRecord>('orders').getOne(data.order_id, {
+          requestKey: null,
+        })
+        if (
+          ord &&
+          (ord.is_redirected ||
+            ord.redirection_status === 'completed' ||
+            ord.redirection_status === 'initiated' ||
+            (ord as any).redirection_status === 'in_progress' ||
+            ord.redirection_new_address ||
+            ord.redirection_point_a_lat)
+        ) {
+          console.info(
+            `[createAddressAlert] Suprimido: pedido ${ord.tracking_code} possui redirecionamento ativo/concluído. Alerta de pin desnecessário.`,
+          )
+          return null
+        }
+      } catch (ordErr) {
+        // Ignora erro de leitura do pedido e segue com as demais guardas
+      }
+    }
 
     // ITEM A.3 — GUARDAS ANTI-BASE E ANTI-IMPRECISÃO:
     // Descartar a criação se:
@@ -4898,32 +4935,55 @@ export const deliveryService = {
       return null
     }
 
-    // DEDUPLICAÇÃO DE ALERTA (REGRA ESTRITA DO ITEM 4):
-    // Checar alerta ativo equivalente (mesmo cliente, coordenada a menos de ~30m, ou janela recente)
-    // Se existir qualquer alerta recente ou equivalente, NÃO criar cópia: atualiza o existente ou descarta a duplicação.
-    if (data.customer) {
+    // DEDUPLICAÇÃO DE ALERTA:
+    // 1 ALERTA POR ENTREGA / POR CLIENTE.
+    // Se existir qualquer alerta pendente para o mesmo pedido OU para o mesmo cliente, NÃO criar outro.
+    // Atualiza o existente se a nova leitura tiver melhor precisão (menor accuracy).
+    if (data.customer || data.order_id || data.tracking_code) {
       try {
-        // 1. Verificar se já existe alerta pendente para o mesmo cliente
+        const filterParts: string[] = []
+        if (data.customer) {
+          filterParts.push(`customer = '${data.customer}'`)
+        }
+        const trackingFilter = data.tracking_code || (data.notes?.match(/TRK-[0-9-]+/)?.[0] ?? '')
+        if (trackingFilter) {
+          filterParts.push(`notes ~ '${trackingFilter}'`)
+        }
+
         const existingPendingList = await pb
           .collection<AddressAlertRecord>('address_alerts')
-          .getList(1, 5, {
-            filter: `customer = '${data.customer}' && status = 'pendente'`,
+          .getList(1, 10, {
+            filter: `(${filterParts.join(' || ')}) && status = 'pendente'`,
             sort: '-created',
             requestKey: null,
           })
 
         if (existingPendingList.items.length > 0) {
           const existing = existingPendingList.items[0]
-          console.info(
-            `[createAddressAlert] Deduplicação ativa: cliente ${data.customer} já possui alerta pendente #${existing.id}. Atualizando registro existente.`,
+          const existingSugg = (existing.suggested_address || {}) as Record<string, any>
+          const existingAcc = Number(
+            existingSugg.accuracy ??
+              existingSugg.accuracy_meters ??
+              existingSugg.gps_accuracy ??
+              999,
           )
-          return await pb.collection<AddressAlertRecord>('address_alerts').update(existing.id, {
-            suggested_address: data.suggested_address,
-            current_address: existing.current_address || data.current_address || {},
-            distance_meters: data.distance_meters ?? existing.distance_meters,
-            marked_at: new Date().toISOString(),
-            notes: data.notes || existing.notes,
-          })
+          const newAcc = accuracy > 0 ? accuracy : 999
+
+          console.info(
+            `[createAddressAlert] Guarda anti-duplicidade: alerta pendente #${existing.id} já existe para este pedido/cliente.`,
+          )
+
+          // Se a nova leitura for mais precisa (menor accuracy), atualiza com a melhor leitura
+          if (newAcc < existingAcc) {
+            return await pb.collection<AddressAlertRecord>('address_alerts').update(existing.id, {
+              suggested_address: data.suggested_address,
+              current_address: existing.current_address || data.current_address || {},
+              distance_meters: data.distance_meters ?? existing.distance_meters,
+              marked_at: new Date().toISOString(),
+              notes: data.notes || existing.notes,
+            })
+          }
+          return existing
         }
 
         // 2. Verificar se já existe alerta recente para o mesmo cliente (últimas 24h ou coordenada muito próxima < 30m)

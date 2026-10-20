@@ -62,34 +62,87 @@ onRecordBeforeCreate((e) => {
     return R * c
   }
 
-  // 1. DEDUPLICAÇÃO ATÔMICA NO SERVIDOR (onRecordBeforeCreate cobre REST e $app.save interno):
-  // Bloquear duplicata se já existir alerta pendente para o mesmo cliente, ou alerta recente (<30m de distância dentro de janela de 6h).
+  // 0.1 SUPRESSÃO EM ENTREGA REDIRECIONADA:
+  // Se o alerta se refere a um pedido com redirecionamento ativo/concluído, NÃO permitir criação.
   try {
-    const sixHoursAgoIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString()
+    const alertNotes = alertRecord.getString('notes') || ''
+    const matchTrk = alertNotes.match(/TRK-[0-9-]+/)
+    if (matchTrk) {
+      const orderTrk = matchTrk[0]
+      const orderMatches = $app.findRecordsByFilter(
+        'orders',
+        `tracking_code = '${orderTrk}'`,
+        '-created',
+        1,
+        0,
+      )
+      if (orderMatches.length > 0) {
+        const ord = orderMatches[0]
+        const isRedir = Boolean(
+          ord.getBool('is_redirected') ||
+          ord.getString('redirection_status') === 'completed' ||
+          ord.getString('redirection_status') === 'initiated' ||
+          ord.getString('redirection_status') === 'in_progress' ||
+          ord.getString('redirection_new_address') ||
+          ord.getFloat('redirection_point_a_lat') > 0,
+        )
+        if (isRedir) {
+          console.log(
+            `[address_alerts_dedup_guard] Alerta suprimido: pedido ${orderTrk} é entrega redirecionada (ponto B já aprovado no fluxo de redirecionamento).`,
+          )
+          throw new BadRequestError(
+            `Entrega redirecionada (${orderTrk}): ponto B aprovado pelo fluxo próprio de redirecionamento. Alerta de pin suprimido.`,
+          )
+        }
+      }
+    }
+  } catch (redirErr) {
+    if (
+      redirErr &&
+      (redirErr.name === 'BadRequestError' || redirErr.message?.includes('Entrega redirecionada'))
+    ) {
+      throw redirErr
+    }
+  }
+
+  // 1. DEDUPLICAÇÃO ATÔMICA NO SERVIDOR (onRecordBeforeCreate cobre REST e $app.save interno):
+  // Bloquear duplicata se já existir alerta pendente para o mesmo cliente, mesmo pedido, ou alerta recente (<30m de distância dentro de janela de 24h).
+  try {
+    const twentyFourHoursAgoIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
     const candidateAlerts = $app.findRecordsByFilter(
       'address_alerts',
-      `customer = '${customerId}' && created >= '${sixHoursAgoIso}'`,
+      `customer = '${customerId}' && created >= '${twentyFourHoursAgoIso}'`,
       '-created',
       20,
       0,
     )
 
-    // Extrair lat/lng da nova sugestão
+    // Extrair lat/lng e precisão da nova sugestão
     let newLat = 0
     let newLng = 0
+    let newAcc = 999
     try {
       const parsedSugg = JSON.parse(alertRecord.getString('suggested_address') || '{}')
       newLat = Number(parsedSugg.lat || 0)
       newLng = Number(parsedSugg.lng || 0)
+      newAcc = Number(parsedSugg.accuracy || parsedSugg.accuracy_meters || 999)
     } catch (_) {}
+
+    const incomingNotes = alertRecord.getString('notes') || ''
+    const incomingTrkMatch = incomingNotes.match(/TRK-[0-9-]+/)
+    const incomingTrk = incomingTrkMatch ? incomingTrkMatch[0] : ''
 
     for (let i = 0; i < candidateAlerts.length; i++) {
       const existing = candidateAlerts[i]
       const existingStatus = existing.getString('status')
+      const existingNotes = existing.getString('notes') || ''
 
       let isDuplicate = false
       if (existingStatus === 'pendente') {
-        // Já tem alerta pendente do mesmo cliente: unificar sempre
+        // Já tem alerta pendente do mesmo cliente OU mesmo pedido: unificar sempre
+        isDuplicate = true
+      } else if (incomingTrk && existingNotes.includes(incomingTrk)) {
+        // Mesmo pedido avaliado nas últimas 24h: não duplicar
         isDuplicate = true
       } else {
         // Checar proximidade física (< 30 metros) dentro da janela de 6 horas
@@ -120,20 +173,41 @@ onRecordBeforeCreate((e) => {
           const newDistance = alertRecord.getFloat('distance_meters')
           const markedBy = alertRecord.getString('marked_by')
 
-          if (newSuggested) existing.set('suggested_address', newSuggested)
-          if (newNotes) existing.set('notes', newNotes)
-          if (newDistance) existing.set('distance_meters', newDistance)
-          if (markedBy) existing.set('marked_by', markedBy)
-          existing.set('marked_at', new Date().toISOString())
-
+          let exAcc = 999
           try {
-            $app.save(existing)
+            const exSugg = JSON.parse(existing.getString('suggested_address') || '{}')
+            exAcc = Number(exSugg.accuracy || exSugg.accuracy_meters || 999)
+          } catch (_) {}
+
+          // Se a nova leitura tem melhor precisão (menor accuracy), atualiza com a melhor leitura
+          if (newAcc < exAcc) {
+            const newSuggested = alertRecord.getString('suggested_address')
+            const newNotes = alertRecord.getString('notes')
+            const newDistance = alertRecord.getFloat('distance_meters')
+            const markedBy = alertRecord.getString('marked_by')
+
+            if (newSuggested) existing.set('suggested_address', newSuggested)
+            if (newNotes) existing.set('notes', newNotes)
+            if (newDistance) existing.set('distance_meters', newDistance)
+            if (markedBy) existing.set('marked_by', markedBy)
+            existing.set('marked_at', new Date().toISOString())
+
+            try {
+              $app.save(existing)
+              console.log(
+                `[address_alerts_dedup_guard] Alerta pendente #${existing.id} atualizado com melhor precisao (${newAcc}m vs ${exAcc}m):`,
+                existing.id,
+              )
+            } catch (saveErr) {
+              console.log(
+                '[address_alerts_dedup_guard] Erro ao atualizar alerta pendente:',
+                saveErr,
+              )
+            }
+          } else {
             console.log(
-              '[address_alerts_dedup_guard] Alerta pendente existente atualizado para evitar duplicata conflitante:',
-              existing.id,
+              `[address_alerts_dedup_guard] Alerta pendente #${existing.id} preservado (precisao existente ${exAcc}m <= nova ${newAcc}m)`,
             )
-          } catch (saveErr) {
-            console.log('[address_alerts_dedup_guard] Erro ao atualizar alerta pendente:', saveErr)
           }
         } else {
           console.log(

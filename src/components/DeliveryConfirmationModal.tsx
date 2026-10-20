@@ -431,7 +431,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   }
 
   const handleConfirmDelivery = async () => {
-    if (!order) return
+    if (!order || isSubmitting) return
 
     const isDelivered = reason === 'delivered'
 
@@ -476,8 +476,22 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       | 'aprovado_admin' = 'ok'
     let distanceToPinM = 0
 
+    const isEffectiveRedirection =
+      isRedirectionFlow ||
+      Boolean(
+        order.is_redirected ||
+        order.redirection_status === 'completed' ||
+        order.redirection_status === 'initiated' ||
+        (order as any).redirection_status === 'in_progress' ||
+        order.redirection_new_address ||
+        order.redirection_point_a_lat,
+      )
     if (isDelivered) {
-      if (!hasClientCoords) {
+      if (isEffectiveRedirection) {
+        // REGRA PERMANENTE: Entrega redirecionada NÃO gera alerta de correção de pin.
+        // O ponto B já é aprovado e gravado pelo fluxo próprio de redirecionamento.
+        geofenceFlag = 'ok'
+      } else if (!hasClientCoords) {
         // CLIENTE SEM COORDENADAS NUNCA BLOQUEIA
         geofenceFlag = 'sem_coordenadas'
         // Criar/atualizar alerta de pin_entregador automaticamente via createAddressAlert com guardas
@@ -510,6 +524,9 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               suggested_address: suggestedObj,
               distance_meters: 0,
               notes: noteText,
+              order_id: order.id,
+              tracking_code: order.tracking_code,
+              is_redirected: false,
             })
           } catch (alertErr) {
             console.warn(
@@ -593,6 +610,9 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               suggested_address: suggestedObj,
               distance_meters: distanceToPinM,
               notes: noteText,
+              order_id: order.id,
+              tracking_code: order.tracking_code,
+              is_redirected: false,
             })
           } catch (alertErr) {
             console.warn(

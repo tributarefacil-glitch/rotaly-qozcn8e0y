@@ -157,131 +157,154 @@ onRecordUpdateRequest((e) => {
     const courierIdVal = targetOrder.getString('courier_id') || ''
     const customerIdVal = targetOrder.getString('customer_id') || ''
 
+    // Verificar se é entrega redirecionada (ponto B aprovado no fluxo de redirecionamento)
+    const isOrderRedirected = Boolean(
+      targetOrder.getBool('is_redirected') ||
+      targetOrder.getString('redirection_status') === 'completed' ||
+      targetOrder.getString('redirection_status') === 'initiated' ||
+      targetOrder.getString('redirection_status') === 'in_progress' ||
+      targetOrder.getString('redirection_new_address') ||
+      targetOrder.getFloat('redirection_point_a_lat') > 0,
+    )
+
     if (newStatus === 'delivered' && geofenceFlag === 'pendente_aprovacao_gt_500m') {
       try {
-        const auditCol = $app.findCollectionByNameOrId('audit_trail')
-        if (auditCol) {
-          const auditRec = new Record(auditCol)
-          // Regra do projeto: ações automáticas usam user_id vazio + actor_name='Sistema' + metadata.system_trigger=true
-          auditRec.set('user_id', '')
-          auditRec.set('actor_name', 'Sistema')
-          auditRec.set('action', 'geofence_pending_approval')
-          auditRec.set('collection', 'orders')
-          auditRec.set('record_id', targetOrder.id)
-          auditRec.set('field', 'entrega_geofence_flag')
-          auditRec.set('old_value', 'em_transito')
-          auditRec.set('new_value', 'pendente_aprovacao_gt_500m')
-          if (courierIdVal) auditRec.set('courier_id', courierIdVal)
-          if (empresaId) auditRec.set('empresa_id', empresaId)
-          auditRec.set(
-            'metadata',
-            JSON.stringify({
-              order_id: targetOrder.id,
-              tracking_code: trackingCode,
-              distance_m: distanceM,
-              courier_id: courierIdVal,
-              customer_id: customerIdVal,
-              system_trigger: true,
-              actor_role: 'system',
-              reason: `Entrega confirmada a ${distanceM}m do pin cadastrado (>500m). Encaminhado para aprovação da central.`,
-            }),
-          )
-          $app.save(auditRec)
+        if (isOrderRedirected) {
+          // Entrega redirecionada NÃO deve gerar alerta de correção de pin nem pendência de geofence.
           console.log(
-            '[orders_guard] audit_trail registrado com sucesso para geofence_pending_approval:',
-            targetOrder.id,
+            '[orders_guard] geofence_pending_approval suprimido: pedido redirecionado',
+            trackingCode,
           )
-        }
-
-        // Criar alerta em address_alerts se ainda não existir pendente para este cliente
-        // Checagem atômica prévia (mesmo cliente, janela 6h, <30m ou pendente) antes de $app.save
-        const alertsCol = $app.findCollectionByNameOrId('address_alerts')
-        if (alertsCol && customerIdVal) {
-          let isDuplicate = false
-          try {
-            const sixHoursAgoIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString()
-            const existingAlerts = $app.findRecordsByFilter(
-              'address_alerts',
-              `customer = '${customerIdVal}' && created >= '${sixHoursAgoIso}'`,
-              '-created',
-              10,
-              0,
+        } else {
+          const auditCol = $app.findCollectionByNameOrId('audit_trail')
+          if (auditCol) {
+            const auditRec = new Record(auditCol)
+            // Regra do projeto: ações automáticas usam user_id vazio + actor_name='Sistema' + metadata.system_trigger=true
+            auditRec.set('user_id', '')
+            auditRec.set('actor_name', 'Sistema')
+            auditRec.set('action', 'geofence_pending_approval')
+            auditRec.set('collection', 'orders')
+            auditRec.set('record_id', targetOrder.id)
+            auditRec.set('field', 'entrega_geofence_flag')
+            auditRec.set('old_value', 'em_transito')
+            auditRec.set('new_value', 'pendente_aprovacao_gt_500m')
+            if (courierIdVal) auditRec.set('courier_id', courierIdVal)
+            if (empresaId) auditRec.set('empresa_id', empresaId)
+            auditRec.set(
+              'metadata',
+              JSON.stringify({
+                order_id: targetOrder.id,
+                tracking_code: trackingCode,
+                distance_m: distanceM,
+                courier_id: courierIdVal,
+                customer_id: customerIdVal,
+                system_trigger: true,
+                actor_role: 'system',
+                reason: `Entrega confirmada a ${distanceM}m do pin cadastrado (>500m). Encaminhado para aprovação da central.`,
+              }),
             )
-            const targetLat = targetOrder.getFloat('end_address_lat') || 0
-            const targetLng = targetOrder.getFloat('end_address_lng') || 0
+            $app.save(auditRec)
+            console.log(
+              '[orders_guard] audit_trail registrado com sucesso para geofence_pending_approval:',
+              targetOrder.id,
+            )
+          }
 
-            for (let a = 0; a < existingAlerts.length; a++) {
-              const ex = existingAlerts[a]
-              if (ex.getString('status') === 'pendente') {
-                isDuplicate = true
-                break
-              }
-              let exLat = 0
-              let exLng = 0
-              try {
-                const exS = JSON.parse(ex.getString('suggested_address') || '{}')
-                exLat = Number(exS.lat || 0)
-                exLng = Number(exS.lng || 0)
-              } catch (_) {}
+          // Criar alerta em address_alerts se ainda não existir pendente para este cliente ou pedido
+          // Checagem atômica prévia (mesmo cliente, janela 6h, <30m ou pendente) antes de $app.save
+          const alertsCol = $app.findCollectionByNameOrId('address_alerts')
+          if (alertsCol && customerIdVal) {
+            let isDuplicate = false
+            try {
+              const sixHoursAgoIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString()
+              const existingAlerts = $app.findRecordsByFilter(
+                'address_alerts',
+                `customer = '${customerIdVal}' && created >= '${sixHoursAgoIso}'`,
+                '-created',
+                10,
+                0,
+              )
+              const targetLat = targetOrder.getFloat('end_address_lat') || 0
+              const targetLng = targetOrder.getFloat('end_address_lng') || 0
 
-              if (targetLat !== 0 && targetLng !== 0 && exLat !== 0 && exLng !== 0) {
-                const dLat = ((exLat - targetLat) * Math.PI) / 180
-                const dLon = ((exLng - targetLng) * Math.PI) / 180
-                const aHarv =
-                  Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                  Math.cos((targetLat * Math.PI) / 180) *
-                    Math.cos((exLat * Math.PI) / 180) *
-                    Math.sin(dLon / 2) *
-                    Math.sin(dLon / 2)
-                const distM = 6371000 * 2 * Math.atan2(Math.sqrt(aHarv), Math.sqrt(1 - aHarv))
-                if (distM <= 30) {
+              for (let a = 0; a < existingAlerts.length; a++) {
+                const ex = existingAlerts[a]
+                if (ex.getString('status') === 'pendente') {
                   isDuplicate = true
                   break
                 }
-              }
-            }
-          } catch (_) {
-            isDuplicate = false
-          }
+                const exNotes = ex.getString('notes') || ''
+                if (trackingCode && exNotes.includes(trackingCode)) {
+                  isDuplicate = true
+                  break
+                }
+                let exLat = 0
+                let exLng = 0
+                try {
+                  const exS = JSON.parse(ex.getString('suggested_address') || '{}')
+                  exLat = Number(exS.lat || 0)
+                  exLng = Number(exS.lng || 0)
+                } catch (_) {}
 
-          if (!isDuplicate) {
-            try {
-              const alertRec = new Record(alertsCol)
-              alertRec.set('customer', customerIdVal)
-              if (empresaId) alertRec.set('company', empresaId)
-              alertRec.set('origin', 'pin_entregador')
-              alertRec.set('status', 'pendente')
-              alertRec.set('distance_meters', distanceM)
-              if (courierIdVal) alertRec.set('marked_by', courierIdVal)
-              alertRec.set('marked_at', new Date().toISOString())
-              alertRec.set(
-                'suggested_address',
-                JSON.stringify({
-                  address: targetOrder.getString('end_address_text') || '',
-                  lat: targetOrder.getFloat('end_address_lat') || 0,
-                  lng: targetOrder.getFloat('end_address_lng') || 0,
-                }),
-              )
-              alertRec.set(
-                'notes',
-                `Entrega realizada a ${(distanceM / 1000).toFixed(1)} km do pin cadastrado no pedido ${trackingCode}. Aguarda conferência da central.`,
-              )
-              $app.save(alertRec)
+                if (targetLat !== 0 && targetLng !== 0 && exLat !== 0 && exLng !== 0) {
+                  const dLat = ((exLat - targetLat) * Math.PI) / 180
+                  const dLon = ((exLng - targetLng) * Math.PI) / 180
+                  const aHarv =
+                    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos((targetLat * Math.PI) / 180) *
+                      Math.cos((exLat * Math.PI) / 180) *
+                      Math.sin(dLon / 2) *
+                      Math.sin(dLon / 2)
+                  const distM = 6371000 * 2 * Math.atan2(Math.sqrt(aHarv), Math.sqrt(1 - aHarv))
+                  if (distM <= 30) {
+                    isDuplicate = true
+                    break
+                  }
+                }
+              }
+            } catch (_) {
+              isDuplicate = false
+            }
+
+            if (!isDuplicate) {
+              try {
+                const alertRec = new Record(alertsCol)
+                alertRec.set('customer', customerIdVal)
+                if (empresaId) alertRec.set('company', empresaId)
+                alertRec.set('origin', 'pin_entregador')
+                alertRec.set('status', 'pendente')
+                alertRec.set('distance_meters', distanceM)
+                if (courierIdVal) alertRec.set('marked_by', courierIdVal)
+                alertRec.set('marked_at', new Date().toISOString())
+                alertRec.set(
+                  'suggested_address',
+                  JSON.stringify({
+                    address: targetOrder.getString('end_address_text') || '',
+                    lat: targetOrder.getFloat('end_address_lat') || 0,
+                    lng: targetOrder.getFloat('end_address_lng') || 0,
+                  }),
+                )
+                alertRec.set(
+                  'notes',
+                  `Entrega realizada a ${(distanceM / 1000).toFixed(1)} km do pin cadastrado no pedido ${trackingCode}. Aguarda conferência da central.`,
+                )
+                $app.save(alertRec)
+                console.log(
+                  '[orders_guard] address_alerts criado com sucesso para cliente:',
+                  customerIdVal,
+                )
+              } catch (errSaveAlert) {
+                console.log(
+                  '[orders_guard] Criação de address_alerts interceptada pelo dedup guard:',
+                  errSaveAlert?.message || errSaveAlert,
+                )
+              }
+            } else {
               console.log(
-                '[orders_guard] address_alerts criado com sucesso para cliente:',
+                '[orders_guard] address_alerts suprimido por deduplicação (alerta existente para cliente):',
                 customerIdVal,
               )
-            } catch (errSaveAlert) {
-              console.log(
-                '[orders_guard] Criação de address_alerts interceptada pelo dedup guard:',
-                errSaveAlert?.message || errSaveAlert,
-              )
             }
-          } else {
-            console.log(
-              '[orders_guard] address_alerts suprimido por deduplicação (alerta existente para cliente):',
-              customerIdVal,
-            )
           }
         }
       } catch (errHookPending) {
