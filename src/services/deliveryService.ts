@@ -4937,8 +4937,9 @@ export const deliveryService = {
 
     // GUARDA DE SANIDADE v0.0.472 (FUTURO):
     // Se o pin sugerido/entrega estiver a <= 150m do pin atual cadastrado do cliente,
-    // mas a distância informada for > 300m, trata-se de falsa divergência (medição contra referência errada).
-    // NÃO criar alerta! Auditar inconsistência e suprimir.
+    // GUARDA DE SANIDADE REFORÇADA (v0.0.472 / v0.0.473):
+    // 1. Se o pin sugerido estiver a <= 150m do pin cadastrado do cliente: 100% falso positivo, abortar.
+    // 2. Se o pedido referenciado nas notas (TRK-xxxx) foi entregue a <= 150m do pin cadastrado: falso positivo, abortar.
     if (data.customer) {
       try {
         let custLat: number | null = null
@@ -4963,12 +4964,47 @@ export const deliveryService = {
         }
 
         if (custLat !== null && custLng !== null) {
-          const distToCustPinM = Math.round(haversineDistanceMeters(lat, lng, custLat, custLng))
-          if (distToCustPinM <= 150) {
-            console.warn(
-              `[createAddressAlert] [FALSO POSITIVO SUPRIMIDO]: pin sugerido está a ${distToCustPinM}m do pin cadastrado do cliente (tolerância 150m). Distância informada no alerta foi ${data.distance_meters || 0}m. Alerta bloqueado.`,
-            )
-            return null
+          // (i) Checar pin sugerido
+          if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+            const distToCustPinM = Math.round(haversineDistanceMeters(lat, lng, custLat, custLng))
+            if (distToCustPinM <= 150) {
+              console.warn(
+                `[createAddressAlert] [FALSO POSITIVO SUPRIMIDO]: pin sugerido está a ${distToCustPinM}m do pin cadastrado do cliente (tolerância 150m). Distância informada: ${data.distance_meters || 0}m. Alerta bloqueado.`,
+              )
+              return null
+            }
+          }
+
+          // (ii) Checar pedido nas notas (se houver TRK-XXXX)
+          const notesText = data.notes || ''
+          const mTrk = notesText.match(/TRK-[0-9-]+/)
+          if (mTrk) {
+            try {
+              const matchedOrder = await pb
+                .collection('orders')
+                .getFirstListItem(`tracking_code = '${mTrk[0]}'`, { requestKey: null })
+              if (matchedOrder) {
+                const endLat = Number(
+                  matchedOrder.end_address_lat || (matchedOrder as any).delivery_lat || 0,
+                )
+                const endLng = Number(
+                  matchedOrder.end_address_lng || (matchedOrder as any).delivery_lng || 0,
+                )
+                if (!isNaN(endLat) && !isNaN(endLng) && endLat !== 0 && endLng !== 0) {
+                  const distOrder = Math.round(
+                    haversineDistanceMeters(endLat, endLng, custLat, custLng),
+                  )
+                  if (distOrder <= 150) {
+                    console.warn(
+                      `[createAddressAlert] [FALSO POSITIVO SUPRIMIDO]: pedido ${mTrk[0]} entregue a ${distOrder}m do pin cadastrado. Alerta bloqueado.`,
+                    )
+                    return null
+                  }
+                }
+              }
+            } catch {
+              /* intentionally ignored */
+            }
           }
         }
       } catch (errCheckCust) {

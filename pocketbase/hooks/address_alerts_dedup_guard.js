@@ -105,65 +105,124 @@ onRecordBeforeCreate((e) => {
     }
   }
 
-  // 0. GUARDA DE SANIDADE v0.0.472:
-  // Se a distância medida for > 300m MAS o pin de entrega sugerido estiver a <= 150m do pin cadastrado do cliente,
-  // trata-se de falsa divergência (medição contra referência errada/rota).
+  // 0. GUARDA DE SANIDADE REFORÇADA (v0.0.472 / v0.0.473):
+  // Se o pin sugerido estiver a <= 150m do pin cadastrado do cliente,
+  // OU se o pedido de origem (TRK-xxxx nas notes) foi entregue a <= 150m do pin cadastrado do cliente:
+  // trata-se de 100% FALSO POSITIVO.
   // Auditar inconsistência e suprimir criação do alerta!
-  if (customerId && candLat !== 0 && candLng !== 0) {
+  if (customerId) {
     try {
       const custRec = $app.findRecordById('customers', customerId)
       if (custRec) {
         const custLat = custRec.getFloat('lat') || 0
         const custLng = custRec.getFloat('lng') || 0
         if (custLat !== 0 && custLng !== 0) {
-          const dLat = ((candLat - custLat) * Math.PI) / 180
-          const dLon = ((candLng - custLng) * Math.PI) / 180
-          const a =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos((custLat * Math.PI) / 180) *
-              Math.cos((candLat * Math.PI) / 180) *
-              Math.sin(dLon / 2) *
-              Math.sin(dLon / 2)
-          const distToCustM = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+          // (i) Checar distância do pin sugerido contra o pin cadastrado
+          if (candLat !== 0 && candLng !== 0) {
+            const dLat = ((candLat - custLat) * Math.PI) / 180
+            const dLon = ((candLng - custLng) * Math.PI) / 180
+            const a =
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos((custLat * Math.PI) / 180) *
+                Math.cos((candLat * Math.PI) / 180) *
+                Math.sin(dLon / 2) *
+                Math.sin(dLon / 2)
+            const distToCustM = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 
-          if (distToCustM <= 150) {
-            console.log(
-              `[address_alerts_dedup_guard] BLOQUEADO FALSO POSITIVO: pin sugerido está a ${Math.round(distToCustM)}m do pin cadastrado do cliente ${customerId}. Distância informada: ${alertDistM}m.`,
-            )
+            if (distToCustM <= 150) {
+              console.log(
+                `[address_alerts_dedup_guard] BLOQUEADO FALSO POSITIVO: pin sugerido está a ${Math.round(distToCustM)}m do pin cadastrado do cliente ${customerId}. Distância informada: ${alertDistM}m.`,
+              )
+              try {
+                const auditCol = $app.findCollectionByNameOrId('audit_trail')
+                if (auditCol) {
+                  const audit = new Record(auditCol)
+                  audit.set('user_id', '')
+                  audit.set('actor_name', 'Sistema')
+                  audit.set('action', 'alerta_pin_falso_positivo_suprimido')
+                  audit.set('collection', 'address_alerts')
+                  audit.set('field', 'distance_meters')
+                  audit.set('old_value', String(alertDistM))
+                  audit.set('new_value', '0')
+                  audit.set(
+                    'metadata',
+                    JSON.stringify({
+                      system_trigger: true,
+                      customer_id: customerId,
+                      dist_to_cust_pin_m: Math.round(distToCustM),
+                      alert_dist_m: alertDistM,
+                      reason:
+                        'Pin de entrega coincide com o pin já cadastrado/calibrado do cliente (<= 150m)',
+                    }),
+                  )
+                  $app.save(audit)
+                }
+              } catch (_) {}
+
+              throw new BadRequestError(
+                `Alerta descartado: o pin da entrega está a apenas ${Math.round(distToCustM)}m do pin cadastrado do cliente (tolerância 150m). Não há divergência real.`,
+              )
+            }
+          }
+
+          // (ii) Checar coordenadas do pedido referenciado nas notes (se houver TRK-XXXX)
+          const notesStr = alertRecord.getString('notes') || ''
+          const mTrkSearch = notesStr.match(/TRK-[0-9-]+/)
+          if (mTrkSearch) {
             try {
-              const auditCol = $app.findCollectionByNameOrId('audit_trail')
-              if (auditCol) {
-                const audit = new Record(auditCol)
-                audit.set('user_id', '')
-                audit.set('actor_name', 'Sistema')
-                audit.set('action', 'alerta_pin_falso_positivo_suprimido')
-                audit.set('collection', 'address_alerts')
-                audit.set('field', 'distance_meters')
-                audit.set('old_value', String(alertDistM))
-                audit.set('new_value', '0')
-                audit.set(
-                  'metadata',
-                  JSON.stringify({
-                    system_trigger: true,
-                    customer_id: customerId,
-                    dist_to_cust_pin_m: Math.round(distToCustM),
-                    alert_dist_m: alertDistM,
-                    reason:
-                      'Pin de entrega coincide com o pin já cadastrado/calibrado do cliente (<= 150m)',
-                  }),
-                )
-                $app.save(audit)
+              const matchedOrder = $app.findFirstRecordByFilter(
+                'orders',
+                `tracking_code = '${mTrkSearch[0]}'`,
+              )
+              if (matchedOrder) {
+                const endLatOrd =
+                  matchedOrder.getFloat('end_address_lat') ||
+                  matchedOrder.getFloat('delivery_lat') ||
+                  0
+                const endLngOrd =
+                  matchedOrder.getFloat('end_address_lng') ||
+                  matchedOrder.getFloat('delivery_lng') ||
+                  0
+                if (endLatOrd !== 0 && endLngOrd !== 0) {
+                  const dLatO = ((custLat - endLatOrd) * Math.PI) / 180
+                  const dLonO = ((custLng - endLngOrd) * Math.PI) / 180
+                  const aO =
+                    Math.sin(dLatO / 2) * Math.sin(dLatO / 2) +
+                    Math.cos((endLatOrd * Math.PI) / 180) *
+                      Math.cos((custLat * Math.PI) / 180) *
+                      Math.sin(dLonO / 2) *
+                      Math.sin(dLonO / 2)
+                  const distOrderM = Math.round(
+                    6371000 * 2 * Math.atan2(Math.sqrt(aO), Math.sqrt(1 - aO)),
+                  )
+                  if (distOrderM <= 150) {
+                    console.log(
+                      `[address_alerts_dedup_guard] BLOQUEADO FALSO POSITIVO (PEDIDO): pedido ${mTrkSearch[0]} foi entregue a ${distOrderM}m do pin cadastrado do cliente.`,
+                    )
+                    throw new BadRequestError(
+                      `Alerta descartado: o pedido ${mTrkSearch[0]} foi entregue a ${distOrderM}m do pin cadastrado no cliente (tolerância 150m).`,
+                    )
+                  }
+                }
               }
-            } catch (_) {}
-
-            throw new BadRequestError(
-              `Alerta descartado: o pin da entrega está a apenas ${Math.round(distToCustM)}m do pin cadastrado do cliente (tolerância 150m). Não há divergência real.`,
-            )
+            } catch (errCheckOrd) {
+              if (
+                errCheckOrd &&
+                (errCheckOrd.name === 'BadRequestError' ||
+                  errCheckOrd.message?.includes('Alerta descartado'))
+              ) {
+                throw errCheckOrd
+              }
+            }
           }
         }
       }
     } catch (errCustCheck) {
-      if (errCustCheck && errCustCheck.name === 'BadRequestError') {
+      if (
+        errCustCheck &&
+        (errCustCheck.name === 'BadRequestError' ||
+          errCustCheck.message?.includes('Alerta descartado'))
+      ) {
         throw errCustCheck
       }
     }

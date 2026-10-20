@@ -146,65 +146,89 @@ onRecordUpdateRequest((e) => {
     // A confirmação delivered nunca bloqueia. Se >500m, aceita com status delivered marcando
     // entrega_geofence_flag='pendente_aprovacao_gt_500m', gravando audit_trail e criando address_alerts.
     const targetOrder = e.record
+    const originalOrder = targetOrder.original()
     const newStatus = targetOrder.getString('status')
+    const prevStatus = originalOrder ? originalOrder.getString('status') : ''
     let geofenceFlag = targetOrder.getString('entrega_geofence_flag')
-    let distanceM =
-      targetOrder.getFloat('entrega_fora_pin_m') ||
-      targetOrder.getFloat('entrega_distance_to_pin_m') ||
-      0
+    const prevGeofenceFlag = originalOrder ? originalOrder.getString('entrega_geofence_flag') : ''
     const trackingCode = targetOrder.getString('tracking_code') || ''
     const empresaId = targetOrder.getString('empresa_id') || ''
     const courierIdVal = targetOrder.getString('courier_id') || ''
     const customerIdVal = targetOrder.getString('customer_id') || ''
 
-    // GUARDA DE SANIDADE v0.0.472:
-    // A referência canônica ÚNICA de comparação é o pin cadastrado do cliente (customers.lat/lng).
-    // Se o pedido tiver entrega dentro da tolerância (<= 150m do pin cadastrado do cliente),
-    // NUNCA criar alerta, NUNCA marcar entrega_geofence_flag='pendente_aprovacao_gt_500m' e zerar entrega_fora_pin_m!
+    // NOVO: Detectar eventos de fechamento de rota / batch close / recálculos subsequentes
+    const isClosingEvent = Boolean(
+      targetOrder.getBool('route_finished') ||
+      targetOrder.getString('route_closing_reason') ||
+      targetOrder.getString('batch_closing_reason'),
+    )
+
+    // Coordenadas da entrega
+    const endLat = targetOrder.getFloat('end_address_lat') || 0
+    const endLng = targetOrder.getFloat('end_address_lng') || 0
+    const delLat = targetOrder.getFloat('delivery_lat') || endLat
+    const delLng = targetOrder.getFloat('delivery_lng') || endLng
+
+    // GUARDA DE SANIDADE REFORÇADA (v0.0.473):
+    // 1. A referência canônica ÚNICA de comparação é o pin cadastrado do cliente (customers.lat/lng).
+    // 2. Se houver coordenadas de entrega no pedido e coordenadas do cliente cadastradas:
+    //    calcular OBRIGATORIAMENTE o desvio real no backend via Haversine, nunca confiar cegamente no entrega_fora_pin_m vindo do frontend.
     let custLat = 0
     let custLng = 0
+    let isCustomerCalibrated = false
     if (customerIdVal) {
       try {
         const custRec = $app.findRecordById('customers', customerIdVal)
         if (custRec) {
           custLat = custRec.getFloat('lat') || 0
           custLng = custRec.getFloat('lng') || 0
+          const cNotes = custRec.getString('notes') || ''
+          if (
+            cNotes.includes('Pin real confirmado') ||
+            cNotes.includes('APROVADO') ||
+            cNotes.includes('[ALERTA GPS APROVADO') ||
+            cNotes.includes('[CORREÇÃO DEFINITIVA')
+          ) {
+            isCustomerCalibrated = true
+          }
         }
       } catch (_) {}
     }
 
-    if (custLat !== 0 && custLng !== 0) {
-      // Coordenadas da entrega
-      const endLat = targetOrder.getFloat('end_address_lat') || 0
-      const endLng = targetOrder.getFloat('end_address_lng') || 0
-      const delLat = targetOrder.getFloat('delivery_lat') || endLat
-      const delLng = targetOrder.getFloat('delivery_lng') || endLng
+    let calculatedDistM =
+      targetOrder.getFloat('entrega_fora_pin_m') ||
+      targetOrder.getFloat('entrega_distance_to_pin_m') ||
+      0
 
-      if (delLat !== 0 && delLng !== 0) {
-        const dLat = ((custLat - delLat) * Math.PI) / 180
-        const dLon = ((custLng - delLng) * Math.PI) / 180
-        const a =
-          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-          Math.cos((delLat * Math.PI) / 180) *
-            Math.cos((custLat * Math.PI) / 180) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2)
-        const realDistM = Math.round(6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
+    if (custLat !== 0 && custLng !== 0 && delLat !== 0 && delLng !== 0) {
+      const dLat = ((custLat - delLat) * Math.PI) / 180
+      const dLon = ((custLng - delLng) * Math.PI) / 180
+      const aH =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((delLat * Math.PI) / 180) *
+          Math.cos((custLat * Math.PI) / 180) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2)
+      const realDistM = Math.round(6371000 * 2 * Math.atan2(Math.sqrt(aH), Math.sqrt(1 - aH)))
 
-        if (realDistM <= 150) {
-          // Entrega realizada no pin cadastrado (<= 150m)
-          distanceM = 0
-          targetOrder.set('entrega_fora_pin_m', 0)
-          if (geofenceFlag === 'pendente_aprovacao_gt_500m') {
-            geofenceFlag = 'ok'
-            targetOrder.set('entrega_geofence_flag', 'ok')
-          }
-          console.log(
-            `[orders_guard] Sanidade v0.0.472: entrega de ${trackingCode} confirmada dentro do pin cadastrado do cliente (distância real: ${realDistM}m). Falso positivo gt_500m cancelado.`,
-          )
-        }
+      if (realDistM <= 150) {
+        // Entrega realizada no pin cadastrado (<= 150m) — 100% falso positivo de desvio
+        calculatedDistM = 0
+        targetOrder.set('entrega_fora_pin_m', 0)
+        targetOrder.set('entrega_distance_to_pin_m', 0)
+        geofenceFlag = 'ok'
+        targetOrder.set('entrega_geofence_flag', 'ok')
+        console.log(
+          `[orders_guard] Sanidade v0.0.473: entrega de ${trackingCode} confirmada dentro do pin cadastrado do cliente (distância real: ${realDistM}m). Falso positivo cancelado e flag zerada para 'ok'.`,
+        )
+      } else {
+        // Recalcular com a distância matemática canônica
+        calculatedDistM = realDistM
+        targetOrder.set('entrega_fora_pin_m', realDistM)
       }
     }
+
+    let distanceM = calculatedDistM
 
     // Verificar se é entrega redirecionada (ponto B aprovado no fluxo de redirecionamento)
     const isOrderRedirected = Boolean(
@@ -216,7 +240,20 @@ onRecordUpdateRequest((e) => {
       targetOrder.getFloat('redirection_point_a_lat') > 0,
     )
 
-    if (newStatus === 'delivered' && geofenceFlag === 'pendente_aprovacao_gt_500m') {
+    // CONDIÇÕES PARA DISPARAR ALERTA E AUDITORIA DE GEOFENCE:
+    // 1. Status 'delivered' e geofenceFlag === 'pendente_aprovacao_gt_500m'
+    // 2. Desvio real > 150m (já garantido pela guarda de sanidade acima)
+    // 3. NÃO ser evento de fechamento de rota / batch close / recálculo
+    // 4. Disparar APENAS na transição para delivered ou primeira transição para pendente_aprovacao_gt_500m!
+    //    Nunca disparar a cada update subsequente de pedido já entregue!
+    const isFirstTimeDeliveredPending =
+      newStatus === 'delivered' &&
+      geofenceFlag === 'pendente_aprovacao_gt_500m' &&
+      distanceM > 150 &&
+      !isClosingEvent &&
+      (prevStatus !== 'delivered' || prevGeofenceFlag !== 'pendente_aprovacao_gt_500m')
+
+    if (isFirstTimeDeliveredPending) {
       try {
         if (isOrderRedirected) {
           // Entrega redirecionada NÃO deve gerar alerta de correção de pin nem pendência de geofence.
@@ -235,7 +272,7 @@ onRecordUpdateRequest((e) => {
             auditRec.set('collection', 'orders')
             auditRec.set('record_id', targetOrder.id)
             auditRec.set('field', 'entrega_geofence_flag')
-            auditRec.set('old_value', 'em_transito')
+            auditRec.set('old_value', prevGeofenceFlag || 'em_transito')
             auditRec.set('new_value', 'pendente_aprovacao_gt_500m')
             if (courierIdVal) auditRec.set('courier_id', courierIdVal)
             if (empresaId) auditRec.set('empresa_id', empresaId)
@@ -259,84 +296,88 @@ onRecordUpdateRequest((e) => {
             )
           }
 
-          // Criar alerta em address_alerts se ainda não existir pendente para este cliente ou pedido
-          // Checagem atômica prévia (mesmo cliente, janela 6h, <30m ou pendente) antes de $app.save
+          // Criar ou atualizar alerta em address_alerts com DEDUP DURO:
+          // Se já existir alerta pendente para o mesmo customer ou mesmo pedido nas últimas 24h:
+          // ATUALIZAR o existente em vez de criar um novo em cascata!
           const alertsCol = $app.findCollectionByNameOrId('address_alerts')
           if (alertsCol && customerIdVal) {
-            let isDuplicate = false
+            let existingPendingAlert = null
             try {
-              // Buscar todos os alertas do cliente para evitar duplicidade tanto no mesmo pedido quanto pendente
               const existingAlerts = $app.findRecordsByFilter(
                 'address_alerts',
                 `customer = '${customerIdVal}'`,
                 '-created',
-                20,
+                30,
                 0,
               )
-              const targetLat = targetOrder.getFloat('end_address_lat') || 0
-              const targetLng = targetOrder.getFloat('end_address_lng') || 0
+
+              const nowTs = Date.now()
+              const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
               for (let a = 0; a < existingAlerts.length; a++) {
                 const ex = existingAlerts[a]
-                if (ex.getString('status') === 'pendente') {
-                  isDuplicate = true
-                  break
-                }
+                const exStatus = ex.getString('status')
                 const exNotes = ex.getString('notes') || ''
-                if (trackingCode && exNotes.includes(trackingCode)) {
-                  isDuplicate = true
-                  break
-                }
-                let exLat = 0
-                let exLng = 0
-                try {
-                  const exS = JSON.parse(ex.getString('suggested_address') || '{}')
-                  exLat = Number(exS.lat || 0)
-                  exLng = Number(exS.lng || 0)
-                } catch (_) {}
+                const exCreatedTs = new Date(ex.getString('created')).getTime()
+                const isWithin24h = nowTs - exCreatedTs <= ONE_DAY_MS
 
-                if (targetLat !== 0 && targetLng !== 0 && exLat !== 0 && exLng !== 0) {
-                  const dLat = ((exLat - targetLat) * Math.PI) / 180
-                  const dLon = ((exLng - targetLng) * Math.PI) / 180
-                  const aHarv =
-                    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                    Math.cos((targetLat * Math.PI) / 180) *
-                      Math.cos((exLat * Math.PI) / 180) *
-                      Math.sin(dLon / 2) *
-                      Math.sin(dLon / 2)
-                  const distM = 6371000 * 2 * Math.atan2(Math.sqrt(aHarv), Math.sqrt(1 - aHarv))
-                  if (distM <= 30) {
-                    isDuplicate = true
-                    break
-                  }
+                // Se houver alerta pendente para o mesmo cliente, ou para este mesmo pedido nas últimas 24h
+                if (
+                  exStatus === 'pendente' ||
+                  (trackingCode && exNotes.includes(trackingCode) && isWithin24h)
+                ) {
+                  existingPendingAlert = ex
+                  break
                 }
               }
-            } catch (_) {
-              isDuplicate = false
+            } catch (errSearchEx) {
+              console.log('[orders_guard] Erro na busca de alertas existentes:', errSearchEx)
             }
 
-            if (!isDuplicate) {
+            const alertPayload = {
+              customer: customerIdVal,
+              company: empresaId || undefined,
+              origin: 'pin_entregador',
+              distance_meters: distanceM,
+              marked_by: courierIdVal || undefined,
+              marked_at: new Date().toISOString(),
+              suggested_address: JSON.stringify({
+                address: targetOrder.getString('end_address_text') || '',
+                lat: delLat || targetOrder.getFloat('end_address_lat') || 0,
+                lng: delLng || targetOrder.getFloat('end_address_lng') || 0,
+              }),
+              notes: `Entrega realizada a ${(distanceM / 1000).toFixed(1)} km do pin cadastrado no pedido ${trackingCode}. Aguarda conferência da central.`,
+            }
+
+            if (existingPendingAlert) {
+              // DEDUP DURO: Atualizar registro existente em vez de criar duplicado
+              try {
+                existingPendingAlert.set('distance_meters', distanceM)
+                existingPendingAlert.set('marked_at', alertPayload.marked_at)
+                existingPendingAlert.set('suggested_address', alertPayload.suggested_address)
+                existingPendingAlert.set('notes', alertPayload.notes)
+                if (courierIdVal) existingPendingAlert.set('marked_by', courierIdVal)
+                $app.save(existingPendingAlert)
+                console.log(
+                  `[orders_guard] address_alerts #${existingPendingAlert.id} atualizado via dedup duro (evitou rajada):`,
+                  customerIdVal,
+                )
+              } catch (errUpAlert) {
+                console.log('[orders_guard] Falha ao atualizar alerta existente:', errUpAlert)
+              }
+            } else {
+              // Criar novo alerta
               try {
                 const alertRec = new Record(alertsCol)
-                alertRec.set('customer', customerIdVal)
-                if (empresaId) alertRec.set('company', empresaId)
+                alertRec.set('customer', alertPayload.customer)
+                if (alertPayload.company) alertRec.set('company', alertPayload.company)
                 alertRec.set('origin', 'pin_entregador')
                 alertRec.set('status', 'pendente')
-                alertRec.set('distance_meters', distanceM)
-                if (courierIdVal) alertRec.set('marked_by', courierIdVal)
-                alertRec.set('marked_at', new Date().toISOString())
-                alertRec.set(
-                  'suggested_address',
-                  JSON.stringify({
-                    address: targetOrder.getString('end_address_text') || '',
-                    lat: targetOrder.getFloat('end_address_lat') || 0,
-                    lng: targetOrder.getFloat('end_address_lng') || 0,
-                  }),
-                )
-                alertRec.set(
-                  'notes',
-                  `Entrega realizada a ${(distanceM / 1000).toFixed(1)} km do pin cadastrado no pedido ${trackingCode}. Aguarda conferência da central.`,
-                )
+                alertRec.set('distance_meters', alertPayload.distance_meters)
+                if (alertPayload.marked_by) alertRec.set('marked_by', alertPayload.marked_by)
+                alertRec.set('marked_at', alertPayload.marked_at)
+                alertRec.set('suggested_address', alertPayload.suggested_address)
+                alertRec.set('notes', alertPayload.notes)
                 $app.save(alertRec)
                 console.log(
                   '[orders_guard] address_alerts criado com sucesso para cliente:',
@@ -344,21 +385,24 @@ onRecordUpdateRequest((e) => {
                 )
               } catch (errSaveAlert) {
                 console.log(
-                  '[orders_guard] Criação de address_alerts interceptada pelo dedup guard:',
+                  '[orders_guard] Criação de address_alerts interceptada:',
                   errSaveAlert?.message || errSaveAlert,
                 )
               }
-            } else {
-              console.log(
-                '[orders_guard] address_alerts suprimido por deduplicação (alerta existente para cliente):',
-                customerIdVal,
-              )
             }
           }
         }
       } catch (errHookPending) {
         console.log('[orders_guard] Aviso ao processar geofence_pending_approval:', errHookPending)
       }
+    } else if (
+      newStatus === 'delivered' &&
+      geofenceFlag === 'pendente_aprovacao_gt_500m' &&
+      isClosingEvent
+    ) {
+      console.log(
+        `[orders_guard] Disparo de address_alerts suprimido: evento de encerramento/lote para ${trackingCode}.`,
+      )
     } else if (newStatus === 'delivered' && geofenceFlag === 'liberado_admin') {
       const unlockReason = (targetOrder.getString('entrega_admin_unlock_reason') || '').trim()
       if (!unlockReason || unlockReason.length < 5) {

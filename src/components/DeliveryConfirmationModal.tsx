@@ -575,8 +575,9 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           haversineDistanceMeters(deliveryCoordLat, deliveryCoordLng, clientLat, clientLng),
         )
 
+        // Se as coordenadas de entrega do pedido ou do ping estão a <= 150m do pin cadastrado do cliente:
+        // É entrega perfeitamente no local correto. Zerar desvio e limpar flag.
         if (distanceToPinM <= 150 || pinToClientDistM <= 150) {
-          // Dentro da tolerância do pin cadastrado: entrega perfeita
           geofenceFlag = 'ok'
           distanceToPinM = 0
         } else if (distanceToPinM > 150 && distanceToPinM <= 500) {
@@ -939,9 +940,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
         // BLOCO 1: Campos de Geofence e KM Real da Perna
         if (isDelivered) {
           formData.append('entrega_geofence_flag', geofenceFlag)
-          if (distanceToPinM > 0) {
-            formData.append('entrega_fora_pin_m', String(distanceToPinM))
-          }
+          formData.append('entrega_fora_pin_m', String(distanceToPinM > 0 ? distanceToPinM : 0))
           if (kmRealPerna !== undefined && kmRealPerna > 0) {
             formData.append('km_real_perna', String(kmRealPerna))
           }
@@ -961,7 +960,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           ...(isDelivered
             ? {
                 entrega_geofence_flag: geofenceFlag,
-                ...(distanceToPinM > 0 ? { entrega_fora_pin_m: distanceToPinM } : {}),
+                entrega_fora_pin_m: distanceToPinM > 0 ? distanceToPinM : 0,
                 ...(kmRealPerna !== undefined && kmRealPerna > 0
                   ? { km_real_perna: kmRealPerna }
                   : {}),
