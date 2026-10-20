@@ -450,19 +450,38 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
     const currentLoc = await getFreshLocation()
     setIsCapturingGps(false)
 
-    // Coordenadas cadastradas do cliente / destino original
-    const clientLat =
+    // Coordenadas canônicas do cliente (REFERÊNCIA ÚNICA: pin cadastrado do cliente)
+    // Se order.expand não trouxer ou for 0, buscar o registro direto do cliente
+    let clientLat =
       typeof order.expand?.customer_id?.lat === 'number' && order.expand.customer_id.lat !== 0
         ? order.expand.customer_id.lat
         : typeof order.end_address_lat === 'number' && order.end_address_lat !== 0
           ? order.end_address_lat
           : null
-    const clientLng =
+    let clientLng =
       typeof order.expand?.customer_id?.lng === 'number' && order.expand.customer_id.lng !== 0
         ? order.expand.customer_id.lng
         : typeof order.end_address_lng === 'number' && order.end_address_lng !== 0
           ? order.end_address_lng
           : null
+
+    // Fallback garantido: consultar customer no banco se lat/lng estiver ausente no expand
+    if ((clientLat === null || clientLng === null) && order.customer_id) {
+      try {
+        const liveCust = await pb
+          .collection('customers')
+          .getOne(order.customer_id, { requestKey: null })
+        if (liveCust && typeof liveCust.lat === 'number' && liveCust.lat !== 0) {
+          clientLat = liveCust.lat
+          clientLng = liveCust.lng
+        }
+      } catch (custErr) {
+        console.warn(
+          '[DeliveryConfirmationModal] Falha ao buscar cliente ao vivo para checar pin:',
+          custErr,
+        )
+      }
+    }
 
     const hasClientCoords = clientLat !== null && clientLng !== null
 
@@ -536,17 +555,33 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           }
         }
       } else if (currentLoc) {
-        // CLIENTE COM COORDENADAS: calcular distância GPS ↔ PIN
+        // CLIENTE COM COORDENADAS: calcular distância GPS ↔ PIN CADASTRADO DO CLIENTE
         distanceToPinM = Math.round(
           haversineDistanceMeters(currentLoc.lat, currentLoc.lng, clientLat, clientLng),
         )
 
-        if (distanceToPinM <= 150) {
+        // GUARDA DE SANIDADE v0.0.472:
+        // Se a posição de entrega (ou end_address do pedido) coincide com o pin do cliente (<= 150m),
+        // NUNCA marcar pendente_aprovacao nem disparar alerta. O pin é soberano e já está correto!
+        const deliveryCoordLat =
+          typeof order.end_address_lat === 'number' && order.end_address_lat !== 0
+            ? order.end_address_lat
+            : currentLoc.lat
+        const deliveryCoordLng =
+          typeof order.end_address_lng === 'number' && order.end_address_lng !== 0
+            ? order.end_address_lng
+            : currentLoc.lng
+        const pinToClientDistM = Math.round(
+          haversineDistanceMeters(deliveryCoordLat, deliveryCoordLng, clientLat, clientLng),
+        )
+
+        if (distanceToPinM <= 150 || pinToClientDistM <= 150) {
+          // Dentro da tolerância do pin cadastrado: entrega perfeita
           geofenceFlag = 'ok'
+          distanceToPinM = 0
         } else if (distanceToPinM > 150 && distanceToPinM <= 500) {
           geofenceFlag = 'flag_150_500m'
         } else {
-          // NOVA REGRA PERMANENTE: confirmação NUNCA bloqueia.
           // Distância > 500m: marca pendente_aprovacao_gt_500m e encaminha para aprovação da central
           geofenceFlag = 'pendente_aprovacao_gt_500m'
 

@@ -690,7 +690,17 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                           .trim()
                           .toLowerCase()
 
+                        // REGRA v0.0.472:
+                        // Se o pin novo for idêntico ao cadastrado (desvio <= 30m) ou o cliente já tiver notas de calibração intocável,
+                        // NUNCA acusar via divergente! A comparação de via divergente só faz sentido se o pin realmente mudou de local (> 30m).
+                        const isPinIdentical = distMeters <= 30
+                        const isProtectedByCustNote =
+                          (cust?.notes || '').toLowerCase().includes('proibido sobrescrever') ||
+                          (cust?.notes || '').includes('[CORREÇÃO DEFINITIVA')
+
                         const isStreetDivergent =
+                          !isPinIdentical &&
+                          !isProtectedByCustNote &&
                           Boolean(registeredStreet) &&
                           Boolean(realStreet) &&
                           registeredStreet !== realStreet &&
@@ -729,7 +739,17 @@ export const SuspiciousAddressesBox: React.FC<SuspiciousAddressesBoxProps> = ({
                               )}
 
                               {/* Endereço Resolvido Estilo Uber (com destaque claro) */}
-                              {isPinEntregador ? (
+                              {isPinIdentical || isProtectedByCustNote ? (
+                                <div className="space-y-1">
+                                  <div className="p-2 rounded bg-emerald-100/60 dark:bg-emerald-950/40 border border-emerald-300 text-emerald-950 dark:text-emerald-100 text-xs font-semibold flex items-center gap-1.5">
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                                    <span>
+                                      Pin idêntico ao cadastrado — nada a corrigir. O endereço
+                                      textual do cliente está protegido e não será alterado.
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : isPinEntregador ? (
                                 <div className="space-y-1">
                                   <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 block">
                                     Endereço corrigido (estilo Uber):

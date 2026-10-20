@@ -105,13 +105,77 @@ onRecordBeforeCreate((e) => {
     }
   }
 
+  // 0. GUARDA DE SANIDADE v0.0.472:
+  // Se a distância medida for > 300m MAS o pin de entrega sugerido estiver a <= 150m do pin cadastrado do cliente,
+  // trata-se de falsa divergência (medição contra referência errada/rota).
+  // Auditar inconsistência e suprimir criação do alerta!
+  if (customerId && candLat !== 0 && candLng !== 0) {
+    try {
+      const custRec = $app.findRecordById('customers', customerId)
+      if (custRec) {
+        const custLat = custRec.getFloat('lat') || 0
+        const custLng = custRec.getFloat('lng') || 0
+        if (custLat !== 0 && custLng !== 0) {
+          const dLat = ((candLat - custLat) * Math.PI) / 180
+          const dLon = ((candLng - custLng) * Math.PI) / 180
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos((custLat * Math.PI) / 180) *
+              Math.cos((candLat * Math.PI) / 180) *
+              Math.sin(dLon / 2) *
+              Math.sin(dLon / 2)
+          const distToCustM = 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+
+          if (distToCustM <= 150) {
+            console.log(
+              `[address_alerts_dedup_guard] BLOQUEADO FALSO POSITIVO: pin sugerido está a ${Math.round(distToCustM)}m do pin cadastrado do cliente ${customerId}. Distância informada: ${alertDistM}m.`,
+            )
+            try {
+              const auditCol = $app.findCollectionByNameOrId('audit_trail')
+              if (auditCol) {
+                const audit = new Record(auditCol)
+                audit.set('user_id', '')
+                audit.set('actor_name', 'Sistema')
+                audit.set('action', 'alerta_pin_falso_positivo_suprimido')
+                audit.set('collection', 'address_alerts')
+                audit.set('field', 'distance_meters')
+                audit.set('old_value', String(alertDistM))
+                audit.set('new_value', '0')
+                audit.set(
+                  'metadata',
+                  JSON.stringify({
+                    system_trigger: true,
+                    customer_id: customerId,
+                    dist_to_cust_pin_m: Math.round(distToCustM),
+                    alert_dist_m: alertDistM,
+                    reason:
+                      'Pin de entrega coincide com o pin já cadastrado/calibrado do cliente (<= 150m)',
+                  }),
+                )
+                $app.save(audit)
+              }
+            } catch (_) {}
+
+            throw new BadRequestError(
+              `Alerta descartado: o pin da entrega está a apenas ${Math.round(distToCustM)}m do pin cadastrado do cliente (tolerância 150m). Não há divergência real.`,
+            )
+          }
+        }
+      }
+    } catch (errCustCheck) {
+      if (errCustCheck && errCustCheck.name === 'BadRequestError') {
+        throw errCustCheck
+      }
+    }
+  }
+
   // 1. DEDUPLICAÇÃO ATÔMICA NO SERVIDOR (onRecordBeforeCreate cobre REST e $app.save interno):
   // Bloquear duplicata se já existir alerta pendente para o mesmo cliente, mesmo pedido, ou alerta recente (<30m de distância dentro de janela de 24h).
   try {
-    const twentyFourHoursAgoIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+    // Buscar todos os alertas do cliente para cobrir tanto janela 24h quanto qualquer alerta pendente histórico
     const candidateAlerts = $app.findRecordsByFilter(
       'address_alerts',
-      `customer = '${customerId}' && created >= '${twentyFourHoursAgoIso}'`,
+      `customer = '${customerId}'`,
       '-created',
       20,
       0,

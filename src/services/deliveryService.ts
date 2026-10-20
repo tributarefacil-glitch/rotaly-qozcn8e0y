@@ -4935,6 +4935,50 @@ export const deliveryService = {
       return null
     }
 
+    // GUARDA DE SANIDADE v0.0.472 (FUTURO):
+    // Se o pin sugerido/entrega estiver a <= 150m do pin atual cadastrado do cliente,
+    // mas a distância informada for > 300m, trata-se de falsa divergência (medição contra referência errada).
+    // NÃO criar alerta! Auditar inconsistência e suprimir.
+    if (data.customer) {
+      try {
+        let custLat: number | null = null
+        let custLng: number | null = null
+        const currentAddr = data.current_address as any
+        if (
+          currentAddr &&
+          typeof currentAddr.lat === 'number' &&
+          typeof currentAddr.lng === 'number' &&
+          currentAddr.lat !== 0
+        ) {
+          custLat = currentAddr.lat
+          custLng = currentAddr.lng
+        } else {
+          const custRec = await pb
+            .collection('customers')
+            .getOne(data.customer, { requestKey: null })
+          if (custRec && typeof custRec.lat === 'number' && custRec.lat !== 0) {
+            custLat = custRec.lat
+            custLng = custRec.lng
+          }
+        }
+
+        if (custLat !== null && custLng !== null) {
+          const distToCustPinM = Math.round(haversineDistanceMeters(lat, lng, custLat, custLng))
+          if (distToCustPinM <= 150) {
+            console.warn(
+              `[createAddressAlert] [FALSO POSITIVO SUPRIMIDO]: pin sugerido está a ${distToCustPinM}m do pin cadastrado do cliente (tolerância 150m). Distância informada no alerta foi ${data.distance_meters || 0}m. Alerta bloqueado.`,
+            )
+            return null
+          }
+        }
+      } catch (errCheckCust) {
+        console.warn(
+          '[createAddressAlert] Falha ao verificar proximidade com pin cadastrado do cliente:',
+          errCheckCust,
+        )
+      }
+    }
+
     // DEDUPLICAÇÃO DE ALERTA:
     // 1 ALERTA POR ENTREGA / POR CLIENTE.
     // Se existir qualquer alerta pendente para o mesmo pedido OU para o mesmo cliente, NÃO criar outro.
@@ -5132,12 +5176,41 @@ export const deliveryService = {
 
     const isVarreduraCep = alert.origin === 'varredura_cep'
 
+    // REGRA SOBERANA DE PIN CALIBRADO v0.0.472:
+    // Se o pin novo for idêntico ao pin já cadastrado do cliente (tolerância <= 30m),
+    // ou se o cliente tiver nota de calibração intocável ("Proibido sobrescrever por geocodificação" / "[CORREÇÃO DEFINITIVA"),
+    // É ESTRITAMENTE PROIBIDO reescrever o endereço textual (street, number, neighborhood, CEP) por geocodificação estilo Uber!
+    const custLatVal = currentCust?.lat ? Number(currentCust.lat) : null
+    const custLngVal = currentCust?.lng ? Number(currentCust.lng) : null
+    let isPinIdenticalToCurrent = false
+    if (custLatVal !== null && custLngVal !== null && hasValidCourierGps) {
+      const dMeters = Math.round(
+        haversineDistanceMeters(
+          custLatVal,
+          custLngVal,
+          Number(rawCourierLat),
+          Number(rawCourierLng),
+        ),
+      )
+      if (dMeters <= 30) {
+        isPinIdenticalToCurrent = true
+      }
+    }
+    const isProtectedByNote =
+      custNotes.toLowerCase().includes('proibido sobrescrever') || hasDefinitiveCorrection
+
     // REGRA SOBERANA DE ENDEREÇO ESTILO UBER NA APROVAÇÃO:
     // Ao aprovar a correção de pin do entregador, o endereço gravado no cliente é o endereço resolvido
     // via reverse geocoding Google na coordenada física do pin (método único do produto),
-    // com rua + número interpolado pelo Google + bairro + cidade e preservando o complemento (lote/quadra).
+    // MAS SOMENTE SE o pin novo diferir do pin cadastrado (> 30m) e o cliente não for blindado contra geocodificação.
     let uberData = resolvedUberAddress
-    if (!isVarreduraCep && !uberData && hasValidCourierGps) {
+    if (
+      !isVarreduraCep &&
+      !uberData &&
+      hasValidCourierGps &&
+      !isPinIdenticalToCurrent &&
+      !isProtectedByNote
+    ) {
       if (suggested.uber_resolved && suggested.address) {
         uberData = {
           fullAddress: suggested.address,
@@ -5176,7 +5249,13 @@ export const deliveryService = {
       }
     }
 
-    if (!isVarreduraCep && uberData && uberData.fullAddress) {
+    if (
+      !isVarreduraCep &&
+      uberData &&
+      uberData.fullAddress &&
+      !isPinIdenticalToCurrent &&
+      !isProtectedByNote
+    ) {
       customerUpdate.address = uberData.fullAddress
       if (uberData.street) customerUpdate.street = uberData.street
       if (uberData.number) (customerUpdate as any).number = uberData.number
@@ -5186,6 +5265,11 @@ export const deliveryService = {
       if (uberData.city) customerUpdate.city = uberData.city
       if (uberData.state) customerUpdate.state = uberData.state
       if (uberData.postalCode) customerUpdate.postal_code = uberData.postalCode
+    } else if (isPinIdenticalToCurrent || isProtectedByNote) {
+      // Pin idêntico ao cadastrado ou protegido: PRESERVAR rigorosamente o endereço textual cadastrado
+      console.info(
+        `[approveAddressAlert] Pin idêntico ou protegido para cliente ${customerId}. Endereço textual preservado sem modificação por geocodificação.`,
+      )
     } else {
       if (!currentCust?.address && suggested.address) {
         customerUpdate.address = String(suggested.address)

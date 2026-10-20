@@ -147,8 +147,8 @@ onRecordUpdateRequest((e) => {
     // entrega_geofence_flag='pendente_aprovacao_gt_500m', gravando audit_trail e criando address_alerts.
     const targetOrder = e.record
     const newStatus = targetOrder.getString('status')
-    const geofenceFlag = targetOrder.getString('entrega_geofence_flag')
-    const distanceM =
+    let geofenceFlag = targetOrder.getString('entrega_geofence_flag')
+    let distanceM =
       targetOrder.getFloat('entrega_fora_pin_m') ||
       targetOrder.getFloat('entrega_distance_to_pin_m') ||
       0
@@ -156,6 +156,55 @@ onRecordUpdateRequest((e) => {
     const empresaId = targetOrder.getString('empresa_id') || ''
     const courierIdVal = targetOrder.getString('courier_id') || ''
     const customerIdVal = targetOrder.getString('customer_id') || ''
+
+    // GUARDA DE SANIDADE v0.0.472:
+    // A referência canônica ÚNICA de comparação é o pin cadastrado do cliente (customers.lat/lng).
+    // Se o pedido tiver entrega dentro da tolerância (<= 150m do pin cadastrado do cliente),
+    // NUNCA criar alerta, NUNCA marcar entrega_geofence_flag='pendente_aprovacao_gt_500m' e zerar entrega_fora_pin_m!
+    let custLat = 0
+    let custLng = 0
+    if (customerIdVal) {
+      try {
+        const custRec = $app.findRecordById('customers', customerIdVal)
+        if (custRec) {
+          custLat = custRec.getFloat('lat') || 0
+          custLng = custRec.getFloat('lng') || 0
+        }
+      } catch (_) {}
+    }
+
+    if (custLat !== 0 && custLng !== 0) {
+      // Coordenadas da entrega
+      const endLat = targetOrder.getFloat('end_address_lat') || 0
+      const endLng = targetOrder.getFloat('end_address_lng') || 0
+      const delLat = targetOrder.getFloat('delivery_lat') || endLat
+      const delLng = targetOrder.getFloat('delivery_lng') || endLng
+
+      if (delLat !== 0 && delLng !== 0) {
+        const dLat = ((custLat - delLat) * Math.PI) / 180
+        const dLon = ((custLng - delLng) * Math.PI) / 180
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((delLat * Math.PI) / 180) *
+            Math.cos((custLat * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2)
+        const realDistM = Math.round(6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
+
+        if (realDistM <= 150) {
+          // Entrega realizada no pin cadastrado (<= 150m)
+          distanceM = 0
+          targetOrder.set('entrega_fora_pin_m', 0)
+          if (geofenceFlag === 'pendente_aprovacao_gt_500m') {
+            geofenceFlag = 'ok'
+            targetOrder.set('entrega_geofence_flag', 'ok')
+          }
+          console.log(
+            `[orders_guard] Sanidade v0.0.472: entrega de ${trackingCode} confirmada dentro do pin cadastrado do cliente (distância real: ${realDistM}m). Falso positivo gt_500m cancelado.`,
+          )
+        }
+      }
+    }
 
     // Verificar se é entrega redirecionada (ponto B aprovado no fluxo de redirecionamento)
     const isOrderRedirected = Boolean(
@@ -216,12 +265,12 @@ onRecordUpdateRequest((e) => {
           if (alertsCol && customerIdVal) {
             let isDuplicate = false
             try {
-              const sixHoursAgoIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString()
+              // Buscar todos os alertas do cliente para evitar duplicidade tanto no mesmo pedido quanto pendente
               const existingAlerts = $app.findRecordsByFilter(
                 'address_alerts',
-                `customer = '${customerIdVal}' && created >= '${sixHoursAgoIso}'`,
+                `customer = '${customerIdVal}'`,
                 '-created',
-                10,
+                20,
                 0,
               )
               const targetLat = targetOrder.getFloat('end_address_lat') || 0
