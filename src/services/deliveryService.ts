@@ -159,7 +159,7 @@ export function sanitizeLocationPayload(params: {
     offline_buffered: cleanOfflineBuffered,
   }
 
-  // battery_level incluída só se inteiro 1..100
+  // FALHA 5: battery_level incluída só se inteiro 1..100 — NUNCA enviar 0 (se indisponível ou 0, omite)
   if (typeof batteryLevel === 'number' && !isNaN(batteryLevel) && isFinite(batteryLevel)) {
     const roundedBattery = Math.round(batteryLevel)
     if (roundedBattery >= 1 && roundedBattery <= 100) {

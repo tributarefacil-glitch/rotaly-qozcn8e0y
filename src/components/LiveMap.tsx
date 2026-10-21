@@ -510,11 +510,12 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
       // No iOS/iPhone e em aparelhos sem Battery API, battery_level reporta 0 ou undefined.
       // Tratar 0 ou <= 0 como "desconhecida" (hasBattery = false) para não alarmar o operador com bateria 0% falsa.
+      // FALHA 4 (d): Bateria: ler SOMENTE battery_level do último ping — se 0 ou null, "Bateria indisponível", NUNCA fallback
       const hasBattery =
         typeof item.battery_level === 'number' &&
         !isNaN(item.battery_level) &&
         item.battery_level > 0
-      const batteryVal = Math.round(item.battery_level || 0)
+      const batteryVal = hasBattery ? Math.round(item.battery_level!) : 0
       const batteryColor = batteryVal <= 20 ? '#dc2626' : batteryVal <= 50 ? '#d97706' : '#16a34a'
 
       return `
@@ -540,12 +541,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               </span>
             `
                 : `
-              <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;" title="Bateria não disponível">
-                <span>🔋</span> —
+              <span style="display: inline-flex; align-items: center; gap: 3px; background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; padding: 2px 5px; border-radius: 4px;" title="Bateria indisponível">
+                <span>🔋</span> Bateria indisponível
               </span>
             `
-            }
-            ${
+            }            ${
               item.offline_buffered
                 ? `
               <span style="display: inline-flex; align-items: center; gap: 3px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 2px 5px; border-radius: 4px; font-size: 9px;">
@@ -601,7 +601,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               : ''
           }
 
-          ${item.speed ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${item.speed} km/h</p>` : ''}
+          ${typeof item.speed === 'number' && item.speed > 0 ? `<p style="font-size: 10px; margin: 4px 0 0; color: #6d28d9; font-weight: 600;">🚀 ${!Number.isInteger(item.speed) || (item.speed > 0 && item.speed <= 25) ? Math.round(item.speed * 3.6) : Math.round(item.speed)} km/h</p>` : ''}
         </div>
       `
     }
@@ -1534,12 +1534,12 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                               </span>
                             ) : (
                               <span
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-400 border-slate-800"
-                                title="Bateria não informada pelo dispositivo"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-slate-950 text-slate-400 border-slate-800 text-[10px]"
+                                title="Bateria indisponível"
                               >
-                                <span>🔋</span> —
+                                <span>🔋</span> Bateria indisponível
                               </span>
-                            )}
+                            )}{' '}
                             {m.offline_buffered && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-blue-950/80 text-blue-300 border-blue-500/40 text-[9px]">
                                 🔄 Buffer sincronizado
@@ -1584,11 +1584,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                             </div>
                           )}
 
-                          {m.speed && (
+                          {typeof m.speed === 'number' && m.speed > 0 ? (
                             <p className="text-purple-400 text-[10px] font-semibold flex items-center gap-1 mt-1">
-                              🚀 {m.speed} km/h
+                              🚀{' '}
+                              {!Number.isInteger(m.speed) || (m.speed > 0 && m.speed <= 25)
+                                ? Math.round(m.speed * 3.6)
+                                : Math.round(m.speed)}{' '}
+                              km/h
                             </p>
-                          )}
+                          ) : null}
                         </div>
                       ) : (
                         /* Tooltip de Pedido / Cliente */

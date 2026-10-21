@@ -270,7 +270,17 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                       </span>
                                     )
                                   }
-                                  // Alerta / Indicador visual de movimento/parada em tempo real
+                                  // Alerta / Indicador visual de movimento/parada em tempo real (FALHA 4)
+                                  if (
+                                    diag.minutesSinceLastPing >= 1 &&
+                                    diag.minutesSinceLastPing <= 10
+                                  ) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
+                                        {diag.movementBadgeLabel}
+                                      </span>
+                                    )
+                                  }
                                   if (diag.isStopped) {
                                     return (
                                       <span
@@ -710,7 +720,17 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                                       </span>
                                     )
                                   }
-                                  // Alerta / Indicador visual de parada em tempo real
+                                  // Alerta / Indicador visual de parada em tempo real (FALHA 4)
+                                  if (
+                                    diag.minutesSinceLastPing >= 1 &&
+                                    diag.minutesSinceLastPing <= 10
+                                  ) {
+                                    return (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50">
+                                        {diag.movementBadgeLabel}
+                                      </span>
+                                    )
+                                  }
                                   if (diag.isStopped) {
                                     return (
                                       <span

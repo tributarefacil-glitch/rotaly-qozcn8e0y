@@ -563,23 +563,18 @@ onRecordAfterCreateSuccess((e) => {
     // (b) em paradas intermediárias na base durante o lote quando ainda há entregas pendentes.
     // Considerar SOMENTE pedidos do dia atual na data civil de Brasília (UTC-3, janela 05h–23h59)
     // e EXCLUIR pedidos status='cancelled'
-    const nowUtc = new Date(currentLocTime)
-    const bsbMs = nowUtc.getTime() - 3 * 3600000
-    const bsbDateObj = new Date(bsbMs)
-    const bsbYear = bsbDateObj.getUTCFullYear()
-    const bsbMonth = String(bsbDateObj.getUTCMonth() + 1).padStart(2, '0')
-    const bsbDay = String(bsbDateObj.getUTCDate()).padStart(2, '0')
-    const bsbDateKey = `${bsbYear}-${bsbMonth}-${bsbDay}`
-    // Janela operacional de Brasília: 05:00 UTC-3 = 08:00 UTC; 23:59:59 UTC-3 = 02:59:59 UTC do dia seguinte
-    const windowStartUtc = `${bsbDateKey} 08:00:00`
+    // FALHA 2: Busca robusta de pedidos do lote aberto para este entregador.
+    // NÃO exigir route_started=true estrito caso todos já estejam como delivered.
+    // Janela ampla de 36 horas para cobrir virada de turno/madrugada sem travar por fuso.
+    const thirtySixHoursAgoIso = new Date(currentLocTime - 36 * 3600000).toISOString()
 
     let openOrdersForBaseAlert = []
     try {
       openOrdersForBaseAlert = $app.findRecordsByFilter(
         'orders',
-        `courier_id = '${courierId}' && route_started = true && (route_finished = false || route_finished = null) && status != 'cancelled' && (route_started_at >= '${windowStartUtc}' || created >= '${windowStartUtc}')`,
-        'route_started_at,created',
-        50,
+        `courier_id = '${courierId}' && (route_finished = false || route_finished = null) && status != 'cancelled' && updated >= '${thirtySixHoursAgoIso}'`,
+        'sequence,created',
+        100,
         0,
       )
     } catch (_) {}

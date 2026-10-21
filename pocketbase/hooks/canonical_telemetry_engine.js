@@ -536,13 +536,110 @@ onRecordAfterUpdateSuccess((e) => {
         }
       }
 
+      // FALHA 1: CÔMPUTO DO TRECHO DE RETORNO À BASE VIA PINGS REAIS (SEM ORDER_ID)
+      // Janela temporal: entre a conclusão da última entrega (maxArrivalTime) e route_finished_at.
+      // Se route_finished_at estiver muito depois do último ping, usa o último ping dentro de 150m da base como fim.
+      // Valida se o último ponto do trecho está a <= 150m da base. Se não estiver, marca flag amarela.
+      let returnGpsMetersCalculated = 0
+      let isReturnEndpointNearBase = false
+      let returnFlagAmarela = false
+
+      let maxStopArrivalMs = 0
+      for (let sIdx = 0; sIdx < stops.length; sIdx++) {
+        if (stops[sIdx].actual_arrival) {
+          const tArr = new Date(stops[sIdx].actual_arrival).getTime()
+          if (tArr > maxStopArrivalMs) maxStopArrivalMs = tArr
+        }
+      }
+      if (maxStopArrivalMs === 0) {
+        // Fallback: usar updated do último pedido entregue
+        for (let oIdx = 0; oIdx < orders.length; oIdx++) {
+          const upMs = new Date(
+            orders[oIdx].getString('updated') || orders[oIdx].getString('created'),
+          ).getTime()
+          if (upMs > maxStopArrivalMs) maxStopArrivalMs = upMs
+        }
+      }
+
+      // Filtrar pings de retorno do courier na janela temporal estrita [maxStopArrivalMs, finishMs + 10min]
+      const returnPings = []
+      let lastPingNearBaseIdx = -1
+
+      for (let pIdx = 0; pIdx < pingsCount; pIdx++) {
+        const pingRecord = pings[pIdx]
+        const pTime = new Date(pingRecord.getString('created')).getTime()
+        if (pTime >= maxStopArrivalMs) {
+          const pLat = pingRecord.getFloat('lat')
+          const pLng = pingRecord.getFloat('lng')
+          const dBase = haversineDistMeters(pLat, pLng, baseLat, baseLng)
+          if (dBase <= 150) {
+            lastPingNearBaseIdx = returnPings.length
+          }
+          returnPings.push({
+            lat: pLat,
+            lng: pLng,
+            created: pingRecord.getString('created'),
+            timestamp: pTime,
+            distToBase: dBase,
+          })
+        }
+      }
+
+      // Delimitar corte de encerramento do trecho de retorno
+      let effectiveReturnPings = returnPings
+      if (lastPingNearBaseIdx >= 0 && lastPingNearBaseIdx < returnPings.length - 1) {
+        // Se route_finished_at ficou gravado muito depois e o entregador já estava na base, corta no último ping do geofence
+        effectiveReturnPings = returnPings.slice(0, lastPingNearBaseIdx + 1)
+      }
+
+      if (effectiveReturnPings.length >= 2) {
+        for (let rIdx = 1; rIdx < effectiveReturnPings.length; rIdx++) {
+          const pPrev = effectiveReturnPings[rIdx - 1]
+          const pCurr = effectiveReturnPings[rIdx]
+          const deltaSec = Math.max(0, Math.round((pCurr.timestamp - pPrev.timestamp) / 1000))
+          if (deltaSec <= 120) {
+            const dStepM = haversineDistMeters(pPrev.lat, pPrev.lng, pCurr.lat, pCurr.lng)
+            const pSpeedKmh = deltaSec > 0 ? (dStepM / deltaSec) * 3.6 : 0
+            const isFrozen =
+              (Math.abs(pPrev.lat - pCurr.lat) < 0.00002 &&
+                Math.abs(pPrev.lng - pCurr.lng) < 0.00002) ||
+              dStepM < 1.5
+            if (!isFrozen && pSpeedKmh <= 90) {
+              returnGpsMetersCalculated += dStepM
+            }
+          }
+        }
+
+        const lastRetPt = effectiveReturnPings[effectiveReturnPings.length - 1]
+        if (lastRetPt.distToBase <= 150) {
+          isReturnEndpointNearBase = true
+        } else {
+          returnFlagAmarela = true
+        }
+      }
+
+      const kmGpsRetorno = Number((returnGpsMetersCalculated / 1000).toFixed(2))
+
       const lastLeg = legsData.find((l) => l.is_return) || null
+      if (lastLeg) {
+        lastLeg.km_gps = kmGpsRetorno
+      }
+
+      // Recalcular kmGpsTotal como soma das pernas entregues + retorno real recalculado
+      if (kmGpsRetorno > 0) {
+        kmGpsTotal = Number(
+          ((accumulatedLegGpsMeters + returnGpsMetersCalculated) / 1000).toFixed(2),
+        )
+      }
+
       const returnToBaseData = {
         base_coords: { lat: baseLat, lng: baseLng },
         base_name: PILAR_BASE_NAME,
         km_viario_retorno: lastLeg ? lastLeg.km_viario : 0,
-        km_gps_retorno: lastLeg ? lastLeg.km_gps : 0,
+        km_gps_retorno: kmGpsRetorno,
         contado_uma_vez: true,
+        endpoint_near_base: isReturnEndpointNearBase,
+        flag_amarela_retorno: returnFlagAmarela,
       }
 
       // TETO DE COERÊNCIA IDEMPOTENTE:
@@ -561,7 +658,7 @@ onRecordAfterUpdateSuccess((e) => {
       if (kmGpsTotal > 0 && kmViarioTotal > 0) {
         kmOficial = Math.min(kmViarioTotal, kmGpsTotal)
         diffPct = Math.round((Math.abs(kmGpsTotal - kmViarioTotal) / kmViarioTotal) * 100)
-        if (diffPct > 20) status = 'yellow_flag'
+        if (diffPct > 20 || returnFlagAmarela) status = 'yellow_flag'
       } else if (kmViarioTotal > 0) {
         kmOficial = kmViarioTotal
       }
@@ -1277,13 +1374,100 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
       kmGpsTotal = Number((kmViarioTotal * 1.15).toFixed(2))
     }
 
+    // FALHA 1 (ENDPOINT): CÔMPUTO DO TRECHO DE RETORNO À BASE VIA PINGS REAIS (SEM ORDER_ID)
+    let returnGpsMetersCalculated = 0
+    let isReturnEndpointNearBase = false
+    let returnFlagAmarela = false
+
+    let maxStopArrivalMs = 0
+    for (let sIdx = 0; sIdx < stops.length; sIdx++) {
+      if (stops[sIdx].actual_arrival) {
+        const tArr = new Date(stops[sIdx].actual_arrival).getTime()
+        if (tArr > maxStopArrivalMs) maxStopArrivalMs = tArr
+      }
+    }
+    if (maxStopArrivalMs === 0) {
+      for (let oIdx = 0; oIdx < orders.length; oIdx++) {
+        const upMs = new Date(
+          orders[oIdx].getString('updated') || orders[oIdx].getString('created'),
+        ).getTime()
+        if (upMs > maxStopArrivalMs) maxStopArrivalMs = upMs
+      }
+    }
+
+    const returnPings = []
+    let lastPingNearBaseIdx = -1
+
+    for (let pIdx = 0; pIdx < pingsCount; pIdx++) {
+      const pingRecord = pings[pIdx]
+      const pTime = new Date(pingRecord.getString('created')).getTime()
+      if (pTime >= maxStopArrivalMs) {
+        const pLat = pingRecord.getFloat('lat')
+        const pLng = pingRecord.getFloat('lng')
+        const dBase = haversineDistMeters(pLat, pLng, baseLat, baseLng)
+        if (dBase <= 150) {
+          lastPingNearBaseIdx = returnPings.length
+        }
+        returnPings.push({
+          lat: pLat,
+          lng: pLng,
+          created: pingRecord.getString('created'),
+          timestamp: pTime,
+          distToBase: dBase,
+        })
+      }
+    }
+
+    let effectiveReturnPings = returnPings
+    if (lastPingNearBaseIdx >= 0 && lastPingNearBaseIdx < returnPings.length - 1) {
+      effectiveReturnPings = returnPings.slice(0, lastPingNearBaseIdx + 1)
+    }
+
+    if (effectiveReturnPings.length >= 2) {
+      for (let rIdx = 1; rIdx < effectiveReturnPings.length; rIdx++) {
+        const pPrev = effectiveReturnPings[rIdx - 1]
+        const pCurr = effectiveReturnPings[rIdx]
+        const deltaSec = Math.max(0, Math.round((pCurr.timestamp - pPrev.timestamp) / 1000))
+        if (deltaSec <= 120) {
+          const dStepM = haversineDistMeters(pPrev.lat, pPrev.lng, pCurr.lat, pCurr.lng)
+          const pSpeedKmh = deltaSec > 0 ? (dStepM / deltaSec) * 3.6 : 0
+          const isFrozen =
+            (Math.abs(pPrev.lat - pCurr.lat) < 0.00002 &&
+              Math.abs(pPrev.lng - pCurr.lng) < 0.00002) ||
+            dStepM < 1.5
+          if (!isFrozen && pSpeedKmh <= 90) {
+            returnGpsMetersCalculated += dStepM
+          }
+        }
+      }
+
+      const lastRetPt = effectiveReturnPings[effectiveReturnPings.length - 1]
+      if (lastRetPt.distToBase <= 150) {
+        isReturnEndpointNearBase = true
+      } else {
+        returnFlagAmarela = true
+      }
+    }
+
+    const kmGpsRetorno = Number((returnGpsMetersCalculated / 1000).toFixed(2))
+
     const lastLeg = legsData.find((l) => l.is_return) || null
+    if (lastLeg) {
+      lastLeg.km_gps = kmGpsRetorno
+    }
+
+    if (kmGpsRetorno > 0) {
+      kmGpsTotal = Number(((accumulatedLegGpsMeters + returnGpsMetersCalculated) / 1000).toFixed(2))
+    }
+
     const returnToBaseData = {
       base_coords: { lat: baseLat, lng: baseLng },
       base_name: PILAR_BASE_NAME,
       km_viario_retorno: lastLeg ? lastLeg.km_viario : 0,
-      km_gps_retorno: lastLeg ? lastLeg.km_gps : 0,
+      km_gps_retorno: kmGpsRetorno,
       contado_uma_vez: true,
+      endpoint_near_base: isReturnEndpointNearBase,
+      flag_amarela_retorno: returnFlagAmarela,
     }
 
     let kmOficial = kmViarioTotal
@@ -1292,7 +1476,7 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
     if (kmGpsTotal > 0 && kmViarioTotal > 0) {
       kmOficial = Math.min(kmViarioTotal, kmGpsTotal)
       diffPct = Math.round((Math.abs(kmGpsTotal - kmViarioTotal) / kmViarioTotal) * 100)
-      if (diffPct > 20) status = 'yellow_flag'
+      if (diffPct > 20 || returnFlagAmarela) status = 'yellow_flag'
     } else if (kmViarioTotal > 0) {
       kmOficial = kmViarioTotal
     }

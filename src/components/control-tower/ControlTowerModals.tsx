@@ -1528,7 +1528,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                               <span className="font-bold text-white text-xs">
                                 {typeof data?.battery_level === 'number' && data.battery_level > 0
                                   ? `🔋 ${Math.round(data.battery_level)}%`
-                                  : '🔋 —'}
+                                  : '🔋 Bateria indisponível'}
                               </span>
                             </div>
                             <div className="p-2 rounded-lg bg-[#0C152F] border border-slate-800">

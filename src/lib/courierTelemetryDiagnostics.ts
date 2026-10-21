@@ -141,9 +141,27 @@ export function diagnoseCourierTelemetry(
   }
 
   // 2. TEMPO PARADO vs EM MOVIMENTO
-  // Se não temos coordenadas ou nunca houve sinal
+  // FALHA 4 (a): velocidade nos pings de Capacitor/locations pode vir em m/s (8.8-10.2) ou já em km/h.
+  // Se rawSpeed > 0 e <= 35 e não foi pré-escalonada, mas pings nativos trazem m/s:
+  // Note que velocidade de moto/carro em m/s raramente passa de 40 m/s (~144 km/h).
+  // No Rotaly, os pings gravados via native bridge gravam pos.coords.speed (m/s da API de geolocalização).
+  // Se rawSpeed for número com ponto flutuante ou se <= 25 vindo do GPS nativo:
+  // Convertemos com segurança: se o ping original veio com speed em m/s (padrão GeolocationPosition coords.speed),
+  // converte m/s -> km/h com fator 3.6.
   const rawSpeed = typeof currentSpeed === 'number' ? currentSpeed : (latestLoc?.speed ?? 0)
-  let speedKmh = Math.max(0, Math.round(rawSpeed))
+  // Se rawSpeed for positivo: se o valor for float ou < 30 e compatível com m/s (ex.: 8.8–10.2), converte
+  // No Capacitor/Android native GPS, coords.speed é sempre m/s (float).
+  let speedKmh = 0
+  if (typeof rawSpeed === 'number' && !isNaN(rawSpeed) && rawSpeed > 0) {
+    // Se o valor tiver casas decimais (ex.: 8.8, 10.2) ou se for explicitamente vindo de coords.speed em m/s
+    // Ou se estiver na faixa de m/s: 8.8 m/s = 31.68 km/h.
+    // Se vier do app antigo já em km/h (inteiro arredondado > 30), mantém; se for float ou < 28, multiplica por 3.6 caso pareça m/s
+    if (!Number.isInteger(rawSpeed) || (rawSpeed > 0 && rawSpeed <= 25)) {
+      speedKmh = Math.round(rawSpeed * 3.6)
+    } else {
+      speedKmh = Math.round(rawSpeed)
+    }
+  }
 
   let isStopped = false
   let stoppedMinutes = 0
@@ -151,12 +169,19 @@ export function diagnoseCourierTelemetry(
   let movementBadgeLabel = 'Em movimento'
   let movementBadgeVariant: 'moving' | 'stopped' | 'no_signal' | 'idle' = 'moving'
 
+  // FALHA 4 (c): se o último ping tiver mais de 60s, mostra badge âmbar "Sinal de X min atrás" em vez de afirmar estado atual
+  const isSignalStaleOver60s = minutesSinceLastPing >= 1
+
   if (gpsState === 'no_signal' || gpsState === 'disabled') {
     movementBadgeVariant = 'no_signal'
     movementBadgeLabel = `Sem sinal recente (${minutesSinceLastPing < 999 ? `${minutesSinceLastPing} min` : '>10 min'})`
   } else if (finalLat === null || finalLng === null) {
     movementBadgeVariant = 'idle'
     movementBadgeLabel = 'Aguardando coordenadas'
+  } else if (isSignalStaleOver60s && minutesSinceLastPing > 1) {
+    // FALHA 4 (c): Sinal defasado há mais de 1 minuto
+    movementBadgeVariant = 'idle'
+    movementBadgeLabel = `⚠️ Sinal de ${minutesSinceLastPing} min atrás`
   } else {
     // Suavização de ruído GPS:
     // Ping com speed >= 5 km/h MAS accuracy > 20 m E deslocamento < 10 m do ping anterior = tratar como PARADO.
@@ -184,6 +209,11 @@ export function diagnoseCourierTelemetry(
 
     // Determinar se está parado:
     // Regra canônica: speed < 5 km/h E deslocamento < 50m desde o ping de referência
+    // Se o sinal tiver > 60s, sinalizar badge âmbar
+    if (isSignalStaleOver60s) {
+      movementBadgeVariant = 'idle'
+      movementBadgeLabel = `⚠️ Sinal de ${minutesSinceLastPing} min atrás`
+    }
     const isInstantStopped = speedKmh < 5
 
     // Investigar histórico consecutivo de pontos para calcular tempo parado contínuo
@@ -243,12 +273,16 @@ export function diagnoseCourierTelemetry(
           ? `Parado há ${stoppedMinutes} min`
           : `Parado há ${Math.floor(stoppedMinutes / 60)}h ${stoppedMinutes % 60 > 0 ? `${stoppedMinutes % 60}min` : ''}`.trim()
 
-      movementBadgeLabel = `🛑 Parado · ${speedKmh} km/h · ${stopDurationText}`
+      movementBadgeLabel = isSignalStaleOver60s
+        ? `⚠️ Sinal de ${minutesSinceLastPing} min atrás (parado há ${stoppedMinutes} min)`
+        : `🛑 Parado · ${speedKmh} km/h · ${stopDurationText}`
     } else {
       isStopped = false
       stoppedMinutes = 0
-      movementBadgeVariant = 'moving'
-      movementBadgeLabel = `🟢 Em movimento · ${speedKmh} km/h`
+      if (!isSignalStaleOver60s) {
+        movementBadgeVariant = 'moving'
+        movementBadgeLabel = `🟢 Em movimento · ${speedKmh} km/h`
+      }
     }
   }
 
