@@ -552,12 +552,12 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
               desvio_pct: desvioPct,
               km_viario_planejado: viarioPlanejadoKm,
               km_telemetria: telemetriaKm,
-              km_aprovacao_regra_dono_menor: Math.min(viarioPlanejadoKm, telemetriaKm),
+              km_oficial_viario: viarioPlanejadoKm,
               prefilled_justification: prefilledJustification,
               macro_ocorrencia: macroDesc,
               macro_horario: macroTimeStr,
               aprovacao_automatica: false,
-              exige_aprovacao_manual_menor: true,
+              exige_aprovacao_manual_menor: false,
             })
             $app.save(auditRec)
           } catch (eAudit) {
@@ -575,7 +575,7 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
           const senderName =
             ($app.settings().meta && $app.settings().meta.senderName) || 'Rotaly Gestão de Entregas'
 
-          const menorKm = Math.min(viarioPlanejadoKm, telemetriaKm)
+          const kmOficialViario = viarioPlanejadoKm
 
           const htmlMsg = `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 2px solid #ef4444; background: #fff; border-radius: 8px;">
@@ -589,12 +589,11 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
               </p>
               <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
                 <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>Desvio Detectado:</strong></td><td style="padding: 8px; color: #dc2626; font-weight: bold;">+${desvioPct}%</td></tr>
-                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Viário Previsto:</strong></td><td style="padding: 8px;">${viarioPlanejadoKm.toFixed(1)} km</td></tr>
-                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Realizado (GPS):</strong></td><td style="padding: 8px;">${telemetriaKm.toFixed(1)} km</td></tr>
-                <tr style="border-bottom: 1px solid #cbd5e1; background: #fef2f2;"><td style="padding: 8px;"><strong>KM Sugerido (Regra do dono - Menor):</strong></td><td style="padding: 8px; font-weight: bold; color: #b91c1c;">${menorKm.toFixed(1)} km</td></tr>
+                <tr style="border-bottom: 1px solid #cbd5e1; background: #ecfdf5;"><td style="padding: 8px;"><strong>KM Oficial Pago (Motor Viário):</strong></td><td style="padding: 8px; font-weight: bold; color: #047857;">${kmOficialViario.toFixed(1)} km</td></tr>
+                <tr style="border-bottom: 1px solid #cbd5e1;"><td style="padding: 8px;"><strong>KM Telemetria GPS (Auditoria):</strong></td><td style="padding: 8px;">${telemetriaKm.toFixed(1)} km</td></tr>
               </table>
-              <p style="color: #b91c1c; font-size: 13px; font-weight: bold;">
-                PROIBIDO aprovação automática: o admin deve revisar na Auditoria de KM e aprovar manualmente.
+              <p style="color: #047857; font-size: 13px; font-weight: bold;">
+                KM oficial pago mantido no motor viário canônico. Auditoria de telemetria disponível no painel.
               </p>
               <p style="font-size: 12px; color: #64748b;">Fechamento diário 21h30 Rotaly — ${todaySp}</p>
             </div>

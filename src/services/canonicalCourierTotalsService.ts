@@ -296,12 +296,15 @@ export function calculateCanonicalCourierTotals(
     let gps = Number(batchRec.km_gps_total) || 0
     let kmOficial = Number(batchRec.km_oficial) || 0
 
-    // FUTURO: Guarda de sanidade nos somatórios (rejeitar fonte com km > 2x viário; teto de coerência)
+    // REGRA DO USUÁRIO (20/10): Pagamento SEMPRE por KM VIÁRIO.
+    // O km oficial pago é o km viário do lote (Google Maps em vias reais).
+    // O km GPS telemetria é estritamente para comparação/auditoria (Coluna B), NUNCA base de pagamento.
     if (viario > 0 && gps > viario * 2) {
       gps = Number((viario * 1.15).toFixed(2))
     }
+    // Base de pagamento canônica: sempre o viário. Fallback para gps apenas se não houver viário
     if (kmOficial <= 0 || (viario > 0 && kmOficial > viario * 2)) {
-      kmOficial = viario > 0 ? (gps > 0 ? Math.min(viario, gps) : viario) : gps
+      kmOficial = viario > 0 ? viario : gps
     }
 
     // Regra da aprovação manual do admin: se admin aprovou km para pedidos do lote ou para o lote

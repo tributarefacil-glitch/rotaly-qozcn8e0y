@@ -652,15 +652,14 @@ onRecordAfterUpdateSuccess((e) => {
         kmGpsTotal = Number((kmViarioTotal * 1.15).toFixed(2))
       }
 
-      let kmOficial = kmViarioTotal
+      // REGRA DO USUÁRIO (20/10): Pagamento SEMPRE por KM VIÁRIO.
+      // O km GPS telemetria é apenas para comparação/auditoria (Coluna B), NUNCA base de pagamento.
+      let kmOficial = kmViarioTotal > 0 ? kmViarioTotal : kmGpsTotal
       let status = 'processed'
       let diffPct = 0
       if (kmGpsTotal > 0 && kmViarioTotal > 0) {
-        kmOficial = Math.min(kmViarioTotal, kmGpsTotal)
         diffPct = Math.round((Math.abs(kmGpsTotal - kmViarioTotal) / kmViarioTotal) * 100)
         if (diffPct > 20 || returnFlagAmarela) status = 'yellow_flag'
-      } else if (kmViarioTotal > 0) {
-        kmOficial = kmViarioTotal
       }
 
       const telemetryCol = $app.findCollectionByNameOrId('route_batch_telemetry')
@@ -1470,15 +1469,14 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
       flag_amarela_retorno: returnFlagAmarela,
     }
 
-    let kmOficial = kmViarioTotal
+    // REGRA DO USUÁRIO (20/10): Pagamento SEMPRE por KM VIÁRIO.
+    // O km GPS telemetria é apenas para comparação/auditoria (Coluna B), NUNCA base de pagamento.
+    let kmOficial = kmViarioTotal > 0 ? kmViarioTotal : kmGpsTotal
     let status = 'processed'
     let diffPct = 0
     if (kmGpsTotal > 0 && kmViarioTotal > 0) {
-      kmOficial = Math.min(kmViarioTotal, kmGpsTotal)
       diffPct = Math.round((Math.abs(kmGpsTotal - kmViarioTotal) / kmViarioTotal) * 100)
       if (diffPct > 20 || returnFlagAmarela) status = 'yellow_flag'
-    } else if (kmViarioTotal > 0) {
-      kmOficial = kmViarioTotal
     }
 
     const telemetryCol = $app.findCollectionByNameOrId('route_batch_telemetry')

@@ -910,7 +910,7 @@ export function calculateCourierFuelMetrics(params: {
         batchGpsKm = Number((canonicalBatchKm * 1.15).toFixed(1))
       }
       if (batchTelem?.officialRealKm && batchTelem.officialRealKm > 0) {
-        // Se telemetria oficial do lote existe, ela é a autoridade canônica (regra do MENOR)
+        // Se telemetria oficial do lote existe, ela reflete o km oficial pago (motor viário)
         if (canonicalBatchKm <= 0 || canonicalBatchKm > batchTelem.officialRealKm * 2) {
           canonicalBatchKm = Number(batchTelem.officialRealKm.toFixed(1))
         }

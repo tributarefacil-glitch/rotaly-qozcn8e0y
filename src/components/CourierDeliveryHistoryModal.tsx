@@ -1084,7 +1084,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 <span className="text-xs font-normal text-slate-400">km</span>
               </p>
               <span className="text-[10px] text-emerald-400/90 block mt-0.5 font-medium">
-                Base viária planejada das paradas visitadas (descontados desvios e conjuntas)
+                KM viário das paradas em vias reais (motor canônico de pagamento)
               </span>
             </div>
 

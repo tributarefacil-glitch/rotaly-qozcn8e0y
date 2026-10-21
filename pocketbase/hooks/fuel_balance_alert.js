@@ -5,8 +5,8 @@
  *
  * REGRAS OFICIAIS DE PRODUTO (PARIDADE TOTAL COM O CARD DO PAINEL / FRONTEND):
  * - Consome EXCLUSIVAMENTE a coleção `route_batch_telemetry` como fonte de km e rotas:
- *   filtrar por courier_id, dedup 1x por route_batch_key, usar km_oficial auditado
- *   (fallback min(km_viario_total, km_gps_total) apenas se km_oficial vazio/zerado).
+ *   filtrar por courier_id, dedup 1x por route_batch_key, usar km_oficial viário auditado
+ *   (fallback km_viario_total se km_oficial vazio/zerado; GPS apenas auditoria).
  * - PROIBIDO: km_gps_total cru somado, km de desvio, orders como fonte de km.
  * - Gasto = km oficial ÷ taxa de consumo do veículo em app_settings (moto 30 km/L) × preço do litro (R$ 6,49).
  * - Bicicleta = custo zero (fuel_cost = 0, gasto = 0).
@@ -198,7 +198,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
    * Processa os lotes dedup 1x por route_batch_key consumindo EXCLUSIVAMENTE route_batch_telemetry.
    * Regras canônicas:
    * 1. Dedup 1x por route_batch_key (mantém o mais recente se houver chave duplicada);
-   * 2. KM Oficial canônico: km_oficial auditado. Fallback: min(km_viario_total, km_gps_total) apenas se km_oficial vazio/zerado;
+   * 2. KM Oficial canônico: km_oficial viário. Fallback: km_viario_total se km_oficial vazio/zerado;
    * 3. Saneamento: se viario > 0 e gps > 2x viario, limita gps a viario * 1.15; se oficial > 2x viario, recalcula pela regra do MENOR;
    * 4. Aprovação manual do admin em route_km_approvals tem soberania;
    * 5. Gasto = km_oficial ÷ consumoKml × pricePerLiter (bicicleta = 0);
@@ -237,7 +237,7 @@ cronAdd('daily_fuel_balance_check', '0 8 * * *', () => {
         gps = Number((viario * 1.15).toFixed(2))
       }
       if (kmOficial <= 0 || (viario > 0 && kmOficial > viario * 2)) {
-        kmOficial = viario > 0 ? (gps > 0 ? Math.min(viario, gps) : viario) : gps
+        kmOficial = viario > 0 ? viario : gps
       }
 
       // Aprovação manual do admin pelo lote
@@ -961,7 +961,7 @@ routerAdd('POST', '/backend/v1/fuel-balance/check-now', (c) => {
         gps = Number((viario * 1.15).toFixed(2))
       }
       if (kmOficial <= 0 || (viario > 0 && kmOficial > viario * 2)) {
-        kmOficial = viario > 0 ? (gps > 0 ? Math.min(viario, gps) : viario) : gps
+        kmOficial = viario > 0 ? viario : gps
       }
 
       var batchApprovals = approvalsByBatch ? approvalsByBatch[bKey] : null
