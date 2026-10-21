@@ -487,12 +487,12 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
           </CardContent>
         </Card>
 
-        {/* Card 4: KM Real Oficial e Desvios */}
+        {/* Card 4: KM Viário Oficial Pago */}
         <Card className="border-[#1E2B58] bg-[#0E1738] text-white shadow-brand-dark">
           <CardContent className="p-4">
             <div className="flex items-center justify-between text-slate-400 text-xs">
               <span className="font-heading uppercase tracking-wider text-[10px] font-bold">
-                KM GPS &amp; Desvios
+                KM Viário Oficial Pago
               </span>
               <TrendingUp className="h-4 w-4 text-[#60A5FA]" />
             </div>
@@ -501,12 +501,13 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
               <span className="text-xs font-normal text-slate-400">km</span>
             </p>
             <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+              <span className="text-slate-300">Auditoria GPS e Desvios:</span>{' '}
               {fleetTotals.totalDeviationKm > 0 ? (
                 <span className="text-rose-400 font-mono font-semibold">
-                  +{fleetTotals.totalDeviationKm.toFixed(1)} km desvios
+                  +{fleetTotals.totalDeviationKm.toFixed(1)} km
                 </span>
               ) : (
-                <span className="text-emerald-400 font-semibold">0 desvios registrados</span>
+                <span className="text-emerald-400 font-semibold">0 km</span>
               )}
               {fleetTotals.bicycleCount > 0 && (
                 <span className="text-slate-400">• 🚲 {fleetTotals.bicycleCount} bike</span>
@@ -639,7 +640,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
                   setIsHistoryModalOpen(true)
                 }}
                 title="Saldo da Conta Corrente"
-                subtitle="Calculado via telemetria GPS oficial"
+                subtitle="Calculado via rota viária oficial (Google)"
                 showPricingExplanation={true}
               />
             ))}

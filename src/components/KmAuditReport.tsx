@@ -1034,19 +1034,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       return
     }
 
-    const roadKm = activeItem.originalRoadKm || 0
-    const gpsKm = activeItem.originalGpsKm !== undefined ? activeItem.originalGpsKm : 0
-    const minCanonical = gpsKm > 0 ? Math.min(roadKm, gpsKm) : roadKm
-    const isOverrideAboveMin = modalAction === 'approve' && kmNum > minCanonical
     const justificationTrimmed = justificationInput.trim()
-
-    // Regra 1.2: aprovado maior que min(A, B) é RECUSADO sem justificativa textual obrigatória (mín 15 caracteres)
-    if (isOverrideAboveMin && justificationTrimmed.length < 15) {
-      toast.error(
-        `Aprovação de ${kmNum.toFixed(1)} km é superior ao menor valor (${minCanonical.toFixed(1)} km). Justificativa obrigatória com no mínimo 15 caracteres.`,
-      )
-      return
-    }
 
     setIsSavingApproval(true)
     try {
@@ -1498,13 +1486,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
                     <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
                       <div className="bg-blue-50/50 p-1.5 rounded border border-blue-100">
-                        <span className="text-[10px] text-slate-500 block">Viário Lote (1x)</span>
+                        <span className="text-[10px] text-slate-500 block">
+                          KM Oficial Pago (Lote 1x)
+                        </span>
                         <strong className="text-blue-900 text-xs">
                           {loteCanonico.toFixed(1)} km
                         </strong>
                       </div>
                       <div className="bg-purple-50/50 p-1.5 rounded border border-purple-100">
-                        <span className="text-[10px] text-purple-700 block">GPS Lote (Janela)</span>
+                        <span className="text-[10px] text-purple-700 block">
+                          GPS Lote (Auditoria)
+                        </span>
                         <strong className="text-purple-900 text-xs">
                           {maxGps > 0 ? `${maxGps.toFixed(1)} km` : '—'}
                         </strong>
@@ -1567,8 +1559,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-100/70 text-slate-600 uppercase tracking-wider text-[11px] font-bold select-none">
                   <th className="py-3 px-4">a) Cliente / Endereço</th>
-                  <th className="py-3 px-3 text-center">Coluna A: Rota Otimizada (Viário)</th>
-                  <th className="py-3 px-3 text-center">Coluna B: GPS Telemetria</th>
+                  <th className="py-3 px-3 text-center">Coluna A: KM Oficial Pago (Viário)</th>
+                  <th className="py-3 px-3 text-center">Coluna B: GPS Telemetria (Auditoria)</th>
                   <th className="py-3 px-3 text-center">Desvio %</th>
                   <th className="py-3 px-3 text-center">Parada Fora do Local</th>
                 </tr>
@@ -1689,7 +1681,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna A: Rota Otimizada (Viário) */}
+                        {/* Coluna A: KM Oficial Pago (Viário) */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
                             <span className="font-mono text-sm font-black text-slate-900 dark:text-white">
@@ -1715,9 +1707,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                           </div>
                         </td>
 
-                        {/* Coluna B: GPS Telemetria (MOTOR CANÔNICO DE TELEMETRIA) */}
+                        {/* Coluna B: GPS Telemetria - Exclusivo Auditoria (MOTOR CANÔNICO DE TELEMETRIA) */}
                         {/* REGRA OBRIGATÓRIA: */}
-                        {/* Exibir km_gps_total gravado pelo motor para o lote; NUNCA copiar Coluna A. */}
+                        {/* Exibir km_gps_total gravado pelo motor para o lote; NUNCA copiar Coluna A. GPS é exclusivamente auditoria. */}
                         {/* Quando o lote tiver lacunas relevantes (telemetry_gaps não vazio), rotular a perna */}
                         {/* "sem telemetria suficiente (N pings)" conforme os dados gravados. Comparação sempre lote×lote. */}
                         <td className="py-3 px-3 align-top text-center">
@@ -1752,8 +1744,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                     <Badge
                                       variant="outline"
                                       className="text-[9px] px-1 py-0 font-bold border-purple-300 text-purple-700 bg-purple-50"
+                                      title="Telemetria GPS exclusivamente para fins de auditoria"
                                     >
-                                      GPS Canônico
+                                      GPS Auditoria
                                     </Badge>
                                   </div>
                                 )

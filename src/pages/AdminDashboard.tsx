@@ -1713,7 +1713,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     <p className="text-xs text-slate-500">
                       Conta corrente por entregador em tempo real:{' '}
                       <strong>Valor Recebido (Adiantamentos)</strong> menos{' '}
-                      <strong>Gasto em Rotas Oficiais</strong>.
+                      <strong>Gasto em Rotas Oficiais</strong> (KM viário oficial (Google); GPS
+                      exclusivo para auditoria).
                     </p>
                   </div>
 
@@ -2109,7 +2110,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                     📖 Histórico Viário de Rotas
                                   </Badge>
                                 </button>
-                                <span className="text-slate-500 font-mono">
+                                <span
+                                  className="text-slate-500 font-mono"
+                                  title="KM viário oficial (Google); GPS exclusivo para auditoria"
+                                >
                                   KM Oficial:{' '}
                                   <strong className="text-slate-700 dark:text-slate-200">
                                     {totalRouteKmNum.toFixed(1)} km
@@ -2117,7 +2121,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                 </span>
                               </div>
                               {/* Dica / Botão de clique para histórico */}
-                              <div className="pt-1 flex items-center justify-between text-[11px] text-[#0052CC] dark:text-[#60A5FA] font-medium group-hover:underline">
+                              <div
+                                className="pt-1 flex items-center justify-between text-[11px] text-[#0052CC] dark:text-[#60A5FA] font-medium group-hover:underline"
+                                title="KM viário oficial (Google); GPS exclusivo para auditoria"
+                              >
                                 <span>Ver histórico detalhado de entregas & telemetria</span>
                                 <span>→</span>
                               </div>
