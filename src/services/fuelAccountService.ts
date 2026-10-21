@@ -8,6 +8,7 @@ import type {
   OffRouteEventRecord,
   OrderRecord,
   UserRecord,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 import {
   calculateCourierFuelMetrics,
@@ -263,6 +264,7 @@ export class FuelAccountService {
     >
     activeBaseCoords?: { lat: number; lng: number } | null
     allPostCutoffOrders?: OrderRecord[]
+    telemetryBatches?: RouteBatchTelemetryRecord[]
   }): UnifiedCourierFuelAccount {
     const {
       courier,
@@ -275,6 +277,7 @@ export class FuelAccountService {
       approvalsMap,
       activeBaseCoords,
       allPostCutoffOrders,
+      telemetryBatches = [],
     } = params
 
     // GUARDA DE ENTRADA (REGRA DE OURO, v0.0.464):
@@ -360,6 +363,7 @@ export class FuelAccountService {
 
     const canonicalTotals = calculateCanonicalCourierTotals({
       courier,
+      telemetryBatches,
       orders: fullOrderPool,
       advances: postCutoffAdvances,
       settings,
@@ -379,6 +383,7 @@ export class FuelAccountService {
       carryOverBalance: openingBalance,
       approvalsMap,
       activeBaseCoords,
+      telemetryBatches,
     })
 
     const isBicycle =
@@ -522,6 +527,7 @@ export class FuelAccountService {
           approvalsMap,
           activeBaseCoords,
           isPostCutoffComputation: true,
+          telemetryBatches,
         })
         spent30d = metrics30d.totalSpent
 

@@ -763,9 +763,18 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
     scopeBatches.forEach((batchRows) => {
       // KM viário original do lote contado 1x:
-      // Em lotes unificados ou consolidados, total_route_with_return_km representa o valor CHEIO do lote.
-      // Busca o valor canônico de total_route_with_return_km do lote (lendo batchRows[0].order.total_route_with_return_km ou o maior valor do lote).
-      const canonicalRoadKm = batchRows.reduce((max, r) => {
+      // REGRA DO USUÁRIO (20/10): Prioridade canônica absoluta: km_viario_total do route_batch_telemetry
+      // gravado para o lote (inclui volta 1x por lote), nunca soma de pernas sem retorno.
+      const canonicalTelemRec = batchRows.find((r) => r.canonicalBatchTelem)?.canonicalBatchTelem
+
+      const telemViarioKm =
+        canonicalTelemRec && typeof canonicalTelemRec.km_viario_total === 'number'
+          ? canonicalTelemRec.km_viario_total
+          : canonicalTelemRec && typeof canonicalTelemRec.km_oficial === 'number'
+            ? canonicalTelemRec.km_oficial
+            : 0
+
+      const maxOrderReturnKm = batchRows.reduce((max, r) => {
         const km =
           typeof r.order?.total_route_with_return_km === 'number'
             ? r.order.total_route_with_return_km
@@ -774,7 +783,11 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       }, 0)
 
       const bRoad =
-        canonicalRoadKm > 0 ? canonicalRoadKm : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
+        telemViarioKm > 0
+          ? telemViarioKm
+          : maxOrderReturnKm > 0
+            ? maxOrderReturnKm
+            : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
 
       // Após aprovação: se alguma linha tem aprovação manual, soma officialAfterApprovalKm das linhas;
       // senão, reflete o valor canônico viário do lote (1x)
@@ -783,23 +796,13 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       )
       const bAfter = hasManualApproval
         ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
-        : canonicalRoadKm > 0
-          ? canonicalRoadKm
-          : batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
+        : bRoad
 
-      // KM GPS SANEADO/AUDITADO DO LOTE 1x:
-      // A telemetria do lote é uma janela única.
-      // Teto de sanidade estrito: se houver km_gps_total salvo em canonicalBatchTelem, usa o valor saneado.
-      // Se bGps bruto exceder 2x o viário do lote, aplica teto de sanidade (1.15x viário) para que lixo
-      // de telemetria nunca polua os totais agregados exibidos nos cards.
+      // KM GPS SANEADO/AUDITADO DO LOTE 1x (Coluna B, estritamente para comparação/auditoria):
       let bGps = batchRows.reduce((max, r) => {
         const telemKm = r.canonicalBatchTelem ? r.canonicalBatchTelem.km_gps_total : 0
         return Math.max(max, telemKm || r.gpsKm || 0)
       }, 0)
-
-      if (bRoad > 0 && bGps > bRoad * 2) {
-        bGps = Number((bRoad * 1.15).toFixed(1))
-      }
 
       roadKmTotal += bRoad
       gpsKmTotal += bGps
@@ -949,8 +952,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
     filteredBatches.forEach((batchRows) => {
       // KM viário original do lote contado 1x:
-      // Em lotes unificados ou consolidados, total_route_with_return_km representa o valor CHEIO do lote.
-      const canonicalRoadKm = batchRows.reduce((max, r) => {
+      // REGRA DO USUÁRIO (20/10): Prioridade canônica absoluta: km_viario_total do route_batch_telemetry
+      const canonicalTelemRec = batchRows.find((r) => r.canonicalBatchTelem)?.canonicalBatchTelem
+
+      const telemViarioKm =
+        canonicalTelemRec && typeof canonicalTelemRec.km_viario_total === 'number'
+          ? canonicalTelemRec.km_viario_total
+          : canonicalTelemRec && typeof canonicalTelemRec.km_oficial === 'number'
+            ? canonicalTelemRec.km_oficial
+            : 0
+
+      const maxOrderReturnKm = batchRows.reduce((max, r) => {
         const km =
           typeof r.order?.total_route_with_return_km === 'number'
             ? r.order.total_route_with_return_km
@@ -959,7 +971,11 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       }, 0)
 
       const bRoad =
-        canonicalRoadKm > 0 ? canonicalRoadKm : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
+        telemViarioKm > 0
+          ? telemViarioKm
+          : maxOrderReturnKm > 0
+            ? maxOrderReturnKm
+            : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
 
       // Após aprovação: se alguma linha tem aprovação manual, soma officialAfterApprovalKm das linhas;
       // senão, reflete o valor canônico viário do lote (1x)
@@ -968,19 +984,13 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       )
       const bAfter = hasManualApproval
         ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
-        : canonicalRoadKm > 0
-          ? canonicalRoadKm
-          : batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
+        : bRoad
 
-      // KM GPS SANEADO DO LOTE 1x
+      // KM GPS SANEADO DO LOTE 1x (Coluna B, estritamente para comparação/auditoria)
       let bGps = batchRows.reduce((max, r) => {
         const telemKm = r.canonicalBatchTelem ? r.canonicalBatchTelem.km_gps_total : 0
         return Math.max(max, telemKm || r.gpsKm || 0)
       }, 0)
-
-      if (bRoad > 0 && bGps > bRoad * 2) {
-        bGps = Number((bRoad * 1.15).toFixed(1))
-      }
 
       roadKmTotal += bRoad
       gpsKmTotal += bGps

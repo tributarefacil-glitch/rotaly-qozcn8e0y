@@ -47,6 +47,7 @@ import type {
   CourierFuelAccount,
   LocationRecord,
   FuelAdvanceRecord,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
 import { calculateCanonicalCourierTotals } from '@/services/canonicalCourierTotalsService'
@@ -295,6 +296,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     }
   }, [courier?.empresa_id])
 
+  const [telemetryBatchesList, setTelemetryBatchesList] = useState<RouteBatchTelemetryRecord[]>([])
+
   // Carregar aprovações via deliveryService.getRouteKmApprovals (paridade com KmAuditReport)
   // Parametrizado com a janela operacional de Brasília (05h–23h59) quando disponível
   React.useEffect(() => {
@@ -316,6 +319,17 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       .catch((err) => {
         console.warn('[CourierDeliveryHistoryModal] Erro ao carregar aprovações de KM:', err)
       })
+
+    // Carregar registros canônicos de route_batch_telemetry para compor a fonte de verdade dos lotes
+    deliveryService
+      .listRouteBatchTelemetry()
+      .then((data) => {
+        if (isMounted) setTelemetryBatchesList(data || [])
+      })
+      .catch((err) => {
+        console.warn('[CourierDeliveryHistoryModal] Erro ao carregar route_batch_telemetry:', err)
+      })
+
     return () => {
       isMounted = false
     }
@@ -778,10 +792,13 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         courier && courier.id
           ? courier
           : ({ id: '', name: courier?.name || 'Entregador' } as UserRecord),
+      telemetryBatches: telemetryBatchesList,
       orders: filteredItems.map((fi) => fi.order),
       advances: allCourierAdvances,
       settings: officialSettings || settings,
       periodFilter,
+      customStartDate,
+      customEndDate,
       approvalsMap,
     })
 
@@ -882,6 +899,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     fuelParams,
     courier?.cutoff_date,
     courier?.opening_balance,
+    telemetryBatchesList,
+    customStartDate,
+    customEndDate,
   ])
 
   // Exportar dados em CSV com KM Real e KM de Desvios em colunas separadas

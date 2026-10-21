@@ -130,6 +130,7 @@ import type {
   CourierFuelAccount,
   FuelPaymentMethod,
   CustomerRecord,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { Button } from '@/components/ui/button'
@@ -1244,6 +1245,22 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
   // Pool completo pós-corte para apuração do saldo canônico (independente do fuelPeriodFilter)
   const [allPostCutoffOrdersPool, setAllPostCutoffOrdersPool] = useState<OrderRecord[]>([])
+  const [telemetryBatches, setTelemetryBatches] = useState<RouteBatchTelemetryRecord[]>([])
+
+  useEffect(() => {
+    let isMounted = true
+    deliveryService
+      .listRouteBatchTelemetry()
+      .then((data) => {
+        if (isMounted) setTelemetryBatches(data || [])
+      })
+      .catch((err) => {
+        console.warn('[AdminDashboard] Erro ao carregar route_batch_telemetry:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const fetchFuelHistoryOrders = useCallback(
     async (forceRefresh = false) => {
@@ -1362,6 +1379,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
           offRouteEvents,
           periodFilter: fuelPeriodFilter,
           allPostCutoffOrders: effectiveFullOrdersPool,
+          telemetryBatches,
         })
       })
   }, [
@@ -1373,6 +1391,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     locations,
     offRouteEvents,
     fuelPeriodFilter,
+    telemetryBatches,
   ])
 
   // Filtered Fuel Advances by Courier & Period (REQUISITO 5)

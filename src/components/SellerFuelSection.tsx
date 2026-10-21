@@ -22,6 +22,7 @@ import type {
   AppSettingsRecord,
   FuelAdvanceRecord,
   CourierFuelAccount,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
 import { fuelAccountService } from '@/services/fuelAccountService'
@@ -77,9 +78,25 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   const [fuelHistoryOrders, setFuelHistoryOrders] = useState<OrderRecord[]>([])
   const [isLoadingFuelOrders, setIsLoadingFuelOrders] = useState(false)
   const [loadedFuelPeriod, setLoadedFuelPeriod] = useState<string>('')
+  const [telemetryBatches, setTelemetryBatches] = useState<RouteBatchTelemetryRecord[]>([])
   const fuelOrdersCacheRef = useRef<Map<string, { data: OrderRecord[]; timestamp: number }>>(
     new Map(),
   )
+
+  useEffect(() => {
+    let isMounted = true
+    deliveryService
+      .listRouteBatchTelemetry()
+      .then((data) => {
+        if (isMounted) setTelemetryBatches(data || [])
+      })
+      .catch((err) => {
+        console.warn('[SellerFuelSection] Erro ao carregar route_batch_telemetry:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   // Versão de sincronização global para invalidar caches legados e forçar recarga imediata
   const FUEL_GLOBAL_VERSION = 'v0325_period_pool_sync'
@@ -180,6 +197,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
           locations,
           offRouteEvents,
           periodFilter: fuelPeriodFilter,
+          telemetryBatches,
         })
 
         const fuelAccount: CourierFuelAccount = {
@@ -210,6 +228,7 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
     offRouteEvents,
     settings,
     fuelPeriodFilter,
+    telemetryBatches,
   ])
 
   // 2. Filtrar os cards dos entregadores por busca e categoria

@@ -7,6 +7,7 @@ import type {
   OffRouteEventRecord,
   AppSettingsRecord,
   CourierFuelAccount,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 // Telemetry engine and delivery service for courier fuel calculation
 import { deliveryService } from '@/services/deliveryService'
@@ -146,6 +147,7 @@ export function calculateCourierFuelMetrics(params: {
   >
   activeBaseCoords?: { lat: number; lng: number } | null
   isPostCutoffComputation?: boolean
+  telemetryBatches?: RouteBatchTelemetryRecord[]
 }): CourierFuelCalculationResult {
   const {
     courier,
@@ -159,6 +161,7 @@ export function calculateCourierFuelMetrics(params: {
     approvalsMap,
     activeBaseCoords,
     isPostCutoffComputation = false,
+    telemetryBatches = [],
   } = params
 
   if (!courier || !courier.id) {
@@ -421,85 +424,19 @@ export function calculateCourierFuelMetrics(params: {
     }
   })
 
-  // COMANDO A1: Ordenar lotes finalizados cronologicamente para detecção de encadeamento
-  // Ao ordenar lotes finalizados por route_started_at:
-  // Se (route_started_at do lote seguinte − route_finished_at do anterior) < 10 min,
-  // OU distância entre última parada do lote anterior e primeira parada do novo < 1 km sem ponto GPS na base,
-  // o lote anterior NÃO cobra o retorno à base (só o viário até a última parada).
-  // Rotas que terminam na base mantêm o retorno.
-
-  type RouteBatchItem = {
-    batchKey: string
-    orders: OrderRecord[]
-    firstOrder: OrderRecord
-    lastOrder: OrderRecord
-    startedAtMs: number
-    finishedAtMs: number
-  }
-
-  const sortedBatchList: RouteBatchItem[] = Array.from(routeBatches.entries())
-    .map(([bKey, bOrders]) => {
-      const sortedBySeq = [...bOrders].sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
-      const firstO = sortedBySeq[0]
-      const lastO = sortedBySeq[sortedBySeq.length - 1]
-      const startedAt = firstO.route_started_at || firstO.created || ''
-      const finishedAt = lastO.route_finished_at || lastO.actual_arrival || startedAt
-      return {
-        batchKey: bKey,
-        orders: bOrders,
-        firstOrder: firstO,
-        lastOrder: lastO,
-        startedAtMs: new Date(startedAt).getTime() || 0,
-        finishedAtMs: new Date(finishedAt).getTime() || 0,
+  // Mapa de lotes canônicos passados via telemetryBatches
+  const canonicalBatchesMap = new Map<string, RouteBatchTelemetryRecord>()
+  if (telemetryBatches && telemetryBatches.length > 0) {
+    telemetryBatches.forEach((b) => {
+      if (b && b.route_batch_key) {
+        canonicalBatchesMap.set(b.route_batch_key, b)
       }
     })
-    .sort((a, b) => a.startedAtMs - b.startedAtMs)
-
-  // Conjunto de lotes identificados como encadeados (lote anterior que não volta à base)
-  const chainedPreviousBatches = new Set<string>()
-
-  for (let bIdx = 0; bIdx < sortedBatchList.length - 1; bIdx++) {
-    const currentBatch = sortedBatchList[bIdx]
-    const nextBatch = sortedBatchList[bIdx + 1]
-
-    if (currentBatch.finishedAtMs > 0 && nextBatch.startedAtMs > 0) {
-      const diffMinutes = (nextBatch.startedAtMs - currentBatch.finishedAtMs) / (60 * 1000)
-
-      // Distância entre última parada do lote anterior e primeira parada do novo
-      const lastStopDest = MapDataService.getOrderDestination(currentBatch.lastOrder)
-      const nextStartDest = MapDataService.getOrderDestination(nextBatch.firstOrder)
-
-      let distBetweenStopsMeters = 999999
-      if (lastStopDest && nextStartDest) {
-        distBetweenStopsMeters = haversineDistanceMeters(
-          lastStopDest.lat,
-          lastStopDest.lng,
-          nextStartDest.lat,
-          nextStartDest.lng,
-        )
-      }
-
-      // Checar se houve ponto GPS na base no intervalo entre lotes
-      const hasGpsAtBaseBetweenBatches = courierLocations.some((loc) => {
-        const locTs = new Date(loc.created).getTime()
-        if (locTs >= currentBatch.finishedAtMs && locTs <= nextBatch.startedAtMs) {
-          const dBase = haversineDistanceMeters(loc.lat, loc.lng, baseLatFallback, baseLngFallback)
-          return dBase < 300 // dentro de 300m da base
-        }
-        return false
-      })
-
-      const isChainedTime = diffMinutes >= -5 && diffMinutes < 10
-      const isChainedSpatial = distBetweenStopsMeters < 1000 && !hasGpsAtBaseBetweenBatches
-
-      if (isChainedTime || isChainedSpatial) {
-        chainedPreviousBatches.add(currentBatch.batchKey)
-        console.log(
-          `[useCourierFuelMetrics] [A1] Encadeamento detectado para lote ${currentBatch.batchKey}: diff=${diffMinutes.toFixed(1)}min, dist=${(distBetweenStopsMeters / 1000).toFixed(1)}km, gpsNaBase=${hasGpsAtBaseBetweenBatches}. Retorno à base descartado neste lote anterior.`,
-        )
-      }
-    }
   }
+
+  // REGRA DO USUÁRIO (20/10): Base -> Paradas -> Volta à base 1x por lote, cada perna 1x.
+  // REMOVIDO: Corte de volta à base por lotes encadeados (não corta mais a volta à base).
+  // REMOVIDO: Teto de desvios arbitrário sobre pernas. A fonte canônica é km_viario_total dos lotes.
 
   // Pré-calcular métricas de telemetria por lote de rota completa
   const batchTelemetryMap = new Map<string, ReturnType<typeof calculateRealKmForOrder>>()
@@ -513,24 +450,17 @@ export function calculateCourierFuelMetrics(params: {
       courierEvents,
     })
 
+    // Se houver registro oficial de telemetria no banco para este lote, priorizar km_viario_total
+    const recordedBatch = canonicalBatchesMap.get(key)
+    const recordedViarioKm = recordedBatch ? Number(recordedBatch.km_viario_total) || 0 : 0
+    const recordedOficialKm = recordedBatch ? Number(recordedBatch.km_oficial) || 0 : 0
+
     // Se no lote algum pedido tiver total_route_with_return_km registrado pelo otimizador de rotas
     // (Histórico viário oficial da rota: Base -> Paradas -> Retorno)
     const maxRoadKmInBatch = batchOrders.reduce((max, ord) => {
       const roadKm =
         typeof ord.total_route_with_return_km === 'number' ? ord.total_route_with_return_km : 0
       return Math.max(max, roadKm)
-    }, 0)
-
-    // Soma viária apenas das pernas de paradas (sem o retorno da última parada à base),
-    // desconsiderando paradas com pin suspeito que foram excluídas do viário
-    const sumOutboundLegsKm = batchOrders.reduce((sum, ord) => {
-      const cleanDest = MapDataService.getOrderDestination(ord)
-      const cNotes = ord.notes || ord.expand?.customer_id?.notes || ''
-      if (isSuspectPin(cleanDest?.lat, cleanDest?.lng, cNotes)) {
-        return sum
-      }
-      const dist = typeof ord.distance_km === 'number' ? ord.distance_km : 0
-      return sum + dist
     }, 0)
 
     // Verificar se há odômetro no lote
@@ -546,39 +476,27 @@ export function calculateCourierFuelMetrics(params: {
       return acc
     }, 0)
 
-    // A1: Se o lote for encadeado com o seguinte, NÃO cobra o retorno à base!
-    const isChainedBatch = chainedPreviousBatches.has(key)
-
     // KM OFICIAL (DECISÃO FECHADA DO PRODUTO):
-    // KM oficial = Trajeto viário planejado pelo otimizador sobre paradas efetivamente visitadas.
-    // Se o lote for encadeado, aplica apenas as pernas de paradas (sem retorno à base duplicado).
-    if (isChainedBatch && sumOutboundLegsKm > 0) {
-      batchTelemetry.officialRealKm = Number(sumOutboundLegsKm.toFixed(1))
+    // 1. Se existe km_viario_total no route_batch_telemetry gravado, este é a fonte canônica com volta inclusa.
+    // 2. Senão, usa total_route_with_return_km do lote (rota com retorno).
+    // 3. Fallback: officialRealKm computado.
+    if (recordedViarioKm > 0) {
+      batchTelemetry.officialRealKm = Number(recordedViarioKm.toFixed(1))
       batchTelemetry.calculationSource = 'historico_viario'
-      batchTelemetry.hasReturnKm = false
+      batchTelemetry.hasReturnKm = true
+    } else if (recordedOficialKm > 0) {
+      batchTelemetry.officialRealKm = Number(recordedOficialKm.toFixed(1))
+      batchTelemetry.calculationSource = 'historico_viario'
+      batchTelemetry.hasReturnKm = true
     } else if (maxRoadKmInBatch > 0) {
       batchTelemetry.officialRealKm = Number(maxRoadKmInBatch.toFixed(1))
       batchTelemetry.calculationSource = 'historico_viario'
+      batchTelemetry.hasReturnKm = true
     } else if (batchTelemetry.officialRealKm > 0) {
       batchTelemetry.officialRealKm = Number(batchTelemetry.officialRealKm.toFixed(1))
       batchTelemetry.calculationSource = 'historico_viario'
     } else {
       batchTelemetry.calculationSource = 'historico_viario'
-    }
-
-    // COMANDO B2: Trava de Sanidade no useCourierFuelMetrics
-    // Se perna individual > 50 km OU km_total > 5x a soma direta viária das paradas:
-    // Dispara alerta crítico e sanitiza
-    const hasAbsurdLegInBatch = batchOrders.some((o) => (o.distance_km || 0) > 50)
-    if (
-      hasAbsurdLegInBatch ||
-      batchTelemetry.officialRealKm > Math.max(30, sumOutboundLegsKm * 5)
-    ) {
-      console.warn(
-        `[useCourierFuelMetrics] [B2] Trava de sanidade acionada para lote ${key}: km=${batchTelemetry.officialRealKm}, sumLegs=${sumOutboundLegsKm}, hasLeg>50=${hasAbsurdLegInBatch}. Limitando a valor coerente.`,
-      )
-      const sanitizedBatchKm = Number((Math.min(sumOutboundLegsKm, 25) + 4.5).toFixed(1))
-      batchTelemetry.officialRealKm = sanitizedBatchKm
     }
 
     if (batchOdometerKm > 0) {
@@ -880,9 +798,11 @@ export function calculateCourierFuelMetrics(params: {
       aggregatedLiters += batchLit
     } else {
       // Sem aprovações manuais: pega o valor canônico oficial do lote UMA única vez.
-      // Se algum pedido do lote tiver total_route_with_return_km > 0 registrado pelo otimizador de rota,
-      // usa-o canonicamente 1x para o lote (desconsiderando soma linha a linha).
-      // Caso contrário, usa batchTelemetry.officialRealKm.
+      // Prioridade máxima: km_viario_total gravado no route_batch_telemetry
+      const recordedBatch = canonicalBatchesMap.get(batchKey)
+      const recordedViarioKm = recordedBatch ? Number(recordedBatch.km_viario_total) || 0 : 0
+      const recordedOficialKm = recordedBatch ? Number(recordedBatch.km_oficial) || 0 : 0
+
       const batchTelem = batchTelemetryMap.get(batchKey)
       const maxRoadKmInBatch = batchOrders.reduce((max, ord) => {
         const roadKm =
@@ -890,10 +810,11 @@ export function calculateCourierFuelMetrics(params: {
         return Math.max(max, roadKm)
       }, 0)
 
-      const isChainedBatch = chainedPreviousBatches.has(batchKey)
       let canonicalBatchKm = 0
-      if (isChainedBatch && batchTelem?.officialRealKm) {
-        canonicalBatchKm = batchTelem.officialRealKm
+      if (recordedViarioKm > 0) {
+        canonicalBatchKm = Number(recordedViarioKm.toFixed(1))
+      } else if (recordedOficialKm > 0) {
+        canonicalBatchKm = Number(recordedOficialKm.toFixed(1))
       } else if (maxRoadKmInBatch > 0) {
         canonicalBatchKm = Number(maxRoadKmInBatch.toFixed(1))
       } else if (batchTelem?.officialRealKm) {
@@ -902,19 +823,15 @@ export function calculateCourierFuelMetrics(params: {
         canonicalBatchKm = Number(batchCalcs.reduce((sum, c) => sum + c.officialKm, 0).toFixed(1))
       }
 
-      // FUTURO: Desvio NUNCA entra em km ou combustível. Usar estritamente o km_oficial do lote
+      // Desvio NUNCA entra em km ou combustível. Usar estritamente o km_oficial do lote
       const batchDevKm = 0
-      // Garantir teto de coerência no GPS do lote caso telemetria bruta venha corrompida
-      let batchGpsKm = batchTelem ? batchTelem.totalGpsKm : 0
-      if (canonicalBatchKm > 0 && batchGpsKm > canonicalBatchKm * 2) {
-        batchGpsKm = Number((canonicalBatchKm * 1.15).toFixed(1))
-      }
-      if (batchTelem?.officialRealKm && batchTelem.officialRealKm > 0) {
-        // Se telemetria oficial do lote existe, ela reflete o km oficial pago (motor viário)
-        if (canonicalBatchKm <= 0 || canonicalBatchKm > batchTelem.officialRealKm * 2) {
-          canonicalBatchKm = Number(batchTelem.officialRealKm.toFixed(1))
-        }
-      }
+      // GPS gravado no lote para auditoria (Coluna B)
+      let batchGpsKm =
+        recordedBatch && typeof recordedBatch.km_gps_total === 'number'
+          ? Number(recordedBatch.km_gps_total)
+          : batchTelem
+            ? batchTelem.totalGpsKm
+            : 0
 
       const batchLit =
         !isBicycle && consumptionKml > 0
@@ -967,6 +884,7 @@ export function calculateCourierFuelMetrics(params: {
           approvalsMap,
           activeBaseCoords,
           isPostCutoffComputation: true,
+          telemetryBatches,
         })
         postCutoffSpent = allMetrics.totalSpent
       }
@@ -990,6 +908,7 @@ export function calculateCourierFuelMetrics(params: {
           approvalsMap,
           activeBaseCoords,
           isPostCutoffComputation: true,
+          telemetryBatches,
         })
         postCutoffSpent = postCutoffMetrics.totalSpent
       }
@@ -1065,6 +984,7 @@ export function useCourierFuelMetrics(params: {
     { approvedKm: number; justification?: string; status: 'approved' | 'rejected' | 'pending' }
   >
   activeBaseCoords?: { lat: number; lng: number } | null
+  telemetryBatches?: RouteBatchTelemetryRecord[]
 }): CourierFuelCalculationResult {
   const {
     courier,
@@ -1077,6 +997,7 @@ export function useCourierFuelMetrics(params: {
     carryOverBalance,
     approvalsMap,
     activeBaseCoords,
+    telemetryBatches,
   } = params
 
   return useMemo(() => {
@@ -1091,6 +1012,7 @@ export function useCourierFuelMetrics(params: {
       carryOverBalance,
       approvalsMap,
       activeBaseCoords,
+      telemetryBatches,
     })
   }, [
     courier,
@@ -1103,5 +1025,6 @@ export function useCourierFuelMetrics(params: {
     carryOverBalance,
     approvalsMap,
     activeBaseCoords,
+    telemetryBatches,
   ])
 }
