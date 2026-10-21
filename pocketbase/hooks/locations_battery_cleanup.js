@@ -5,7 +5,7 @@
  * Se battery_level for <= 0 ou 0, converte para null/ausente antes de persistir.
  */
 
-onRecordBeforeCreateRequest((e) => {
+onRecordCreateRequest((e) => {
   try {
     const bLevel = e.record.getInt('battery_level')
     if (bLevel <= 0) {
@@ -15,7 +15,7 @@ onRecordBeforeCreateRequest((e) => {
   e.next()
 }, 'locations')
 
-onRecordBeforeUpdateRequest((e) => {
+onRecordUpdateRequest((e) => {
   try {
     const bLevel = e.record.getInt('battery_level')
     if (bLevel <= 0) {
