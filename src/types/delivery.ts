@@ -446,6 +446,12 @@ export interface CourierFuelAccount {
   availableBalance?: number
   reachedAlertThreshold?: boolean
   averageLabel?: string
+  hasManualAdjustment?: boolean
+  manualAdjustmentKm?: number
+  manualAdjustmentFuelCost?: number
+  manualAdjustmentDeltaKm?: number
+  manualAdjustmentPeriodLabel?: string
+  rawOfficialKmBeforeAdjustment?: number
   todayAlertSent?: {
     id: string
     alert_date: string

@@ -211,6 +211,22 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
           advances: unifiedAccount.advances,
           calculationSource: unifiedAccount.calculationSource,
           carryOverBalance: unifiedAccount.carryOverBalance,
+          dailyAverage30d: unifiedAccount.dailyAverage30d,
+          spent30d: unifiedAccount.spent30d,
+          remainingDays: unifiedAccount.remainingDays,
+          remainingIntervalLabel: unifiedAccount.remainingIntervalLabel,
+          projectionRemainingMonth: unifiedAccount.projectionRemainingMonth,
+          suggestedRecharge: unifiedAccount.suggestedRecharge,
+          availableBalance: unifiedAccount.availableBalance,
+          reachedAlertThreshold: unifiedAccount.reachedAlertThreshold,
+          averageLabel: unifiedAccount.averageLabel,
+          hasManualAdjustment: unifiedAccount.hasManualAdjustment,
+          manualAdjustmentKm: unifiedAccount.manualAdjustmentKm,
+          manualAdjustmentFuelCost: unifiedAccount.manualAdjustmentFuelCost,
+          manualAdjustmentDeltaKm: unifiedAccount.manualAdjustmentDeltaKm,
+          manualAdjustmentPeriodLabel: unifiedAccount.manualAdjustmentPeriodLabel,
+          rawOfficialKmBeforeAdjustment: unifiedAccount.metrics?.rawOfficialKmBeforeAdjustment,
+          todayAlertSent: unifiedAccount.todayAlertSent,
         }
 
         return {
@@ -649,11 +665,12 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredAccounts.map(({ courier, metrics }) => (
+            {filteredAccounts.map(({ courier, metrics, unifiedAccount, fuelAccount }) => (
               <CourierFuelSummaryCard
                 key={courier.id}
                 metrics={metrics}
                 courier={courier}
+                account={unifiedAccount || fuelAccount}
                 onOpenHistoryModal={() => {
                   setSelectedCourierForHistory(courier)
                   setIsHistoryModalOpen(true)

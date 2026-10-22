@@ -1977,6 +1977,26 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   )}
                               </div>
 
+                              {/* Selo de Ajuste Manual se aplicado */}
+                              {acc.hasManualAdjustment && (
+                                <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 flex items-center justify-between gap-2 text-[11px]">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <Info className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                                    <span className="font-semibold text-amber-900 dark:text-amber-200 truncate">
+                                      Ajuste manual aplicado (
+                                      {acc.manualAdjustmentPeriodLabel || '01/10–22/10'})
+                                    </span>
+                                  </div>
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] px-1.5 py-0 font-bold border-amber-400 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 shrink-0 font-mono"
+                                  >
+                                    {acc.manualAdjustmentKm || 731} km (R${' '}
+                                    {(acc.manualAdjustmentFuelCost ?? totalSpentNum).toFixed(2)})
+                                  </Badge>
+                                </div>
+                              )}
+
                               {/* Paridade de Alerta por E-mail do Dia Civil */}
                               {acc.todayAlertSent && (
                                 <div className="p-2 rounded-lg bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900/60 flex items-center justify-between gap-2 text-[11px]">
@@ -2137,6 +2157,11 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   <strong className="text-slate-700 dark:text-slate-200">
                                     {totalRouteKmNum.toFixed(1)} km
                                   </strong>
+                                  {acc.hasManualAdjustment && (
+                                    <span className="block text-[8px] text-amber-600 dark:text-amber-400 font-medium text-right">
+                                      Ajuste manual
+                                    </span>
+                                  )}
                                 </span>
                               </div>
                               {/* Dica / Botão de clique para histórico */}
