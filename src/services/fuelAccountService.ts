@@ -58,6 +58,7 @@ export interface UnifiedCourierFuelAccount {
   manualAdjustmentFuelCost?: number
   manualAdjustmentDeltaKm?: number
   manualAdjustmentPeriodLabel?: string
+  rawOfficialKmBeforeAdjustment?: number
   todayAlertSent?: {
     id: string
     alert_date: string
@@ -703,9 +704,9 @@ export class FuelAccountService {
       manualAdjustmentFuelCost: canonicalTotals.manualAdjustmentFuelCost,
       manualAdjustmentDeltaKm: canonicalTotals.manualAdjustmentDeltaKm,
       manualAdjustmentPeriodLabel: canonicalTotals.manualAdjustmentPeriodLabel,
+      rawOfficialKmBeforeAdjustment: canonicalTotals.rawOfficialKmBeforeAdjustment,
     }
   }
-
   /**
    * Computa o carry-over de conta corrente acumulado até o mês anterior.
    * Regra inviolável:

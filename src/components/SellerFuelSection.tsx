@@ -225,7 +225,9 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
           manualAdjustmentFuelCost: unifiedAccount.manualAdjustmentFuelCost,
           manualAdjustmentDeltaKm: unifiedAccount.manualAdjustmentDeltaKm,
           manualAdjustmentPeriodLabel: unifiedAccount.manualAdjustmentPeriodLabel,
-          rawOfficialKmBeforeAdjustment: unifiedAccount.metrics?.rawOfficialKmBeforeAdjustment,
+          rawOfficialKmBeforeAdjustment:
+            unifiedAccount.rawOfficialKmBeforeAdjustment ??
+            unifiedAccount.metrics?.rawOfficialKmBeforeAdjustment,
           todayAlertSent: unifiedAccount.todayAlertSent,
         }
 

@@ -115,6 +115,12 @@ export interface CourierFuelCalculationResult {
   jointDeliveriesOrdersCount: number
   jointSavedKm: number
   jointSavedFuelCost: number
+  hasManualAdjustment?: boolean
+  manualAdjustmentKm?: number
+  manualAdjustmentFuelCost?: number
+  manualAdjustmentDeltaKm?: number
+  manualAdjustmentPeriodLabel?: string
+  rawOfficialKmBeforeAdjustment?: number
   openingBalance?: number
   cutoffDate?: string
   periodAdvances?: number
