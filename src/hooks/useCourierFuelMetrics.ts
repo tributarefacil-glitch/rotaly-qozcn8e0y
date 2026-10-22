@@ -611,6 +611,19 @@ export function calculateCourierFuelMetrics(params: {
     let fuelCost = batchTotalFuelCost
     let litersSpent = batchTotalLiters
 
+    // Presença de telemetria GPS real no lote:
+    // Se o lote possui telemetria real (via pings ou route_batch_telemetry status processed/yellow_flag/ok),
+    // todas as entregas do lote contam como tendo telemetria GPS real.
+    const recordedBatch = canonicalBatchesMap.get(key)
+    const hasBatchRealTelemetry = Boolean(
+      batchTelemetry.isRealTelemetry ||
+      (recordedBatch &&
+        (recordedBatch.status === 'processed' ||
+          recordedBatch.status === 'yellow_flag' ||
+          (typeof recordedBatch.pings_count === 'number' && recordedBatch.pings_count > 1) ||
+          (typeof recordedBatch.km_gps_total === 'number' && recordedBatch.km_gps_total > 0))),
+    )
+
     if (batchCount > 1) {
       // Rateio pro-rata: peso = max(roadDistFromBase(i), 0.8) + returnToBase(i)
       const totalBatchWeight = batchOrders.reduce((sum, b) => sum + computeOrderWeight(b), 0)
@@ -738,8 +751,8 @@ export function calculateCourierFuelMetrics(params: {
       totalGpsKm: Number(totalGpsKm.toFixed(1)),
       km_real_perna: kmRealPernaVal,
       discardedNoiseKm: batchTelemetry.discardedNoiseKm,
-      isRealTelemetry: batchTelemetry.isRealTelemetry,
-      telemetryStatus: batchTelemetry.telemetryStatus,
+      isRealTelemetry: hasBatchRealTelemetry,
+      telemetryStatus: hasBatchRealTelemetry ? 'suficiente' : batchTelemetry.telemetryStatus,
       telemetryPingsCount: batchTelemetry.telemetryPingsCount,
       hasReturnKm: batchTelemetry.hasReturnKm,
       fuelCost: Number(fuelCost.toFixed(2)),

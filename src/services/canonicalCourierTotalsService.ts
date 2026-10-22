@@ -56,6 +56,7 @@ export interface CanonicalCourierTotals {
       deviationEpisodes: number
       maxDeviationMeters: number
       isJointSecondary: boolean
+      isRealTelemetry: boolean
     }
   >
 }
@@ -280,6 +281,7 @@ export function calculateCanonicalCourierTotals(
       deviationEpisodes: number
       maxDeviationMeters: number
       isJointSecondary: boolean
+      isRealTelemetry: boolean
     }
   >()
 
@@ -379,6 +381,12 @@ export function calculateCanonicalCourierTotals(
       // Rateio por entrega dentro do lote para exibição nas linhas
       const orderCount = batchOrders.length
       if (orderCount > 0) {
+        const hasGps = Boolean(
+          batchRec.status === 'processed' ||
+          batchRec.status === 'yellow_flag' ||
+          (typeof batchRec.pings_count === 'number' && batchRec.pings_count > 1) ||
+          gps > 0,
+        )
         const shareKm = Number((kmOficial / orderCount).toFixed(1))
         const shareFuel = !isBicycle ? Number((batchFuelCost / orderCount).toFixed(2)) : 0
         batchOrders.forEach((bo) => {
@@ -388,6 +396,7 @@ export function calculateCanonicalCourierTotals(
             deviationEpisodes: episodesCount,
             maxDeviationMeters: batchMaxDevMeters,
             isJointSecondary: false,
+            isRealTelemetry: hasGps,
           })
         })
       }

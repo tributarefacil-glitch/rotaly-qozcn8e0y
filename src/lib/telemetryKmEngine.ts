@@ -572,12 +572,15 @@ export function calculateRealKmForOrder(params: {
   const plannedTotalKm = plannedBaseKm + plannedReturnKm
   const hasReturnKm = plannedReturnKm > 0
 
-  // 2. Janela de tempo desta entrega
+  // 2. Janela de tempo desta entrega / lote
   const { startTime, endTime } = getOrderTimeWindow(order, allCourierOrders)
 
   // 3. Filtrar pontos de GPS pertencentes a este entregador e janela de tempo
+  // CORREÇÃO TELEMETRIA CONTÍNUA DE LOTE:
+  // Se allCourierOrders contiver os pedidos do lote (ou se o lote tiver múltiplos pedidos),
+  // a janela de tempo já abrange o lote todo. Filtramos pontos do entregador dentro da janela calculada.
   const orderGpsRaw = allCourierLocations.filter((l) => {
-    if (l.user_id !== order.courier_id) return false
+    if (l.user_id !== order.courier_id && l.courier_id !== order.courier_id) return false
     const locTime = new Date(l.created).getTime()
     return locTime >= startTime && locTime <= endTime
   })

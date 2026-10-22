@@ -516,6 +516,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       carryOverBalance,
       approvalsMap,
       activeBaseCoords,
+      telemetryBatches: telemetryBatchesList,
     })
   }, [
     courier,
@@ -528,6 +529,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     carryOverBalance,
     approvalsMap,
     activeBaseCoords,
+    telemetryBatchesList,
   ])
 
   // Eventos de desvio e paradas do entregador para exibição na auditoria do modal:
@@ -560,16 +562,42 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     })
   }, [offRouteEvents, courier, activeBaseCoords])
 
-  // Processar itens detalhados de cada entrega utilizando o rateio consolidado do motor
+  // Processar itens detalhados de cada entrega utilizando os orderAllocations do motor canônico
   const historyItems: CourierDeliveryHistoryItem[] = useMemo(() => {
     if (!courier || !consolidatedMetrics) return []
 
-    // Mapear cada orderCalculation gerado pelo motor consolidado
+    // Calcular mapa de alocações canônicas sobre todos os pedidos elegíveis (rateio viário de lote com volta à base 1x)
+    const canonicalAll = calculateCanonicalCourierTotals({
+      courier: courier.id
+        ? courier
+        : ({ id: '', name: courier.name || 'Entregador' } as UserRecord),
+      telemetryBatches: telemetryBatchesList,
+      orders,
+      advances: allCourierAdvances,
+      settings: officialSettings || settings,
+      periodFilter: 'all',
+      approvalsMap,
+    })
+
+    // Mapear cada orderCalculation gerado pelo motor consolidado, alinhando km e combustível com canonicalTotals
     return consolidatedMetrics.orderCalculations.map((calc) => {
       const o = calc.order
-      const kmOficial = calc.officialKm
-      const liters = calc.litersSpent
-      const cost = calc.fuelCost
+
+      // Prioridade absoluta: alocação do motor canônico (rateio proporcional do km viário do lote, volta à base inclusa 1x)
+      const canonicalAlloc = canonicalAll.orderAllocations.get(o.id)
+      const kmOficial = canonicalAlloc ? canonicalAlloc.officialKm : calc.officialKm
+      const cost = canonicalAlloc ? canonicalAlloc.fuelCost : calc.fuelCost
+
+      const isBicycle =
+        fuelParams.category === 'bicicleta' ||
+        courier?.vehicle_type === 'bicicleta' ||
+        courier?.vehicle_type === 'bicycle'
+      const effectiveKml =
+        typeof courier?.consumption_kml === 'number' && courier.consumption_kml > 0
+          ? courier.consumption_kml
+          : fuelParams.consumptionKml || 30.0
+      const liters =
+        !isBicycle && effectiveKml > 0 ? Number((kmOficial / effectiveKml).toFixed(2)) : 0
 
       // Eventos associados a esta entrega específica
       const associatedEvents = courierEvents.filter(
@@ -580,7 +608,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
             ev.created <= (o.actual_arrival || o.updated || o.created)),
       )
       const offRouteCount = Math.max(
-        calc.offRouteCount,
+        canonicalAlloc?.deviationEpisodes ?? calc.offRouteCount,
         associatedEvents.filter((ev) => ev.event_type === 'route_deviation').length,
       )
       const unexpectedStopsCount = Math.max(
@@ -648,7 +676,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         statusLabel,
         statusColor,
         kmRodado: kmOficial,
-        isRealTelemetry: calc.isRealTelemetry,
+        isRealTelemetry: canonicalAlloc ? canonicalAlloc.isRealTelemetry : calc.isRealTelemetry,
         deviationKm: calc.deviationKm,
         totalGpsKm: calc.totalGpsKm,
         discardedNoiseKm: calc.discardedNoiseKm,
@@ -664,7 +692,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         unexpectedStopsCount,
         isJointDelivery: calc.isJointDelivery,
         isJointPrimary: calc.isJointPrimary,
-        isJointSecondary: calc.isJointSecondary,
+        isJointSecondary: canonicalAlloc ? canonicalAlloc.isJointSecondary : calc.isJointSecondary,
         jointGroupSize: calc.jointGroupSize,
         jointPrimaryTrackingCode: calc.jointPrimaryTrackingCode,
         jointPartnerTrackingCodes: calc.jointPartnerTrackingCodes,
@@ -674,7 +702,18 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
             : courierEvents.filter((ev) => ev.order_id === o.id),
       }
     })
-  }, [courier, consolidatedMetrics, courierEvents])
+  }, [
+    courier,
+    consolidatedMetrics,
+    courierEvents,
+    fuelParams,
+    telemetryBatchesList,
+    orders,
+    allCourierAdvances,
+    officialSettings,
+    settings,
+    approvalsMap,
+  ])
 
   // Aplicar filtros de período, status e busca
   const filteredItems = useMemo(() => {
@@ -1104,8 +1143,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 <span className="text-xs font-normal text-slate-400">km</span>
               </p>
               <span className="text-[10px] text-emerald-400/90 block mt-0.5 font-medium">
-                KM viário das paradas em vias reais (motor canônico de pagamento)
-              </span>
+                KM viário dos lotes (volta à base incluída)
+              </span>{' '}
             </div>
 
             {/* 4. Combustível Total Gasto */}

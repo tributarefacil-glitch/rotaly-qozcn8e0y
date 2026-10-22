@@ -410,7 +410,10 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         })
       })
 
-      // Rodar motor oficial para este entregador
+      // Rodar motor oficial para este entregador com lotes de telemetria canônica
+      const courierBatches = Array.from(batchTelemetryMap.values()).filter(
+        (b) => b.courier_id === courierId,
+      )
       const metrics = calculateCourierFuelMetrics({
         courier: courierObj,
         advances: [],
@@ -420,6 +423,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         settings,
         periodFilter: 'all',
         approvalsMap: motorApprovalsMap,
+        telemetryBatches: courierBatches,
       })
 
       // Também rodar sem aprovações para saber o valor original do trajeto viário oficial
@@ -431,6 +435,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         offRouteEvents,
         settings,
         periodFilter: 'all',
+        telemetryBatches: courierBatches,
       })
 
       const originalOrderMap = new Map<string, number>()
