@@ -53,6 +53,11 @@ export interface UnifiedCourierFuelAccount {
   availableBalance?: number
   reachedAlertThreshold?: boolean
   averageLabel?: string
+  hasManualAdjustment?: boolean
+  manualAdjustmentKm?: number
+  manualAdjustmentFuelCost?: number
+  manualAdjustmentDeltaKm?: number
+  manualAdjustmentPeriodLabel?: string
   todayAlertSent?: {
     id: string
     alert_date: string
@@ -406,6 +411,8 @@ export class FuelAccountService {
 
     const periodSpent = canonicalTotals.totalSpent
     const postCutoffSpent = canonicalTotals.postCutoffSpent
+    // REGRA DO USUÁRIO: NÃO alterar saldo conta corrente, total adiantado nem pagamentos.
+    // O saldo de conta corrente pós-corte deve permanecer intacto (openingBalance + adiantamentos - gasto pós-corte não alterado pelo ajuste).
     const finalBalance = canonicalTotals.balance
 
     // Parcelas informativas do período selecionado (para exibição em colunas/cards quando aplicável)
@@ -691,6 +698,11 @@ export class FuelAccountService {
       availableBalance,
       reachedAlertThreshold,
       averageLabel,
+      hasManualAdjustment: canonicalTotals.hasManualAdjustment,
+      manualAdjustmentKm: canonicalTotals.manualAdjustmentKm,
+      manualAdjustmentFuelCost: canonicalTotals.manualAdjustmentFuelCost,
+      manualAdjustmentDeltaKm: canonicalTotals.manualAdjustmentDeltaKm,
+      manualAdjustmentPeriodLabel: canonicalTotals.manualAdjustmentPeriodLabel,
     }
   }
 

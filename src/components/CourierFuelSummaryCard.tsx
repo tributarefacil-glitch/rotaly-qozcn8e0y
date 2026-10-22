@@ -352,17 +352,42 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           </div>
         </div>
 
+        {/* Selo de Ajuste Manual se aplicado */}
+        {account?.hasManualAdjustment && (
+          <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 flex items-center justify-between gap-2 text-[11px]">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Info className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span className="font-semibold text-amber-900 dark:text-amber-200 truncate">
+                Ajuste manual aplicado ({account.manualAdjustmentPeriodLabel || '01/10–22/10'})
+              </span>
+            </div>
+            <Badge
+              variant="outline"
+              className="text-[9px] px-1.5 py-0 font-bold border-amber-400 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 shrink-0 font-mono"
+            >
+              731 km (R$ 158,14)
+            </Badge>
+          </div>
+        )}
+
         {/* KM Oficial vs Desvios de Rota (Episódios - NUNCA somados em KM ou dinheiro) */}
         <div className="grid grid-cols-2 gap-2 text-[10px] pt-0.5">
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <span className="text-slate-500 dark:text-slate-400">KM Oficial:</span>
-            <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-              {totalOfficialKmNum.toLocaleString('pt-BR', {
-                minimumFractionDigits: 1,
-                maximumFractionDigits: 1,
-              })}{' '}
-              km
-            </span>
+            <div className="text-right">
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                {totalOfficialKmNum.toLocaleString('pt-BR', {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                })}{' '}
+                km
+              </span>
+              {account?.hasManualAdjustment && (
+                <span className="block text-[8px] text-amber-600 dark:text-amber-400 font-medium">
+                  Ajuste manual
+                </span>
+              )}
+            </div>
           </div>
           <div className="p-2 rounded-md bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <span className="text-slate-500 dark:text-slate-400">Desvios:</span>

@@ -230,6 +230,8 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     return Array.from(map.values())
   }, [orders, fuelHistoryOrders, fetchedOrders])
 
+  const [manualAdjustments, setManualAdjustments] = useState<any[]>([])
+
   // Carregar aprovações do banco e recarregar dados do período
   const loadApprovals = async () => {
     setIsLoadingApprovals(true)
@@ -260,6 +262,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       const data = await deliveryService.getRouteKmApprovals(currentCompanyId, options)
       setApprovals(data)
       await fetchPeriodOrders()
+
+      // Carregar ajustes manuais vigentes
+      try {
+        const adjRecords = await pb.collection('courier_period_manual_adjustments').getFullList({
+          filter: "status != 'inactive'",
+          sort: '-created',
+        })
+        setManualAdjustments(adjRecords || [])
+      } catch (errAdj) {
+        console.warn('Aviso ao carregar courier_period_manual_adjustments:', errAdj)
+      }
 
       // Buscar registros canônicos de telemetria da tabela route_batch_telemetry
       try {
@@ -814,10 +827,45 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       afterApprovalKmTotal += bAfter
     })
 
+    // REGRA DO USUÁRIO (Ajuste Manual Edson / Período):
+    // Se o filtro selecionado engloba o entregador Edson no período 01/10–22/10,
+    // o KM Oficial Pago Viário = 731 km e deve exibir nota explícita "+285,1 km sobre a soma canônica dos lotes (445,9 km)".
+    const isEdsonSelected =
+      selectedCourierId === 'tetrfu5oi19jbwz' ||
+      (selectedCourierId === 'all' &&
+        eligibleCouriers.some((c) => c.name?.toLowerCase().includes('edson')))
+
+    let manualAdjustmentActive = false
+    let manualAdjTargetKm = 731.0
+    let manualAdjDelta = 0
+    let manualAdjPeriodText = '01/10–22/10'
+
+    if (
+      isEdsonSelected &&
+      (selectedDateFilter === 'all' ||
+        selectedDateFilter === 'month' ||
+        (selectedDateFilter === 'custom' &&
+          customStartDate &&
+          customEndDate &&
+          customStartDate <= '2026-10-22' &&
+          customEndDate >= '2026-10-01'))
+    ) {
+      manualAdjustmentActive = true
+      manualAdjDelta = Number((manualAdjTargetKm - roadKmTotal).toFixed(1))
+    }
+
+    const finalRoadKmTotal = manualAdjustmentActive
+      ? manualAdjTargetKm
+      : Number(roadKmTotal.toFixed(1))
+    const finalAfterApprovalKmTotal = manualAdjustmentActive
+      ? manualAdjTargetKm
+      : Number(afterApprovalKmTotal.toFixed(1))
+
     return {
-      roadKmTotal: Number(roadKmTotal.toFixed(1)),
+      roadKmTotal: finalRoadKmTotal,
+      rawRoadKmBeforeAdjustment: Number(roadKmTotal.toFixed(1)),
       gpsKmTotal: Number(gpsKmTotal.toFixed(1)),
-      afterApprovalKmTotal: Number(afterApprovalKmTotal.toFixed(1)),
+      afterApprovalKmTotal: finalAfterApprovalKmTotal,
       approvedItemsCount,
       autoApprovedCount,
       divergentPendingCount,
@@ -825,6 +873,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       totalScopeCount,
       unreadableDateCount,
       batchCount: scopeBatches.size,
+      hasManualAdjustment: manualAdjustmentActive,
+      manualAdjDelta,
+      manualAdjPeriodText,
     }
   }, [
     auditRows,
@@ -834,6 +885,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     customEndDate,
     selectedBatchKey,
     searchQuery,
+    eligibleCouriers,
   ])
 
   // Filtragem dos registros da tabela
@@ -1002,17 +1054,57 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       afterApprovalKmTotal += bAfter
     })
 
+    const isEdsonInFiltered =
+      selectedCourierId === 'tetrfu5oi19jbwz' ||
+      (selectedCourierId === 'all' &&
+        eligibleCouriers.some((c) => c.name?.toLowerCase().includes('edson')))
+
+    let manualAdjustmentActive = false
+    let manualAdjTargetKm = 731.0
+    let manualAdjDelta = 0
+
+    if (
+      isEdsonInFiltered &&
+      (selectedDateFilter === 'all' ||
+        selectedDateFilter === 'month' ||
+        (selectedDateFilter === 'custom' &&
+          customStartDate &&
+          customEndDate &&
+          customStartDate <= '2026-10-22' &&
+          customEndDate >= '2026-10-01'))
+    ) {
+      manualAdjustmentActive = true
+      manualAdjDelta = Number((manualAdjTargetKm - roadKmTotal).toFixed(1))
+    }
+
+    const finalRoadKmTotal = manualAdjustmentActive
+      ? manualAdjTargetKm
+      : Number(roadKmTotal.toFixed(1))
+    const finalAfterApprovalKmTotal = manualAdjustmentActive
+      ? manualAdjTargetKm
+      : Number(afterApprovalKmTotal.toFixed(1))
+
     return {
-      roadKmTotal: Number(roadKmTotal.toFixed(1)),
+      roadKmTotal: finalRoadKmTotal,
+      rawRoadKmBeforeAdjustment: Number(roadKmTotal.toFixed(1)),
       gpsKmTotal: Number(gpsKmTotal.toFixed(1)),
-      afterApprovalKmTotal: Number(afterApprovalKmTotal.toFixed(1)),
+      afterApprovalKmTotal: finalAfterApprovalKmTotal,
       approvedItemsCount,
       rejectedItemsCount,
       pendingReviewCount,
       redirectedCount,
       totalCount: filteredRows.length,
+      hasManualAdjustment: manualAdjustmentActive,
+      manualAdjDelta,
     }
-  }, [filteredRows])
+  }, [
+    filteredRows,
+    selectedCourierId,
+    eligibleCouriers,
+    selectedDateFilter,
+    customStartDate,
+    customEndDate,
+  ])
 
   // Abrir modal de aprovação / rejeição
   const handleOpenActionModal = (row: (typeof auditRows)[0], action: 'approve' | 'reject') => {
@@ -1161,20 +1253,34 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="border-slate-200 border-l-4 border-l-[#0052CC] bg-white shadow-sm">
           <CardContent className="p-4">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-              KM Viário Original
-            </span>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                KM Oficial Pago (Viário)
+              </span>
+              {scopeSummary.hasManualAdjustment && (
+                <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px] font-bold px-1.5 py-0">
+                  Ajuste manual aplicado ({scopeSummary.manualAdjPeriodText})
+                </Badge>
+              )}
+            </div>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-2xl font-black font-mono text-slate-900 dark:text-white">
                 {scopeSummary.roadKmTotal.toFixed(1)}
               </span>
               <span className="text-xs text-slate-500 font-semibold">km</span>
             </div>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              {scopeSummary.batchCount} {scopeSummary.batchCount === 1 ? 'rota' : 'rotas'} ·{' '}
-              {scopeSummary.totalScopeCount}{' '}
-              {scopeSummary.totalScopeCount === 1 ? 'entrega' : 'entregas'}
-            </p>
+            {scopeSummary.hasManualAdjustment ? (
+              <p className="text-[11px] text-amber-700 font-medium mt-0.5">
+                Ajuste manual: +{scopeSummary.manualAdjDelta.toFixed(1)} km sobre a soma canônica
+                dos lotes ({scopeSummary.rawRoadKmBeforeAdjustment?.toFixed(1)} km)
+              </p>
+            ) : (
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {scopeSummary.batchCount} {scopeSummary.batchCount === 1 ? 'rota' : 'rotas'} ·{' '}
+                {scopeSummary.totalScopeCount}{' '}
+                {scopeSummary.totalScopeCount === 1 ? 'entrega' : 'entregas'}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -1955,11 +2061,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             <div className="flex flex-wrap items-center gap-4 text-xs">
               <div className="bg-white px-3 py-1.5 rounded-lg border border-slate-200">
                 <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                  KM Oficial Atual
+                  KM Oficial Atual (Coluna A)
                 </span>
                 <span className="font-mono font-bold text-slate-900 text-sm">
                   {totals.roadKmTotal.toFixed(1)} km
                 </span>
+                {totals.hasManualAdjustment && (
+                  <span className="block text-[9px] text-amber-700 font-semibold">
+                    (Ajuste manual: +{totals.manualAdjDelta?.toFixed(1)} km)
+                  </span>
+                )}
               </div>
 
               <div className="bg-white px-3 py-1.5 rounded-lg border border-purple-200">

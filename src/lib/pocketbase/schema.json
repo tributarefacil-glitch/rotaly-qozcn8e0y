@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-22T03:11:52.396Z",
+  "generatedAt": "2026-10-22T03:46:49.913Z",
   "collections": [
     {
       "name": "users",
@@ -2850,6 +2850,87 @@
         "CREATE UNIQUE INDEX idx_batch_telemetry_key ON route_batch_telemetry (route_batch_key)",
         "CREATE INDEX idx_batch_telemetry_courier ON route_batch_telemetry (courier_id, created DESC)",
         "CREATE INDEX idx_batch_telemetry_created ON route_batch_telemetry (created DESC)"
+      ]
+    },
+    {
+      "name": "courier_period_manual_adjustments",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')",
+        "update": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')",
+        "delete": "@request.auth.id != '' && (@request.auth.role = 'master' || @request.auth.role = 'admin')"
+      },
+      "fields": [
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "periodo_inicio",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "periodo_fim",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "km_manual",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "fuel_cost",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "origem",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["active", "inactive"]
+        },
+        {
+          "name": "justificativa",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_manual_adj_courier ON courier_period_manual_adjustments (courier_id)",
+        "CREATE INDEX idx_manual_adj_dates ON courier_period_manual_adjustments (periodo_inicio, periodo_fim)"
       ]
     }
   ]

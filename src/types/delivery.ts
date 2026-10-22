@@ -713,6 +713,20 @@ export interface TelemetryLegData {
   address?: string
 }
 
+export interface CourierPeriodManualAdjustmentRecord extends RecordModel {
+  courier_id: string
+  periodo_inicio: string
+  periodo_fim: string
+  km_manual: number
+  fuel_cost?: number
+  origem: string
+  status: 'active' | 'inactive' | string
+  justificativa?: string
+  expand?: {
+    courier_id?: UserRecord
+  }
+}
+
 export interface RouteBatchTelemetryRecord extends RecordModel {
   route_batch_key: string
   courier_id: string

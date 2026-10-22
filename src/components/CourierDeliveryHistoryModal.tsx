@@ -928,6 +928,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       jointConsolidatedCount,
       jointSavedKm: Number(jointSavedKm.toFixed(1)),
       jointSavedFuelCost: Number(jointSavedFuelCost.toFixed(2)),
+      hasManualAdjustment: canonicalCalculation.hasManualAdjustment,
+      manualAdjustmentKm: canonicalCalculation.manualAdjustmentKm,
+      manualAdjustmentFuelCost: canonicalCalculation.manualAdjustmentFuelCost,
+      manualAdjustmentDeltaKm: canonicalCalculation.manualAdjustmentDeltaKm,
+      manualAdjustmentPeriodLabel: canonicalCalculation.manualAdjustmentPeriodLabel,
+      rawOfficialKmBeforeAdjustment: canonicalCalculation.rawOfficialKmBeforeAdjustment,
     }
   }, [
     allCourierAdvances,
@@ -992,6 +998,31 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
           : '"Individual"',
       item.isJointSecondary ? '"km já contabilizado na entrega conjunta"' : '""',
     ])
+
+    // Se houver ajuste manual no período, adicionar linha para que a soma feche exatamente no total do período
+    if (metricsSummary.hasManualAdjustment && metricsSummary.manualAdjustmentDeltaKm) {
+      const deltaKm = metricsSummary.manualAdjustmentDeltaKm
+      const deltaFuel = (deltaKm / fuelParams.consumptionKml) * fuelParams.pricePerLiter
+      const deltaLiters = deltaKm / fuelParams.consumptionKml
+      rows.push([
+        'AJUSTE-MANUAL',
+        `"${metricsSummary.manualAdjustmentPeriodLabel || '01/10–22/10'}"`,
+        '"Ajuste manual do período"',
+        '"Ajuste manual de km determinado pelo administrador"',
+        '"Aprovado"',
+        deltaKm.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+        '0',
+        '0,0',
+        '0.00',
+        'Ajuste Manual Admin',
+        deltaFuel.toFixed(2),
+        deltaLiters.toFixed(2),
+        '0',
+        '0',
+        '"Ajuste Manual"',
+        '"Ajuste manual do período para fechar o total de 731 km"',
+      ])
+    }
 
     const csvContent =
       'data:text/csv;charset=utf-8,\uFEFF' +
@@ -1136,16 +1167,30 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 </span>
                 <Navigation className="h-4 w-4 text-[#FF6B35]" />
               </div>
-              <p className="text-xl sm:text-2xl font-black font-mono text-white mt-1">
-                {metricsSummary.totalKm.toLocaleString('pt-BR', {
-                  minimumFractionDigits: 1,
-                  maximumFractionDigits: 1,
-                })}{' '}
-                <span className="text-xs font-normal text-slate-400">km</span>
-              </p>
-              <span className="text-[10px] text-emerald-400/90 block mt-0.5 font-medium">
-                KM viário dos lotes (volta à base incluída)
-              </span>{' '}
+              <div className="flex items-baseline gap-2 mt-1">
+                <p className="text-xl sm:text-2xl font-black font-mono text-white">
+                  {metricsSummary.totalKm.toLocaleString('pt-BR', {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                  })}{' '}
+                  <span className="text-xs font-normal text-slate-400">km</span>
+                </p>
+                {metricsSummary.hasManualAdjustment && (
+                  <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[9px] px-1.5 py-0 font-bold">
+                    Ajuste manual aplicado ({metricsSummary.manualAdjustmentPeriodLabel})
+                  </Badge>
+                )}
+              </div>
+              {metricsSummary.hasManualAdjustment ? (
+                <span className="text-[10px] text-amber-400/90 block mt-0.5 font-medium">
+                  +{metricsSummary.manualAdjustmentDeltaKm?.toFixed(1)} km sobre a soma dos lotes (
+                  {metricsSummary.rawOfficialKmBeforeAdjustment?.toFixed(1)} km)
+                </span>
+              ) : (
+                <span className="text-[10px] text-emerald-400/90 block mt-0.5 font-medium">
+                  KM viário dos lotes (volta à base incluída)
+                </span>
+              )}
             </div>
 
             {/* 4. Combustível Total Gasto */}
@@ -1157,9 +1202,16 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                 </span>
                 <Fuel className="h-4 w-4 text-amber-400" />
               </div>
-              <p className="text-xl sm:text-2xl font-black font-mono text-amber-400 mt-1">
-                R$ {metricsSummary.totalFuelCost.toFixed(2)}
-              </p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <p className="text-xl sm:text-2xl font-black font-mono text-amber-400">
+                  R$ {metricsSummary.totalFuelCost.toFixed(2)}
+                </p>
+                {metricsSummary.hasManualAdjustment && (
+                  <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[9px] px-1.5 py-0 font-bold">
+                    Ajuste manual
+                  </Badge>
+                )}
+              </div>
               <span className="text-[10px] text-slate-400 block mt-0.5">
                 ~{metricsSummary.totalLiters} L consumidos
               </span>
@@ -1389,13 +1441,76 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1E2B58]/60 text-slate-200">
-                  {filteredItems.length === 0 ? (
+                  {filteredItems.length === 0 && !metricsSummary.hasManualAdjustment ? (
                     <tr>
                       <td colSpan={9} className="py-8 text-center text-slate-400">
                         Nenhuma entrega encontrada para os filtros selecionados.
                       </td>
                     </tr>
                   ) : (
+                    <>
+                      {metricsSummary.hasManualAdjustment && (
+                        <tr className="bg-amber-950/20 border-b border-amber-500/30">
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-amber-300">
+                            {metricsSummary.manualAdjustmentPeriodLabel || '01/10–22/10'}
+                            <span className="block text-[10px] text-amber-400/80">
+                              Período Mensal
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-1.5">
+                              <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[10px] font-bold">
+                                Ajuste manual do período
+                              </Badge>
+                            </div>
+                            <span className="text-[11px] text-amber-200/90 font-medium block">
+                              Ajuste manual determinado pelo administrador (+
+                              {metricsSummary.manualAdjustmentDeltaKm?.toFixed(1)} km para fechar
+                              731 km)
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] font-bold border-amber-500/40 text-amber-300 bg-amber-500/10"
+                            >
+                              Aprovado Admin
+                            </Badge>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-300">
+                            +{metricsSummary.manualAdjustmentDeltaKm?.toFixed(1)} km
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <span className="font-mono font-bold text-amber-400 block">
+                              R${' '}
+                              {(
+                                ((metricsSummary.manualAdjustmentDeltaKm || 0) /
+                                  fuelParams.consumptionKml) *
+                                fuelParams.pricePerLiter
+                              ).toFixed(2)}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              ~
+                              {(
+                                (metricsSummary.manualAdjustmentDeltaKm || 0) /
+                                fuelParams.consumptionKml
+                              ).toFixed(2)}{' '}
+                              L
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center text-slate-500">-</td>
+                          <td className="py-2.5 px-3 text-center text-slate-500 font-mono">
+                            0 ep.
+                          </td>
+                          <td className="py-2.5 px-3 text-center text-slate-500">-</td>
+                          <td className="py-2.5 px-3 text-right text-slate-500 text-[10px]">
+                            Ajuste Global
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  )}
+                  {filteredItems.length > 0 &&
                     filteredItems.map((item) => (
                       <tr
                         key={item.order.id}
@@ -1569,8 +1684,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                           </Button>
                         </td>
                       </tr>
-                    ))
-                  )}
+                    ))}
                 </tbody>
               </table>
             </div>
