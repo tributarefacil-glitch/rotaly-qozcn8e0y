@@ -869,7 +869,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     const totalLiters =
       !isBicycle && effectiveKml > 0 ? Number((totalKm / effectiveKml).toFixed(2)) : 0
 
-    const totalDeviations = canonicalCalculation.deviationEpisodesCount
+    const totalDeviations = filteredItems.reduce((acc, i) => acc + i.offRouteCount, 0)
     const totalStops = filteredItems.reduce((acc, i) => acc + i.unexpectedStopsCount, 0)
 
     const jointSavedKm = jointSecondaryItems.reduce((sum, item) => {
@@ -912,7 +912,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       0,
     )
 
-    const saldoContaCorrenteInvariante = canonicalCalculation.balance
+    const saldoContaCorrenteInvariante =
+      openingBal + totalAdvancesAllPostCutoff - totalFuelSpentAllPostCutoff
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
