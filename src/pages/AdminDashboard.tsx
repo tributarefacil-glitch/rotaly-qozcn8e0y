@@ -117,6 +117,7 @@ import {
 } from '@/lib/operationalWindow'
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
+import { getCanonicalCourierBalance } from '@/services/canonicalCourierTotalsService'
 import type {
   OrderRecord,
   UserRecord,
@@ -1862,10 +1863,22 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     {currentFuelAccounts
                       .filter((acc) => acc && acc.courier && acc.courier.id)
                       .map((acc) => {
-                        const balanceNum = Number(acc?.balance) || 0
-                        const totalAdvancesNum = Number(acc?.totalAdvances) || 0
-                        const totalSpentNum = Number(acc?.totalSpent) || 0
-                        const totalRouteKmNum = Number(acc?.totalRouteKm) || 0
+                        // FONTE ÚNICA CANÔNICA DO SALDO DO CARD:
+                        // O card do Admin Dashboard chama getCanonicalCourierBalance,
+                        // garantindo identidade com o modal e com o card do entregador.
+                        const canonicalBal = getCanonicalCourierBalance({
+                          courier: acc.courier,
+                          periodFilter: fuelPeriodFilter,
+                          telemetryBatches,
+                          orders: activeFuelOrdersPool,
+                          advances: fuelAdvances,
+                          settings,
+                        })
+
+                        const balanceNum = canonicalBal.saldo
+                        const totalAdvancesNum = canonicalBal.totalAdvances
+                        const totalSpentNum = canonicalBal.combustivel
+                        const totalRouteKmNum = canonicalBal.kmOficial
                         const isPositive = balanceNum >= 0
                         const courierName = String(acc?.courier?.name || 'Entregador')
                         const courierVehicleType = acc?.courier?.vehicle_type
@@ -1978,21 +1991,24 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                               </div>
 
                               {/* Selo de Ajuste Manual se aplicado */}
-                              {acc.hasManualAdjustment && (
+                              {canonicalBal.hasManualAdjustment && (
                                 <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 flex items-center justify-between gap-2 text-[11px]">
                                   <div className="flex items-center gap-1.5 min-w-0">
                                     <Info className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
                                     <span className="font-semibold text-amber-900 dark:text-amber-200 truncate">
                                       Ajuste manual aplicado (
-                                      {acc.manualAdjustmentPeriodLabel || '01/10–22/10'})
+                                      {canonicalBal.manualAdjustmentPeriodLabel || '01/10–22/10'})
                                     </span>
                                   </div>
                                   <Badge
                                     variant="outline"
                                     className="text-[9px] px-1.5 py-0 font-bold border-amber-400 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 shrink-0 font-mono"
                                   >
-                                    {acc.manualAdjustmentKm || 731} km (R${' '}
-                                    {(acc.manualAdjustmentFuelCost ?? totalSpentNum).toFixed(2)})
+                                    {canonicalBal.manualAdjustmentKm || 731} km (R${' '}
+                                    {(
+                                      canonicalBal.manualAdjustmentFuelCost ?? totalSpentNum
+                                    ).toFixed(2)}
+                                    )
                                   </Badge>
                                 </div>
                               )}
@@ -2055,7 +2071,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                     {Number(acc?.advanceCount) || 0} adiantamento(s)
                                   </span>
                                   <span className="text-[10px] text-slate-400 block">
-                                    {Number(acc?.deliveriesCount) || 0} entregas no período
+                                    {Number(canonicalBal.entregas || acc?.deliveriesCount) || 0}{' '}
+                                    entregas no período
                                   </span>
                                 </div>
                               </div>
@@ -2088,7 +2105,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   <span className="text-[9px] text-slate-400 block mt-0.5">
                                     {isBicycle
                                       ? 'Telemetria apurada'
-                                      : `${totalRouteKmNum.toFixed(1)} km • ${Number(acc?.deliveriesCount) || 0} entregas`}
+                                      : `${totalRouteKmNum.toFixed(1)} km • ${Number(canonicalBal.entregas || acc?.deliveriesCount) || 0} entregas`}
                                   </span>
                                 </div>
                               </div>

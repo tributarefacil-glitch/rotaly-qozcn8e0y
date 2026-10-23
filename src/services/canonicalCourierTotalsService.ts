@@ -68,6 +68,42 @@ export interface CanonicalCourierTotals {
   rawOfficialKmBeforeAdjustment?: number
 }
 
+export interface CanonicalCourierBalanceResult {
+  kmOficial: number
+  combustivel: number
+  saldo: number
+  entregas: number
+  rotas: number
+  totalOfficialKm: number
+  fuelCost: number
+  balance: number
+  deliveriesCount: number
+  batchesCount: number
+  openingBalance: number
+  totalAdvances: number
+  postCutoffAdvances: number
+  postCutoffSpent: number
+  hasManualAdjustment?: boolean
+  manualAdjustmentKm?: number
+  manualAdjustmentFuelCost?: number
+  manualAdjustmentPeriodLabel?: string
+}
+
+export interface GetCanonicalCourierParams {
+  courierId?: string
+  courier?: UserRecord | null
+  periodo?: 'all' | 'today' | 'week' | 'month' | 'custom'
+  periodFilter?: 'all' | 'today' | 'week' | 'month' | 'custom'
+  customStartDate?: string
+  customEndDate?: string
+  telemetryBatches?: RouteBatchTelemetryRecord[]
+  orders?: OrderRecord[]
+  advances?: FuelAdvanceRecord[]
+  settings?: Partial<AppSettingsRecord> | null
+  approvalsMap?: Map<string, { approvedKm: number; status: 'approved' | 'rejected' | 'pending' }>
+  manualAdjustments?: CourierPeriodManualAdjustmentRecord[]
+}
+
 export interface CalculateCanonicalTotalsParams {
   courier: UserRecord
   telemetryBatches?: RouteBatchTelemetryRecord[]
@@ -535,5 +571,129 @@ export function calculateCanonicalCourierTotals(
     manualAdjustmentDeltaKm: appliesManualAdjustment ? manualAdjDeltaKm : undefined,
     manualAdjustmentPeriodLabel: appliesManualAdjustment ? manualAdjPeriodLabel : undefined,
     rawOfficialKmBeforeAdjustment: appliesManualAdjustment ? rawOfficialKmPeriod : undefined,
+  }
+}
+
+/**
+ * Normaliza os parâmetros de chamada para aceitar tanto a assinatura:
+ * (courierId, periodo, options) quanto um único objeto de configuração.
+ */
+function resolveCanonicalParams(
+  courierOrId: string | UserRecord | GetCanonicalCourierParams | null | undefined,
+  periodo?: 'all' | 'today' | 'week' | 'month' | 'custom' | GetCanonicalCourierParams,
+  extraParams?: Partial<GetCanonicalCourierParams>,
+): CalculateCanonicalTotalsParams {
+  let courier: UserRecord
+  let periodFilter: 'all' | 'today' | 'week' | 'month' | 'custom' = 'month'
+  let rest: Partial<GetCanonicalCourierParams> = {}
+
+  const isParamsObject =
+    typeof courierOrId === 'object' &&
+    courierOrId !== null &&
+    !('collectionId' in courierOrId && !('courier' in courierOrId || 'courierId' in courierOrId)) &&
+    ('periodo' in courierOrId ||
+      'periodFilter' in courierOrId ||
+      'courier' in courierOrId ||
+      'courierId' in courierOrId ||
+      'orders' in courierOrId)
+
+  if (isParamsObject) {
+    const p = courierOrId as GetCanonicalCourierParams
+    courier =
+      p.courier ||
+      (p.courierId
+        ? ({ id: p.courierId, name: 'Entregador' } as UserRecord)
+        : ({ id: '', name: 'Entregador' } as UserRecord))
+    periodFilter = p.periodo || p.periodFilter || 'month'
+    rest = p
+  } else {
+    if (typeof courierOrId === 'string') {
+      courier = { id: courierOrId, name: 'Entregador' } as UserRecord
+    } else if (courierOrId && typeof courierOrId === 'object' && 'id' in courierOrId) {
+      courier = courierOrId as UserRecord
+    } else {
+      courier = { id: '', name: 'Entregador' } as UserRecord
+    }
+
+    if (typeof periodo === 'string') {
+      periodFilter = periodo
+    } else if (typeof periodo === 'object' && periodo !== null) {
+      rest = periodo
+      periodFilter = periodo.periodo || periodo.periodFilter || 'month'
+    }
+
+    if (extraParams) {
+      rest = { ...rest, ...extraParams }
+    }
+  }
+
+  if (rest.courier) {
+    courier = rest.courier
+  } else if (rest.courierId && !courier.id) {
+    courier = { id: rest.courierId, name: 'Entregador' } as UserRecord
+  }
+
+  return {
+    courier,
+    telemetryBatches: rest.telemetryBatches || [],
+    orders: rest.orders || [],
+    advances: rest.advances || [],
+    settings: rest.settings || null,
+    periodFilter,
+    customStartDate: rest.customStartDate,
+    customEndDate: rest.customEndDate,
+    approvalsMap: rest.approvalsMap,
+    manualAdjustments: rest.manualAdjustments || [],
+  }
+}
+
+/**
+ * FONTE CANÔNICA DE TOTAIS DO ENTREGADOR:
+ * Exporta os totais oficiais do canonicalCourierTotalsService.
+ */
+export function getCanonicalCourierTotals(
+  courierOrParams: string | UserRecord | GetCanonicalCourierParams | null | undefined,
+  periodo?: 'all' | 'today' | 'week' | 'month' | 'custom' | GetCanonicalCourierParams,
+  extraParams?: Partial<GetCanonicalCourierParams>,
+): CanonicalCourierTotals {
+  const params = resolveCanonicalParams(courierOrParams, periodo, extraParams)
+  return calculateCanonicalCourierTotals(params)
+}
+
+/**
+ * FONTE ÚNICA CANÔNICA DO SALDO DO ENTREGADOR:
+ * Calcula o saldo UMA vez com a fórmula canônica:
+ * saldoAbertura + adiantamentosPósCorte − combustívelPósCorte,
+ * usando os totais canônicos do serviço (route_batch com km_viario_total,
+ * ajuste manual do período quando existir, combustível = km ÷ 30 × R$ 6,49 para moto, R$ 0 para bicicleta).
+ * Retorna { kmOficial, combustivel, saldo, entregas, rotas } e aliases compatíveis.
+ */
+export function getCanonicalCourierBalance(
+  courierOrParams: string | UserRecord | GetCanonicalCourierParams | null | undefined,
+  periodo?: 'all' | 'today' | 'week' | 'month' | 'custom' | GetCanonicalCourierParams,
+  extraParams?: Partial<GetCanonicalCourierParams>,
+): CanonicalCourierBalanceResult {
+  const totals = getCanonicalCourierTotals(courierOrParams, periodo, extraParams)
+
+  return {
+    kmOficial: totals.totalOfficialKm,
+    combustivel: totals.fuelCost,
+    saldo: totals.balance,
+    entregas: totals.deliveriesCount,
+    rotas: totals.batchesCount,
+    // Aliases para conveniência e compatibilidade direta:
+    totalOfficialKm: totals.totalOfficialKm,
+    fuelCost: totals.fuelCost,
+    balance: totals.balance,
+    deliveriesCount: totals.deliveriesCount,
+    batchesCount: totals.batchesCount,
+    openingBalance: totals.openingBalance,
+    totalAdvances: totals.totalAdvances,
+    postCutoffAdvances: totals.postCutoffAdvances,
+    postCutoffSpent: totals.postCutoffSpent,
+    hasManualAdjustment: totals.hasManualAdjustment,
+    manualAdjustmentKm: totals.manualAdjustmentKm,
+    manualAdjustmentFuelCost: totals.manualAdjustmentFuelCost,
+    manualAdjustmentPeriodLabel: totals.manualAdjustmentPeriodLabel,
   }
 }

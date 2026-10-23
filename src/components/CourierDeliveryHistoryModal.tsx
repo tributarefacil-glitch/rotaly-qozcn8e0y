@@ -50,7 +50,10 @@ import type {
   RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 import { deliveryService } from '@/services/deliveryService'
-import { calculateCanonicalCourierTotals } from '@/services/canonicalCourierTotalsService'
+import {
+  calculateCanonicalCourierTotals,
+  getCanonicalCourierBalance,
+} from '@/services/canonicalCourierTotalsService'
 import { fuelAccountService } from '@/services/fuelAccountService'
 import { DEVIATION_THRESHOLD_METERS, haversineDistanceMeters } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
@@ -883,37 +886,23 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
           return sum + (pKm / effectiveKml) * effectivePrice
         }, 0)
 
-    // ITEM (5) SALDO FIXO NO MODAL:
-    // As métricas de período (km oficial, combustível, entregas, desvios, economia) respondem ao periodFilter.
-    // O "Saldo da Conta Corrente" passa a ser calculado sobre TODO o histórico pós-corte
-    // (allCourierAdvances com created >= cutoff_date e pedidos com created >= cutoff_date):
-    // abertura + adiantamentos reais pós-corte (regra 1a) − gasto de combustível pós-corte, invariante ao filtro.
-    // Mesma fórmula canônica do fuelAccountService.ts.
-    const allPostCutoffAdvances = allCourierAdvances.filter((a) => {
-      if (a.status === 'cancelled') return false
-      if (a.entry_type === 'balance_adjustment') return false
-      if (a.entry_type && a.entry_type !== 'advance') return false
-      if (hasCutoff && !isAdvancePostCutoff(a.date || a.created, cutoffDateStr)) return false
-      return true
+    // FONTE ÚNICA CANÔNICA DO SALDO (getCanonicalCourierBalance):
+    // Substitui a fórmula de saldo local do modal pela chamada canônica única.
+    // Card e modal exibem exatamente o mesmo valor da função getCanonicalCourierBalance.
+    const canonicalBalance = getCanonicalCourierBalance({
+      courier:
+        courier && courier.id
+          ? courier
+          : ({ id: '', name: courier?.name || 'Entregador' } as UserRecord),
+      telemetryBatches: telemetryBatchesList,
+      orders: orders || filteredItems.map((fi) => fi.order),
+      advances: allCourierAdvances,
+      settings: officialSettings || settings,
+      periodFilter,
+      customStartDate,
+      customEndDate,
+      approvalsMap,
     })
-    const totalAdvancesAllPostCutoff = allPostCutoffAdvances.reduce(
-      (s, a) => s + (Number(a.amount) || 0),
-      0,
-    )
-
-    // Gasto total de combustível de todas as entregas pós-corte calculadas pelo motor (historyItems é periodFilter='all')
-    const allPostCutoffHistoryOrders = historyItems.filter((i) => {
-      if (!hasCutoff) return true
-      const orderTs = new Date(i.order.created).getTime()
-      return orderTs >= cutoffTime
-    })
-    const totalFuelSpentAllPostCutoff = allPostCutoffHistoryOrders.reduce(
-      (acc, i) => acc + i.fuelCost,
-      0,
-    )
-
-    const saldoContaCorrenteInvariante =
-      openingBal + totalAdvancesAllPostCutoff - totalFuelSpentAllPostCutoff
 
     return {
       totalKm: Number(totalKm.toFixed(1)),
@@ -921,7 +910,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       totalLiters: Number(totalLiters.toFixed(2)),
       totalDeviations,
       totalStops,
-      saldoContaCorrente: Number(saldoContaCorrenteInvariante.toFixed(2)),
+      saldoContaCorrente: Number(canonicalBalance.saldo.toFixed(2)),
       totalAdiantado: Number(totalAdiantado.toFixed(2)),
       totalDeliveries: filteredItems.length,
       carryOverBalance: Number(openingBal.toFixed(2)),

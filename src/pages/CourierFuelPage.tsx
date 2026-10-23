@@ -311,15 +311,17 @@ export default function CourierFuelPage() {
 
         {/* COMPONENTE COMPARTILHADO: CARD DE CONTA CORRENTE (IDENTICO AO ADMIN) */}
         <CourierFuelSummaryCard
-          metrics={periodFilter === 'month' ? currentMonthMetrics : metrics}
+          metrics={metrics}
           courier={user}
-          account={fuelAccount}
+          account={metrics.fuelAccount || fuelAccount}
           periodLabel={
             periodFilter === 'today'
               ? 'Hoje'
               : periodFilter === 'month'
-                ? 'Mês (mês corrente)'
-                : 'Total desde o início (saldo acumulado)'
+                ? 'Este Mês'
+                : periodFilter === 'week'
+                  ? 'Últimos 7 dias'
+                  : 'Total desde o início'
           }
           onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
           subtitle="Valores 100% sincronizados com o motor oficial da contabilidade do gestor"

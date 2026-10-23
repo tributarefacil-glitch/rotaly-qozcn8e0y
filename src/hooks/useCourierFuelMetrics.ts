@@ -19,18 +19,17 @@ import {
 import { isSuspectPin } from '@/lib/geo'
 import { MapDataService } from '@/lib/mapDataService'
 import { buildJointDeliveryMetaMap } from '@/lib/multiDeliveryDetector'
-import {
-  deriveRouteBatchKey,
-  getMergedRouteBatchKey,
-  groupOrdersByRouteBatch,
-} from '@/lib/routeBatchHelper'
+import { deriveRouteBatchKey, groupOrdersByRouteBatch } from '@/lib/routeBatchHelper'
 import {
   getOperationalWindow,
   isAdvancePostCutoff,
   isCurrentMonthInTz,
-  isOrderInPeriod,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
+import {
+  getCanonicalCourierTotals,
+  getCanonicalCourierBalance,
+} from '@/services/canonicalCourierTotalsService'
 
 export interface CourierOrderTelemetryCalculation {
   order: OrderRecord
@@ -512,60 +511,36 @@ export function calculateCourierFuelMetrics(params: {
     batchTelemetryMap.set(key, batchTelemetry)
   })
 
-  let totalOfficialKm = 0
-  let totalDeviationKm = 0
-  let totalOdometerKm = 0
-  let totalSpent = 0
-  let totalLiters = 0
-
-  // Se houver múltiplos pedidos na mesma rota, distribuímos proporcionalmente o KM da rota inteira
-  // ou atribuímos a cada pedido de modo que a soma do lote corresponda exatamente ao KM real da rota inteira (Base -> Entregas -> Base).
   const isBicycle = category === 'bicicleta'
 
-  // Helper para peso individual da entrega no rateio da rota:
-  // Regra oficial: ida proporcional ao trecho (distance_km) + retorno rateado uma vez.
-  // Paradas com pin suspeito recebem peso 0 para não absorverem quilometragem viária.
-  const computeOrderWeight = (ord: OrderRecord): number => {
-    const cleanDest = MapDataService.getOrderDestination(ord)
-    const cNotes = ord.notes || ord.expand?.customer_id?.notes || ''
-    if (isSuspectPin(cleanDest?.lat, cleanDest?.lng, cNotes)) {
-      return 0
-    }
+  // FONTE ÚNICA CANÔNICA:
+  // Chama getCanonicalCourierTotals e getCanonicalCourierBalance de canonicalCourierTotalsService.
+  // Nenhum cálculo local alternativo de km / gasto / saldo nasce aqui.
+  const canonicalTotals = getCanonicalCourierTotals({
+    courier,
+    periodFilter,
+    telemetryBatches,
+    orders: allCourierOrders,
+    advances,
+    settings,
+    approvalsMap: approvalsMap as Map<
+      string,
+      { approvedKm: number; status: 'approved' | 'rejected' | 'pending' }
+    >,
+  })
 
-    const baseLat = ord.start_base_lat || baseLatFallback
-    const baseLng = ord.start_base_lng || baseLngFallback
-    const hasCustomerCoords = Boolean(cleanDest)
-
-    let roadDist = 0.8
-    if (cleanDest) {
-      const directMeters = haversineDistanceMeters(baseLat, baseLng, cleanDest.lat, cleanDest.lng)
-      roadDist = Math.max(directMeters / 1000, 0.8)
-    }
-
-    // Se o cliente tem coordenadas vigentes, o viário calculado sobre o pin vigente tem soberania.
-    // Math.max com ord.distance_km fica apenas como fallback quando não há coordenadas vigentes no cliente.
-    if (!hasCustomerCoords && typeof ord.distance_km === 'number' && ord.distance_km > 0) {
-      roadDist = Math.max(roadDist, ord.distance_km)
-    }
-
-    const returnKm =
-      typeof ord.return_trip_km === 'number' && ord.return_trip_km > 0 ? ord.return_trip_km : 0
-
-    return Math.max(roadDist + returnKm, 0.8)
-  }
-
-  // Mapa de controle para acumular os valores rateados por lote de rota
-  // permitindo que o último pedido absorva o delta de arredondamento tanto para KM quanto para Combustível (R$)
-  const batchAllocationAccumulators = new Map<
-    string,
-    {
-      allocatedOfficialKm: number
-      allocatedDeviationKm: number
-      allocatedGpsKm: number
-      allocatedFuelCost: number
-      allocatedLiters: number
-    }
-  >()
+  const canonicalBalance = getCanonicalCourierBalance({
+    courier,
+    periodFilter,
+    telemetryBatches,
+    orders: allCourierOrders,
+    advances,
+    settings,
+    approvalsMap: approvalsMap as Map<
+      string,
+      { approvedKm: number; status: 'approved' | 'rejected' | 'pending' }
+    >,
+  })
 
   // 4.1 Detectar entregas múltiplas/conjuntas no mesmo ponto (< 45 minutos no mesmo cliente)
   const jointMetaMap = buildJointDeliveryMetaMap(eligibleOrders)
@@ -589,37 +564,22 @@ export function calculateCourierFuelMetrics(params: {
     const batchOrders = routeBatches.get(key) || [order]
     const batchCount = batchOrders.length
 
-    let acc = batchAllocationAccumulators.get(key)
-    if (!acc) {
-      acc = {
-        allocatedOfficialKm: 0,
-        allocatedDeviationKm: 0,
-        allocatedGpsKm: 0,
-        allocatedFuelCost: 0,
-        allocatedLiters: 0,
-      }
-      batchAllocationAccumulators.set(key, acc)
-    }
+    // Alocação vinda da fonte canônica ou rateio simples
+    const canonicalAlloc = canonicalTotals.orderAllocations.get(order.id)
+    let officialKm = canonicalAlloc
+      ? canonicalAlloc.officialKm
+      : Number((batchTelemetry.officialRealKm / Math.max(batchCount, 1)).toFixed(1))
+    let fuelCost = canonicalAlloc
+      ? canonicalAlloc.fuelCost
+      : isBicycle
+        ? 0
+        : Number(((officialKm / Math.max(consumptionKml, 1)) * pricePerLiter).toFixed(2))
+    let litersSpent =
+      !isBicycle && consumptionKml > 0 ? Number((officialKm / consumptionKml).toFixed(2)) : 0
+    let deviationKm = 0
+    let totalGpsKm = Number((batchTelemetry.totalGpsKm / Math.max(batchCount, 1)).toFixed(1))
 
-    // Totais calculados para este lote de rota completa
-    const batchTotalOfficialKm = batchTelemetry.officialRealKm
-    const batchTotalLiters =
-      !isBicycle && consumptionKml > 0
-        ? Number((batchTotalOfficialKm / consumptionKml).toFixed(2))
-        : 0
-    const batchTotalFuelCost = !isBicycle
-      ? Number((batchTotalLiters * pricePerLiter).toFixed(2))
-      : 0
-
-    let officialKm = batchTelemetry.officialRealKm
-    let deviationKm = batchTelemetry.deviationKm
-    let totalGpsKm = batchTelemetry.totalGpsKm
-    let fuelCost = batchTotalFuelCost
-    let litersSpent = batchTotalLiters
-
-    // Presença de telemetria GPS real no lote:
-    // Se o lote possui telemetria real (via pings ou route_batch_telemetry status processed/yellow_flag/ok),
-    // todas as entregas do lote contam como tendo telemetria GPS real.
+    // Presença de telemetria GPS real no lote
     const recordedBatch = canonicalBatchesMap.get(key)
     const hasBatchRealTelemetry = Boolean(
       batchTelemetry.isRealTelemetry ||
@@ -630,54 +590,7 @@ export function calculateCourierFuelMetrics(params: {
           (typeof recordedBatch.km_gps_total === 'number' && recordedBatch.km_gps_total > 0))),
     )
 
-    if (batchCount > 1) {
-      // Rateio pro-rata: peso = max(roadDistFromBase(i), 0.8) + returnToBase(i)
-      const totalBatchWeight = batchOrders.reduce((sum, b) => sum + computeOrderWeight(b), 0)
-      const thisWeight = computeOrderWeight(order)
-      const ratio = totalBatchWeight > 0 ? thisWeight / totalBatchWeight : 0
-
-      const orderIndex = batchOrders.findIndex((b) => b.id === order.id)
-      const isLastOrderInBatch = orderIndex === batchCount - 1
-
-      if (thisWeight === 0) {
-        // Parada com pin suspeito: 0 km viário e 0 combustível
-        officialKm = 0
-        fuelCost = 0
-        litersSpent = 0
-      } else if (isLastOrderInBatch) {
-        // O último item do lote absorve exatamente o resíduo de arredondamento
-        // garantindo que Σ km = total do lote e Σ fuel = total do lote
-        officialKm = Number(
-          Math.max(0, batchTelemetry.officialRealKm - acc.allocatedOfficialKm).toFixed(1),
-        )
-        deviationKm = Number(
-          Math.max(0, batchTelemetry.deviationKm - acc.allocatedDeviationKm).toFixed(1),
-        )
-        totalGpsKm = Number(Math.max(0, batchTelemetry.totalGpsKm - acc.allocatedGpsKm).toFixed(1))
-
-        fuelCost = Number(Math.max(0, batchTotalFuelCost - acc.allocatedFuelCost).toFixed(2))
-        litersSpent = Number(Math.max(0, batchTotalLiters - acc.allocatedLiters).toFixed(2))
-      } else {
-        officialKm = Number((batchTelemetry.officialRealKm * ratio).toFixed(1))
-        deviationKm = 0 // Desvio nunca vira km ou dinheiro
-        totalGpsKm = Number((batchTelemetry.totalGpsKm * ratio).toFixed(1))
-
-        litersSpent =
-          !isBicycle && consumptionKml > 0 ? Number((officialKm / consumptionKml).toFixed(2)) : 0
-        fuelCost = !isBicycle ? Number((litersSpent * pricePerLiter).toFixed(2)) : 0
-
-        acc.allocatedOfficialKm += officialKm
-        acc.allocatedDeviationKm += deviationKm
-        acc.allocatedGpsKm += totalGpsKm
-        acc.allocatedFuelCost += fuelCost
-        acc.allocatedLiters += litersSpent
-      }
-    }
-
-    // APLICAR REGRA DE ENTREGA CONJUNTA NO MESMO PONTO:
-    // Se o pedido fizer parte de um grupo de entrega múltipla no mesmo ponto:
-    // O pedido primário (1º) mantém o KM/combustível da viagem.
-    // Os pedidos secundários (2º em diante) entram com officialKm = 0 e fuelCost = 0 (viagem já paga).
+    // APLICAR REGRA DE ENTREGA CONJUNTA NO MESMO PONTO
     const jointMeta = jointMetaMap.get(order.id)
     let isJointDelivery = false
     let isJointPrimary = false
@@ -699,16 +612,12 @@ export function calculateCourierFuelMetrics(params: {
         jointDeliveriesConsolidatedCount++
         jointSavedKm += officialKm
         jointSavedFuelCost += fuelCost
-
-        // Zera o KM oficial e combustível reembolsável
         officialKm = 0
         fuelCost = 0
         litersSpent = 0
       }
     }
 
-    // REGRA DE PIN SUSPEITO:
-    // Parada com isSuspectPin é excluída do viário e sinalizada 'Parada com Pin Suspeito'
     const cleanDestToCheck = MapDataService.getOrderDestination(order)
     const custLatToCheck = cleanDestToCheck?.lat ?? null
     const custLngToCheck = cleanDestToCheck?.lng ?? null
@@ -721,10 +630,6 @@ export function calculateCourierFuelMetrics(params: {
       litersSpent = 0
     }
 
-    // REGRA DE APROVAÇÃO DE KM DO ADMINISTRADOR:
-    // Quando o admin aprova um KM customizado para esta entrega (ex: erro de endereço, chuva, área de risco),
-    // o valor aprovado SUBSTITUI o trecho no cálculo oficial de KM real e de consumo de combustível.
-    // Para entregas secundárias consolidadas de entrega conjunta, o valor permanece zerado.
     let isApprovedKm = false
     let approvedKmVal: number | undefined
     let approvalJustification: string | undefined
@@ -781,162 +686,14 @@ export function calculateCourierFuelMetrics(params: {
     }
   })
 
-  // Regra de Agregação de Totais Únicos por Lote de Rota (Deduplicação de Lote):
-  // Cada lote de rota (route_batch_key) é somado UMA ÚNICA VEZ nos totais agregados (dia, período, semana),
-  // evitando que pedidos do mesmo lote dupliquem o KM da rota inteira uma vez por parada.
-  // Linhas individuais (orderCalculations) exibem seu valor individual/rateado, mas o cabeçalho/total
-  // agrega exatamente a soma dos lotes únicos (km viário oficial do lote com aprovações, GPS do lote 1x, etc).
-  let aggregatedOfficialKm = 0
-  let aggregatedDeviationKm = 0
-  let aggregatedGpsKm = 0
-  let aggregatedSpent = 0
-  let aggregatedLiters = 0
-
-  routeBatches.forEach((batchOrders, batchKey) => {
-    // Buscar os cálculos das ordens deste lote
-    const batchCalcs = orderCalculations.filter((c) =>
-      batchOrders.some((bo) => bo.id === c.order.id),
-    )
-    if (batchCalcs.length === 0) return
-
-    // Se houve aprovação manual em ordens do lote, a soma das ordens reflete os trechos aprovados
-    const hasAnyApprovalInBatch = batchCalcs.some((c) => c.isApprovedKm)
-
-    if (hasAnyApprovalInBatch) {
-      // Quando há aprovação específica de trecho, soma os valores das paradas do lote
-      const batchKm = batchCalcs.reduce((sum, c) => sum + c.officialKm, 0)
-      const batchDev = batchCalcs.reduce((sum, c) => sum + c.deviationKm, 0)
-      const batchGps = batchCalcs.reduce((sum, c) => sum + c.totalGpsKm, 0)
-      const batchFuel = batchCalcs.reduce((sum, c) => sum + c.fuelCost, 0)
-      const batchLit = batchCalcs.reduce((sum, c) => sum + c.litersSpent, 0)
-
-      aggregatedOfficialKm += batchKm
-      aggregatedDeviationKm += batchDev
-      aggregatedGpsKm += batchGps
-      aggregatedSpent += batchFuel
-      aggregatedLiters += batchLit
-    } else {
-      // Sem aprovações manuais: pega o valor canônico oficial do lote UMA única vez.
-      // Prioridade máxima: km_viario_total gravado no route_batch_telemetry
-      const recordedBatch = canonicalBatchesMap.get(batchKey)
-      const recordedViarioKm = recordedBatch ? Number(recordedBatch.km_viario_total) || 0 : 0
-      const recordedOficialKm = recordedBatch ? Number(recordedBatch.km_oficial) || 0 : 0
-
-      const batchTelem = batchTelemetryMap.get(batchKey)
-      const maxRoadKmInBatch = batchOrders.reduce((max, ord) => {
-        const roadKm =
-          typeof ord.total_route_with_return_km === 'number' ? ord.total_route_with_return_km : 0
-        return Math.max(max, roadKm)
-      }, 0)
-
-      let canonicalBatchKm = 0
-      if (recordedViarioKm > 0) {
-        canonicalBatchKm = Number(recordedViarioKm.toFixed(1))
-      } else if (recordedOficialKm > 0) {
-        canonicalBatchKm = Number(recordedOficialKm.toFixed(1))
-      } else if (maxRoadKmInBatch > 0) {
-        canonicalBatchKm = Number(maxRoadKmInBatch.toFixed(1))
-      } else if (batchTelem?.officialRealKm) {
-        canonicalBatchKm = Number(batchTelem.officialRealKm.toFixed(1))
-      } else {
-        canonicalBatchKm = Number(batchCalcs.reduce((sum, c) => sum + c.officialKm, 0).toFixed(1))
-      }
-
-      // Desvio NUNCA entra em km ou combustível. Usar estritamente o km_oficial do lote
-      const batchDevKm = 0
-      // GPS gravado no lote para auditoria (Coluna B)
-      let batchGpsKm =
-        recordedBatch && typeof recordedBatch.km_gps_total === 'number'
-          ? Number(recordedBatch.km_gps_total)
-          : batchTelem
-            ? batchTelem.totalGpsKm
-            : 0
-
-      const batchLit =
-        !isBicycle && consumptionKml > 0
-          ? Number((canonicalBatchKm / consumptionKml).toFixed(2))
-          : 0
-      const batchFuel = !isBicycle ? Number((batchLit * pricePerLiter).toFixed(2)) : 0
-
-      aggregatedOfficialKm += canonicalBatchKm
-      aggregatedDeviationKm += batchDevKm
-      aggregatedGpsKm += batchGpsKm
-      aggregatedSpent += batchFuel
-      aggregatedLiters += batchLit
-    }
-  })
-
-  totalOfficialKm = Number(aggregatedOfficialKm.toFixed(1))
-  totalDeviationKm = Number(aggregatedDeviationKm.toFixed(1))
-  totalOdometerKm = Number(aggregatedGpsKm.toFixed(1))
-  totalLiters = Number(aggregatedLiters.toFixed(2))
-
-  if (isBicycle) {
-    totalSpent = 0
-  } else {
-    totalSpent = Number(aggregatedSpent.toFixed(2))
-  }
-
-  // GASTO PÓS-CORTE CANÔNICO PARA O SALDO:
-  // O saldo é SEMPRE período-independente: opening_balance + totalPostCutoffAdvances − totalPostCutoffSpent.
-  // Gasto pós-corte: pedidos elegíveis com timestamp >= cutoffTime calculados com periodFilter 'all'.
-  // GUARDA ANTI-RECURSÃO INFINITA:
-  // Se isPostCutoffComputation for true, pula este bloco (pois esta execução já é a computação do gasto pós-corte)
-  // e utiliza diretamente o totalSpent já computado acima pelo motor oficial.
-  let postCutoffSpent = 0
-  if (!isBicycle) {
-    if (isPostCutoffComputation) {
-      postCutoffSpent = totalSpent
-    } else if (!hasCutoff) {
-      if (periodFilter === 'all') {
-        postCutoffSpent = totalSpent
-      } else {
-        const allMetrics = calculateCourierFuelMetrics({
-          courier,
-          advances: allPostCutoffAdvances,
-          orders: allCourierOrders,
-          locations,
-          offRouteEvents,
-          settings,
-          periodFilter: 'all',
-          carryOverBalance: openingBalance,
-          approvalsMap,
-          activeBaseCoords,
-          isPostCutoffComputation: true,
-          telemetryBatches,
-        })
-        postCutoffSpent = allMetrics.totalSpent
-      }
-    } else {
-      const postCutoffOrders = allCourierOrders.filter((o) => {
-        const orderDateVal = o.route_finished_at || o.actual_arrival || o.created
-        const orderTs = new Date(orderDateVal).getTime()
-        return orderTs >= cutoffTime
-      })
-
-      if (postCutoffOrders.length > 0) {
-        const postCutoffMetrics = calculateCourierFuelMetrics({
-          courier,
-          advances: allPostCutoffAdvances,
-          orders: postCutoffOrders,
-          locations,
-          offRouteEvents,
-          settings,
-          periodFilter: 'all',
-          carryOverBalance: openingBalance,
-          approvalsMap,
-          activeBaseCoords,
-          isPostCutoffComputation: true,
-          telemetryBatches,
-        })
-        postCutoffSpent = postCutoffMetrics.totalSpent
-      }
-    }
-  }
-
-  // FÓRMULA ÚNICA E INVARIANTE DO SALDO (Regra 1b):
-  // Saldo = opening_balance (fixo) + adiantamentos reais pós-corte (regra 1a) − gasto pós-corte
-  const balance = Number((openingBalance + totalPostCutoffAdvances - postCutoffSpent).toFixed(2))
+  // TOTAIS VINDOS EXCLUSIVAMENTE DO SERVIÇO CANÔNICO:
+  const totalOfficialKm = canonicalTotals.totalOfficialKm
+  const totalSpent = canonicalTotals.totalSpent
+  const totalLiters =
+    !isBicycle && consumptionKml > 0 ? Number((totalOfficialKm / consumptionKml).toFixed(2)) : 0
+  const totalDeviationKm = 0
+  const totalOdometerKm = 0
+  const balance = canonicalBalance.saldo
   const calculationSource: 'odometro' | 'historico_viario' | 'gps' = 'historico_viario'
   const calculationSourceLabel = 'Trajeto Viário Oficial'
 
@@ -983,6 +740,12 @@ export function calculateCourierFuelMetrics(params: {
     periodAdvances: Number(periodAdvances.toFixed(2)),
     periodAdjustments: Number(periodAdjustments.toFixed(2)),
     carryOverBalance: Number(openingBalance.toFixed(2)),
+    hasManualAdjustment: canonicalTotals.hasManualAdjustment,
+    manualAdjustmentKm: canonicalTotals.manualAdjustmentKm,
+    manualAdjustmentFuelCost: canonicalTotals.manualAdjustmentFuelCost,
+    manualAdjustmentDeltaKm: canonicalTotals.manualAdjustmentDeltaKm,
+    manualAdjustmentPeriodLabel: canonicalTotals.manualAdjustmentPeriodLabel,
+    rawOfficialKmBeforeAdjustment: canonicalTotals.rawOfficialKmBeforeAdjustment,
   }
 }
 
