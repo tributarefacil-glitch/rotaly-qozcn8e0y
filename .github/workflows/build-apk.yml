@@ -12,6 +12,7 @@ on:
       - 'package.json'
       - 'capacitor.config.ts'
       - '.github/workflows/build-apk.yml'
+      - 'scripts/**'
   workflow_dispatch:
     inputs:
       build_type:
@@ -28,7 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
   actions: write
   id-token: write
 
@@ -40,6 +41,37 @@ jobs:
     steps:
       - name: Checkout repositório
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-commit before sync
+        id: auto_commit_sync
+        run: |
+          echo "=== [PASSO: Auto-commit before sync] Verificando integridade e alterações locais ==="
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Garante que o status do git não cause falha em caso de dirty check
+          CHANGED_FILES=$(git status --porcelain)
+          if [ -n "$CHANGED_FILES" ]; then
+            echo "Alterações detectadas antes do sync:"
+            echo "$CHANGED_FILES"
+            git add -A
+            # git commit só falha se houver erro real, não se estiver limpo (--allow-empty garante zero erro)
+            git commit --allow-empty -m "chore(sync): auto-commit before sync [skip ci]"
+            
+            # Tenta sincronizar com a branch remota com pull rebase defensivo
+            CURRENT_BRANCH="${GITHUB_REF_NAME:-main}"
+            echo "Sincronizando com a branch remota: $CURRENT_BRANCH"
+            git pull --rebase origin "$CURRENT_BRANCH" || echo "Rebase ignorado ou branch já alinhada"
+            
+            # Push defensivo: tolera restrição ou ausência de permissão sem quebrar o build do APK
+            git push origin HEAD:"$CURRENT_BRANCH" || echo "Aviso: Push automático ignorado (continuando com a compilação do APK nativo)"
+          else
+            echo "Repositório limpo sem arquivos pendentes antes do sync. Nenhuma ação necessária."
+          fi
+          echo "=== Passo Auto-commit before sync finalizado com sucesso! ==="
 
       - name: Configurar Bun
         uses: oven-sh/setup-bun@v2
@@ -196,8 +228,11 @@ jobs:
           KEY_PASSWORD: ${{ steps.setup_keystore.outputs.key_pass }}
         run: |
           cd android
+          # Extrai a versão semântica do package.json para nomear o artefato
+          APP_VER=$(node -p "require('../package.json').version" 2>/dev/null || echo "1.0.0")
+
           if [ "${{ steps.setup_keystore.outputs.has_keystore }}" = "true" ] && [ "${{ github.event.inputs.build_type || 'release' }}" = "release" ]; then
-            echo "Compilando APK Release Assinado com Keystore Oficial..."
+            echo "Compilando APK Release Assinado com Keystore Oficial (v${APP_VER})..."
             ./gradlew assembleRelease --no-daemon --stacktrace
             # Suporta variações comuns de saída do AGP (app-release.apk ou app-release-unsigned.apk)
             if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
@@ -206,9 +241,9 @@ jobs:
               RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n 1)
               echo "apk_path=android/${RELEASE_APK}" >> $GITHUB_ENV
             fi
-            echo "artifact_name=rotaly-app-v1.0.0-release.apk" >> $GITHUB_ENV
+            echo "artifact_name=rotaly-app-v${APP_VER}-release.apk" >> $GITHUB_ENV
           else
-            echo "Compilando APK Debug (Fallback sem segredos de keystore)..."
+            echo "Compilando APK Debug (v${APP_VER} - Fallback sem segredos de keystore)..."
             ./gradlew assembleDebug --no-daemon --stacktrace
             if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
               echo "apk_path=android/app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_ENV
@@ -216,7 +251,7 @@ jobs:
               DEBUG_APK=$(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1)
               echo "apk_path=android/${DEBUG_APK}" >> $GITHUB_ENV
             fi
-            echo "artifact_name=rotaly-app-v1.0.0-debug.apk" >> $GITHUB_ENV
+            echo "artifact_name=rotaly-app-v${APP_VER}-debug.apk" >> $GITHUB_ENV
           fi
 
       - name: Preparar Artifact do APK
