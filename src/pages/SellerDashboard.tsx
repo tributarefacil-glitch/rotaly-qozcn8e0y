@@ -2408,8 +2408,8 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                       const defaultBase =
                         baseAddresses.find((b) => b.is_default) || baseAddresses[0]
                       const fallbackBasePos = {
-                        lat: defaultBase?.lat || -22.7001402,
-                        lng: defaultBase?.lng || -43.2982834,
+                        lat: defaultBase?.lat || -22.6977499,
+                        lng: defaultBase?.lng || -43.2936013,
                       }
 
                       const startPos =

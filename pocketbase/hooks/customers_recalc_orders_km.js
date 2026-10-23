@@ -137,8 +137,8 @@ onRecordUpdate((e) => {
       bases = e.app.findRecordsByFilter('base_addresses', '', '-is_default', 10)
     } catch (_) {}
     const defaultBase = bases.length > 0 ? bases[0] : null
-    const fallbackBaseLat = defaultBase ? defaultBase.getFloat('lat') : -22.7001402
-    const fallbackBaseLng = defaultBase ? defaultBase.getFloat('lng') : -43.2982834
+    const fallbackBaseLat = defaultBase ? defaultBase.getFloat('lat') : -22.6977499
+    const fallbackBaseLng = defaultBase ? defaultBase.getFloat('lng') : -43.2936013
 
     const auditCol = e.app.findCollectionByNameOrId('audit_trail')
 

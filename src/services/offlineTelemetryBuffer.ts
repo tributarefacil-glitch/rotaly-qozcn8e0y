@@ -16,7 +16,7 @@
  */
 
 import { haversineDistanceMeters } from '@/lib/geo'
-import { deliveryService } from './deliveryService'
+import { deliveryService, sanitizeLocationPayload } from './deliveryService'
 import { offlineRouteStorage, type OfflineLocationPoint } from './offlineRouteStorage'
 
 export type OfflineTelemetryPoint = OfflineLocationPoint
@@ -403,7 +403,7 @@ class OfflineTelemetryBufferService {
         // PATCH 1: Usar sanitizador em TODO envio a locations (flush do buffer) com timestamp original preservado
         let sanitizedPayload: ReturnType<typeof deliveryService.sanitizeLocationPayload>
         try {
-          sanitizedPayload = deliveryService.sanitizeLocationPayload({
+          sanitizedPayload = sanitizeLocationPayload({
             userId: pt.userId,
             lat: pt.lat,
             lng: pt.lng,

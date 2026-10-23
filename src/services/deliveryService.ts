@@ -110,10 +110,25 @@ export function sanitizeLocationPayload(params: {
   const cleanLat = Math.round(numLat * 1e6) / 1e6
   const cleanLng = Math.round(numLng * 1e6) / 1e6
 
-  // Speed: número >= 0, teto 250, 1 decimal, senão 0
+  // FILTROS DE SANIDADE DE TELEMETRIA:
+  // Rejeição ou descarte de velocidade impossível (> 200 km/h)
+  // Rejeição de accuracy absurda (> 100m)
+  if (typeof accuracy === 'number' && !isNaN(accuracy) && accuracy > 100) {
+    throw new Error(
+      `[sanitizeLocationPayload] Ping descartado por baixa precisão (accuracy=${accuracy}m > 100m)`,
+    )
+  }
+
+  if (typeof speed === 'number' && !isNaN(speed) && speed > 200) {
+    throw new Error(
+      `[sanitizeLocationPayload] Velocidade impossível descartada (${speed} km/h > 200 km/h)`,
+    )
+  }
+
+  // Speed: número >= 0, teto 200, 1 decimal, senão 0
   let cleanSpeed = 0
   if (typeof speed === 'number' && !isNaN(speed) && isFinite(speed) && speed >= 0) {
-    cleanSpeed = Math.round(Math.min(250, speed) * 10) / 10
+    cleanSpeed = Math.round(Math.min(200, speed) * 10) / 10
   }
 
   // Heading: 0..360, 1 decimal, senão 0
@@ -128,10 +143,10 @@ export function sanitizeLocationPayload(params: {
     cleanHeading = Math.round(heading * 10) / 10
   }
 
-  // Accuracy: >= 0, teto 10000, 1 decimal, senão 10
+  // Accuracy: >= 0, teto 100 (valores > 100 já foram rejeitados), 1 decimal, senão 10
   let cleanAccuracy = 10
   if (typeof accuracy === 'number' && !isNaN(accuracy) && isFinite(accuracy) && accuracy >= 0) {
-    cleanAccuracy = Math.round(Math.min(10000, accuracy) * 10) / 10
+    cleanAccuracy = Math.round(Math.min(100, accuracy) * 10) / 10
   }
 
   // gps_status default 'active'
@@ -959,6 +974,14 @@ export const deliveryService = {
     customerId: string
     lat: number
     lng: number
+    address?: string
+    street?: string
+    number?: string
+    complement?: string
+    neighborhood?: string
+    city?: string
+    state?: string
+    postalCode?: string
     customerAddressId?: string | null
   }): Promise<void> {
     const { customerId, lat, lng, customerAddressId } = params
@@ -2272,6 +2295,7 @@ export const deliveryService = {
       location_timestamp?: string
     },
   ) {
+    const now = Date.now()
     try {
       const sanitizedPayload = sanitizeLocationPayload({
         userId,
@@ -2286,112 +2310,117 @@ export const deliveryService = {
         accuracy: extra?.accuracy,
         locationTimestamp: extra?.location_timestamp,
       })
-    // Rejeição de saltos impossíveis (> 300 km/h implícito entre pings consecutivos)
-    const prevCached = this._lastCourierLocationRecordMap.get(userId)
-    if (prevCached && prevCached.timestamp) {
-      const deltaSec = Math.max(1, (now - prevCached.timestamp) / 1000)
-      const distMeters = haversineDistanceMeters(
-        prevCached.lat,
-        prevCached.lng,
-        sanitizedPayload.lat!,
-        sanitizedPayload.lng!,
-      )
-      const speedKmh = (distMeters / deltaSec) * 3.6
-      if (speedKmh > 300) {
-        console.warn('[TELEMETRIA] Salto impossível descartado (>300 km/h):', {
-          speedKmh: Math.round(speedKmh),
-          distMeters: Math.round(distMeters),
-          deltaSec,
-          prev: { lat: prevCached.lat, lng: prevCached.lng },
-          next: { lat: sanitizedPayload.lat, lng: sanitizedPayload.lng },
-        })
-        throw new Error(
-          `[sanitizeLocationPayload] Salto impossível de telemetria (${Math.round(speedKmh)} km/h)`,
+
+      // Rejeição de saltos impossíveis (> 200 km/h implícito entre pings consecutivos)
+      const prevCached = this._lastCourierLocationRecordMap.get(userId)
+      if (prevCached && prevCached.timestamp) {
+        const deltaSec = Math.max(1, (now - prevCached.timestamp) / 1000)
+        const distMeters = haversineDistanceMeters(
+          prevCached.lat,
+          prevCached.lng,
+          sanitizedPayload.lat!,
+          sanitizedPayload.lng!,
         )
+        const speedKmh = (distMeters / deltaSec) * 3.6
+        if (speedKmh > 200) {
+          console.warn('[TELEMETRIA] Salto impossível descartado (>200 km/h):', {
+            speedKmh: Math.round(speedKmh),
+            distMeters: Math.round(distMeters),
+            deltaSec,
+            prev: { lat: prevCached.lat, lng: prevCached.lng },
+            next: { lat: sanitizedPayload.lat, lng: sanitizedPayload.lng },
+          })
+          throw new Error(
+            `[sanitizeLocationPayload] Salto impossível de telemetria (${Math.round(speedKmh)} km/h)`,
+          )
+        }
       }
-    }
 
-    // Deduplicação defensiva no cliente antes de criar novas linhas:
-    // Se a posição mudou menos de ~10m OU a acurácia é >= 500m (sem fix / fallback de 2000m),
-    // reutiliza/atualiza o registro recente existente em vez de criar outro registro repetido.
-    const cached = this._lastCourierLocationRecordMap.get(userId)
-    if (cached && cached.id) {
-      const dist = haversineDistanceMeters(
-        cached.lat,
-        cached.lng,
-        sanitizedPayload.lat!,
-        sanitizedPayload.lng!,
-      )
-      const isWeakOrFallback =
-        (sanitizedPayload.accuracy ?? 2000) >= 500 || (cached.accuracy ?? 2000) >= 500
-      const isSubTenMeters = dist < 10
+      // Deduplicação defensiva no cliente antes de criar novas linhas:
+      // Se a posição mudou menos de ~10m OU a acurácia é >= 500m (sem fix / fallback de 2000m),
+      // reutiliza/atualiza o registro recente existente em vez de criar outro registro repetido.
+      const cached = this._lastCourierLocationRecordMap.get(userId)
+      if (cached && cached.id) {
+        const dist = haversineDistanceMeters(
+          cached.lat,
+          cached.lng,
+          sanitizedPayload.lat!,
+          sanitizedPayload.lng!,
+        )
+        const isWeakOrFallback =
+          (sanitizedPayload.accuracy ?? 2000) >= 500 || (cached.accuracy ?? 2000) >= 500
+        const isSubTenMeters = dist < 10
 
-      if (isSubTenMeters || isWeakOrFallback) {
-        try {
-          const updated = await pb
-            .collection<LocationRecord>('locations')
-            .update(cached.id, sanitizedPayload)
-          this._lastCourierLocationRecordMap.set(userId, {
-            id: updated.id,
-            lat: sanitizedPayload.lat!,
-            lng: sanitizedPayload.lng!,
-            accuracy: sanitizedPayload.accuracy,
-            timestamp: now,
-          })
-          return updated
-        } catch (err: any) {
-          console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
-            status: err?.status,
-            message: err?.message,
-            fieldErrors: err?.data?.data || err?.data,
-            payload: sanitizedPayload,
-          })
-          // Se o update falhar (ex: registro apagado 404 ou 400), limpa o cache e recria
-          this._lastCourierLocationRecordMap.delete(userId)
+        if (isSubTenMeters || isWeakOrFallback) {
           try {
-            const createdFallback = await pb
+            const updated = await pb
               .collection<LocationRecord>('locations')
-              .create(sanitizedPayload)
+              .update(cached.id, sanitizedPayload)
             this._lastCourierLocationRecordMap.set(userId, {
-              id: createdFallback.id,
+              id: updated.id,
               lat: sanitizedPayload.lat!,
               lng: sanitizedPayload.lng!,
               accuracy: sanitizedPayload.accuracy,
               timestamp: now,
             })
-            return createdFallback
-          } catch (createFallbackErr: any) {
+            return updated
+          } catch (err: any) {
             console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
-              status: createFallbackErr?.status,
-              message: createFallbackErr?.message,
-              fieldErrors: createFallbackErr?.data?.data || createFallbackErr?.data,
+              status: err?.status,
+              message: err?.message,
+              fieldErrors: err?.data?.data || err?.data,
               payload: sanitizedPayload,
             })
-            throw createFallbackErr
+            // Se o update falhar (ex: registro apagado 404 ou 400), limpa o cache e recria
+            this._lastCourierLocationRecordMap.delete(userId)
+            try {
+              const createdFallback = await pb
+                .collection<LocationRecord>('locations')
+                .create(sanitizedPayload)
+              this._lastCourierLocationRecordMap.set(userId, {
+                id: createdFallback.id,
+                lat: sanitizedPayload.lat!,
+                lng: sanitizedPayload.lng!,
+                accuracy: sanitizedPayload.accuracy,
+                timestamp: now,
+              })
+              return createdFallback
+            } catch (createFallbackErr: any) {
+              console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
+                status: createFallbackErr?.status,
+                message: createFallbackErr?.message,
+                fieldErrors: createFallbackErr?.data?.data || createFallbackErr?.data,
+                payload: sanitizedPayload,
+              })
+              throw createFallbackErr
+            }
           }
         }
       }
-    }
 
-    // Caso contrário (deslocamento real >= 10m com fix de GPS aceitável), cria novo ponto
-    try {
-      const created = await pb.collection<LocationRecord>('locations').create(sanitizedPayload)
-      this._lastCourierLocationRecordMap.set(userId, {
-        id: created.id,
-        lat: sanitizedPayload.lat!,
-        lng: sanitizedPayload.lng!,
-        accuracy: sanitizedPayload.accuracy,
-        timestamp: now,
-      })
-      return created
-    } catch (createErr: any) {
-      console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
-        status: createErr?.status,
-        message: createErr?.message,
-        fieldErrors: createErr?.data?.data || createErr?.data,
-        payload: sanitizedPayload,
-      })
-      throw createErr
+      // Caso contrário (deslocamento real >= 10m com fix de GPS aceitável), cria novo ponto
+      try {
+        const created = await pb.collection<LocationRecord>('locations').create(sanitizedPayload)
+        this._lastCourierLocationRecordMap.set(userId, {
+          id: created.id,
+          lat: sanitizedPayload.lat!,
+          lng: sanitizedPayload.lng!,
+          accuracy: sanitizedPayload.accuracy,
+          timestamp: now,
+        })
+        return created
+      } catch (createErr: any) {
+        console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
+          status: createErr?.status,
+          message: createErr?.message,
+          fieldErrors: createErr?.data?.data || createErr?.data,
+          payload: sanitizedPayload,
+        })
+        throw createErr
+      }
+    } catch (locErr: any) {
+      console.warn('[deliveryService.updateCourierLocation] Falha ao registrar telemetria:', locErr)
+      throw locErr
     }
   },
 
@@ -3663,8 +3692,8 @@ export const deliveryService = {
         route_released_at: now.toISOString(),
         start_base_name: lastOrder?.start_base_name || defaultBase?.name || 'Mais Saudavel',
         start_base_address: lastOrder?.start_base_address || defaultBase?.address,
-        start_base_lat: lastOrder?.start_base_lat || defaultBase?.lat || -22.7001402,
-        start_base_lng: lastOrder?.start_base_lng || defaultBase?.lng || -43.2982834,
+        start_base_lat: lastOrder?.start_base_lat || defaultBase?.lat || -22.6977499,
+        start_base_lng: lastOrder?.start_base_lng || defaultBase?.lng || -43.2936013,
       }
 
       if (isRouteStarted) {
@@ -4033,8 +4062,8 @@ export const deliveryService = {
             route_released_at: sampleOrder?.route_released_at || nowIso,
             start_base_name: sampleOrder?.start_base_name || defaultBase?.name || 'Mais Saudavel',
             start_base_address: sampleOrder?.start_base_address || defaultBase?.address,
-            start_base_lat: sampleOrder?.start_base_lat || defaultBase?.lat || -22.7001402,
-            start_base_lng: sampleOrder?.start_base_lng || defaultBase?.lng || -43.2982834,
+            start_base_lat: sampleOrder?.start_base_lat || defaultBase?.lat || -22.6977499,
+            start_base_lng: sampleOrder?.start_base_lng || defaultBase?.lng || -43.2936013,
           }
 
           if (isRouteStarted) {

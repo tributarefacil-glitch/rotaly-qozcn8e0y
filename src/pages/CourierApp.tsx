@@ -959,7 +959,31 @@ export default function CourierApp() {
       if (isSendingLocationRef.current) return
 
       const now = Date.now()
+
+      // FILTRO DE SANIDADE DE TELEMETRIA ( accuracy > 100m, vel > 200 km/h, saltos impossíveis )
+      // Descartar pings absurdos antes de qualquer persistência ou cálculo
+      if (typeof accuracyVal === 'number' && accuracyVal > 100) {
+        console.warn(
+          '[TELEMETRIA] Ping descartado por baixa precisão (accuracy > 100m):',
+          accuracyVal,
+        )
+        return
+      }
+
       const last = lastRecordedGpsRef.current
+      if (last && last.timestamp) {
+        const deltaSec = Math.max(0.5, (now - last.timestamp) / 1000)
+        const distMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+        const speedKmh = (distMeters / deltaSec) * 3.6
+        if (speedKmh > 200) {
+          console.warn('[TELEMETRIA] Salto/teleporte impossível descartado (>200 km/h):', {
+            speedKmh: Math.round(speedKmh),
+            distMeters: Math.round(distMeters),
+            deltaSec,
+          })
+          return
+        }
+      }
 
       // ITEM K2: GATILHO DE DISTÂNCIA / TEMPO ADAPTATIVO
       // Disparar ping no MENOR entre 30 segundos de intervalo MÁXIMO OU 15–20 metros de deslocamento.

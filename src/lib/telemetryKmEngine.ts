@@ -73,8 +73,8 @@ export function calculateDeliveryRouteWeight(
 ): number {
   // Se a ordem já tem distance_km registrado de forma consistente (ex.: corrigido na base)
   // ou se distance_km representa a distância direta/viária
-  const fallbackLat = activeBaseCoords?.lat ?? -22.7001402
-  const fallbackLng = activeBaseCoords?.lng ?? -43.2982834
+  const fallbackLat = activeBaseCoords?.lat ?? -22.6977499
+  const fallbackLng = activeBaseCoords?.lng ?? -43.2936013
   const baseLat = order.start_base_lat || fallbackLat
   const baseLng = order.start_base_lng || fallbackLng
   const cleanDest = MapDataService.getOrderDestination(order)
@@ -329,7 +329,7 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
   let noiseCount = 0
   let discardedNoiseMeters = 0
 
-  // 1. Filtrar coordenadas inválidas (0,0, NaN, accuracy > 100m, ou sem precisão aceitável)
+  // 1. Filtrar coordenadas inválidas (0,0, NaN, accuracy > 100m, velocidade impossível > 200 km/h)
   const initialValid = points.filter((p) => {
     if (typeof p.lat !== 'number' || typeof p.lng !== 'number' || isNaN(p.lat) || isNaN(p.lng)) {
       noiseCount++
@@ -342,6 +342,11 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
     }
     // Descartar se precisão GPS informada for ruim (> 100m)
     if (typeof p.accuracy === 'number' && p.accuracy > 100) {
+      noiseCount++
+      return false
+    }
+    // Descartar velocidade absurda reportada (> 200 km/h ≈ 55.6 m/s)
+    if (typeof p.speed === 'number' && p.speed > 200) {
       noiseCount++
       return false
     }

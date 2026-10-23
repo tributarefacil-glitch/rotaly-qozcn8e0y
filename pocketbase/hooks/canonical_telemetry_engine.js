@@ -48,8 +48,10 @@ onRecordAfterUpdateSuccess((e) => {
 
     /**
      * Saneamento canônico de pings compartilhado e idempotente:
+     * - Descarte de pings com baixa precisão (accuracy > 100m)
+     * - Descarte de velocidade impossível (> 200 km/h)
      * - Descarte de coordenada congelada repetida (<1.5m ou diferença angular <0.00002)
-     * - Descarte de saltos com velocidade impossível (>90 km/h)
+     * - Descarte de saltos com velocidade impossível (>90 km/h na malha urbana ou teleporte > 200 km/h)
      * - Detecção de lacunas de telemetria (>90s)
      */
     function sanitizePingsAndComputeTelemetry(pingsList, distFn) {
@@ -57,22 +59,43 @@ onRecordAfterUpdateSuccess((e) => {
       const telemetryGaps = []
       let gapsCount = 0
       let gapsTotalSeconds = 0
+      let discardedCount = 0
       const telemetrySegments = []
       let currentSegment = []
-      const pCount = pingsList ? pingsList.length : 0
+
+      // Pré-filtrar pings com accuracy > 100m ou coordenadas inválidas
+      const validPings = []
+      if (pingsList) {
+        for (let idx = 0; idx < pingsList.length; idx++) {
+          const p = pingsList[idx]
+          const acc = p.getFloat('accuracy')
+          const spd = p.getFloat('speed')
+          if (acc && acc > 100) {
+            discardedCount++
+            continue
+          }
+          if (spd && spd > 200) {
+            discardedCount++
+            continue
+          }
+          validPings.push(p)
+        }
+      }
+
+      const pCount = validPings.length
 
       if (pCount >= 1) {
         currentSegment.push({
-          lat: pingsList[0].getFloat('lat'),
-          lng: pingsList[0].getFloat('lng'),
-          created: pingsList[0].getString('created'),
-          timeMs: new Date(pingsList[0].getString('created')).getTime(),
+          lat: validPings[0].getFloat('lat'),
+          lng: validPings[0].getFloat('lng'),
+          created: validPings[0].getString('created'),
+          timeMs: new Date(validPings[0].getString('created')).getTime(),
         })
       }
 
       for (let i = 1; i < pCount; i++) {
-        const prev = pingsList[i - 1]
-        const curr = pingsList[i]
+        const prev = validPings[i - 1]
+        const curr = validPings[i]
         const prevLat = prev.getFloat('lat')
         const prevLng = prev.getFloat('lng')
         const currLat = curr.getFloat('lat')
@@ -102,6 +125,10 @@ onRecordAfterUpdateSuccess((e) => {
           currentSegment = []
         } else if (!isFrozenPing) {
           const speedKmh = deltaSec > 0 ? (dMeters / deltaSec) * 3.6 : 0
+          if (speedKmh > 200) {
+            discardedCount++
+            continue
+          }
           if (speedKmh <= 90) {
             kmGpsTotalMeters += dMeters
           }
@@ -121,6 +148,7 @@ onRecordAfterUpdateSuccess((e) => {
         gapsCount,
         gapsTotalSeconds,
         telemetrySegments,
+        discardedCount,
       }
     }
 
