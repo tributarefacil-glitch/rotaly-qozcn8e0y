@@ -29,9 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
-  actions: write
-  id-token: write
+  contents: read
 
 jobs:
   build:
@@ -43,46 +41,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Auto-commit before sync
-        id: auto_commit_sync
-        continue-on-error: true
-        run: |
-          set +e
-          echo "=== [PASSO: Auto-commit before sync] Verificando integridade e alterações locais ==="
-          git config user.name "github-actions[bot]" || true
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com" || true
-
-          # Diagnóstico seguro do remote (ofuscando tokens se presentes)
-          echo "Remote configurado:"
-          git remote -v 2>&1 | sed -E 's/(https?:\/\/[^@:]+:)?[^@]+@/\*\*\*@/g' || true
-
-          CHANGED_FILES=$(git status --porcelain 2>&1)
-          if [ -n "$CHANGED_FILES" ]; then
-            echo "Alterações locais detectadas antes do sync:"
-            echo "$CHANGED_FILES"
-            git add -A 2>&1 || echo "Aviso: git add falhou"
-            git commit --allow-empty -m "chore(sync): auto-commit before sync [skip ci]" 2>&1 || echo "Aviso: git commit falhou"
-            
-            CURRENT_BRANCH="${GITHUB_REF_NAME:-main}"
-            echo "Tentando sincronizar com a branch remota: $CURRENT_BRANCH"
-            git pull --rebase origin "$CURRENT_BRANCH" 2>&1 || echo "Aviso: git pull --rebase falhou ou ignorado"
-            
-            echo "Tentando push defensivo..."
-            PUSH_OUT=$(git push origin HEAD:"$CURRENT_BRANCH" 2>&1)
-            PUSH_STATUS=$?
-            if [ $PUSH_STATUS -eq 0 ]; then
-              echo "Push realizado com sucesso!"
-            else
-              echo "AVISO: Auto-commit push falhou com status $PUSH_STATUS, prosseguindo com a build do APK."
-              echo "Detalhes do push: $PUSH_OUT"
-            fi
-          else
-            echo "Repositório limpo sem arquivos pendentes antes do sync. Nenhuma ação necessária."
-          fi
-          echo "=== [PASSO: Auto-commit before sync concluído defensivamente] ==="
-          exit 0
 
       - name: Configurar Bun
         uses: oven-sh/setup-bun@v2
@@ -137,12 +95,12 @@ jobs:
             echo "key_alias=$KEY_ALIAS" >> $GITHUB_OUTPUT
             echo "key_pass=$KEY_PASSWORD" >> $GITHUB_OUTPUT
             echo "$KEYSTORE_BASE64" | base64 -d > android/release.keystore
-            echo "✅ Keystore de release restaurado com sucesso a partir dos GitHub Secrets!"
+            echo "Keystore de release restaurado com sucesso a partir dos GitHub Secrets!"
           else
-            echo "⚠️ Secrets de assinatura não encontrados nos GitHub Secrets do repositório."
+            echo "Secrets de assinatura nao encontrados nos GitHub Secrets do repositorio."
             echo "has_custom_secrets=false" >> $GITHUB_OUTPUT
             
-            # 2. Gerar keystore oficial persistente do Rotaly se não existir
+            # 2. Gerar keystore oficial persistente do Rotaly se nao existir
             AUTO_KEY_ALIAS="rotaly_release"
             AUTO_PASS="RotalyAppRelease2025SecretKey"
             
@@ -167,7 +125,6 @@ jobs:
             echo "is_auto_generated=true" >> $GITHUB_OUTPUT
             
             echo "Tentando salvar automaticamente nos GitHub Secrets via gh CLI..."
-            # Tenta salvar os secrets se o token tiver escopo repo / admin
             SET_OK=true
             gh secret set KEYSTORE_BASE64 --body "$GENERATED_BASE64" || SET_OK=false
             gh secret set KEYSTORE_PASSWORD --body "$AUTO_PASS" || SET_OK=false
@@ -175,26 +132,26 @@ jobs:
             gh secret set KEY_PASSWORD --body "$AUTO_PASS" || SET_OK=false
             
             if [ "$SET_OK" = "true" ]; then
-              echo "🎉 Secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS e KEY_PASSWORD gravados com sucesso no repositório pelo gh CLI!"
+              echo "Secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS e KEY_PASSWORD gravados com sucesso no repositorio pelo gh CLI!"
             else
-              echo "::warning::O GITHUB_TOKEN padrão não tem permissão para gravar secrets do repositório (Resource not accessible by integration)."
-              echo "::warning::Para fixar a chave permanentemente e evitar nova chave no próximo runner, adicione os 4 secrets nas Configurações do Repositório (Settings > Secrets and variables > Actions)."
-              echo "::notice title=Rotaly Keystore Gerado::Adicione os secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD no repositório para garantir identidade imutável."
+              echo "::warning::O GITHUB_TOKEN padrao nao tem permissao para gravar secrets do repositorio."
+              echo "::warning::Para fixar a chave permanentemente e evitar nova chave no proximo runner, adicione os 4 secrets nas Configuracoes do Repositorio (Settings > Secrets and variables > Actions)."
+              echo "::notice title=Rotaly Keystore Gerado::Adicione os secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD no repositorio para garantir identidade imutavel."
             fi
 
-            # 3. Empacota o release.keystore gerado e um arquivo de instruções em release-keystore.zip
+            # 3. Empacota o release.keystore gerado e um arquivo de instrucoes em release-keystore.zip
             mkdir -p keystore-artifact
             cp android/release.keystore keystore-artifact/release.keystore
             echo "===================================================================" > keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "ROTALY - INSTRUÇÕES PARA FIXAR A CHAVE DE ASSINATURA (SECRETS)" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "ROTALY - INSTRUCOES PARA FIXAR A CHAVE DE ASSINATURA (SECRETS)" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
             echo "===================================================================" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
             echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Este arquivo zip contém a chave de assinatura gerada (release.keystore)." >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Para que todos os próximos builds usem exatamente a mesma chave e os" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Este arquivo zip contem a chave de assinatura gerada (release.keystore)." >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "Para que todos os proximos builds usem exatamente a mesma chave e os" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
             echo "entregadores possam atualizar o aplicativo sem desinstalar, configure" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "os 4 secrets abaixo no GitHub do repositório:" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "os 4 secrets abaixo no GitHub do repositorio:" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
             echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "1. Acesse: GitHub > Repositório > Settings > Secrets and variables > Actions" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
+            echo "1. Acesse: GitHub > Repositorio > Settings > Secrets and variables > Actions" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
             echo "2. Clique em 'New repository secret' e adicione os seguintes 4 secrets:" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
             echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
             echo "Nome: KEYSTORE_BASE64" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
