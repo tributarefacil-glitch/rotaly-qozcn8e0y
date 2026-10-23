@@ -1,18 +1,6 @@
 name: Build Rotaly Android APK
 
 on:
-  push:
-    branches:
-      - main
-      - master
-    paths:
-      - 'src/**'
-      - 'public/**'
-      - 'android/**'
-      - 'package.json'
-      - 'capacitor.config.ts'
-      - '.github/workflows/build-apk.yml'
-      - 'scripts/**'
   workflow_dispatch:
     inputs:
       build_type:
@@ -23,13 +11,21 @@ on:
         options:
           - release
           - debug
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'android/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+
+permissions:
+  contents: read
 
 concurrency:
   group: apk-build-${{ github.ref }}
   cancel-in-progress: true
-
-permissions:
-  contents: read
 
 jobs:
   build:
@@ -37,37 +33,51 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # a. Checkout do repositório
       - name: Checkout repositório
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
+      # b. Diagnóstico do ambiente (primeiro passo após checkout para inspecionar runner real)
+      - name: Diagnóstico do ambiente
+        run: |
+          echo "=== DIAGNÓSTICO DO RUNNER GITHUB ACTIONS ==="
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls -la "$ANDROID_HOME" 2>/dev/null || echo "SDK não pré-instalado em ANDROID_HOME"
+          echo "--- Android Platforms instaladas ---"
+          ls "$ANDROID_HOME/platforms" 2>/dev/null || echo "Nenhuma plataforma encontrada"
+          echo "--- Android Build-Tools instaladas ---"
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null || echo "Nenhum build-tools encontrado"
+          echo "--- Versão do Java pré-instalado ---"
+          java -version 2>&1 || echo "Java não encontrado"
+          echo "--- Versão do Node.js ---"
+          node -v 2>&1 || echo "Node não encontrado"
+          echo "=== FIM DO DIAGNÓSTICO ==="
+
+      # c. Dependências web e build do frontend Vite
       - name: Configurar Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Cache de dependências do Bun
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb', '**/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
       - name: Instalar dependências Web
         run: |
-          bun install
+          bun install --frozen-lockfile || bun install
 
       - name: Build do frontend Web (Vite)
         run: |
           bun run build
 
+      # d. Copiar dist/* para os assets públicos do Android
       - name: Copiar assets Web para o Android
         run: |
           mkdir -p android/app/src/main/assets/public
           cp -r dist/* android/app/src/main/assets/public/
+          echo "Assets copiados para android/app/src/main/assets/public:"
+          ls -lh android/app/src/main/assets/public/
 
+      # e. Configurar Java 17 (Temurin com cache Gradle)
+      # runners ubuntu-latest já possuem Android SDK pré-instalado (confirmado no diagnóstico)
       - name: Configurar Java 17 (JDK)
         uses: actions/setup-java@v4
         with:
@@ -75,120 +85,30 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Configurar Android SDK
-        uses: android-actions/setup-android@v4
-
-      - name: Configurar Assinatura Fixa do Keystore (Release)
+      # f. Decodificação e assinatura fixa (Secrets cadastrados pelo usuário no GitHub)
+      # Secrets: KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
+      - name: Configurar Assinatura do Keystore
         id: setup_keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Se os secrets existirem, restaura o keystore e exporta as credenciais
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "has_keystore=true" >> $GITHUB_OUTPUT
-            echo "has_custom_secrets=true" >> $GITHUB_OUTPUT
-            echo "keystore_pass=$KEYSTORE_PASSWORD" >> $GITHUB_OUTPUT
-            echo "key_alias=$KEY_ALIAS" >> $GITHUB_OUTPUT
-            echo "key_pass=$KEY_PASSWORD" >> $GITHUB_OUTPUT
+            echo "has_keystore=true" >> "$GITHUB_OUTPUT"
+            echo "keystore_pass=$KEYSTORE_PASSWORD" >> "$GITHUB_OUTPUT"
+            echo "key_alias=$KEY_ALIAS" >> "$GITHUB_OUTPUT"
+            echo "key_pass=$KEY_PASSWORD" >> "$GITHUB_OUTPUT"
             echo "$KEYSTORE_BASE64" | base64 -d > android/release.keystore
             echo "Keystore de release restaurado com sucesso a partir dos GitHub Secrets!"
           else
-            echo "Secrets de assinatura nao encontrados nos GitHub Secrets do repositorio."
-            echo "has_custom_secrets=false" >> $GITHUB_OUTPUT
-            
-            # 2. Gerar keystore oficial persistente do Rotaly se nao existir
-            AUTO_KEY_ALIAS="rotaly_release"
-            AUTO_PASS="RotalyAppRelease2025SecretKey"
-            
-            echo "Gerando novo Keystore oficial Rotaly (RSA 2048, 10.000 dias)..."
-            keytool -genkeypair \
-              -v \
-              -keystore android/release.keystore \
-              -alias "$AUTO_KEY_ALIAS" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass "$AUTO_PASS" \
-              -keypass "$AUTO_PASS" \
-              -dname "CN=Rotaly App, OU=Logistica, O=Rotaly Tecnologia, L=Rio de Janeiro, ST=RJ, C=BR"
-            
-            GENERATED_BASE64=$(base64 -w 0 android/release.keystore)
-            
-            echo "has_keystore=true" >> $GITHUB_OUTPUT
-            echo "keystore_pass=$AUTO_PASS" >> $GITHUB_OUTPUT
-            echo "key_alias=$AUTO_KEY_ALIAS" >> $GITHUB_OUTPUT
-            echo "key_pass=$AUTO_PASS" >> $GITHUB_OUTPUT
-            echo "is_auto_generated=true" >> $GITHUB_OUTPUT
-            
-            echo "Tentando salvar automaticamente nos GitHub Secrets via gh CLI..."
-            SET_OK=true
-            gh secret set KEYSTORE_BASE64 --body "$GENERATED_BASE64" || SET_OK=false
-            gh secret set KEYSTORE_PASSWORD --body "$AUTO_PASS" || SET_OK=false
-            gh secret set KEY_ALIAS --body "$AUTO_KEY_ALIAS" || SET_OK=false
-            gh secret set KEY_PASSWORD --body "$AUTO_PASS" || SET_OK=false
-            
-            if [ "$SET_OK" = "true" ]; then
-              echo "Secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS e KEY_PASSWORD gravados com sucesso no repositorio pelo gh CLI!"
-            else
-              echo "::warning::O GITHUB_TOKEN padrao nao tem permissao para gravar secrets do repositorio."
-              echo "::warning::Para fixar a chave permanentemente e evitar nova chave no proximo runner, adicione os 4 secrets nas Configuracoes do Repositorio (Settings > Secrets and variables > Actions)."
-              echo "::notice title=Rotaly Keystore Gerado::Adicione os secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD no repositorio para garantir identidade imutavel."
-            fi
-
-            # 3. Empacota o release.keystore gerado e um arquivo de instrucoes em release-keystore.zip
-            mkdir -p keystore-artifact
-            cp android/release.keystore keystore-artifact/release.keystore
-            echo "===================================================================" > keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "ROTALY - INSTRUCOES PARA FIXAR A CHAVE DE ASSINATURA (SECRETS)" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "===================================================================" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Este arquivo zip contem a chave de assinatura gerada (release.keystore)." >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Para que todos os proximos builds usem exatamente a mesma chave e os" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "entregadores possam atualizar o aplicativo sem desinstalar, configure" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "os 4 secrets abaixo no GitHub do repositorio:" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "1. Acesse: GitHub > Repositorio > Settings > Secrets and variables > Actions" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "2. Clique em 'New repository secret' e adicione os seguintes 4 secrets:" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Nome: KEYSTORE_BASE64" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Valor: ${GENERATED_BASE64}" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Nome: KEYSTORE_PASSWORD" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Valor: ${AUTO_PASS}" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Nome: KEY_ALIAS" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Valor: ${AUTO_KEY_ALIAS}" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Nome: KEY_PASSWORD" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Valor: ${AUTO_PASS}" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "===================================================================" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "Guarde o arquivo release.keystore em local seguro." >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            echo "===================================================================" >> keystore-artifact/SECRETS_INSTRUCTIONS.txt
-            cd keystore-artifact
-            zip -r ../release-keystore.zip release.keystore SECRETS_INSTRUCTIONS.txt
-            cd ..
-            echo "has_keystore_zip=true" >> $GITHUB_OUTPUT
-            echo "Keystore compactado em release-keystore.zip com sucesso!"
+            echo "::warning::Secrets de assinatura não encontrados ou incompletos no repositório."
+            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Preparar Gradle Wrapper do Repositório
-        run: |
-          cd android
-          # Se o jar do wrapper não estiver presente no repositório, baixa a versão correspondente fixada
-          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            mkdir -p gradle/wrapper
-            echo "Baixando gradle-wrapper.jar correspondente ao Gradle 8.2.1..."
-            curl -sSL -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.2.1/gradle/wrapper/gradle-wrapper.jar
-          fi
-          chmod +x gradlew
-
-      - name: Compilar APK (Release Assinado com Keystore Oficial)
-        id: compile_apk
+      # g. Compilação do APK via gradlew
+      - name: Compilar APK Android
         env:
           KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.has_keystore == 'true' && '../release.keystore' || '' }}
           KEYSTORE_PASSWORD: ${{ steps.setup_keystore.outputs.keystore_pass }}
@@ -196,53 +116,31 @@ jobs:
           KEY_PASSWORD: ${{ steps.setup_keystore.outputs.key_pass }}
         run: |
           cd android
-          # Extrai a versão semântica do package.json para nomear o artefato
-          APP_VER=$(node -p "require('../package.json').version" 2>/dev/null || echo "1.0.0")
+          # Garante gradle-wrapper.jar se não estiver no git
+          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            mkdir -p gradle/wrapper
+            echo "Baixando gradle-wrapper.jar v8.2.1..."
+            curl -sSL -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.2.1/gradle/wrapper/gradle-wrapper.jar
+          fi
+          chmod +x gradlew
 
-          if [ "${{ steps.setup_keystore.outputs.has_keystore }}" = "true" ] && [ "${{ github.event.inputs.build_type || 'release' }}" = "release" ]; then
-            echo "Compilando APK Release Assinado com Keystore Oficial (v${APP_VER})..."
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'release' }}"
+          echo "Iniciando compilação Gradle (modo: $BUILD_TYPE)..."
+
+          if [ "$BUILD_TYPE" = "release" ]; then
             ./gradlew assembleRelease --no-daemon --stacktrace
-            # Suporta variações comuns de saída do AGP (app-release.apk ou app-release-unsigned.apk)
-            if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
-              echo "apk_path=android/app/build/outputs/apk/release/app-release.apk" >> $GITHUB_ENV
-            else
-              RELEASE_APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n 1)
-              echo "apk_path=android/${RELEASE_APK}" >> $GITHUB_ENV
-            fi
-            echo "artifact_name=rotaly-app-v${APP_VER}-release.apk" >> $GITHUB_ENV
           else
-            echo "Compilando APK Debug (v${APP_VER} - Fallback sem segredos de keystore)..."
             ./gradlew assembleDebug --no-daemon --stacktrace
-            if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
-              echo "apk_path=android/app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_ENV
-            else
-              DEBUG_APK=$(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -n 1)
-              echo "apk_path=android/${DEBUG_APK}" >> $GITHUB_ENV
-            fi
-            echo "artifact_name=rotaly-app-v${APP_VER}-debug.apk" >> $GITHUB_ENV
           fi
 
-      - name: Preparar Artifact do APK
-        run: |
-          mkdir -p build-output
-          cp ${{ env.apk_path }} build-output/${{ env.artifact_name }}
-          echo "APK copiado com sucesso para build-output/${{ env.artifact_name }}"
-          ls -lh build-output/
-
-      - name: Publicar Artifact no GitHub Actions (rotaly-apk)
+      # h. Upload do artifact do APK
+      - name: Publicar APK no GitHub Actions (rotaly-apk)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rotaly-apk
-          path: build-output/*
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Publicar Artifact do Keystore Gerado (release-keystore)
-        if: steps.setup_keystore.outputs.has_keystore_zip == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-keystore
-          path: release-keystore.zip
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
           if-no-files-found: warn
