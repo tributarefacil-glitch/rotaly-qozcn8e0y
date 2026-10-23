@@ -28,9 +28,15 @@ export const CourierBatteryGuideModal: React.FC<CourierBatteryGuideModalProps> =
 
   const handleOpenSettings = async () => {
     try {
-      await nativeGpsBridge.openBatteryOptimizationSettings()
+      // Tenta primeiro abrir o diálogo de isenção direta (ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+      const requested = await nativeGpsBridge.requestIgnoreBatteryOptimizations()
+      if (!requested) {
+        // Se já isento ou não suportado direto, abre as configurações completas
+        await nativeGpsBridge.openBatteryOptimizationSettings()
+      }
     } catch (err) {
       console.warn('[CourierBatteryGuideModal] Falha ao abrir configurações nativas:', err)
+      await nativeGpsBridge.openBatteryOptimizationSettings()
     }
   }
 

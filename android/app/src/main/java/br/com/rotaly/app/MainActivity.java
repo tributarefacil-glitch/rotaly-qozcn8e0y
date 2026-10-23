@@ -291,6 +291,57 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         }
 
         @JavascriptInterface
+        public int getBatteryLevel() {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    android.os.BatteryManager bm = (android.os.BatteryManager) getSystemService(Context.BATTERY_SERVICE);
+                    if (bm != null) {
+                        int val = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
+                        if (val > 0 && val <= 100) {
+                            return val;
+                        }
+                    }
+                }
+                IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+                Intent batteryStatus = registerReceiver(null, ifilter);
+                if (batteryStatus != null) {
+                    int level = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1);
+                    int scale = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1);
+                    if (level > 0 && scale > 0) {
+                        int pct = Math.round((level / (float) scale) * 100.0f);
+                        if (pct > 0 && pct <= 100) {
+                            return pct;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Falha na leitura direta de bateria:", e);
+            }
+            return -1;
+        }
+
+        @JavascriptInterface
+        public boolean requestIgnoreBatteryOptimizations() {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                    String packageName = getPackageName();
+                    if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+                        @SuppressLint("BatteryLife")
+                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        intent.setData(Uri.parse("package:" + packageName));
+                        startActivity(intent);
+                        return true;
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Falha ao solicitar diálogo de isenção direta de bateria:", e);
+                openBatteryOptimizationSettings();
+            }
+            return false;
+        }
+
+        @JavascriptInterface
         public void openBatteryOptimizationSettings() {
             try {
                 Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);

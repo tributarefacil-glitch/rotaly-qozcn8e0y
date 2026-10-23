@@ -554,8 +554,8 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
           return false
         }
         // Verificar se foi na base padrão (Pilar/Caxias ou start_base ativa)
-        const baseLat = activeBaseCoords?.lat ?? -22.7001402
-        const baseLng = activeBaseCoords?.lng ?? -43.2982834
+        const baseLat = activeBaseCoords?.lat ?? -22.6977499
+        const baseLng = activeBaseCoords?.lng ?? -43.2936013
         const distToBase = haversineDistanceMeters(ev.lat, ev.lng, baseLat, baseLng)
         if (distToBase < DEVIATION_THRESHOLD_METERS) {
           return false

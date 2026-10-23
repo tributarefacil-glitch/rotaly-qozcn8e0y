@@ -585,15 +585,27 @@ export default function CourierApp() {
     }
   })
 
-  // Captura do nível de bateria com fallback gracioso:
-  // Se navigator.getBattery não existir (iOS/Safari) ou falhar, retorna null/undefined — NUNCA 0.
+  // Captura do nível de bateria com prioridade nativa real:
+  // 1. nativeGpsBridge.getNativeBatteryLevel() (Android BatteryManager real via APK)
+  // 2. navigator.getBattery() (Web Battery API onde suportado)
+  // Se indisponível, retorna null — NUNCA 0 como valor falso.
   const getBatteryLevel = async (): Promise<number | null> => {
+    // 1. Tentar leitura nativa no APK
+    const nativeLevel = nativeGpsBridge.getNativeBatteryLevel()
+    if (typeof nativeLevel === 'number' && nativeLevel > 0 && nativeLevel <= 100) {
+      return nativeLevel
+    }
+
+    // 2. Fallback Web Battery API
     try {
       const nav = typeof navigator !== 'undefined' ? (navigator as any) : null
       if (nav && typeof nav.getBattery === 'function') {
         const battery = await nav.getBattery()
         if (typeof battery?.level === 'number' && !isNaN(battery.level) && battery.level > 0) {
-          return Math.round(battery.level * 100)
+          const pct = Math.round(battery.level * 100)
+          if (pct > 0 && pct <= 100) {
+            return pct
+          }
         }
       }
     } catch {
@@ -974,9 +986,11 @@ export default function CourierApp() {
         )
       }
 
+      // Cadência contínua ágil:
+      // Em rota ativa, pings a cada ~5s a 10s se houver movimento (>=8m), ou no máximo a cada 15s parado
       const isNearStop = distToTargetStopMeters < 300
-      const maxTimeIntervalSeconds = isNearStop ? 10 : 30
-      const distanceThresholdMeters = isNearStop ? 10 : 18
+      const maxTimeIntervalSeconds = isNearStop ? 8 : 15
+      const distanceThresholdMeters = isNearStop ? 8 : 12
 
       if (last && !forceSend) {
         const timeDiffSeconds = (now - last.timestamp) / 1000
@@ -1173,7 +1187,7 @@ export default function CourierApp() {
       )
     }
 
-    // Iniciar Foreground Service nativo Android caso estejamos no APK nativo
+    // Iniciar Foreground Service nativo Android caso estejamos no APK nativo (~5s de cadência contínua)
     if (hasActiveStartedRoute && nativeGpsBridge.isNativeEnvironment()) {
       const pbToken = (deliveryService as any).getToken?.() || pb.authStore.token || ''
       const pbBaseUrl = pb.baseUrl || window.location.origin
@@ -1185,8 +1199,8 @@ export default function CourierApp() {
           token: pbToken ? `Bearer ${pbToken}` : '',
           notificationTitle: 'Rastreamento de Entregas Rotaly',
           notificationText: 'GPS em segundo plano ativo para cômputo da rota e segurança',
-          minIntervalMs: 30000,
-          minDistanceMeters: 18,
+          minIntervalMs: 5000,
+          minDistanceMeters: 10,
         })
         .catch((e) => console.warn('Erro ao iniciar native foreground GPS:', e))
     }
@@ -2014,7 +2028,7 @@ export default function CourierApp() {
 
   // AUTO-FINALIZAÇÃO POR GEOFENCE:
   // Se está na etapa de retorno à base (todas as entregas feitas) e o entregador chega à base
-  // (raio <= 120m confirmado em 2 leituras consecutivas para evitar falsos positivos por imprecisão de GPS)
+  // (raio <= 150m confirmado em 2 leituras consecutivas para evitar falsos positivos por imprecisão de GPS)
   useEffect(() => {
     if (!isReturningToBase) {
       baseGeofenceHitCountRef.current = 0
@@ -2023,7 +2037,7 @@ export default function CourierApp() {
 
     if (distanceToBaseMeters === null) return
 
-    const GEOFENCE_BASE_RADIUS_METERS = 120
+    const GEOFENCE_BASE_RADIUS_METERS = 150
 
     if (distanceToBaseMeters <= GEOFENCE_BASE_RADIUS_METERS) {
       baseGeofenceHitCountRef.current += 1
@@ -2035,8 +2049,8 @@ export default function CourierApp() {
         handleFinishFullRoute(true)
       }
     } else {
-      // Se estiver mais longe que 180m, reinicia a contagem de proximidade
-      if (distanceToBaseMeters > 180) {
+      // Se estiver mais longe que 200m, reinicia a contagem de proximidade
+      if (distanceToBaseMeters > 200) {
         baseGeofenceHitCountRef.current = 0
       }
     }

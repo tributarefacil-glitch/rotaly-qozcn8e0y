@@ -308,8 +308,8 @@ export function calculateCourierFuelMetrics(params: {
   const totalAdvances = totalPostCutoffAdvances
 
   // 2. Filtrar telemetria e ocorrências do entregador
-  const baseLatFallback = activeBaseCoords?.lat ?? -22.7001402
-  const baseLngFallback = activeBaseCoords?.lng ?? -43.2982834
+  const baseLatFallback = activeBaseCoords?.lat ?? -22.6977499
+  const baseLngFallback = activeBaseCoords?.lng ?? -43.2936013
 
   const courierLocations = locations.filter((l) => l.user_id === courier.id)
   const courierEvents = offRouteEvents.filter((ev) => {

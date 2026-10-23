@@ -64,6 +64,7 @@ export function sanitizeLocationPayload(params: {
   gpsStatus?: string | null
   gpsReason?: string | null
   offlineBuffered?: boolean | null
+  locationTimestamp?: string | null
 }): Partial<LocationRecord> {
   const {
     userId,
@@ -76,6 +77,7 @@ export function sanitizeLocationPayload(params: {
     gpsStatus,
     gpsReason,
     offlineBuffered,
+    locationTimestamp,
   } = params
 
   if (!userId || typeof userId !== 'string' || !userId.trim()) {
@@ -147,6 +149,15 @@ export function sanitizeLocationPayload(params: {
   // offline_buffered booleano
   const cleanOfflineBuffered = Boolean(offlineBuffered)
 
+  // location_timestamp original preservado (se informado)
+  let cleanLocationTimestamp: string | undefined = undefined
+  if (locationTimestamp && typeof locationTimestamp === 'string' && locationTimestamp.trim()) {
+    const parsedDate = new Date(locationTimestamp.trim())
+    if (!isNaN(parsedDate.getTime())) {
+      cleanLocationTimestamp = parsedDate.toISOString()
+    }
+  }
+
   const payload: Partial<LocationRecord> = {
     user_id: userId.trim(),
     lat: cleanLat,
@@ -157,6 +168,7 @@ export function sanitizeLocationPayload(params: {
     gps_status: cleanGpsStatus,
     gps_reason: cleanGpsReason,
     offline_buffered: cleanOfflineBuffered,
+    ...(cleanLocationTimestamp ? { location_timestamp: cleanLocationTimestamp } : {}),
   }
 
   // FALHA 5: battery_level incluída só se inteiro 1..100 — NUNCA enviar 0 (se indisponível ou 0, omite)
@@ -2257,22 +2269,23 @@ export const deliveryService = {
       gps_reason?: string
       offline_buffered?: boolean
       accuracy?: number
+      location_timestamp?: string
     },
   ) {
-    const now = Date.now()
-    const sanitizedPayload = sanitizeLocationPayload({
-      userId,
-      lat,
-      lng,
-      speed,
-      heading,
-      batteryLevel,
-      accuracy: extra?.accuracy,
-      gpsStatus: extra?.gps_status,
-      gpsReason: extra?.gps_reason,
-      offlineBuffered: extra?.offline_buffered,
-    })
-
+    try {
+      const sanitizedPayload = sanitizeLocationPayload({
+        userId,
+        lat,
+        lng,
+        speed,
+        heading,
+        batteryLevel,
+        gpsStatus: extra?.gps_status,
+        gpsReason: extra?.gps_reason,
+        offlineBuffered: extra?.offline_buffered,
+        accuracy: extra?.accuracy,
+        locationTimestamp: extra?.location_timestamp,
+      })
     // Rejeição de saltos impossíveis (> 300 km/h implícito entre pings consecutivos)
     const prevCached = this._lastCourierLocationRecordMap.get(userId)
     if (prevCached && prevCached.timestamp) {

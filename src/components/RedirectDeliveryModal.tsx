@@ -111,8 +111,8 @@ export const RedirectDeliveryModal: React.FC<RedirectDeliveryModalProps> = ({
       // Fallback gracioso: usar coordenadas planejadas do pedido se o hardware falhar
       const destCoords = MapDataService.getOrderDestination(order)
       coords = {
-        lat: destCoords ? destCoords.lat : -22.699,
-        lng: destCoords ? destCoords.lng : -43.296,
+        lat: destCoords ? destCoords.lat : -22.6977499,
+        lng: destCoords ? destCoords.lng : -43.2936013,
         at: new Date().toISOString(),
       }
       setCapturedPointA(coords)

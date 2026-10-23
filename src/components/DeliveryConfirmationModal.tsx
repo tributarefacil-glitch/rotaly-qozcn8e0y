@@ -355,81 +355,101 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const getFreshLocation = async (): Promise<{
     latitude: number
     longitude: number
-    accuracy?: number
+    accuracy: number
     lat: number
     lng: number
   } | null> => {
-    // 1. Caminho nativo com nativeGpsBridge
-    if (nativeGpsBridge.isNativeEnvironment()) {
-      try {
-        const nativeCoord = await nativeGpsBridge.getCurrentPosition({
-          enableHighAccuracy: true,
-          timeout: 8000,
-          maximumAge: 10000,
-        })
-        if (nativeCoord) {
-          const fresh = {
-            latitude: nativeCoord.latitude,
-            longitude: nativeCoord.longitude,
-            accuracy: nativeCoord.accuracy,
-            lat: nativeCoord.latitude,
-            lng: nativeCoord.longitude,
+    // AUDITORIA DO PIN: Esperar fix de alta precisão (guard accuracy <= 50m) com retry
+    // Nunca aceitar primeira leitura ruim se accuracy > 50m quando puder fazer novo fix.
+    const MAX_ACCEPTABLE_ACCURACY = 50
+
+    // Helper interno de leitura com timeout dedicado
+    const fetchSingleFix = async (timeoutMs: number, maxAgeMs: number) => {
+      // 1. Caminho nativo com nativeGpsBridge
+      if (nativeGpsBridge.isNativeEnvironment()) {
+        try {
+          const nativeCoord = await nativeGpsBridge.getCurrentPosition({
+            enableHighAccuracy: true,
+            timeout: timeoutMs,
+            maximumAge: maxAgeMs,
+          })
+          if (nativeCoord && typeof nativeCoord.latitude === 'number') {
+            return {
+              latitude: nativeCoord.latitude,
+              longitude: nativeCoord.longitude,
+              accuracy: nativeCoord.accuracy ?? 10,
+              lat: nativeCoord.latitude,
+              lng: nativeCoord.longitude,
+            }
           }
-          setCapturedGps(fresh)
-          return fresh
+        } catch (err) {
+          console.warn('[DeliveryConfirmationModal] Falha no GPS nativo sob demanda:', err)
         }
-      } catch (err) {
-        console.warn('[DeliveryConfirmationModal] Falha no GPS nativo sob demanda:', err)
+      }
+
+      // 2. Fallback Web Geolocation API
+      return new Promise<{
+        latitude: number
+        longitude: number
+        accuracy: number
+        lat: number
+        lng: number
+      } | null>((resolve) => {
+        if (typeof navigator === 'undefined' || !navigator.geolocation) {
+          resolve(null)
+          return
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            resolve({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+              accuracy: pos.coords.accuracy ?? 10,
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            })
+          },
+          (err) => {
+            console.warn('[DeliveryConfirmationModal] Falha na leitura Web Geolocation:', err)
+            resolve(null)
+          },
+          { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: maxAgeMs },
+        )
+      })
+    }
+
+    // Tentativa 1: Fix imediato
+    let fix = await fetchSingleFix(6000, 5000)
+
+    // Retry defensivo: se accuracy > 50m ou sem fix, espera 1.2s para satélite estabilizar e tenta de novo
+    if (!fix || (fix.accuracy && fix.accuracy > MAX_ACCEPTABLE_ACCURACY)) {
+      await new Promise((r) => setTimeout(r, 1200))
+      const retryFix = await fetchSingleFix(10000, 0) // maximumAge 0 para fix 100% fresco
+      if (retryFix) {
+        // Se a segunda leitura for melhor ou a primeira foi nula, usa a segunda
+        if (!fix || (retryFix.accuracy && retryFix.accuracy < fix.accuracy)) {
+          fix = retryFix
+        }
       }
     }
 
-    // 2. Fallback do navegador (navigator.geolocation.getCurrentPosition)
-    return new Promise((resolve) => {
-      if (typeof navigator === 'undefined' || !navigator.geolocation) {
-        if (capturedGps) {
-          resolve({
-            latitude: capturedGps.lat,
-            longitude: capturedGps.lng,
-            accuracy: capturedGps.accuracy,
-            lat: capturedGps.lat,
-            lng: capturedGps.lng,
-          })
-          return
-        }
-        resolve(null)
-        return
-      }
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const fresh = {
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          }
-          setCapturedGps(fresh)
-          resolve(fresh)
-        },
-        (err) => {
-          console.warn('[DeliveryConfirmationModal] Falha na leitura GPS sob demanda:', err)
-          if (capturedGps) {
-            resolve({
-              latitude: capturedGps.lat,
-              longitude: capturedGps.lng,
-              accuracy: capturedGps.accuracy,
-              lat: capturedGps.lat,
-              lng: capturedGps.lng,
-            })
-          } else {
-            resolve(null)
-          }
-        },
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 },
-      )
-    })
-  }
+    if (fix) {
+      setCapturedGps(fix)
+      return fix
+    }
 
+    if (capturedGps) {
+      return {
+        latitude: capturedGps.lat,
+        longitude: capturedGps.lng,
+        accuracy: capturedGps.accuracy,
+        lat: capturedGps.lat,
+        lng: capturedGps.lng,
+      }
+    }
+
+    return null
+  }
   const handleConfirmDelivery = async () => {
     if (!order || isSubmitting) return
 
@@ -717,12 +737,12 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           redirectionPointB?.lat ||
           order.end_address_lat ||
           order.expand?.customer_id?.lat ||
-          -22.699
+          -22.6977499
         const pointBLng =
           redirectionPointB?.lng ||
           order.end_address_lng ||
           order.expand?.customer_id?.lng ||
-          -43.296
+          -43.2936013
         const pointALat =
           order.redirection_point_a_lat ||
           order.end_address_lat ||
@@ -895,8 +915,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       if ((reason === 'address_error' || reason === 'client_absent') && distanceKm === 0) {
         const custLat = order.expand?.customer_id?.lat
         const custLng = order.expand?.customer_id?.lng
-        const baseLat = order.start_base_lat || -22.906847
-        const baseLng = order.start_base_lng || -43.172896
+        const baseLat = order.start_base_lat || -22.6977499
+        const baseLng = order.start_base_lng || -43.2936013
 
         if (custLat && custLng) {
           const directKm = calcHaversineKm(baseLat, baseLng, custLat, custLng)
@@ -1012,10 +1032,54 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           const oldLng = order.expand?.customer_id?.lng
           const oldAddress = order.expand?.customer_id?.address
 
+          // REGRA PERMANENTE DE ENDEREÇO DO CLIENTE (MÉTODO ÚNICO):
+          // Enriquecer com endereço estilo Uber (número interpolado Google + lote/quadra no complemento)
+          let enrichedAddressText = ''
+          let enrichedStreet = ''
+          let enrichedNumber = ''
+          let enrichedComplement = ''
+          let enrichedNeighborhood = ''
+          let enrichedCity = ''
+          let enrichedState = ''
+          let enrichedPostalCode = ''
+
+          try {
+            const { MapDataService } = await import('@/lib/mapDataService')
+            const enriched = await MapDataService.reverseGeocodePin({
+              lat: currentLoc.lat,
+              lng: currentLoc.lng,
+              existingAddress: oldAddress || order.end_address_text || '',
+              existingComplement: order.expand?.customer_id?.complement || '',
+            })
+            if (enriched && enriched.fullAddress) {
+              enrichedAddressText = enriched.fullAddress
+              enrichedStreet = enriched.street
+              enrichedNumber = enriched.number
+              enrichedComplement = enriched.complement
+              enrichedNeighborhood = enriched.neighborhood
+              enrichedCity = enriched.city
+              enrichedState = enriched.state
+              enrichedPostalCode = enriched.postalCode
+            }
+          } catch (uberErr) {
+            console.warn(
+              '[DeliveryConfirmationModal] Aviso ao interpolar endereço estilo Uber:',
+              uberErr,
+            )
+          }
+
           await deliveryService.updateCustomerDeliveryPin({
             customerId: order.customer_id,
             lat: currentLoc.lat,
             lng: currentLoc.lng,
+            address: enrichedAddressText || undefined,
+            street: enrichedStreet || undefined,
+            number: enrichedNumber || undefined,
+            complement: enrichedComplement || undefined,
+            neighborhood: enrichedNeighborhood || undefined,
+            city: enrichedCity || undefined,
+            state: enrichedState || undefined,
+            postalCode: enrichedPostalCode || undefined,
             customerAddressId: order.customer_address_id,
           })
 

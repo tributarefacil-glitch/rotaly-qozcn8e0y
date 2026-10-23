@@ -45,8 +45,8 @@ export function getOrderRoadDistanceFromBase(
   order: OrderRecord,
   activeBaseCoords?: { lat: number; lng: number } | null,
 ): number {
-  const fallbackLat = activeBaseCoords?.lat ?? -22.7001402
-  const fallbackLng = activeBaseCoords?.lng ?? -43.2982834
+  const fallbackLat = activeBaseCoords?.lat ?? -22.6977499
+  const fallbackLng = activeBaseCoords?.lng ?? -43.2936013
   const baseLat = order.start_base_lat || fallbackLat
   const baseLng = order.start_base_lng || fallbackLng
   const cleanDest = MapDataService.getOrderDestination(order)

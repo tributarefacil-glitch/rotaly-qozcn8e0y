@@ -47,6 +47,8 @@ declare global {
       isTrackingActive: () => boolean | string
       requestAllPermissions: () => void
       checkPermissions: () => string // JSON com permissões
+      getBatteryLevel?: () => number
+      requestIgnoreBatteryOptimizations?: () => boolean
       openBatteryOptimizationSettings: () => void
       openAppSettings: () => void
       openNavigationApp: (
@@ -376,9 +378,39 @@ class NativeGpsBridgeService {
   }
 
   /**
-   * Dispara o intent ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (via plugin Capacitor ou nativo)
+   * Obtém nível de bateria nativo real via interface Android.
+   * Retorna 1..100 ou null se indisponível. NUNCA retorna 0.
+   */
+  public getNativeBatteryLevel(): number | null {
+    if (this.isNativeEnvironment() && window.RotalyNativeGps?.getBatteryLevel) {
+      try {
+        const val = Number(window.RotalyNativeGps.getBatteryLevel())
+        if (!isNaN(val) && val > 0 && val <= 100) {
+          return Math.round(val)
+        }
+      } catch (err) {
+        console.warn('[NativeGpsBridge] Falha ao ler bateria nativa:', err)
+      }
+    }
+    return null
+  }
+
+  /**
+   * Dispara o intent ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (via interface nativa RotalyNativeGps ou plugin)
    */
   public async requestIgnoreBatteryOptimizations(): Promise<boolean> {
+    if (this.isNativeEnvironment() && window.RotalyNativeGps?.requestIgnoreBatteryOptimizations) {
+      try {
+        const ok = window.RotalyNativeGps.requestIgnoreBatteryOptimizations()
+        if (ok) return true
+      } catch (err) {
+        console.warn(
+          '[NativeGpsBridge] Erro ao chamar requestIgnoreBatteryOptimizations nativo:',
+          err,
+        )
+      }
+    }
+
     if (this.isCapacitorAvailable()) {
       const cap = (window as any).Capacitor
       try {
@@ -394,6 +426,9 @@ class NativeGpsBridgeService {
         console.warn('[nativeGpsBridge] Falha ao disparar requestIgnoreBatteryOptimizations:', e)
       }
     }
+
+    // Fallback: abrir tela de configurações de otimização de bateria do sistema
+    this.openBatteryOptimizationSettings()
     return false
   }
 

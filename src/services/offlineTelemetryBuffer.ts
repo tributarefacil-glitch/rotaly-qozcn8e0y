@@ -400,7 +400,7 @@ class OfflineTelemetryBufferService {
         // Converter timestamp original em formato legível ISO para o log de auditoria
         const originalTimeIso = new Date(pt.timestamp).toISOString()
 
-        // PATCH 1: Usar sanitizador em TODO envio a locations (flush do buffer)
+        // PATCH 1: Usar sanitizador em TODO envio a locations (flush do buffer) com timestamp original preservado
         let sanitizedPayload: ReturnType<typeof deliveryService.sanitizeLocationPayload>
         try {
           sanitizedPayload = deliveryService.sanitizeLocationPayload({
@@ -417,6 +417,7 @@ class OfflineTelemetryBufferService {
                 : 'offline',
             gpsReason: `${pt.reason} (coletado em ${originalTimeIso})`,
             offlineBuffered: true,
+            locationTimestamp: originalTimeIso,
           })
         } catch (sanitizationErr: any) {
           console.warn('[TELEMETRIA POCKETBASE 400/FAIL] Erro de sanitização no buffer:', {
@@ -445,6 +446,7 @@ class OfflineTelemetryBufferService {
               gps_reason: sanitizedPayload.gps_reason,
               offline_buffered: true,
               accuracy: sanitizedPayload.accuracy,
+              location_timestamp: originalTimeIso,
             },
           )
           sentCount++

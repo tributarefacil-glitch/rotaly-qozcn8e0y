@@ -72,8 +72,8 @@ public class RotalyGpsForegroundService extends Service {
     private static volatile boolean isTracking = false;
     private static volatile long lastPingTimestamp = 0L;
 
-    private long intervalMs = 30000L; // 30s
-    private float minDistanceM = 18f;  // 18m
+    private long intervalMs = 5000L; // Cadência contínua de ~5s em rota ativa
+    private float minDistanceM = 10f; // 10m de deslocamento para detecção ágil
     private String notificationTitle = "Rastreamento de Entregas Rotaly";
     private String notificationText = "GPS em segundo plano ativo para cômputo da rota e segurança";
 
@@ -216,14 +216,16 @@ public class RotalyGpsForegroundService extends Service {
 
     private void requestLocationUpdates() {
         try {
-            long minFastestIntervalMs = 5000L;
+            long minFastestIntervalMs = 3000L;
             LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
                     .setMinUpdateIntervalMillis(minFastestIntervalMs)
                     .setMinUpdateDistanceMeters(minDistanceM)
                     .setWaitForAccurateLocation(false)
+                    .setMaxUpdateDelayMillis(10000L) // Força entrega em no máximo 10s mesmo em batch do SO
                     .build();
 
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
+            Log.i(TAG, "LocationRequest registrado com interval=" + intervalMs + "ms, minDistance=" + minDistanceM + "m");
         } catch (SecurityException se) {
             Log.e(TAG, "Permissão de localização não concedida para o Foreground Service!", se);
         } catch (Exception e) {
@@ -250,6 +252,40 @@ public class RotalyGpsForegroundService extends Service {
         broadcastLocation(location);
     }
 
+    /**
+     * Obtém o nível de bateria atual do dispositivo via Android BatteryManager nativo.
+     * Retorna valor inteiro de 1 a 100, ou -1 se indisponível.
+     * NUNCA retorna 0 como valor falso.
+     */
+    private int getNativeBatteryLevel() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                android.os.BatteryManager bm = (android.os.BatteryManager) getSystemService(Context.BATTERY_SERVICE);
+                if (bm != null) {
+                    int val = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
+                    if (val > 0 && val <= 100) {
+                        return val;
+                    }
+                }
+            }
+            IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+            Intent batteryStatus = registerReceiver(null, ifilter);
+            if (batteryStatus != null) {
+                int level = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1);
+                int scale = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1);
+                if (level > 0 && scale > 0) {
+                    int pct = Math.round((level / (float) scale) * 100.0f);
+                    if (pct > 0 && pct <= 100) {
+                        return pct;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Falha ao obter nível de bateria nativo:", e);
+        }
+        return -1;
+    }
+
     private void postLocationDirectly(Location location, long originalTimestamp) {
         networkExecutor.execute(() -> {
             boolean success = false;
@@ -272,15 +308,37 @@ public class RotalyGpsForegroundService extends Service {
                 }
                 conn.setDoOutput(true);
 
+                // FILTRO DE QUALIDADE NATIVO:
+                // Descartar pings com accuracy absurda (> 2000m) e velocidade impossível (> 200 km/h)
+                float acc = location.hasAccuracy() ? location.getAccuracy() : 10.0f;
+                if (acc > 2000f) {
+                    Log.w(TAG, "Ping nativo descartado por accuracy absurda: " + acc + "m");
+                    conn.disconnect();
+                    return;
+                }
+
+                float rawSpeedMps = location.hasSpeed() ? location.getSpeed() : 0.0f;
+                float speedKmh = rawSpeedMps * 3.6f;
+                if (speedKmh > 200f) {
+                    Log.w(TAG, "Velocidade impossível reportada pelo GPS (" + speedKmh + " km/h) — forçando speed para 0");
+                    speedKmh = 0.0f;
+                }
+
                 JSONObject payload = new JSONObject();
                 payload.put("user_id", userId);
                 payload.put("lat", location.getLatitude());
                 payload.put("lng", location.getLongitude());
-                payload.put("speed", location.hasSpeed() ? location.getSpeed() : 0.0);
+                payload.put("speed", Math.round(speedKmh * 10.0f) / 10.0);
                 payload.put("heading", location.hasBearing() ? location.getBearing() : 0.0);
-                payload.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : 10.0);
+                payload.put("accuracy", Math.round(acc * 10.0f) / 10.0);
                 payload.put("gps_status", "active");
                 payload.put("offline_buffered", false);
+
+                // Leitura nativa real da bateria: NUNCA grava 0 falso
+                int battery = getNativeBatteryLevel();
+                if (battery > 0 && battery <= 100) {
+                    payload.put("battery_level", battery);
+                }
 
                 // Timestamp original do ping formatado em UTC ISO 8601
                 SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS'Z'", Locale.US);
@@ -339,10 +397,17 @@ public class RotalyGpsForegroundService extends Service {
             JSONObject item = new JSONObject();
             item.put("lat", lat);
             item.put("lng", lng);
-            item.put("speed", location.hasSpeed() ? location.getSpeed() : 0.0);
+            float speedKmh = location.hasSpeed() ? (location.getSpeed() * 3.6f) : 0.0f;
+            if (speedKmh > 200f) speedKmh = 0.0f;
+            item.put("speed", Math.round(speedKmh * 10.0f) / 10.0);
             item.put("heading", location.hasBearing() ? location.getBearing() : 0.0);
             item.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : 10.0);
             item.put("timestamp", originalTimestamp);
+
+            int battery = getNativeBatteryLevel();
+            if (battery > 0 && battery <= 100) {
+                item.put("battery_level", battery);
+            }
 
             // Limitar fila a 1000 pings mais recentes para não esgotar memória
             if (arr.length() > 1000) {
@@ -415,6 +480,12 @@ public class RotalyGpsForegroundService extends Service {
                         payload.put("accuracy", item.optDouble("accuracy", 10.0));
                         payload.put("gps_status", "active");
                         payload.put("offline_buffered", true);
+
+                        int itemBattery = item.optInt("battery_level", -1);
+                        if (itemBattery > 0 && itemBattery <= 100) {
+                            payload.put("battery_level", itemBattery);
+                        }
+
                         payload.put("location_timestamp", sdf.format(new Date(item.getLong("timestamp"))));
 
                         byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
@@ -466,10 +537,18 @@ public class RotalyGpsForegroundService extends Service {
             json.put("latitude", location.getLatitude());
             json.put("longitude", location.getLongitude());
             json.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : 10.0);
-            json.put("speed", location.hasSpeed() ? location.getSpeed() : 0.0);
+            float speedKmh = location.hasSpeed() ? (location.getSpeed() * 3.6f) : 0.0f;
+            if (speedKmh > 200f) speedKmh = 0.0f;
+            json.put("speed", Math.round(speedKmh * 10.0f) / 10.0);
             json.put("heading", location.hasBearing() ? location.getBearing() : 90.0);
             json.put("altitude", location.hasAltitude() ? location.getAltitude() : 0.0);
             json.put("timestamp", location.getTime() > 0 ? location.getTime() : System.currentTimeMillis());
+
+            int battery = getNativeBatteryLevel();
+            if (battery > 0 && battery <= 100) {
+                json.put("batteryLevel", battery);
+                json.put("battery_level", battery);
+            }
 
             Intent broadcastIntent = new Intent(ACTION_LOCATION_BROADCAST);
             broadcastIntent.putExtra(EXTRA_LOCATION_JSON, json.toString());
