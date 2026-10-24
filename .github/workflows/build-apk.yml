@@ -283,7 +283,19 @@ jobs:
               fi
             fi
 
-            # 6.3 Aplicar overlay nativo personalizado do Rotaly
+            # 6.3 Limpar arquivos padrão do Capacitor que colidem com recursos personalizados
+            # Capacitor gera res/values/ic_launcher_background.xml (cor branca padrão) e
+            # res/drawable/ic_launcher_background.xml / res/drawable-v24/ic_launcher_foreground.xml
+            # que colidem com nossa paleta Rotaly (definida em colors.xml) e nosso foreground vetorial.
+            echo "--- [SUB-PASSO] Higienizar recursos pre-overlay para evitar duplicatas do Gradle ---"
+            rm -f android/app/src/main/res/values/ic_launcher_background.xml
+            rm -f android/app/src/main/res/drawable/ic_launcher_background.xml
+            rm -f android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
+            rm -f android/app/src/main/res/font/ic_launcher_background.xml
+            rm -f android/app/src/main/res/color/ic_launcher_background.xml
+            echo "Arquivos legados/padrao potencialmente conflitantes removidos com sucesso."
+
+            # 6.3b Aplicar overlay nativo personalizado do Rotaly
             echo "--- [SUB-PASSO] Aplicar android-overlay sobre android/ ---"
             if [ ! -d "android-overlay" ]; then
               echo "::error::Diretorio android-overlay ausente no repositorio!"
@@ -292,6 +304,13 @@ jobs:
             fi
             cp -r android-overlay/* android/
             echo "Overlay nativo copiado com sucesso sobre android/."
+
+            # 6.3c Garantir novamente a ausência de recursos duplicados de ic_launcher_background pós-cópia
+            rm -f android/app/src/main/res/values/ic_launcher_background.xml
+            rm -f android/app/src/main/res/drawable/ic_launcher_background.xml
+            rm -f android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
+            rm -f android/app/src/main/res/font/ic_launcher_background.xml
+            rm -f android/app/src/main/res/color/ic_launcher_background.xml
 
             # 6.4 Sincronizar configuracoes e assets com Capacitor CLI
             if ! log_cmd "Sincronizar plataforma Android (npx cap sync android)" npx cap sync android; then
