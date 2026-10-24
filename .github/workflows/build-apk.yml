@@ -197,16 +197,19 @@ jobs:
             local step_name="$1"
             shift
             echo "--- [SUB-PASSO] $step_name ---"
-            if ! "$@"; then
-              local err_code=$?
+            set +e
+            "$@"
+            local err_code=$?
+            set -e
+            if [ "$err_code" -ne 0 ]; then
               local msg="FALHA no sub-passo '$step_name' com codigo de saida $err_code ao executar: $*"
               echo "::error::$msg"
               echo "=== FALHA NA REGENERACAO DO PROJETO ANDROID ===" >> "$GRADLE_LOG"
               echo "$msg" >> "$GRADLE_LOG"
               echo "O Gradle nao foi iniciado porque a etapa de regeneracao falhou antes da compilacao." >> "$GRADLE_LOG"
-              exit $err_code
+              exit "$err_code"
             fi
-            echo "SUCESSO: $step_name"
+            echo "SUCESSO: $step_name (codigo de saida: $err_code)"
           }
 
           {
