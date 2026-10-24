@@ -45,8 +45,9 @@ if (fs.existsSync(tsPath)) {
     if (appIdMatch) canonicalConfig.appId = appIdMatch[1]
     if (appNameMatch) canonicalConfig.appName = appNameMatch[1]
     if (webDirMatch) canonicalConfig.webDir = webDirMatch[1]
-    if (serverUrlMatch) canonicalConfig.server.url = serverUrlMatch[1]
-    if (bgColorMatch) canonicalConfig.android.backgroundColor = bgColorMatch[1]
+    if (serverUrlMatch && canonicalConfig.server) canonicalConfig.server.url = serverUrlMatch[1]
+    if (bgColorMatch && canonicalConfig.android)
+      canonicalConfig.android.backgroundColor = bgColorMatch[1]
   } catch (err) {
     console.warn(
       '[prepare-capacitor-config] Aviso: Nao foi possivel parsear capacitor.config.ts, usando fallback canonico.',
@@ -66,4 +67,12 @@ if (fs.existsSync(androidAssetsPath)) {
   const assetConfigPath = path.join(androidAssetsPath, 'capacitor.config.json')
   fs.writeFileSync(assetConfigPath, JSON.stringify(canonicalConfig, null, 2) + '\n', 'utf8')
   console.log(`[prepare-capacitor-config] SUCESSO: Sincronizado ${assetConfigPath}`)
+}
+
+// 4. Se android-overlay/app/src/main/assets existir, manter espelhado
+const overlayAssetsPath = path.resolve('android-overlay/app/src/main/assets')
+if (fs.existsSync(overlayAssetsPath)) {
+  const overlayConfigPath = path.join(overlayAssetsPath, 'capacitor.config.json')
+  fs.writeFileSync(overlayConfigPath, JSON.stringify(canonicalConfig, null, 2) + '\n', 'utf8')
+  console.log(`[prepare-capacitor-config] SUCESSO: Sincronizado ${overlayConfigPath}`)
 }

@@ -1,4 +1,3 @@
-# TEMPORARIO: build em todo push ate confirmacao do release apk-latest; depois restringir a workflow_dispatch
 name: Criar APK para Android
 
 on:
@@ -15,9 +14,6 @@ on:
   push:
     branches:
       - main
-  # REMOVER apos confirmacao do release apk-latest
-  schedule:
-    - cron: '*/5 * * * *'
 
 permissions:
   contents: write
@@ -32,16 +28,14 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # Step 0. Guarda de decisao inteligente para execucao deterministica de build
-      # Executa sempre sem 'if' para evitar runs com 0 jobs / falha de avaliacao.
-      # TEMPORARIO: autoriza build para todos os eventos (workflow_dispatch, schedule e push, inclusive auto-commit)
-      - name: Avaliar gatilho e filtro de auto-commit
+      # Step 0. Guarda inicial por step que autoriza TODOS os pushes e dispatches
+      - name: Avaliar gatilho e autorizar build
         id: guard
         run: |
           MSG="${{ github.event.head_commit.message || '' }}"
           echo "Evento disparado: ${{ github.event_name }}"
           echo "Mensagem do commit: $MSG"
-          echo "Build autorizado para todos os eventos (garantia de geracao do release apk-latest): build=true"
+          echo "Autorizado para todos os eventos de push no main e workflow_dispatch: build=true"
           echo "build=true" >> "$GITHUB_OUTPUT"
 
       # 1. Checkout do repositório
@@ -83,7 +77,7 @@ jobs:
             echo "=== FIM DO DIAGNOSTICO INICIAL ==="
           } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
 
-      # 3. Configurar Node.js oficial (Node 20 LTS - altamente estável para Capacitor 6/7 e npm)
+      # 3. Configurar Node.js oficial (Node 20 LTS)
       - name: Configurar Node.js 20 LTS
         if: steps.guard.outputs.build == 'true'
         uses: actions/setup-node@v4
@@ -102,7 +96,6 @@ jobs:
             node -v
             npm -v
 
-            # Tenta múltiplos métodos de instalação para garantir sucesso com ou sem lockfile
             INSTALLED=false
 
             if [ -f "package-lock.json" ]; then
@@ -177,7 +170,7 @@ jobs:
             fi
             echo "dist/index.html confirmado com $(wc -c < dist/index.html) bytes."
 
-            echo "Garantindo capacitor.config.json canônico (sem dependencia de ts-node)..."
+            echo "Garantindo capacitor.config.json canonico (sem dependencia de ts-node)..."
             node scripts/prepare-capacitor-config.mjs
 
             if [ ! -f "capacitor.config.json" ]; then
@@ -187,8 +180,12 @@ jobs:
             echo "Conteudo do capacitor.config.json:"
             cat capacitor.config.json
 
-            echo "Garantindo pacotes @capacitor/cli e @capacitor/android no node_modules..."
+            echo "Garantindo pacotes @capacitor/core, @capacitor/cli e @capacitor/android no node_modules..."
             CAP_MISSING=false
+            if [ ! -d "node_modules/@capacitor/core" ]; then
+              echo "Aviso: node_modules/@capacitor/core ausente."
+              CAP_MISSING=true
+            fi
             if [ ! -d "node_modules/@capacitor/cli" ]; then
               echo "Aviso: node_modules/@capacitor/cli ausente."
               CAP_MISSING=true
@@ -199,8 +196,8 @@ jobs:
             fi
 
             if [ "$CAP_MISSING" = "true" ]; then
-              echo "Instalando @capacitor/cli e @capacitor/android explicitamente..."
-              npm install --legacy-peer-deps --no-save --no-audit --no-fund @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0
+              echo "Instalando pacotes do Capacitor explicitamente..."
+              npm install --legacy-peer-deps --no-audit --no-fund @capacitor/core@^6.2.0 @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0
             fi
 
             echo "Versao do Capacitor CLI: $(npx cap --version 2>&1 || echo 'falha ao obter versao')"
@@ -217,23 +214,49 @@ jobs:
           STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
           GRADLE_LOG="$GITHUB_WORKSPACE/gradle-build.log"
 
+          # log_cmd seguro com dump completo de stdout/stderr em caso de falha
           log_cmd() {
             local step_name="$1"
             shift
             echo "--- [SUB-PASSO] $step_name ---"
+            local tmp_out
+            tmp_out=$(mktemp)
             set +e
-            "$@"
+            "$@" > "$tmp_out" 2>&1
             local err_code=$?
             set -e
+            cat "$tmp_out"
             if [ "$err_code" -ne 0 ]; then
               local msg="FALHA no sub-passo '$step_name' com codigo de saida $err_code ao executar: $*"
               echo "::error::$msg"
+              echo "=== DIAGNOSTICO COMPLETO DA FALHA NO SUB-PASSO '$step_name' ==="
+              echo "Comando: $*"
+              echo "Codigo de saida: $err_code"
+              echo "--- Saida completa do comando ---"
+              cat "$tmp_out"
+              echo "--- Versao do Node e NPM ---"
+              node -v || true
+              npm -v || true
+              echo "--- Versao do Capacitor CLI ---"
+              npx cap --version || true
+              echo "--- Capacitor Doctor ---"
+              npx cap doctor || true
+              echo "--- Dependencias do package.json (secao capacitor) ---"
+              grep -E "capacitor" package.json || true
+              echo "--- Conteudo de capacitor.config.json ---"
+              cat capacitor.config.json 2>/dev/null || true
+              echo "=== FIM DO DIAGNOSTICO ==="
+
               echo "=== FALHA NA REGENERACAO DO PROJETO ANDROID ===" >> "$GRADLE_LOG"
               echo "$msg" >> "$GRADLE_LOG"
+              cat "$tmp_out" >> "$GRADLE_LOG"
               echo "O Gradle nao foi iniciado porque a etapa de regeneracao falhou antes da compilacao." >> "$GRADLE_LOG"
-              exit "$err_code"
+              rm -f "$tmp_out"
+              return "$err_code"
             fi
+            rm -f "$tmp_out"
             echo "SUCESSO: $step_name (codigo de saida: $err_code)"
+            return 0
           }
 
           {
@@ -242,8 +265,17 @@ jobs:
             # 6.1 Limpeza completa do diretório android existente
             log_cmd "Remover android/ pre-existente" rm -rf android
 
-            # 6.2 Adicionar plataforma Android via Capacitor CLI
-            log_cmd "Adicionar plataforma Android (npx cap add android)" npx cap add android
+            # 6.2 Adicionar plataforma Android via Capacitor CLI com retry resiliente
+            echo "Executando adicao de plataforma Android..."
+            if ! log_cmd "Adicionar plataforma Android (npx cap add android)" npx cap add android; then
+              echo "::warning::Primeira tentativa de 'npx cap add android' falhou. Tentando reinstalar @capacitor/core, @capacitor/cli, @capacitor/android e tentar novamente..."
+              npm install --legacy-peer-deps --no-audit --no-fund @capacitor/core@^6.2.0 @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0
+              rm -rf android
+              if ! log_cmd "Adicionar plataforma Android (tentativa 2 com re-install)" npx cap add android; then
+                echo "::error::Falha definitiva ao adicionar plataforma Android!"
+                exit 1
+              fi
+            fi
 
             # 6.3 Aplicar overlay nativo personalizado do Rotaly
             echo "--- [SUB-PASSO] Aplicar android-overlay sobre android/ ---"
@@ -256,10 +288,12 @@ jobs:
             echo "Overlay nativo copiado com sucesso sobre android/."
 
             # 6.4 Sincronizar configuracoes e assets com Capacitor CLI
-            log_cmd "Sincronizar plataforma Android (npx cap sync android)" npx cap sync android
+            if ! log_cmd "Sincronizar plataforma Android (npx cap sync android)" npx cap sync android; then
+              echo "::warning::Falha em 'npx cap sync android'. Tentando 'npx cap copy android' como fallback..."
+              log_cmd "Copiar assets para Android (npx cap copy android)" npx cap copy android
+            fi
 
-            # 6.4b Se houver sincronizacao interna ou script que execute git commit antes do build,
-            # forcar configuracao e mensagem com [skip ci] para que o GitHub nunca dispare pipeline a partir dele
+            # 6.4b Se houver alteração de git local, evitar que gere commits desnecessários
             if [ -d ".git" ]; then
               git config --global user.name "github-actions[bot]" || true
               git config --global user.email "github-actions[bot]@users.noreply.github.com" || true
