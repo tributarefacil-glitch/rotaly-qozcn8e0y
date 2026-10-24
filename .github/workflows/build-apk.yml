@@ -23,8 +23,9 @@ jobs:
   build:
     name: Compilar APK Android
     runs-on: ubuntu-24.04
-    # Pula a execucao caso seja disparada por commits automaticos (ex: auto-commit before sync)
-    if: "!contains(github.event.head_commit.message, 'Auto-commit before sync') && !contains(github.event.head_commit.message, '[skip ci]')"
+    # Cinta de seguranca permanente: somente executa em workflow_dispatch manual
+    # Bloqueia qualquer execucao advinda de push, pull_request ou commits automaticos
+    if: "github.event_name == 'workflow_dispatch' && !contains(github.event.head_commit.message, 'Auto-commit before sync') && !contains(github.event.head_commit.message, '[skip ci]')"
 
     steps:
       # 1. Checkout do repositório
@@ -233,6 +234,18 @@ jobs:
 
             # 6.4 Sincronizar configuracoes e assets com Capacitor CLI
             log_cmd "Sincronizar plataforma Android (npx cap sync android)" npx cap sync android
+
+            # 6.4b Se houver sincronizacao interna ou script que execute git commit antes do build,
+            # forcar configuracao e mensagem com [skip ci] para que o GitHub nunca dispare pipeline a partir dele
+            if [ -d ".git" ]; then
+              git config --global user.name "github-actions[bot]" || true
+              git config --global user.email "github-actions[bot]@users.noreply.github.com" || true
+            fi
+            if git status --porcelain 2>/dev/null | grep -q .; then
+              echo "Status git pos-sync detectado. Garantindo commit com [skip ci] caso auto-commit seja invocado:"
+              git add -A || true
+              git commit -m "Auto-commit before sync [skip ci]" || true
+            fi
 
             # 6.5 Garantir capacitor.config.json dentro de assets do app
             echo "--- [SUB-PASSO] Sincronizar capacitor.config.json em assets ---"
