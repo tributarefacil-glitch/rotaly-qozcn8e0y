@@ -1,3 +1,4 @@
+# TEMPORARIO: build em todo push ate confirmacao do release apk-latest; depois restringir a workflow_dispatch
 name: Criar APK para Android
 
 on:
@@ -33,20 +34,15 @@ jobs:
     steps:
       # Step 0. Guarda de decisao inteligente para execucao deterministica de build
       # Executa sempre sem 'if' para evitar runs com 0 jobs / falha de avaliacao.
-      # Pushs de auto-commit terminam verdes pulando os steps de compilacao.
+      # TEMPORARIO: autoriza build para todos os eventos (workflow_dispatch, schedule e push, inclusive auto-commit)
       - name: Avaliar gatilho e filtro de auto-commit
         id: guard
         run: |
           MSG="${{ github.event.head_commit.message || '' }}"
           echo "Evento disparado: ${{ github.event_name }}"
           echo "Mensagem do commit: $MSG"
-          if echo "$MSG" | grep -qE "Auto-commit before sync|\[skip ci\]"; then
-            echo "Build pulado: commit automatico"
-            echo "build=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Build autorizado: commit de versao, schedule ou disparo manual"
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          fi
+          echo "Build autorizado para todos os eventos (garantia de geracao do release apk-latest): build=true"
+          echo "build=true" >> "$GITHUB_OUTPUT"
 
       # 1. Checkout do repositório
       - name: Checkout do repositorio
