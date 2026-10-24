@@ -512,11 +512,18 @@ jobs:
 
           if [ "$BUILD_DEBUG_FAILED" = "true" ]; then
             echo "::error::FALHA CRITICA no assembleDebug!"
+            echo "=== DUMP DE ERROS DO COMPILADOR JAVAC ==="
+            grep -E "error:|erro:|location:|symbol:|cannot find symbol" "$GRADLE_LOG_FILE" || true
+            echo "=== FIM DO DUMP DE ERROS JAVAC ==="
             if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
               ROOT_CAUSE=$(grep -A 10 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g')
               [ -n "$ROOT_CAUSE" ] && echo "::error title=Gradle Root Cause (Debug)::$ROOT_CAUSE"
               CAUSED_BY=$(grep -A 5 "Caused by:" "$GRADLE_LOG_FILE" | head -n 5 | tr '\r\n' '  ' | sed 's/"/\\"/g')
               [ -n "$CAUSED_BY" ] && echo "::error title=Gradle Caused By (Debug)::$CAUSED_BY"
+            fi
+            JAVAC_ERRORS=$(grep -E "^/.*\.java:[0-9]+: error:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g' || true)
+            if [ -n "$JAVAC_ERRORS" ]; then
+              echo "::error title=Java Compiler Errors::$JAVAC_ERRORS"
             fi
             exit 1
           fi
@@ -571,11 +578,18 @@ jobs:
             fi
           else
             echo "::warning title=Falha no Release::RELEASE falhou, APK debug disponivel como fallback."
+            echo "=== DUMP DE ERROS DO COMPILADOR JAVAC (RELEASE) ==="
+            grep -E "error:|erro:|location:|symbol:|cannot find symbol" "$GRADLE_LOG_FILE" || true
+            echo "=== FIM DO DUMP DE ERROS JAVAC (RELEASE) ==="
             if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
               ROOT_CAUSE=$(grep -A 10 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g')
               [ -n "$ROOT_CAUSE" ] && echo "::warning title=Gradle Root Cause (Release)::$ROOT_CAUSE"
               CAUSED_BY=$(grep -A 5 "Caused by:" "$GRADLE_LOG_FILE" | head -n 5 | tr '\r\n' '  ' | sed 's/"/\\"/g')
               [ -n "$CAUSED_BY" ] && echo "::warning title=Gradle Caused By (Release)::$CAUSED_BY"
+            fi
+            JAVAC_ERRORS_REL=$(grep -E "^/.*\.java:[0-9]+: error:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g' || true)
+            if [ -n "$JAVAC_ERRORS_REL" ]; then
+              echo "::warning title=Java Compiler Errors (Release)::$JAVAC_ERRORS_REL"
             fi
             echo "release_success=false" >> "$GITHUB_OUTPUT"
             exit 1

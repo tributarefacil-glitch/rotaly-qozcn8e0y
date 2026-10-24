@@ -41,7 +41,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import br.com.rotaly.app.MainActivity;
-import br.com.rotaly.app.R;
 
 public class RotalyGpsForegroundService extends Service {
     private static final String TAG = "RotalyGpsService";
@@ -558,6 +557,17 @@ public class RotalyGpsForegroundService extends Service {
         }
     }
 
+    private int getAppIconResourceId() {
+        int iconId = getApplicationInfo().icon;
+        if (iconId <= 0) {
+            iconId = getResources().getIdentifier("ic_launcher", "mipmap", getPackageName());
+        }
+        if (iconId <= 0) {
+            iconId = android.R.drawable.ic_dialog_map;
+        }
+        return iconId;
+    }
+
     private Notification buildNotification(String title, String content) {
         Intent notificationIntent = new Intent(this, MainActivity.class);
         notificationIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -569,10 +579,12 @@ public class RotalyGpsForegroundService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0)
         );
 
+        int smallIcon = getAppIconResourceId();
+
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(content)
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(smallIcon)
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
