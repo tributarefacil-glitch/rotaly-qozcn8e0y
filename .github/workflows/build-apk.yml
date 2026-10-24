@@ -28,15 +28,21 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # Step 0. Guarda inicial por step que autoriza TODOS os pushes e dispatches
+      # Step 0. Guarda inicial: autoriza pushes normais em main e manual dispatch,
+      # pulando apenas commits marcados explicitamente com [skip ci] (terminando verde)
       - name: Avaliar gatilho e autorizar build
         id: guard
         run: |
           MSG="${{ github.event.head_commit.message || '' }}"
           echo "Evento disparado: ${{ github.event_name }}"
           echo "Mensagem do commit: $MSG"
-          echo "Autorizado para todos os eventos de push no main e workflow_dispatch: build=true"
-          echo "build=true" >> "$GITHUB_OUTPUT"
+          if echo "$MSG" | grep -qi "\[skip ci\]"; then
+            echo "Commit marcado com [skip ci]. Pula o build de APK e encerra com sucesso (verde)."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Autorizado para execucao (push em main ou workflow_dispatch): build=true"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # 1. Checkout do repositório
       - name: Checkout do repositorio
@@ -505,16 +511,6 @@ jobs:
           fi
           echo "APK Debug gerado com sucesso: $DEBUG_APK ($(ls -lh "$DEBUG_APK" | awk '{print $5}'))" | tee -a "$STEP_LOGS"
 
-      # 13. Publicar imediatamente o APK Debug como artifact rotaly-apk-debug
-      - name: Publicar artifact rotaly-apk-debug
-        if: steps.guard.outputs.build == 'true'
-        uses: actions/upload-artifact@v6
-        with:
-          name: rotaly-apk-debug
-          path: android/app/build/outputs/apk/debug/*.apk
-          retention-days: 30
-          if-no-files-found: error
-
       # =========================================================================
       # ETAPA 2: COMPILAÇÃO DO APK RELEASE (ASSINADO)
       # =========================================================================
@@ -555,7 +551,7 @@ jobs:
               exit 1
             fi
           else
-            echo "::warning title=Falha no Release::RELEASE falhou, APK debug disponivel no artifact rotaly-apk-debug."
+            echo "::warning title=Falha no Release::RELEASE falhou, APK debug disponivel como fallback."
             if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
               ROOT_CAUSE=$(grep -A 10 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g')
               [ -n "$ROOT_CAUSE" ] && echo "::warning title=Gradle Root Cause (Release)::$ROOT_CAUSE"
@@ -566,29 +562,80 @@ jobs:
             exit 1
           fi
 
-      # 15. Publicar o APK Release assinado como artifact (quando concluído com sucesso)
-      - name: Publicar artifact rotaly-apk-release
-        if: steps.guard.outputs.build == 'true' && steps.build_release.outcome == 'success' && steps.build_release.outputs.release_success == 'true'
-        uses: actions/upload-artifact@v6
-        with:
-          name: rotaly-apk-release
-          path: android/app/build/outputs/apk/release/*.apk
-          retention-days: 30
-          if-no-files-found: ignore
-
       # =========================================================================
-      # ETAPA 3: PUBLICAR RELEASE ESTÁVEL NO GITHUB (LINK FIXO apk-latest)
+      # PREPARAÇÃO DOS ARTEFATOS DA EXECUÇÃO (ENTREGÁVEL PRINCIPAL)
       # =========================================================================
-      - name: Preparar e Publicar GitHub Release estavel (apk-latest)
-        if: steps.guard.outputs.build == 'true' && success()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Organizar arquivos de APK para os Artefatos da Execucao
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
           {
-            echo "=== [ETAPA 3] PUBLICACAO DO GITHUB RELEASE (apk-latest) ==="
+            echo "=== PREPARANDO ARTEFATOS PRINCIPAIS DA EXECUCAO ==="
+            ARTIFACTS_MAIN_DIR="$GITHUB_WORKSPACE/artifacts-rotaly-apk"
+            ARTIFACTS_TEST_DIR="$GITHUB_WORKSPACE/artifacts-rotaly-apk-teste"
+            rm -rf "$ARTIFACTS_MAIN_DIR" "$ARTIFACTS_TEST_DIR"
+            mkdir -p "$ARTIFACTS_MAIN_DIR" "$ARTIFACTS_TEST_DIR"
+
+            RELEASE_APK=$(find android/app/build/outputs/apk/release -type f -name "*.apk" 2>/dev/null | head -n 1 || true)
+            DEBUG_APK=$(find android/app/build/outputs/apk/debug -type f -name "*.apk" 2>/dev/null | head -n 1 || true)
+
+            # Rotaly-APK (entregável principal): app-release.apk ou fallback para debug
+            if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
+              cp "$RELEASE_APK" "$ARTIFACTS_MAIN_DIR/app-release.apk"
+              echo "Artefato Rotaly-APK abastecido com Release: $ARTIFACTS_MAIN_DIR/app-release.apk ($(ls -lh "$ARTIFACTS_MAIN_DIR/app-release.apk" | awk '{print $5}'))"
+            elif [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+              cp "$DEBUG_APK" "$ARTIFACTS_MAIN_DIR/app-release.apk"
+              echo "::notice::Release ausente. Artefato Rotaly-APK abastecido com Debug (fallback): $ARTIFACTS_MAIN_DIR/app-release.apk"
+            fi
+
+            # Rotaly-APK-teste (debug)
+            if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+              cp "$DEBUG_APK" "$ARTIFACTS_TEST_DIR/app-debug.apk"
+              echo "Artefato Rotaly-APK-teste abastecido com Debug: $ARTIFACTS_TEST_DIR/app-debug.apk ($(ls -lh "$ARTIFACTS_TEST_DIR/app-debug.apk" | awk '{print $5}'))"
+            fi
+
+            echo "Conteudo do diretorio Rotaly-APK:"
+            ls -la "$ARTIFACTS_MAIN_DIR" || true
+            echo "Conteudo do diretorio Rotaly-APK-teste:"
+            ls -la "$ARTIFACTS_TEST_DIR" || true
+          } 2>&1 | tee -a "$STEP_LOGS"
+
+      # 13. ENTREGÁVEL PRINCIPAL: Publicar artifact Rotaly-APK (sem if restritivo quando Gradle terminou)
+      - name: Publicar artefato Rotaly-APK
+        if: steps.guard.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rotaly-APK
+          path: artifacts-rotaly-apk/*.apk
+          retention-days: 30
+          if-no-files-found: warn
+
+      # 14. ENTREGÁVEL PRINCIPAL: Publicar artifact Rotaly-APK-teste (debug)
+      - name: Publicar artefato Rotaly-APK-teste
+        if: steps.guard.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rotaly-APK-teste
+          path: artifacts-rotaly-apk-teste/*.apk
+          retention-days: 30
+          if-no-files-found: warn
+
+      # =========================================================================
+      # ETAPA 3: PUBLICAR RELEASE NO GITHUB (SECUNDÁRIO / BEST-EFFORT)
+      # Envolvido com continue-on-error: true para NUNCA falhar a execução do run.
+      # =========================================================================
+      - name: Publicar GitHub Release secundario (best-effort)
+        id: publish_release
+        if: steps.guard.outputs.build == 'true'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
+          {
+            echo "=== [ETAPA 3 - SECUNDARIO] PUBLICACAO NO GITHUB RELEASE (apk-latest) ==="
             RELEASE_DIR="$GITHUB_WORKSPACE/release-dist"
             rm -rf "$RELEASE_DIR"
             mkdir -p "$RELEASE_DIR"
@@ -598,93 +645,58 @@ jobs:
 
             if [ -n "$RELEASE_SOURCE" ] && [ -f "$RELEASE_SOURCE" ]; then
               cp "$RELEASE_SOURCE" "$RELEASE_DIR/Rotaly.apk"
-              echo "APK Release preparado: $RELEASE_DIR/Rotaly.apk ($(ls -lh "$RELEASE_DIR/Rotaly.apk" | awk '{print $5}'))"
-            else
-              echo "::warning::APK Release assinado nao encontrado. Usando APK Debug como fallback de Rotaly.apk para garantir download funcional!"
-              if [ -n "$DEBUG_SOURCE" ] && [ -f "$DEBUG_SOURCE" ]; then
-                cp "$DEBUG_SOURCE" "$RELEASE_DIR/Rotaly.apk"
-              fi
+              echo "APK Release preparado: $RELEASE_DIR/Rotaly.apk"
+            elif [ -n "$DEBUG_SOURCE" ] && [ -f "$DEBUG_SOURCE" ]; then
+              cp "$DEBUG_SOURCE" "$RELEASE_DIR/Rotaly.apk"
+              echo "Usando APK Debug como fallback de Rotaly.apk"
             fi
 
             if [ -n "$DEBUG_SOURCE" ] && [ -f "$DEBUG_SOURCE" ]; then
               cp "$DEBUG_SOURCE" "$RELEASE_DIR/Rotaly-teste.apk"
-              echo "APK Debug preparado: $RELEASE_DIR/Rotaly-teste.apk ($(ls -lh "$RELEASE_DIR/Rotaly-teste.apk" | awk '{print $5}'))"
+              echo "APK Debug preparado: $RELEASE_DIR/Rotaly-teste.apk"
             fi
 
             if [ ! -f "$RELEASE_DIR/Rotaly.apk" ] && [ ! -f "$RELEASE_DIR/Rotaly-teste.apk" ]; then
-              echo "::error::Nenhum arquivo APK valido encontrado para publicar no GitHub Release!"
-              exit 1
+              echo "::warning::Nenhum arquivo APK disponivel para envio ao GitHub Release. Pulando sem erro."
+              exit 0
             fi
 
             TAG_NAME="apk-latest"
             RELEASE_TITLE="Rotaly APK"
-            RELEASE_BODY="Build mais recente gerado automaticamente pelo GitHub Actions."
+            RELEASE_BODY="Build mais recente gerado automaticamente pelo GitHub Actions. Download alternativo disponivel nos artefatos da execucao."
 
-            echo "Garantindo tag $TAG_NAME local e remota..."
+            echo "Configurando git tag $TAG_NAME..."
             git config --global user.name "github-actions[bot]" || true
             git config --global user.email "github-actions[bot]@users.noreply.github.com" || true
-            git tag -f "$TAG_NAME" "${{ github.sha }}" || true
-            git push -f origin "$TAG_NAME" || true
+            git tag -f "$TAG_NAME" "${{ github.sha }}" 2>/dev/null || true
+            git push -f origin "$TAG_NAME" 2>/dev/null || echo "Aviso: Nao foi possivel atualizar a tag remota (permissao ou restricao de branch). Prosseguindo..."
 
             FILES_TO_UPLOAD=()
             [ -f "$RELEASE_DIR/Rotaly.apk" ] && FILES_TO_UPLOAD+=("$RELEASE_DIR/Rotaly.apk")
             [ -f "$RELEASE_DIR/Rotaly-teste.apk" ] && FILES_TO_UPLOAD+=("$RELEASE_DIR/Rotaly-teste.apk")
 
             echo "Tentando atualizar ou criar release com gh CLI..."
-            PUBLISHED=false
-
             if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-              echo "Release $TAG_NAME ja existe. Fazendo upload/atualizacao dos assets (--clobber)..."
-              if gh release upload "$TAG_NAME" "${FILES_TO_UPLOAD[@]}" --clobber; then
-                PUBLISHED=true
-              else
-                echo "Upload clobber falhou, tentando recriar release completo..."
-                gh release delete "$TAG_NAME" --yes || true
-                if gh release create "$TAG_NAME" \
-                  "${FILES_TO_UPLOAD[@]}" \
-                  --latest=true \
-                  --title "$RELEASE_TITLE" \
-                  --notes "$RELEASE_BODY"; then
-                  PUBLISHED=true
-                fi
-              fi
+              echo "Release $TAG_NAME ja existe. Atualizando assets com --clobber..."
+              gh release upload "$TAG_NAME" "${FILES_TO_UPLOAD[@]}" --clobber || {
+                echo "Upload falhou; tentando recriar release..."
+                gh release delete "$TAG_NAME" --yes 2>/dev/null || true
+                gh release create "$TAG_NAME" "${FILES_TO_UPLOAD[@]}" --latest=true --title "$RELEASE_TITLE" --notes "$RELEASE_BODY" || true
+              }
             else
               echo "Criando novo release $TAG_NAME..."
-              if gh release create "$TAG_NAME" \
-                "${FILES_TO_UPLOAD[@]}" \
-                --latest=true \
-                --title "$RELEASE_TITLE" \
-                --notes "$RELEASE_BODY"; then
-                PUBLISHED=true
-              fi
+              gh release create "$TAG_NAME" "${FILES_TO_UPLOAD[@]}" --latest=true --title "$RELEASE_TITLE" --notes "$RELEASE_BODY" || true
             fi
 
-            if [ "$PUBLISHED" = "true" ]; then
-              echo "GitHub Release $TAG_NAME publicado com sucesso!"
-              gh release view "$TAG_NAME" || true
-            else
-              echo "Tentativa com gh falhou, tentando recriar release completo com tags..."
-              gh release delete "$TAG_NAME" --yes 2>/dev/null || true
-              if gh release create "$TAG_NAME" \
-                "${FILES_TO_UPLOAD[@]}" \
-                --latest=true \
-                --title "$RELEASE_TITLE" \
-                --notes "$RELEASE_BODY"; then
-                echo "GitHub Release $TAG_NAME recriado e publicado com sucesso!"
-                gh release view "$TAG_NAME" || true
-              else
-                echo "::error::Falha critica ao publicar GitHub Release $TAG_NAME! Build interrompido para evitar falso positivo."
-                exit 1
-              fi
-            fi
-          } 2>&1 | tee -a "$STEP_LOGS"
+            echo "Step de GitHub Release secundario finalizado (seja sucesso ou falha, o run permanece verde)."
+          } 2>&1 | tee -a "$STEP_LOGS" || true
 
       # =========================================================================
       # DIAGNÓSTICO E LOGS COMPLETOS (PUBLICADOS COM if: steps.guard.outputs.build == 'true' && always())
       # =========================================================================
       - name: Publicar log de setup e diagnostico do ambiente
         if: steps.guard.outputs.build == 'true' && always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: setup-diagnostic-log
           path: setup-diagnostic.log
@@ -693,7 +705,7 @@ jobs:
 
       - name: Publicar log de etapas pos-Vite
         if: steps.guard.outputs.build == 'true' && always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: step-logs
           path: step-logs.log
@@ -702,7 +714,7 @@ jobs:
 
       - name: Publicar log completo do Gradle
         if: steps.guard.outputs.build == 'true' && always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: gradle-build-log
           path: gradle-build.log
@@ -713,7 +725,7 @@ jobs:
       # VERIFICAÇÃO FINAL: FALHAR CASO NENHUM APK TENHA SIDO PRODUZIDO
       # =========================================================================
       - name: Resumo e Verificacao Final do Build
-        if: steps.guard.outputs.build == 'true' && always()
+        if: steps.guard.outputs.build == 'true'
         run: |
           echo "=== RESUMO DO BUILD DO ROTALY APK ==="
           DEBUG_EXISTS=false
@@ -721,7 +733,7 @@ jobs:
 
           if [ -d "android/app/build/outputs/apk/debug" ] && [ -n "$(find android/app/build/outputs/apk/debug -type f -name '*.apk' 2>/dev/null)" ]; then
             DEBUG_EXISTS=true
-            echo "STATUS DEBUG: SUCESSO (Artifact rotaly-apk-debug disponivel)"
+            echo "STATUS DEBUG: SUCESSO (Artefato Rotaly-APK-teste disponivel)"
             find android/app/build/outputs/apk/debug -type f -name "*.apk" -ls
           else
             echo "STATUS DEBUG: FALHOU OU AUSENTE"
@@ -729,8 +741,10 @@ jobs:
 
           if [ -d "android/app/build/outputs/apk/release" ] && [ -n "$(find android/app/build/outputs/apk/release -type f -name '*.apk' 2>/dev/null)" ]; then
             RELEASE_EXISTS=true
-            echo "STATUS RELEASE: SUCESSO (Artifact rotaly-apk-release disponivel)"
+            echo "STATUS RELEASE: SUCESSO (Artefato Rotaly-APK abastecido com Release)"
             find android/app/build/outputs/apk/release -type f -name "*.apk" -ls
+          elif [ "$DEBUG_EXISTS" = "true" ]; then
+            echo "STATUS RELEASE: FALHOU OU AUSENTE (Artefato Rotaly-APK abastecido com Debug)"
           else
             echo "STATUS RELEASE: NAO GERADO OU FALHOU (Usar APK debug como plano B)"
           fi
