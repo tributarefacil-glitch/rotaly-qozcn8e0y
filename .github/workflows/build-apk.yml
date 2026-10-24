@@ -13,7 +13,7 @@ on:
           - debug
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: apk-build-dispatch
@@ -497,6 +497,82 @@ jobs:
           path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30
           if-no-files-found: ignore
+
+      # =========================================================================
+      # ETAPA 3: PUBLICAR RELEASE ESTÁVEL NO GITHUB (LINK FIXO apk-latest)
+      # =========================================================================
+      - name: Preparar e Publicar GitHub Release estavel (apk-latest)
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eo pipefail
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
+          {
+            echo "=== [ETAPA 3] PUBLICACAO DO GITHUB RELEASE (apk-latest) ==="
+            RELEASE_DIR="$GITHUB_WORKSPACE/release-dist"
+            rm -rf "$RELEASE_DIR"
+            mkdir -p "$RELEASE_DIR"
+
+            RELEASE_SOURCE=$(find android/app/build/outputs/apk/release -type f -name "*.apk" 2>/dev/null | head -n 1 || true)
+            DEBUG_SOURCE=$(find android/app/build/outputs/apk/debug -type f -name "*.apk" 2>/dev/null | head -n 1 || true)
+
+            if [ -n "$RELEASE_SOURCE" ] && [ -f "$RELEASE_SOURCE" ]; then
+              cp "$RELEASE_SOURCE" "$RELEASE_DIR/Rotaly.apk"
+              echo "APK Release preparado: $RELEASE_DIR/Rotaly.apk ($(ls -lh "$RELEASE_DIR/Rotaly.apk" | awk '{print $5}'))"
+            else
+              echo "::warning::APK Release nao encontrado para inclusao no GitHub Release!"
+            fi
+
+            if [ -n "$DEBUG_SOURCE" ] && [ -f "$DEBUG_SOURCE" ]; then
+              cp "$DEBUG_SOURCE" "$RELEASE_DIR/Rotaly-teste.apk"
+              echo "APK Debug preparado: $RELEASE_DIR/Rotaly-teste.apk ($(ls -lh "$RELEASE_DIR/Rotaly-teste.apk" | awk '{print $5}'))"
+            fi
+
+            if [ ! -f "$RELEASE_DIR/Rotaly.apk" ] && [ ! -f "$RELEASE_DIR/Rotaly-teste.apk" ]; then
+              echo "::error::Nenhum arquivo APK valido encontrado para publicar no GitHub Release!"
+              exit 1
+            fi
+
+            TAG_NAME="apk-latest"
+            RELEASE_TITLE="Rotaly APK - Versao Mais Recente"
+            RELEASE_BODY="### Rotaly Android - Download Direto Oficial
+
+Link estavel e permanente com a build mais recente compilada via GitHub Actions.
+
+#### Arquivos disponiveis:
+- **Rotaly.apk**: Versao oficial de producao (assinado). Instala diretamente por cima da versao anterior sem perder dados.
+- **Rotaly-teste.apk**: Versao de teste (debug).
+
+*Build gerada automaticamente em $(date -u '+%d/%m/%Y %H:%M:%S UTC') a partir do commit \`${{ github.sha }}\`.*"
+
+            echo "Garantindo recriacao da tag $TAG_NAME no repositorio..."
+            git tag -f "$TAG_NAME" "${{ github.sha }}"
+            git push -f origin "$TAG_NAME" || true
+
+            echo "Verificando se release previo $TAG_NAME ja existe..."
+            if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+              echo "Release $TAG_NAME existente encontrado. Removendo versao anterior para garantir integridade dos arquivos..."
+              gh release delete "$TAG_NAME" --yes || true
+            fi
+
+            echo "Criando release publico com gh CLI..."
+            FILES_TO_UPLOAD=()
+            [ -f "$RELEASE_DIR/Rotaly.apk" ] && FILES_TO_UPLOAD+=("$RELEASE_DIR/Rotaly.apk")
+            [ -f "$RELEASE_DIR/Rotaly-teste.apk" ] && FILES_TO_UPLOAD+=("$RELEASE_DIR/Rotaly-teste.apk")
+
+            gh release create "$TAG_NAME" \
+              "${FILES_TO_UPLOAD[@]}" \
+              --title "$RELEASE_TITLE" \
+              --notes "$RELEASE_BODY" \
+              --clobber \
+              --prerelease=false \
+              --draft=false \
+              --latest=true
+
+            echo "GitHub Release $TAG_NAME publicado com sucesso!"
+            gh release view "$TAG_NAME" || true
+          } 2>&1 | tee -a "$STEP_LOGS"
 
       # =========================================================================
       # DIAGNÓSTICO E LOGS COMPLETOS (PUBLICADOS SEMPRE COM if: always())

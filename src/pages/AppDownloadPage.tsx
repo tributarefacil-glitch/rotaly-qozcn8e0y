@@ -22,11 +22,13 @@ import { RotalyLogo } from '@/components/RotalyLogo'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 
 export const AppDownloadPage: React.FC = () => {
-  // Link padrão configurável do APK (hospedado no Skip Cloud, release do GitHub ou CDN direto)
-  // Pode ser sobrescrito pelo admin ou definido por variável
+  // Link estável e permanente do APK no GitHub Release oficial (tag fixa apk-latest)
+  // Permite download direto do APK assinado Rotaly.apk sem passar por WhatsApp ou artifacts temporários
   const [apkDownloadUrl] = useState<string>(
-    'https://github.com/tributarefacil-glitch/rotaly-qozcn8e0y/actions',
+    'https://github.com/tributarefacil-glitch/rotaly-qozcn8e0y/releases/download/apk-latest/Rotaly.apk',
   )
+  const releasesPageUrl =
+    'https://github.com/tributarefacil-glitch/rotaly-qozcn8e0y/releases/tag/apk-latest'
   const [copiedLink, setCopiedLink] = useState(false)
 
   const handleCopyLink = () => {
@@ -44,7 +46,7 @@ export const AppDownloadPage: React.FC = () => {
     {
       num: '1',
       title: 'Baixar o Aplicativo',
-      desc: 'Toque no botão "Baixar APK Rotaly" acima. O arquivo rotaly-app.apk começará a ser baixado no seu celular Android.',
+      desc: 'Toque no botão "Baixar APK Rotaly" acima. O arquivo Rotaly.apk será baixado direto no seu celular Android, sem risco de corrupção de arquivo.',
       icon: <Download className="h-5 w-5 text-cyan-400" />,
       tag: 'Download Direto',
     },
@@ -166,7 +168,6 @@ export const AppDownloadPage: React.FC = () => {
             )}
           </div>
         </div>
-
         {/* Aviso de Atualização Direta: Atualize sem desinstalar */}
         <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/40 p-4 flex items-start gap-3 text-xs text-emerald-100 shadow-lg">
           <RefreshCw className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
@@ -188,7 +189,6 @@ export const AppDownloadPage: React.FC = () => {
             </p>
           </div>
         </div>
-
         {/* Banner de Destaque: Por que instalar o APK? */}
         <div className="rounded-2xl border border-cyan-500/30 bg-cyan-950/30 p-4 flex items-start gap-3 text-xs text-cyan-100 shadow-lg">
           <Sparkles className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
@@ -203,7 +203,6 @@ export const AppDownloadPage: React.FC = () => {
             </p>
           </div>
         </div>
-
         {/* Passo a Passo Ilustrado */}
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
@@ -239,7 +238,6 @@ export const AppDownloadPage: React.FC = () => {
             ))}
           </div>
         </div>
-
         {/* Dúvidas Frequentes e Avisos do Android */}
         <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-5 space-y-3 text-xs">
           <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
@@ -284,7 +282,6 @@ export const AppDownloadPage: React.FC = () => {
             </div>
           </div>
         </div>
-
         {/* Compartilhar com Entregadores */}
         <div className="rounded-2xl border border-[#1E2B58] bg-[#0E1738] p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
           <div className="space-y-0.5 text-center sm:text-left">
@@ -307,10 +304,28 @@ export const AppDownloadPage: React.FC = () => {
             <span>{copiedLink ? 'Link Copiado!' : 'Copiar Link'}</span>
           </Button>
         </div>
+        {/* Opção Fallback e Links Alternativos */}
+        <div className="text-center pt-2 pb-6 space-y-2">
+          <div className="flex items-center justify-center gap-4 text-xs">
+            <a
+              href={releasesPageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 underline font-semibold"
+            >
+              <span>Ver página do release (GitHub)</span>
+              <ExternalLink className="h-3 w-3" />
+            </a>
+            <span className="text-slate-600">•</span>
+            <a
+              href="https://github.com/tributarefacil-glitch/rotaly-qozcn8e0y/releases/download/apk-latest/Rotaly-teste.apk"
+              className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-300 underline"
+            >
+              <span>Baixar APK de teste (Debug)</span>
+            </a>
+          </div>
 
-        {/* Opção Fallback: Acessar pelo navegador */}
-        <div className="text-center pt-2 pb-6 space-y-1.5">
-          <p className="text-[11px] text-slate-400">
+          <p className="text-[11px] text-slate-400 pt-1">
             Teve dificuldade na instalação? Você ainda pode acessar a versão web temporariamente:
           </p>
           <a
@@ -320,7 +335,7 @@ export const AppDownloadPage: React.FC = () => {
             <span>Entrar pelo navegador (versão web)</span>
             <ExternalLink className="h-3 w-3" />
           </a>
-        </div>
+        </div>{' '}
       </main>
     </div>
   )
