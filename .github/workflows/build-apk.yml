@@ -37,7 +37,8 @@ jobs:
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
           GRADLE_LOG="$GITHUB_WORKSPACE/gradle-build.log"
-          touch "$SETUP_LOG" "$GRADLE_LOG"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
+          touch "$SETUP_LOG" "$GRADLE_LOG" "$STEP_LOGS"
 
           {
             echo "=== DIAGNOSTICO DO RUNNER (Ubuntu 24.04) ==="
@@ -61,10 +62,9 @@ jobs:
               exit 1
             fi
             echo "=== FIM DO DIAGNOSTICO INICIAL ==="
-          } 2>&1 | tee -a "$SETUP_LOG"
+          } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
 
       # 3. Configurar Node.js oficial (Node 20 LTS - altamente estável para Capacitor 6/7 e npm)
-      # Nota: sem dependência de cache/lockfile obrigatório
       - name: Configurar Node.js 20 LTS
         uses: actions/setup-node@v4
         with:
@@ -73,7 +73,9 @@ jobs:
       # 4. Instalar dependências Web do projeto React/Vite com fallback robusto e dump de erro
       - name: Instalar dependencias Web
         run: |
+          set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
           {
             echo "=== [PASSO 4] INSTALACAO DE DEPENDENCIAS WEB ==="
             node -v
@@ -116,12 +118,14 @@ jobs:
             fi
 
             echo "Dependencias Web instaladas com exito."
-          } 2>&1 | tee -a "$SETUP_LOG"
+          } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
 
       # 5. Compilar o frontend Web Vite (gera dist/)
       - name: Compilar frontend Web (Vite)
         run: |
+          set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
           {
             echo "=== [PASSO 5] COMPILACAO VITE (FRONTEND) ==="
             npm run build 2>&1
@@ -130,77 +134,133 @@ jobs:
               exit 1
             fi
             echo "Build Vite concluido com sucesso. Total de arquivos em dist/: $(find dist -type f | wc -l)"
-          } 2>&1 | tee -a "$SETUP_LOG"
+          } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
+
+      # 5b. Pre-checagem e Preparacao de Configuracao do Capacitor
+      - name: Pre-checagem do ambiente e geracao do capacitor.config.json
+        run: |
+          set -eo pipefail
+          SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
+          {
+            echo "=== [PASSO 5b] PRE-CHECAGEM DO AMBIENTE CAPACITOR ==="
+            echo "Node: $(node --version)"
+            echo "NPM: $(npm --version)"
+
+            echo "Verificando integridade de dist/:"
+            if [ ! -f "dist/index.html" ]; then
+              echo "::error::Arquivo dist/index.html obrigatorio nao encontrado!"
+              exit 1
+            fi
+            echo "dist/index.html confirmado com $(wc -c < dist/index.html) bytes."
+
+            echo "Garantindo capacitor.config.json canônico (sem dependencia de ts-node)..."
+            node scripts/prepare-capacitor-config.mjs
+
+            if [ ! -f "capacitor.config.json" ]; then
+              echo "::error::Falha ao gerar capacitor.config.json!"
+              exit 1
+            fi
+            echo "Conteudo do capacitor.config.json:"
+            cat capacitor.config.json
+
+            echo "Garantindo pacotes @capacitor/cli e @capacitor/android no node_modules..."
+            CAP_MISSING=false
+            if [ ! -d "node_modules/@capacitor/cli" ]; then
+              echo "Aviso: node_modules/@capacitor/cli ausente."
+              CAP_MISSING=true
+            fi
+            if [ ! -d "node_modules/@capacitor/android" ]; then
+              echo "Aviso: node_modules/@capacitor/android ausente."
+              CAP_MISSING=true
+            fi
+
+            if [ "$CAP_MISSING" = "true" ]; then
+              echo "Instalando @capacitor/cli e @capacitor/android explicitamente..."
+              npm install --legacy-peer-deps --no-save --no-audit --no-fund @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0
+            fi
+
+            echo "Versao do Capacitor CLI: $(npx cap --version 2>&1 || echo 'falha ao obter versao')"
+            echo "Pre-checagem do ambiente Capacitor concluida com sucesso."
+          } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
 
       # 6. ESTRATÉGIA AUTORREGENERATIVA: Regenerar esqueleto Android canônico do zero
       # Remove qualquer pasta android/ pré-existente e recria via Capacitor CLI, aplicando overlay
       - name: Regenerar esqueleto Android canonico com overlay
         run: |
+          set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
+          GRADLE_LOG="$GITHUB_WORKSPACE/gradle-build.log"
+
+          log_cmd() {
+            local step_name="$1"
+            shift
+            echo "--- [SUB-PASSO] $step_name ---"
+            if ! "$@"; then
+              local err_code=$?
+              local msg="FALHA no sub-passo '$step_name' com codigo de saida $err_code ao executar: $*"
+              echo "::error::$msg"
+              echo "=== FALHA NA REGENERACAO DO PROJETO ANDROID ===" >> "$GRADLE_LOG"
+              echo "$msg" >> "$GRADLE_LOG"
+              echo "O Gradle nao foi iniciado porque a etapa de regeneracao falhou antes da compilacao." >> "$GRADLE_LOG"
+              exit $err_code
+            fi
+            echo "SUCESSO: $step_name"
+          }
+
           {
             echo "=== [PASSO 6] REGENERACAO AUTORREGENERATIVA DO ANDROID ==="
-            rm -rf android
 
-            # Garantir @capacitor/cli disponível localmente
-            if ! npx cap --version >/dev/null 2>&1; then
-              echo "Instalando @capacitor/cli e @capacitor/android explicitamente..."
-              npm install --save-dev @capacitor/cli @capacitor/android --legacy-peer-deps
-            fi
+            # 6.1 Limpeza completa do diretório android existente
+            log_cmd "Remover android/ pre-existente" rm -rf android
 
-            echo "Versao do Capacitor CLI: $(npx cap --version)"
+            # 6.2 Adicionar plataforma Android via Capacitor CLI
+            log_cmd "Adicionar plataforma Android (npx cap add android)" npx cap add android
 
-            echo "Executando: npx cap add android..."
-            npx cap add android
-
-            echo "Executando: npx cap sync android..."
-            npx cap sync android
-
-            echo "Aplicando android-overlay/ sobre o esqueleto canonico..."
-            if [ -d "android-overlay" ]; then
-              cp -r android-overlay/* android/
-              echo "Overlay nativo copiado com sucesso sobre android/."
-            else
-              echo "::error::Diretorio android-overlay nao encontrado!"
+            # 6.3 Aplicar overlay nativo personalizado do Rotaly
+            echo "--- [SUB-PASSO] Aplicar android-overlay sobre android/ ---"
+            if [ ! -d "android-overlay" ]; then
+              echo "::error::Diretorio android-overlay ausente no repositorio!"
+              echo "FALHA: android-overlay ausente" >> "$GRADLE_LOG"
               exit 1
             fi
+            cp -r android-overlay/* android/
+            echo "Overlay nativo copiado com sucesso sobre android/."
 
-            # Garantir capacitor.config.json dentro de assets
-            echo "Garantindo capacitor.config.json em assets..."
+            # 6.4 Sincronizar configuracoes e assets com Capacitor CLI
+            log_cmd "Sincronizar plataforma Android (npx cap sync android)" npx cap sync android
+
+            # 6.5 Garantir capacitor.config.json dentro de assets do app
+            echo "--- [SUB-PASSO] Sincronizar capacitor.config.json em assets ---"
             mkdir -p android/app/src/main/assets
-            cat << 'JSON_EOF' > android/app/src/main/assets/capacitor.config.json
-            {
-              "appId": "br.com.rotaly.app",
-              "appName": "Rotaly",
-              "webDir": "public",
-              "bundledWebRuntime": false,
-              "server": {
-                "url": "https://www.rotaly.com.br",
-                "androidScheme": "https",
-                "cleartext": false
-              },
-              "android": {
-                "allowMixedContent": false,
-                "backgroundColor": "#0E1738"
-              },
-              "plugins": {
-                "CapacitorHttp": {
-                  "enabled": true
-                }
-              }
-            }
-            JSON_EOF
-            # Normalizar indentacao do JSON gerado
-            node -e 'const f="android/app/src/main/assets/capacitor.config.json", j=JSON.parse(fs.readFileSync(f,"utf8")); fs.writeFileSync(f, JSON.stringify(j, null, 2));'
+            cp capacitor.config.json android/app/src/main/assets/capacitor.config.json
 
-            # Copiar a compilação web recente para assets/public
+            # 6.6 Copiar build web recente para assets/public
+            echo "--- [SUB-PASSO] Copiar dist/ para assets/public ---"
             mkdir -p android/app/src/main/assets/public
             cp -r dist/* android/app/src/main/assets/public/
 
-            echo "Conferindo estrutura resultante em android/app/src/main/java/br/com/rotaly/app/:"
+            # 6.7 Validar arquivos essenciais gerados
+            echo "--- [SUB-PASSO] Validar estrutura do projeto Android ---"
+            if [ ! -f "android/build.gradle" ]; then
+              echo "::error::android/build.gradle nao foi gerado!"
+              exit 1
+            fi
+            if [ ! -f "android/app/build.gradle" ]; then
+              echo "::error::android/app/build.gradle nao foi gerado!"
+              exit 1
+            fi
+            if [ ! -f "android/app/src/main/java/br/com/rotaly/app/MainActivity.java" ]; then
+              echo "::error::MainActivity.java ausente no pacote br.com.rotaly.app!"
+              exit 1
+            fi
+
+            echo "Conferindo arquivos em android/app/src/main/java/br/com/rotaly/app/:"
             ls -la android/app/src/main/java/br/com/rotaly/app/ || true
             ls -la android/app/src/main/java/br/com/rotaly/app/services/ || true
-            echo "Regeneracao do projeto Android concluida com sucesso."
-          } 2>&1 | tee -a "$SETUP_LOG"
+            echo "Regeneracao do projeto Android concluida com 100% de exito."
+          } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
 
       # 7. Configurar Java 17 (JDK Temurin)
       - name: Configurar Java 17 (JDK)
@@ -212,7 +272,9 @@ jobs:
       # 8. Aceitar licenças do Android SDK e instalar platforms;android-34 + build-tools;34.0.0
       - name: Aceitar licencas e instalar Android SDK Platform 34 e Build-Tools
         run: |
+          set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
           {
             echo "=== [PASSO 8] CONFIGURACAO DO ANDROID SDK E LICENCAS ==="
             SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
@@ -234,7 +296,7 @@ jobs:
               echo "sdkmanager localizado em: $SDKMANAGER_BIN"
               echo "Aceitando licencas do Android SDK..."
               yes | "$SDKMANAGER_BIN" --licenses || true
-              echo "Instalando components necessarios..."
+              echo "Instalando componentes necessarios..."
               "$SDKMANAGER_BIN" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
             else
               echo "::warning::sdkmanager binario nao encontrado em $SDK_DIR. Aplicando hashes manuais..."
@@ -244,7 +306,7 @@ jobs:
             echo -e "\n24333f8a63b1d7f2e51fa81f12b0452f0537b8a6\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b1d7f2e51fa81f12b0452f0537b8a6" > "$SDK_DIR/licenses/android-sdk-license" || true
             echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "$SDK_DIR/licenses/android-sdk-preview-license" || true
             echo "Licencas configuradas com sucesso."
-          } 2>&1 | tee -a "$SETUP_LOG"
+          } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
 
       # 9. Configurar Gradle oficial
       - name: Configurar Gradle
@@ -262,7 +324,9 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
           {
             echo "=== [PASSO 10] CONFIGURACAO DO KEYSTORE ==="
             rm -f android/release.keystore
@@ -284,12 +348,15 @@ jobs:
               echo "has_keystore=false" >> "$GITHUB_OUTPUT"
               echo "keystore_path=" >> "$GITHUB_OUTPUT"
             fi
-          } 2>&1 | tee -a "$SETUP_LOG"
+          } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
 
       # 11. Preparar Gradle Wrapper oficial (8.2.1)
       - name: Preparar Gradle Wrapper
         run: |
+          set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
+          GRADLE_LOG="$GITHUB_WORKSPACE/gradle-build.log"
           {
             echo "=== [PASSO 11] PREPARACAO DO GRADLE WRAPPER ==="
             cd android
@@ -304,12 +371,22 @@ jobs:
             fi
             if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
               echo "::error::gradle-wrapper.jar nao pode ser gerado nem baixado!"
+              echo "FALHA: gradle-wrapper.jar ausente" >> "$GRADLE_LOG"
               exit 1
             fi
+
+            echo "Garantindo permissao de execucao no gradlew..."
             chmod +x gradlew
+            if [ ! -x "./gradlew" ]; then
+              echo "::error::android/gradlew nao possui permissao executavel!"
+              echo "FALHA: android/gradlew nao executavel" >> "$GRADLE_LOG"
+              exit 1
+            fi
+
             echo "Testando gradlew --version:"
             ./gradlew --version
-          } 2>&1 | tee -a "$SETUP_LOG"
+            echo "Gradle Wrapper 8.2.1 pronto e operacional."
+          } 2>&1 | tee -a "$SETUP_LOG" "$STEP_LOGS"
 
       # =========================================================================
       # ETAPA 1: COMPILAÇÃO DO APK DEBUG (GARANTIA TOTAL DE ENTREGÁVEL NATIVO)
@@ -317,15 +394,19 @@ jobs:
       - name: Etapa 1 - Compilar APK Debug (assembleDebug)
         id: build_debug
         run: |
+          set -eo pipefail
+          GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
           cd android
           chmod +x gradlew
-          echo "=== [ETAPA 1/2] COMPILANDO APK DEBUG ==="
-          GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
-          echo "=== LOG ETAPA 1: assembleDebug ===" >> "$GRADLE_LOG_FILE"
 
-          if ./gradlew assembleDebug --no-daemon --stacktrace --warning-mode all 2>&1 | tee -a "$GRADLE_LOG_FILE"; then
-            echo "assembleDebug concluido com sucesso."
-          else
+          echo "=== [ETAPA 1/2] COMPILANDO APK DEBUG ===" | tee -a "$STEP_LOGS"
+          echo -e "\n=== LOG ETAPA 1: assembleDebug ($(date -u)) ===" >> "$GRADLE_LOG_FILE"
+
+          BUILD_DEBUG_FAILED=false
+          ./gradlew assembleDebug --no-daemon --stacktrace --warning-mode all 2>&1 | tee -a "$GRADLE_LOG_FILE" "$STEP_LOGS" || BUILD_DEBUG_FAILED=true
+
+          if [ "$BUILD_DEBUG_FAILED" = "true" ]; then
             echo "::error::FALHA CRITICA no assembleDebug!"
             if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
               ROOT_CAUSE=$(grep -A 10 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g')
@@ -336,13 +417,14 @@ jobs:
             exit 1
           fi
 
+          echo "assembleDebug concluido com sucesso."
           echo "=== CONFERINDO APK DEBUG GERADO ==="
           DEBUG_APK=$(find app/build/outputs/apk/debug -type f -name "*.apk" | head -n 1)
           if [ -z "$DEBUG_APK" ] || [ ! -f "$DEBUG_APK" ]; then
             echo "::error::Nenhum APK debug encontrado apos assembleDebug!"
             exit 1
           fi
-          echo "APK Debug gerado com sucesso: $DEBUG_APK ($(ls -lh "$DEBUG_APK" | awk '{print $5}'))"
+          echo "APK Debug gerado com sucesso: $DEBUG_APK ($(ls -lh "$DEBUG_APK" | awk '{print $5}'))" | tee -a "$STEP_LOGS"
 
       # 13. Publicar imediatamente o APK Debug como artifact rotaly-apk-debug
       - name: Publicar artifact rotaly-apk-debug
@@ -365,20 +447,26 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set -eo pipefail
+          GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
+          STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
           cd android
           chmod +x gradlew
-          echo "=== [ETAPA 2/2] COMPILANDO APK RELEASE ==="
-          GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
-          echo -e "\n\n=== LOG ETAPA 2: assembleRelease ===" >> "$GRADLE_LOG_FILE"
+
+          echo "=== [ETAPA 2/2] COMPILANDO APK RELEASE ===" | tee -a "$STEP_LOGS"
+          echo -e "\n\n=== LOG ETAPA 2: assembleRelease ($(date -u)) ===" >> "$GRADLE_LOG_FILE"
 
           if [ "${{ steps.setup_keystore.outputs.has_keystore }}" != "true" ]; then
             echo "::warning::Keystore nao configurado via secrets; build release caira no fallback de debug configurado no build.gradle."
           fi
 
-          if ./gradlew assembleRelease --no-daemon --stacktrace --warning-mode all 2>&1 | tee -a "$GRADLE_LOG_FILE"; then
+          BUILD_RELEASE_FAILED=false
+          ./gradlew assembleRelease --no-daemon --stacktrace --warning-mode all 2>&1 | tee -a "$GRADLE_LOG_FILE" "$STEP_LOGS" || BUILD_RELEASE_FAILED=true
+
+          if [ "$BUILD_RELEASE_FAILED" = "false" ]; then
             RELEASE_APK=$(find app/build/outputs/apk/release -type f -name "*.apk" | head -n 1)
             if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
-              echo "assembleRelease concluido com sucesso: $RELEASE_APK ($(ls -lh "$RELEASE_APK" | awk '{print $5}'))"
+              echo "assembleRelease concluido com sucesso: $RELEASE_APK ($(ls -lh "$RELEASE_APK" | awk '{print $5}'))" | tee -a "$STEP_LOGS"
               echo "release_success=true" >> "$GITHUB_OUTPUT"
             else
               echo "::warning title=Release Sem APK::assembleRelease terminou sem gerar arquivo APK em app/build/outputs/apk/release."
@@ -419,6 +507,15 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+      - name: Publicar log de etapas pos-Vite
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: step-logs
+          path: step-logs.log
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Publicar log completo do Gradle
         if: always()
         uses: actions/upload-artifact@v6
@@ -438,7 +535,7 @@ jobs:
           DEBUG_EXISTS=false
           RELEASE_EXISTS=false
 
-          if [ -d "android/app/build/outputs/apk/debug" ] && [ -n "$(find android/app/build/outputs/apk/debug -type f -name '*.apk')" ]; then
+          if [ -d "android/app/build/outputs/apk/debug" ] && [ -n "$(find android/app/build/outputs/apk/debug -type f -name '*.apk' 2>/dev/null)" ]; then
             DEBUG_EXISTS=true
             echo "STATUS DEBUG: SUCESSO (Artifact rotaly-apk-debug disponivel)"
             find android/app/build/outputs/apk/debug -type f -name "*.apk" -ls
@@ -446,7 +543,7 @@ jobs:
             echo "STATUS DEBUG: FALHOU OU AUSENTE"
           fi
 
-          if [ -d "android/app/build/outputs/apk/release" ] && [ -n "$(find android/app/build/outputs/apk/release -type f -name '*.apk')" ]; then
+          if [ -d "android/app/build/outputs/apk/release" ] && [ -n "$(find android/app/build/outputs/apk/release -type f -name '*.apk' 2>/dev/null)" ]; then
             RELEASE_EXISTS=true
             echo "STATUS RELEASE: SUCESSO (Artifact rotaly-apk-release disponivel)"
             find android/app/build/outputs/apk/release -type f -name "*.apk" -ls
