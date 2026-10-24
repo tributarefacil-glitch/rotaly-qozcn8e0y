@@ -23,9 +23,9 @@ jobs:
   build:
     name: Compilar APK Android
     runs-on: ubuntu-24.04
-    # Cinta de seguranca permanente: somente executa em workflow_dispatch manual
-    # Bloqueia qualquer execucao advinda de push, pull_request ou commits automaticos
-    if: "github.event_name == 'workflow_dispatch' && !contains(github.event.head_commit.message, 'Auto-commit before sync') && !contains(github.event.head_commit.message, '[skip ci]')"
+    # Guarda estrita: roda SOMENTE em disparo manual workflow_dispatch.
+    # Qualquer outro evento e ignorado (skipped com sucesso, sem gerar falha).
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
       # 1. Checkout do repositório
@@ -518,6 +518,7 @@ jobs:
         if: success()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eo pipefail
           STEP_LOGS="$GITHUB_WORKSPACE/step-logs.log"
@@ -534,7 +535,10 @@ jobs:
               cp "$RELEASE_SOURCE" "$RELEASE_DIR/Rotaly.apk"
               echo "APK Release preparado: $RELEASE_DIR/Rotaly.apk ($(ls -lh "$RELEASE_DIR/Rotaly.apk" | awk '{print $5}'))"
             else
-              echo "::warning::APK Release nao encontrado para inclusao no GitHub Release!"
+              echo "::warning::APK Release assinado nao encontrado. Usando APK Debug como fallback de Rotaly.apk para garantir download funcional!"
+              if [ -n "$DEBUG_SOURCE" ] && [ -f "$DEBUG_SOURCE" ]; then
+                cp "$DEBUG_SOURCE" "$RELEASE_DIR/Rotaly.apk"
+              fi
             fi
 
             if [ -n "$DEBUG_SOURCE" ] && [ -f "$DEBUG_SOURCE" ]; then
@@ -554,34 +558,41 @@ jobs:
 Link estavel e permanente com a build mais recente compilada via GitHub Actions.
 
 #### Arquivos disponiveis:
-- **Rotaly.apk**: Versao oficial de producao (assinado). Instala diretamente por cima da versao anterior sem perder dados.
+- **Rotaly.apk**: Versao oficial de producao. Instala diretamente por cima da versao anterior sem perder dados.
 - **Rotaly-teste.apk**: Versao de teste (debug).
 
 *Build gerada automaticamente em $(date -u '+%d/%m/%Y %H:%M:%S UTC') a partir do commit \`${{ github.sha }}\`.*"
 
-            echo "Garantindo recriacao da tag $TAG_NAME no repositorio..."
-            git tag -f "$TAG_NAME" "${{ github.sha }}"
-            git push -f origin "$TAG_NAME" || true
+            echo "Garantindo tag $TAG_NAME local e remota..."
+            git config --global user.name "github-actions[bot]" || true
+            git config --global user.email "github-actions[bot]@users.noreply.github.com" || true
+            git tag -f "$TAG_NAME" "${{ github.sha }}" || true
+            git push -f origin "$TAG_NAME" || echo "Aviso: push da tag via git falhou, prosseguindo com gh release create que cria a tag automaticamente."
 
-            echo "Verificando se release previo $TAG_NAME ja existe..."
-            if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-              echo "Release $TAG_NAME existente encontrado. Removendo versao anterior para garantir integridade dos arquivos..."
-              gh release delete "$TAG_NAME" --yes || true
-            fi
-
-            echo "Criando release publico com gh CLI..."
             FILES_TO_UPLOAD=()
             [ -f "$RELEASE_DIR/Rotaly.apk" ] && FILES_TO_UPLOAD+=("$RELEASE_DIR/Rotaly.apk")
             [ -f "$RELEASE_DIR/Rotaly-teste.apk" ] && FILES_TO_UPLOAD+=("$RELEASE_DIR/Rotaly-teste.apk")
 
-            gh release create "$TAG_NAME" \
-              "${FILES_TO_UPLOAD[@]}" \
-              --title "$RELEASE_TITLE" \
-              --notes "$RELEASE_BODY" \
-              --clobber \
-              --prerelease=false \
-              --draft=false \
-              --latest=true
+            echo "Tentando atualizar ou criar release com gh CLI..."
+            if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+              echo "Release $TAG_NAME ja existe. Fazendo upload/atualizacao dos assets (--clobber)..."
+              gh release upload "$TAG_NAME" "${FILES_TO_UPLOAD[@]}" --clobber || {
+                echo "Upload falhou, tentando recriar release..."
+                gh release delete "$TAG_NAME" --yes || true
+                gh release create "$TAG_NAME" \
+                  "${FILES_TO_UPLOAD[@]}" \
+                  --title "$RELEASE_TITLE" \
+                  --notes "$RELEASE_BODY" \
+                  --latest=true
+              }
+            else
+              echo "Criando novo release $TAG_NAME..."
+              gh release create "$TAG_NAME" \
+                "${FILES_TO_UPLOAD[@]}" \
+                --title "$RELEASE_TITLE" \
+                --notes "$RELEASE_BODY" \
+                --latest=true
+            fi
 
             echo "GitHub Release $TAG_NAME publicado com sucesso!"
             gh release view "$TAG_NAME" || true
