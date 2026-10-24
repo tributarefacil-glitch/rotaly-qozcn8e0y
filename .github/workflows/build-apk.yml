@@ -23,6 +23,8 @@ jobs:
   build:
     name: Compilar APK Android
     runs-on: ubuntu-24.04
+    # Pula a execucao caso seja disparada por commits automaticos (ex: auto-commit before sync)
+    if: "!contains(github.event.head_commit.message, 'Auto-commit before sync') && !contains(github.event.head_commit.message, '[skip ci]')"
 
     steps:
       # 1. Checkout do repositório
@@ -165,28 +167,30 @@ jobs:
             # Garantir capacitor.config.json dentro de assets
             echo "Garantindo capacitor.config.json em assets..."
             mkdir -p android/app/src/main/assets
-            cat << 'EOF' > android/app/src/main/assets/capacitor.config.json
-{
-  "appId": "br.com.rotaly.app",
-  "appName": "Rotaly",
-  "webDir": "public",
-  "bundledWebRuntime": false,
-  "server": {
-    "url": "https://www.rotaly.com.br",
-    "androidScheme": "https",
-    "cleartext": false
-  },
-  "android": {
-    "allowMixedContent": false,
-    "backgroundColor": "#0E1738"
-  },
-  "plugins": {
-    "CapacitorHttp": {
-      "enabled": true
-    }
-  }
-}
-EOF
+            cat << 'JSON_EOF' > android/app/src/main/assets/capacitor.config.json
+            {
+              "appId": "br.com.rotaly.app",
+              "appName": "Rotaly",
+              "webDir": "public",
+              "bundledWebRuntime": false,
+              "server": {
+                "url": "https://www.rotaly.com.br",
+                "androidScheme": "https",
+                "cleartext": false
+              },
+              "android": {
+                "allowMixedContent": false,
+                "backgroundColor": "#0E1738"
+              },
+              "plugins": {
+                "CapacitorHttp": {
+                  "enabled": true
+                }
+              }
+            }
+            JSON_EOF
+            # Normalizar indentacao do JSON gerado
+            node -e 'const f="android/app/src/main/assets/capacitor.config.json", j=JSON.parse(fs.readFileSync(f,"utf8")); fs.writeFileSync(f, JSON.stringify(j, null, 2));'
 
             # Copiar a compilação web recente para assets/public
             mkdir -p android/app/src/main/assets/public
@@ -342,7 +346,7 @@ EOF
 
       # 13. Publicar imediatamente o APK Debug como artifact rotaly-apk-debug
       - name: Publicar artifact rotaly-apk-debug
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rotaly-apk-debug
           path: android/app/build/outputs/apk/debug/*.apk
@@ -396,7 +400,7 @@ EOF
       # 15. Publicar o APK Release assinado como artifact (quando concluído com sucesso)
       - name: Publicar artifact rotaly-apk-release
         if: steps.build_release.outcome == 'success' && steps.build_release.outputs.release_success == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rotaly-apk-release
           path: android/app/build/outputs/apk/release/*.apk
@@ -408,7 +412,7 @@ EOF
       # =========================================================================
       - name: Publicar log de setup e diagnostico do ambiente
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: setup-diagnostic-log
           path: setup-diagnostic.log
@@ -417,7 +421,7 @@ EOF
 
       - name: Publicar log completo do Gradle
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gradle-build-log
           path: gradle-build.log
