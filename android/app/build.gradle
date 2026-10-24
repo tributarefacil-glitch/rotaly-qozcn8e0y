@@ -15,8 +15,8 @@ android {
         applicationId "br.com.rotaly.app"
         minSdk getVariable("minSdkVersion", 24)
         targetSdk getVariable("targetSdkVersion", 34)
-        versionCode 2
-        versionName "1.0.1"
+        versionCode 3
+        versionName "1.0.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -54,8 +54,7 @@ android {
             }
         }
         debug {
-            // NOTA: mantemos applicationId sem suffix ".debug" para que APKs de debug/release
-            // compartilhem o mesmo ID br.com.rotaly.app e permitam teste direto.
+            // Mantemos applicationId sem suffix ".debug" para compatibilidade total de pacote
             debuggable true
             signingConfig signingConfigs.debug
         }
@@ -67,12 +66,21 @@ android {
     }
 }
 
+repositories {
+    google()
+    mavenCentral()
+    flatDir {
+        dirs 'libs'
+    }
+}
+
 dependencies {
     def appcompatVer = getVariable("androidxAppCompatVersion", "1.6.1")
     def coreVer = getVariable("androidxCoreVersion", "1.12.0")
     def coordinatorVer = getVariable("androidxCoordinatorLayoutVersion", "1.2.0")
     def playServicesLocVer = getVariable("playServicesLocationVersion", "21.0.1")
 
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$appcompatVer"
     implementation "androidx.core:core-ktx:$coreVer"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$coordinatorVer"

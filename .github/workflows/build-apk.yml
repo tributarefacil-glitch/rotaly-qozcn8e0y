@@ -206,7 +206,7 @@ jobs:
           echo "Testando gradlew --version:"
           ./gradlew --version
 
-      # 12. Compilar APK Android com Gradle (com stacktrace completo, warning-mode e log detalhado em caso de falha)
+      # 12. Compilar APK Android com Gradle (com extração obrigatória de causas de erro e log detalhado)
       - name: Compilar APK Android com Gradle
         env:
           KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.keystore_path }}
@@ -232,6 +232,29 @@ jobs:
             else
               local exit_code=$?
               echo "::error::Tarefa $task_name FALHOU com codigo de saida $exit_code!"
+
+              # DIAGNOSTICO ESPECIFICO: Extrair secao exata 'FAILURE: Build failed with an error.' e '* What went wrong:'
+              echo "=== DIAGNOSTICO DETALHADO DO GRADLE: CAUSA RAIZ DA FALHA ==="
+              if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:|AAPT: error:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
+                awk '/FAILURE: Build failed with an error\./,/\* Get more help at/ { print }' "$GRADLE_LOG_FILE" || true
+                echo "----------------------------------------------------"
+                echo "Linhas 'Caused by' encontradas no log:"
+                grep -n -C 2 "Caused by:" "$GRADLE_LOG_FILE" | head -n 40 || true
+                echo "----------------------------------------------------"
+                echo "Linhas 'AAPT: error' encontradas no log:"
+                grep -n -C 2 "AAPT: error" "$GRADLE_LOG_FILE" | head -n 40 || true
+
+                # Injeta anotacao estruturada no GitHub Actions com a causa literal
+                local failure_summary
+                failure_summary=$(grep -A 10 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g')
+                if [ -n "$failure_summary" ]; then
+                  echo "::error title=Gradle Root Cause::$failure_summary"
+                fi
+              else
+                echo "Cabecalho padrao nao encontrado, exibindo diagnostico generico."
+              fi
+              echo "=== FIM DO DIAGNOSTICO DETALHADO ==="
+
               echo "=== ULTIMAS 250 LINHAS DO LOG GRADLE ($task_name) ==="
               tail -n 250 "$GRADLE_LOG_FILE"
               echo "=== FIM DO LOG GRADLE ==="
