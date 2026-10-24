@@ -25,126 +25,182 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # 1. Checkout do repositório via checkout@v5
+      # 1. Checkout do repositório
       - name: Checkout do repositorio
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
-      # 2. Diagnóstico inicial do ambiente runner
-      - name: Diagnostico do ambiente
+      # 2. Diagnóstico inicial do ambiente runner e inicialização de logs
+      - name: Diagnostico do ambiente e preparacao de logs
         run: |
-          echo "=== DIAGNOSTICO DO RUNNER (Ubuntu 24.04) ==="
-          uname -a
-          echo "ANDROID_HOME=${ANDROID_HOME}"
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
-          echo "JAVA_HOME=${JAVA_HOME}"
-          echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
-          echo "Commit SHA: ${{ github.sha }}"
-          echo "Disparado por: ${{ github.actor }}"
-          echo "Build Type solicitado: ${{ github.event.inputs.build_type || 'release' }}"
-          echo "--- Conteudo raiz ---"
-          ls -la
-          echo "--- Conteudo android-overlay/ ---"
-          if [ -d "android-overlay" ]; then
-            find android-overlay -maxdepth 4 -ls
-          else
-            echo "::error::Diretorio android-overlay ausente no checkout!"
-            exit 1
-          fi
-          echo "=== FIM DO DIAGNOSTICO INICIAL ==="
+          set -eo pipefail
+          SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          GRADLE_LOG="$GITHUB_WORKSPACE/gradle-build.log"
+          touch "$SETUP_LOG" "$GRADLE_LOG"
 
-      # 3. Configurar Node.js oficial (compatível com Node 24 runtime do GitHub Actions)
-      # Nota: não ativamos cache no setup-node pois o repositório não commita package-lock.json;
-      # o passo de instalação abaixo gerencia lockfile e instalação de forma tolerante e robusta.
-      - name: Configurar Node.js 24
-        uses: actions/setup-node@v6
+          {
+            echo "=== DIAGNOSTICO DO RUNNER (Ubuntu 24.04) ==="
+            date -u
+            uname -a
+            echo "ANDROID_HOME=${ANDROID_HOME:-nao definido}"
+            echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-nao definido}"
+            echo "JAVA_HOME=${JAVA_HOME:-nao definido}"
+            echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+            echo "Commit SHA: ${{ github.sha }}"
+            echo "Branch / Ref: ${{ github.ref }}"
+            echo "Disparado por: ${{ github.actor }}"
+            echo "Build Type solicitado: ${{ github.event.inputs.build_type || 'release' }}"
+            echo "--- Conteudo raiz ---"
+            ls -la
+            echo "--- Conteudo android-overlay/ ---"
+            if [ -d "android-overlay" ]; then
+              find android-overlay -maxdepth 4 -ls
+            else
+              echo "::error::Diretorio android-overlay ausente no checkout!"
+              exit 1
+            fi
+            echo "=== FIM DO DIAGNOSTICO INICIAL ==="
+          } 2>&1 | tee -a "$SETUP_LOG"
+
+      # 3. Configurar Node.js oficial (Node 20 LTS - altamente estável para Capacitor 6/7 e npm)
+      # Nota: sem dependência de cache/lockfile obrigatório
+      - name: Configurar Node.js 20 LTS
+        uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
 
-      # 4. Instalar dependências Web do projeto React/Vite com tolerância total a lockfile ausente
+      # 4. Instalar dependências Web do projeto React/Vite com fallback robusto e dump de erro
       - name: Instalar dependencias Web
         run: |
-          echo "=== CONFIGURANDO DEPENDENCIAS WEB ==="
-          if [ -f "package-lock.json" ]; then
-            echo "package-lock.json encontrado no repositorio. Tentando npm ci..."
-            npm ci || npm install --legacy-peer-deps
-          else
-            echo "package-lock.json ausente no repositorio. Executando npm install com --legacy-peer-deps..."
-            npm install --legacy-peer-deps
-          fi
-          echo "Dependencias Web instaladas com sucesso."
+          SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          {
+            echo "=== [PASSO 4] INSTALACAO DE DEPENDENCIAS WEB ==="
+            node -v
+            npm -v
+
+            # Tenta múltiplos métodos de instalação para garantir sucesso com ou sem lockfile
+            INSTALLED=false
+
+            if [ -f "package-lock.json" ]; then
+              echo "package-lock.json encontrado. Tentando 'npm ci'..."
+              if npm ci --prefer-offline 2>&1; then
+                echo "'npm ci' concluiu com sucesso."
+                INSTALLED=true
+              else
+                echo "::warning::'npm ci' falhou. Tentando fallback para 'npm install --legacy-peer-deps'..."
+              fi
+            fi
+
+            if [ "$INSTALLED" = "false" ]; then
+              echo "Executando: npm install --legacy-peer-deps --no-audit --no-fund..."
+              if npm install --legacy-peer-deps --no-audit --no-fund 2>&1; then
+                echo "'npm install' concluiu com sucesso."
+                INSTALLED=true
+              else
+                echo "::warning::'npm install --legacy-peer-deps' falhou. Tentando fallback final com --force..."
+                if npm install --force --no-audit --no-fund 2>&1; then
+                  echo "'npm install --force' concluiu com sucesso."
+                  INSTALLED=true
+                fi
+              fi
+            fi
+
+            if [ "$INSTALLED" = "false" ]; then
+              echo "::error::Falha critica na instalacao de dependencias npm!"
+              if [ -d "$HOME/.npm/_logs" ]; then
+                echo "--- Ultimo log do npm ---"
+                tail -n 60 "$HOME/.npm/_logs"/*.log 2>/dev/null || true
+              fi
+              exit 1
+            fi
+
+            echo "Dependencias Web instaladas com exito."
+          } 2>&1 | tee -a "$SETUP_LOG"
 
       # 5. Compilar o frontend Web Vite (gera dist/)
       - name: Compilar frontend Web (Vite)
         run: |
-          echo "Compilando versao web para pasta dist/..."
-          npm run build
-          if [ ! -d "dist" ] || [ -z "$(ls -A dist)" ]; then
-            echo "::error::Pasta dist ausente ou vazia apos o build do Vite!"
-            exit 1
-          fi
-          echo "Build Vite concluido com sucesso."
+          SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          {
+            echo "=== [PASSO 5] COMPILACAO VITE (FRONTEND) ==="
+            npm run build 2>&1
+            if [ ! -d "dist" ] || [ -z "$(ls -A dist)" ]; then
+              echo "::error::Pasta dist ausente ou vazia apos o build do Vite!"
+              exit 1
+            fi
+            echo "Build Vite concluido com sucesso. Total de arquivos em dist/: $(find dist -type f | wc -l)"
+          } 2>&1 | tee -a "$SETUP_LOG"
 
       # 6. ESTRATÉGIA AUTORREGENERATIVA: Regenerar esqueleto Android canônico do zero
-      # Remove qualquer pasta android/ pré-existente (eliminando inconsistências/reversões de commit)
-      # e recria via Capacitor CLI canônico, aplicando em seguida o overlay versionado
-      - name: Regenerar esqueleto Android canônico com overlay
+      # Remove qualquer pasta android/ pré-existente e recria via Capacitor CLI, aplicando overlay
+      - name: Regenerar esqueleto Android canonico com overlay
         run: |
-          echo "=== REGENERANDO ESQUELETO ANDROID DO ZERO ==="
-          rm -rf android
-
-          echo "Executando: npx cap add android..."
-          npx cap add android
-
-          echo "Executando: npx cap sync android..."
-          npx cap sync android
-
-          echo "Aplicando android-overlay/ sobre o android/ canônico..."
-          if [ -d "android-overlay" ]; then
-            cp -r android-overlay/* android/
-            echo "Overlay nativo copiado com sucesso sobre android/."
-          else
-            echo "::error::Diretorio android-overlay nao encontrado!"
-            exit 1
-          fi
-
-          # Garantir sincronização do capacitor.config.json no assets
-          echo "Garantindo capacitor.config.json em assets..."
-          mkdir -p android/app/src/main/assets
-          cat << 'EOF' > android/app/src/main/assets/capacitor.config.json
+          SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
           {
-            "appId": "br.com.rotaly.app",
-            "appName": "Rotaly",
-            "webDir": "public",
-            "bundledWebRuntime": false,
-            "server": {
-              "url": "https://www.rotaly.com.br",
-              "androidScheme": "https",
-              "cleartext": false
-            },
-            "android": {
-              "allowMixedContent": false,
-              "backgroundColor": "#0E1738"
-            },
-            "plugins": {
-              "CapacitorHttp": {
-                "enabled": true
-              }
-            }
-          }
-          EOF
+            echo "=== [PASSO 6] REGENERACAO AUTORREGENERATIVA DO ANDROID ==="
+            rm -rf android
 
-          # Garantir que public/ dentro de assets contenha a compilação web recente
-          mkdir -p android/app/src/main/assets/public
-          cp -r dist/* android/app/src/main/assets/public/
+            # Garantir @capacitor/cli disponível localmente
+            if ! npx cap --version >/dev/null 2>&1; then
+              echo "Instalando @capacitor/cli e @capacitor/android explicitamente..."
+              npm install --save-dev @capacitor/cli @capacitor/android --legacy-peer-deps
+            fi
 
-          echo "Conferindo estrutura resultante em android/app/src/main/java/br/com/rotaly/app/:"
-          ls -la android/app/src/main/java/br/com/rotaly/app/
-          ls -la android/app/src/main/java/br/com/rotaly/app/services/ || true
-          echo "=== REGENERACAO CONCLUIDA COM SUCESSO ==="
+            echo "Versao do Capacitor CLI: $(npx cap --version)"
 
-      # 7. Configurar Java 17 (JDK Temurin) com setup-java@v5
+            echo "Executando: npx cap add android..."
+            npx cap add android
+
+            echo "Executando: npx cap sync android..."
+            npx cap sync android
+
+            echo "Aplicando android-overlay/ sobre o esqueleto canonico..."
+            if [ -d "android-overlay" ]; then
+              cp -r android-overlay/* android/
+              echo "Overlay nativo copiado com sucesso sobre android/."
+            else
+              echo "::error::Diretorio android-overlay nao encontrado!"
+              exit 1
+            fi
+
+            # Garantir capacitor.config.json dentro de assets
+            echo "Garantindo capacitor.config.json em assets..."
+            mkdir -p android/app/src/main/assets
+            cat << 'EOF' > android/app/src/main/assets/capacitor.config.json
+{
+  "appId": "br.com.rotaly.app",
+  "appName": "Rotaly",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://www.rotaly.com.br",
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0E1738"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
+EOF
+
+            # Copiar a compilação web recente para assets/public
+            mkdir -p android/app/src/main/assets/public
+            cp -r dist/* android/app/src/main/assets/public/
+
+            echo "Conferindo estrutura resultante em android/app/src/main/java/br/com/rotaly/app/:"
+            ls -la android/app/src/main/java/br/com/rotaly/app/ || true
+            ls -la android/app/src/main/java/br/com/rotaly/app/services/ || true
+            echo "Regeneracao do projeto Android concluida com sucesso."
+          } 2>&1 | tee -a "$SETUP_LOG"
+
+      # 7. Configurar Java 17 (JDK Temurin)
       - name: Configurar Java 17 (JDK)
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -152,46 +208,47 @@ jobs:
       # 8. Aceitar licenças do Android SDK e instalar platforms;android-34 + build-tools;34.0.0
       - name: Aceitar licencas e instalar Android SDK Platform 34 e Build-Tools
         run: |
-          echo "=== CONFIGURANDO ANDROID SDK MANAGER E LICENCAS ==="
-          SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          if [ -z "$SDK_DIR" ]; then
-            SDK_DIR="/usr/local/lib/android/sdk"
-          fi
-          echo "Usando Android SDK em: $SDK_DIR"
+          SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          {
+            echo "=== [PASSO 8] CONFIGURACAO DO ANDROID SDK E LICENCAS ==="
+            SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+            if [ -z "$SDK_DIR" ]; then
+              SDK_DIR="/usr/local/lib/android/sdk"
+            fi
+            echo "Usando Android SDK em: $SDK_DIR"
 
-          SDKMANAGER_BIN=""
-          if command -v sdkmanager >/dev/null 2>&1; then
-            SDKMANAGER_BIN="$(command -v sdkmanager)"
-          elif [ -f "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SDKMANAGER_BIN="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
-          else
-            SDKMANAGER_BIN="$(find "$SDK_DIR/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
-          fi
+            SDKMANAGER_BIN=""
+            if command -v sdkmanager >/dev/null 2>&1; then
+              SDKMANAGER_BIN="$(command -v sdkmanager)"
+            elif [ -f "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
+              SDKMANAGER_BIN="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+            else
+              SDKMANAGER_BIN="$(find "$SDK_DIR/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort | tail -n 1)"
+            fi
 
-          if [ -n "$SDKMANAGER_BIN" ] && [ -x "$SDKMANAGER_BIN" ]; then
-            echo "sdkmanager localizado em: $SDKMANAGER_BIN"
-            echo "Aceitando todas as licencas do Android SDK..."
-            yes | "$SDKMANAGER_BIN" --licenses || true
-            echo "Instalando components necessarios: platform-tools, platforms;android-34, build-tools;34.0.0..."
-            "$SDKMANAGER_BIN" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
-          else
-            echo "::warning::sdkmanager binario nao encontrado em $SDK_DIR. Criando licencas manualmente..."
-          fi
+            if [ -n "$SDKMANAGER_BIN" ] && [ -x "$SDKMANAGER_BIN" ]; then
+              echo "sdkmanager localizado em: $SDKMANAGER_BIN"
+              echo "Aceitando licencas do Android SDK..."
+              yes | "$SDKMANAGER_BIN" --licenses || true
+              echo "Instalando components necessarios..."
+              "$SDKMANAGER_BIN" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
+            else
+              echo "::warning::sdkmanager binario nao encontrado em $SDK_DIR. Aplicando hashes manuais..."
+            fi
 
-          # Garantir diretorio de licencas e hashes oficiais aceitos preventivamente
-          mkdir -p "$SDK_DIR/licenses"
-          echo -e "\n24333f8a63b1d7f2e51fa81f12b0452f0537b8a6\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b1d7f2e51fa81f12b0452f0537b8a6" > "$SDK_DIR/licenses/android-sdk-license" || true
-          echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "$SDK_DIR/licenses/android-sdk-preview-license" || true
-          echo "Licencas configuradas com sucesso."
+            mkdir -p "$SDK_DIR/licenses"
+            echo -e "\n24333f8a63b1d7f2e51fa81f12b0452f0537b8a6\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b1d7f2e51fa81f12b0452f0537b8a6" > "$SDK_DIR/licenses/android-sdk-license" || true
+            echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "$SDK_DIR/licenses/android-sdk-preview-license" || true
+            echo "Licencas configuradas com sucesso."
+          } 2>&1 | tee -a "$SETUP_LOG"
 
-      # 9. Configurar Gradle oficial com setup-gradle@v4
+      # 9. Configurar Gradle oficial
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.2.1'
 
       # 10. Decodificar Keystore de produção dos secrets do repositório
-      # Suporta tanto KEYSTORE_FILE (base64) quanto KEYSTORE_BASE64 com fallback debug tolerante
       - name: Configurar Assinatura do Keystore
         id: setup_keystore
         env:
@@ -201,46 +258,54 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          rm -f android/release.keystore
-          B64_DATA="${KEYSTORE_FILE_SECRET:-$KEYSTORE_BASE64_SECRET}"
+          SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          {
+            echo "=== [PASSO 10] CONFIGURACAO DO KEYSTORE ==="
+            rm -f android/release.keystore
+            B64_DATA="${KEYSTORE_FILE_SECRET:-$KEYSTORE_BASE64_SECRET}"
 
-          if [ -n "$B64_DATA" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "$B64_DATA" | tr -d '\r\n ' | base64 -d > "$GITHUB_WORKSPACE/android/release.keystore"
-            if [ -s "$GITHUB_WORKSPACE/android/release.keystore" ]; then
-              echo "has_keystore=true" >> "$GITHUB_OUTPUT"
-              echo "keystore_path=$GITHUB_WORKSPACE/android/release.keystore" >> "$GITHUB_OUTPUT"
-              echo "Keystore de release decodificado com sucesso ($(wc -c < "$GITHUB_WORKSPACE/android/release.keystore") bytes)."
+            if [ -n "$B64_DATA" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+              echo "$B64_DATA" | tr -d '\r\n ' | base64 -d > "$GITHUB_WORKSPACE/android/release.keystore"
+              if [ -s "$GITHUB_WORKSPACE/android/release.keystore" ]; then
+                echo "has_keystore=true" >> "$GITHUB_OUTPUT"
+                echo "keystore_path=$GITHUB_WORKSPACE/android/release.keystore" >> "$GITHUB_OUTPUT"
+                echo "Keystore de release decodificado com sucesso ($(wc -c < "$GITHUB_WORKSPACE/android/release.keystore") bytes)."
+              else
+                echo "::warning::Falha na decodificacao do Keystore (arquivo vazio). Release usara fallback."
+                echo "has_keystore=false" >> "$GITHUB_OUTPUT"
+                echo "keystore_path=" >> "$GITHUB_OUTPUT"
+              fi
             else
-              echo "::warning::Falha na decodificacao do Keystore Base64 (arquivo vazio). Release usara fallback de debug."
+              echo "::notice::Secrets de assinatura ausentes ou incompletos. Release usara fallback de debug."
               echo "has_keystore=false" >> "$GITHUB_OUTPUT"
               echo "keystore_path=" >> "$GITHUB_OUTPUT"
             fi
-          else
-            echo "::notice::Secrets de assinatura ausentes ou incompletos. Release usara fallback de debug."
-            echo "has_keystore=false" >> "$GITHUB_OUTPUT"
-            echo "keystore_path=" >> "$GITHUB_OUTPUT"
-          fi
+          } 2>&1 | tee -a "$SETUP_LOG"
 
       # 11. Preparar Gradle Wrapper oficial (8.2.1)
       - name: Preparar Gradle Wrapper
         run: |
-          cd android
-          mkdir -p gradle/wrapper
-          if command -v gradle >/dev/null 2>&1; then
-            echo "Gerando gradle-wrapper via Gradle oficial instalado..."
-            gradle wrapper --gradle-version 8.2.1 --distribution-type bin
-          fi
-          if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "Baixando gradle-wrapper.jar oficial de services.gradle.org..."
-            curl -fSL --retry 3 --connect-timeout 15 -o gradle/wrapper/gradle-wrapper.jar https://services.gradle.org/distributions/gradle-8.2.1-wrapper.jar || true
-          fi
-          if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "::error::gradle-wrapper.jar nao pode ser gerado nem baixado!"
-            exit 1
-          fi
-          chmod +x gradlew
-          echo "Testando gradlew --version:"
-          ./gradlew --version
+          SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
+          {
+            echo "=== [PASSO 11] PREPARACAO DO GRADLE WRAPPER ==="
+            cd android
+            mkdir -p gradle/wrapper
+            if command -v gradle >/dev/null 2>&1; then
+              echo "Gerando gradle-wrapper via Gradle oficial instalado..."
+              gradle wrapper --gradle-version 8.2.1 --distribution-type bin
+            fi
+            if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
+              echo "Baixando gradle-wrapper.jar oficial de services.gradle.org..."
+              curl -fSL --retry 3 --connect-timeout 15 -o gradle/wrapper/gradle-wrapper.jar https://services.gradle.org/distributions/gradle-8.2.1-wrapper.jar || true
+            fi
+            if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
+              echo "::error::gradle-wrapper.jar nao pode ser gerado nem baixado!"
+              exit 1
+            fi
+            chmod +x gradlew
+            echo "Testando gradlew --version:"
+            ./gradlew --version
+          } 2>&1 | tee -a "$SETUP_LOG"
 
       # =========================================================================
       # ETAPA 1: COMPILAÇÃO DO APK DEBUG (GARANTIA TOTAL DE ENTREGÁVEL NATIVO)
@@ -277,7 +342,7 @@ jobs:
 
       # 13. Publicar imediatamente o APK Debug como artifact rotaly-apk-debug
       - name: Publicar artifact rotaly-apk-debug
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: rotaly-apk-debug
           path: android/app/build/outputs/apk/debug/*.apk
@@ -331,7 +396,7 @@ jobs:
       # 15. Publicar o APK Release assinado como artifact (quando concluído com sucesso)
       - name: Publicar artifact rotaly-apk-release
         if: steps.build_release.outcome == 'success' && steps.build_release.outputs.release_success == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: rotaly-apk-release
           path: android/app/build/outputs/apk/release/*.apk
@@ -339,11 +404,20 @@ jobs:
           if-no-files-found: ignore
 
       # =========================================================================
-      # LOG COMPLETO DO GRADLE (PUBLICADO SEMPRE, INDEPENDENTE DO RESULTADO)
+      # DIAGNÓSTICO E LOGS COMPLETOS (PUBLICADOS SEMPRE COM if: always())
       # =========================================================================
-      - name: Salvar log completo do Gradle
+      - name: Publicar log de setup e diagnostico do ambiente
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-diagnostic-log
+          path: setup-diagnostic.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Publicar log completo do Gradle
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: gradle-build-log
           path: gradle-build.log

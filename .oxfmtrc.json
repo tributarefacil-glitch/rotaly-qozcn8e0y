@@ -49,6 +49,7 @@
     ".eslintcache",
     ".oxlintcache",
     ".env*",
-    "core.[0-9]*"
+    "core.[0-9]*",
+    ".github/**"
   ]
 }
