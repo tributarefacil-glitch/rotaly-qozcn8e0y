@@ -633,13 +633,19 @@ jobs:
               echo "GitHub Release $TAG_NAME publicado com sucesso!"
               gh release view "$TAG_NAME" || true
             else
-              echo "::warning::Tentativa principal com gh falhou. Executando fallback idempotente com delete e create..."
+              echo "Tentativa com gh falhou, tentando recriar release completo com tags..."
               gh release delete "$TAG_NAME" --yes 2>/dev/null || true
-              gh release create "$TAG_NAME" \
+              if gh release create "$TAG_NAME" \
                 "${FILES_TO_UPLOAD[@]}" \
                 --latest=true \
                 --title "$RELEASE_TITLE" \
-                --notes "$RELEASE_BODY" || echo "::warning::Nao foi possivel publicar o release pelo gh CLI neste momento, mas os artifacts rotaly-apk-debug e rotaly-apk-release foram gerados e armazenados com sucesso."
+                --notes "$RELEASE_BODY"; then
+                echo "GitHub Release $TAG_NAME recriado e publicado com sucesso!"
+                gh release view "$TAG_NAME" || true
+              else
+                echo "::error::Falha critica ao publicar GitHub Release $TAG_NAME! Build interrompido para evitar falso positivo."
+                exit 1
+              fi
             fi
           } 2>&1 | tee -a "$STEP_LOGS"
 
