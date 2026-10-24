@@ -1,0 +1,20 @@
+{
+  "appId": "br.com.rotaly.app",
+  "appName": "Rotaly",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://www.rotaly.com.br",
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0E1738"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
