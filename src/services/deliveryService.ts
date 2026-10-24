@@ -2949,6 +2949,84 @@ export const deliveryService = {
     }
   },
 
+  /**
+   * Verificar se o entregador já possui uma rota ativa em andamento antes de iniciar outra.
+   * Consulta tanto orders ativas quanto o endpoint atômico do backend.
+   */
+  async checkCourierActiveRoute(courierId: string): Promise<{
+    hasActiveRoute: boolean
+    activeOrdersCount: number
+    pendingDeliveriesCount: number
+    activeBatchKey: string | null
+    routeStartedAt: string | null
+  }> {
+    try {
+      // 1. Consulta rápida ao endpoint customizado no backend
+      try {
+        const res = await pb.send<{
+          has_active_route: boolean
+          active_orders_count: number
+          pending_deliveries_count: number
+          active_batch_key: string | null
+          route_started_at: string | null
+        }>('/backend/v1/courier/check-active-route', {
+          method: 'GET',
+          params: { courier_id: courierId },
+        })
+        if (res) {
+          return {
+            hasActiveRoute: Boolean(res.has_active_route),
+            activeOrdersCount: res.active_orders_count || 0,
+            pendingDeliveriesCount: res.pending_deliveries_count || 0,
+            activeBatchKey: res.active_batch_key || null,
+            routeStartedAt: res.route_started_at || null,
+          }
+        }
+      } catch {
+        /* fallback para busca direta em orders */
+      }
+
+      // 2. Fallback direto via SDK
+      const activeOrders = await pb.collection<OrderRecord>('orders').getFullList({
+        filter: `courier_id='${courierId}' && route_started=true && route_finished!=true && status!='cancelled'`,
+        sort: '-route_started_at',
+        requestKey: null,
+      })
+
+      if (activeOrders.length === 0) {
+        return {
+          hasActiveRoute: false,
+          activeOrdersCount: 0,
+          pendingDeliveriesCount: 0,
+          activeBatchKey: null,
+          routeStartedAt: null,
+        }
+      }
+
+      const first = activeOrders[0]
+      const pendingCount = activeOrders.filter(
+        (o) => o.status !== 'delivered' && o.status !== 'client_absent',
+      ).length
+
+      return {
+        hasActiveRoute: true,
+        activeOrdersCount: activeOrders.length,
+        pendingDeliveriesCount: pendingCount,
+        activeBatchKey: first.route_batch_key || null,
+        routeStartedAt: first.route_started_at || first.created || null,
+      }
+    } catch (err) {
+      console.warn('[deliveryService] Erro ao checar rota ativa:', err)
+      return {
+        hasActiveRoute: false,
+        activeOrdersCount: 0,
+        pendingDeliveriesCount: 0,
+        activeBatchKey: null,
+        routeStartedAt: null,
+      }
+    }
+  },
+
   async startCourierRoute(
     courierId: string,
     orderIds?: string[],
@@ -2972,6 +3050,30 @@ export const deliveryService = {
           filter: `courier_id='${courierId}' && (status='assigned' || status='in_transit' || status='picked_up')`,
           requestKey: null,
         })
+      }
+
+      if (ordersToUpdate.length === 0) {
+        return { success: true, updatedCount: 0 }
+      }
+
+      // GUARDA REFORÇADA CONTRA SOBREPOSIÇÃO DE ROTAS:
+      // Se o entregador já possui outra rota iniciada e não finalizada na base,
+      // BLOQUEAR IMEDIATAMENTE com mensagem explícita.
+      const currentCandidateIds = new Set(ordersToUpdate.map((o) => o.id))
+      const existingActiveOrders = await pb.collection<OrderRecord>('orders').getFullList({
+        filter: `courier_id='${courierId}' && route_started=true && route_finished!=true && status!='cancelled'`,
+        requestKey: null,
+      })
+
+      const conflictingActive = existingActiveOrders.filter((o) => !currentCandidateIds.has(o.id))
+      if (conflictingActive.length > 0) {
+        const actBatch = conflictingActive[0].route_batch_key || conflictingActive[0].id
+        console.error(
+          `[deliveryService:startCourierRoute] Tentativa de iniciar nova rota bloqueada: entregador ${courierId} possui ${conflictingActive.length} pedido(s) na rota ativa ${actBatch}.`,
+        )
+        throw new Error(
+          'Você já possui uma rota ativa em andamento! Finalize todas as entregas e encerre a rota na base antes de iniciar outra.',
+        )
       }
 
       // Calcular carimbo canônico unificado para todos os pedidos da rota iniciada,
@@ -3097,6 +3199,27 @@ export const deliveryService = {
           filter: `courier_id='${courierId}' && route_started=true && route_finished!=true`,
           requestKey: null,
         })
+      }
+
+      // GUARDA REFORÇADA DE FECHAMENTO ISOLADO:
+      // Se routeBatchKey foi informado ou se ordersToUpdate possui pedidos de múltiplos lotes distintos,
+      // NUNCA fechar dois lotes juntos no mesmo toque. Limitar estritamente ao lote alvo!
+      if (ordersToUpdate.length > 0) {
+        const targetBatch = routeBatchKey || ordersToUpdate[0]?.route_batch_key || ''
+
+        if (targetBatch) {
+          // Filtrar estritamente apenas os pedidos que pertencem ao lote alvo
+          const filteredOrders = ordersToUpdate.filter(
+            (o) => !o.route_batch_key || o.route_batch_key === targetBatch,
+          )
+
+          if (filteredOrders.length < ordersToUpdate.length) {
+            console.warn(
+              `[deliveryService:finishCourierRoute] Isolamento estrito de lote: ${ordersToUpdate.length - filteredOrders.length} pedidos de outros lotes foram excluídos deste fechamento para impedir fechamento duplo conjunto!`,
+            )
+            ordersToUpdate = filteredOrders
+          }
+        }
       }
 
       let updatedCount = 0

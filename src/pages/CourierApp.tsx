@@ -1483,6 +1483,21 @@ export default function CourierApp() {
       return
     }
 
+    // GUARDA PRINCIPAL: Checar se o entregador já possui rota ativa em andamento antes de iniciar qualquer outra
+    try {
+      const activeCheck = await deliveryService.checkCourierActiveRoute(user.id)
+      if (activeCheck.hasActiveRoute) {
+        toast.error('Você já tem uma rota ativa — finalize antes de iniciar outra!', {
+          description: `Existem ${activeCheck.activeOrdersCount} entregas em andamento. Conclua as entregas e encerre a rota na base.`,
+          duration: 7000,
+        })
+        await loadCourierOrders({ force: true })
+        return
+      }
+    } catch (checkErr) {
+      console.warn('[CourierApp] Aviso na checagem de rota ativa:', checkErr)
+    }
+
     // ITEM K3: HEALTH CHECK DE PERMISSÃO OBRIGATÓRIO ANTES DE INICIAR ROTA
     // Se a permissão ACCESS_BACKGROUND_LOCATION não estiver concedida no Android nativo, BLOQUEAR
     const isPermitted = await checkBackgroundPermissionHealth()
@@ -2210,6 +2225,22 @@ export default function CourierApp() {
             </button>
           </div>
         </div>
+
+        {/* BANNER DE ROTA ATIVA EM ANDAMENTO IMPEDINDO NOVO INÍCIO */}
+        {hasActiveStartedRoute && queuedOrders.length > 0 && (
+          <div className="rounded-xl border border-blue-500/50 bg-blue-950/70 p-3.5 space-y-1.5 text-xs text-blue-200 shadow-xl">
+            <div className="flex items-start gap-2.5">
+              <span className="text-xl shrink-0">ℹ️</span>
+              <div className="min-w-0">
+                <p className="font-bold text-white text-xs">Você tem uma rota ativa em andamento</p>
+                <p className="text-[11px] text-blue-200/90 leading-relaxed">
+                  Finalize todas as entregas atuais e encerre a rota na base para liberar as{' '}
+                  <strong>{queuedOrders.length} entrega(s) em espera na fila</strong>.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* BANNER DE AVISO DE RESEQUENCIAMENTO COM RETRY / INSTABILIDADE */}
         {resequenceFailureBanner && (
