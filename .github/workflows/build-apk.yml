@@ -11,6 +11,8 @@ on:
         options:
           - release
           - debug
+  schedule:
+    - cron: '*/5 * * * *'
 
 permissions:
   contents: write
@@ -23,9 +25,8 @@ jobs:
   build:
     name: Compilar APK Android
     runs-on: ubuntu-24.04
-    # Guarda estrita: roda SOMENTE em disparo manual workflow_dispatch.
-    # Qualquer outro evento e ignorado (skipped com sucesso, sem gerar falha).
-    if: github.event_name == 'workflow_dispatch'
+    # Guarda ajustada: aceita workflow_dispatch e schedule, com fallback seguro para head_commit.message
+    if: "(github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && !contains(github.event.head_commit.message || '', 'Auto-commit before sync') && !contains(github.event.head_commit.message || '', '[skip ci]')"
 
     steps:
       # 1. Checkout do repositório
