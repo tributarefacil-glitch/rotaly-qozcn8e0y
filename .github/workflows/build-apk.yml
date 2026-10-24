@@ -27,6 +27,7 @@ jobs:
     name: Compilar APK Android
     runs-on: ubuntu-24.04
     # Guarda ajustada: aceita workflow_dispatch e schedule, com fallback seguro para head_commit.message
+    # O evento schedule nao possui head_commit, por isso o operador || '' e mandatorio
     if: "(github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && !contains(github.event.head_commit.message || '', 'Auto-commit before sync') && !contains(github.event.head_commit.message || '', '[skip ci]')"
 
     steps:
