@@ -33,11 +33,16 @@ jobs:
   build:
     name: Criar APK para Android
     runs-on: ubuntu-24.04
+    # Blinda contra execuções disparadas por sincronizações automáticas com mensagem "Auto-commit before sync"
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (!contains(github.event.head_commit.message, 'Auto-commit before sync') &&
+       !contains(github.event.head_commit.message, 'Confirmação automática antes da sincronização'))
 
     steps:
       # 1. Checkout do repositório
       - name: Checkout do repositorio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 2. Diagnóstico inicial do ambiente
       - name: Diagnostico do ambiente
@@ -48,29 +53,32 @@ jobs:
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
           echo "JAVA_HOME=${JAVA_HOME}"
           echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "Commit Message: ${{ github.event.head_commit.message }}"
           echo "--- Estrutura raiz ---"
           ls -la
           echo "--- Estrutura android/ ---"
           ls -la android/
           echo "=== FIM DO DIAGNOSTICO ==="
 
-      # 3. Configurar ambiente Bun para o frontend
-      - name: Configurar Bun
-        uses: oven-sh/setup-bun@v2
+      # 3. Configurar Node.js oficial (LTS v20) para o build web
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: 20
+          cache: 'npm'
 
-      # 4. Instalar dependências Web do projeto React/Vite
+      # 4. Instalar dependências Web do projeto React/Vite com npm ci
       - name: Instalar dependencias Web
         run: |
-          echo "Instalando dependencias com Bun..."
-          bun install --frozen-lockfile || bun install
+          echo "Instalando dependencias com npm ci..."
+          npm ci || npm install --legacy-peer-deps
 
       # 5. Compilar o frontend Web Vite (gera dist/)
       - name: Compilar frontend Web (Vite)
         run: |
           echo "Compilando versao web para pasta dist/..."
-          bun run build
+          npm run build
           if [ ! -d "dist" ] || [ -z "$(ls -A dist)" ]; then
             echo "::error::Pasta dist ausente ou vazia apos o build do Vite!"
             exit 1
@@ -110,9 +118,9 @@ jobs:
           echo "Assets copiados. Total de itens em public/:"
           ls -lh android/app/src/main/assets/public/ | head -15
 
-      # 7. Configurar Java 17 (JDK)
+      # 7. Configurar Java 17 (JDK Temurin) com setup-java@v5
       - name: Configurar Java 17 (JDK)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -152,7 +160,7 @@ jobs:
           echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "$SDK_DIR/licenses/android-sdk-preview-license" || true
           echo "Licencas configuradas com sucesso."
 
-      # 9. Configurar Gradle oficial
+      # 9. Configurar Gradle oficial com setup-gradle@v4
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -185,7 +193,7 @@ jobs:
             echo "keystore_path=" >> "$GITHUB_OUTPUT"
           fi
 
-      # 11. Preparar Gradle Wrapper oficial
+      # 11. Preparar Gradle Wrapper oficial (8.2.1)
       - name: Preparar Gradle Wrapper
         run: |
           cd android
@@ -208,6 +216,7 @@ jobs:
 
       # 12. Compilar APK Android com Gradle (com extração obrigatória de causas de erro e log detalhado)
       - name: Compilar APK Android com Gradle
+        id: gradle_build
         env:
           KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.keystore_path }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -221,42 +230,49 @@ jobs:
           BUILD_MODE="${BUILD_TYPE_INPUT:-release}"
           echo "=== INICIANDO COMPILACAO GRADLE (MODO: $BUILD_MODE) ==="
 
-          GRADLE_LOG_FILE="/tmp/gradle_build.log"
+          GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
+          touch "$GRADLE_LOG_FILE"
 
           run_gradle_task() {
             local task_name="$1"
             echo "Executando ./gradlew $task_name --no-daemon --stacktrace --warning-mode all ..."
-            if ./gradlew "$task_name" --no-daemon --stacktrace --warning-mode all 2>&1 | tee "$GRADLE_LOG_FILE"; then
+            if ./gradlew "$task_name" --no-daemon --stacktrace --warning-mode all 2>&1 | tee -a "$GRADLE_LOG_FILE"; then
               echo "Tarefa $task_name concluida com sucesso."
               return 0
             else
               local exit_code=$?
               echo "::error::Tarefa $task_name FALHOU com codigo de saida $exit_code!"
 
-              # DIAGNOSTICO ESPECIFICO: Extrair secao exata 'FAILURE: Build failed with an error.' e '* What went wrong:'
               echo "=== DIAGNOSTICO DETALHADO DO GRADLE: CAUSA RAIZ DA FALHA ==="
               if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:|AAPT: error:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
-                awk '/FAILURE: Build failed with an error\./,/\* Get more help at/ { print }' "$GRADLE_LOG_FILE" || true
+                echo "--- Secao 'FAILURE: Build failed / What went wrong:' ---"
+                grep -A 20 -E "FAILURE: Build failed|What went wrong:" "$GRADLE_LOG_FILE" || true
                 echo "----------------------------------------------------"
-                echo "Linhas 'Caused by' encontradas no log:"
-                grep -n -C 2 "Caused by:" "$GRADLE_LOG_FILE" | head -n 40 || true
+                echo "--- Ocorrencias de 'Caused by:' ---"
+                grep -A 10 -E "Caused by:" "$GRADLE_LOG_FILE" | head -n 40 || true
                 echo "----------------------------------------------------"
-                echo "Linhas 'AAPT: error' encontradas no log:"
-                grep -n -C 2 "AAPT: error" "$GRADLE_LOG_FILE" | head -n 40 || true
+                echo "--- Ocorrencias de 'AAPT: error' ---"
+                grep -A 10 -E "AAPT: error" "$GRADLE_LOG_FILE" | head -n 40 || true
 
-                # Injeta anotacao estruturada no GitHub Actions com a causa literal
+                # Injeta anotacao estruturada no GitHub Actions com o bloco de causa raiz
                 local failure_summary
-                failure_summary=$(grep -A 10 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g')
+                failure_summary=$(grep -A 15 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 15 | tr '\r\n' '  ' | sed 's/"/\\"/g')
                 if [ -n "$failure_summary" ]; then
                   echo "::error title=Gradle Root Cause::$failure_summary"
+                else
+                  local caused_by_summary
+                  caused_by_summary=$(grep -A 5 "Caused by:" "$GRADLE_LOG_FILE" | head -n 5 | tr '\r\n' '  ' | sed 's/"/\\"/g')
+                  if [ -n "$caused_by_summary" ]; then
+                    echo "::error title=Gradle Caused By::$caused_by_summary"
+                  fi
                 fi
               else
-                echo "Cabecalho padrao nao encontrado, exibindo diagnostico generico."
+                echo "Cabecalho padrao nao encontrado nos padroes conhecidos."
               fi
               echo "=== FIM DO DIAGNOSTICO DETALHADO ==="
 
-              echo "=== ULTIMAS 250 LINHAS DO LOG GRADLE ($task_name) ==="
-              tail -n 250 "$GRADLE_LOG_FILE"
+              echo "=== ULTIMAS 150 LINHAS DO LOG GRADLE ($task_name) ==="
+              tail -n 150 "$GRADLE_LOG_FILE"
               echo "=== FIM DO LOG GRADLE ==="
               return $exit_code
             fi
@@ -277,7 +293,17 @@ jobs:
             fi
           fi
 
-      # 13. Verificar APK gerado (FALHA explicitamente se nenhum APK existir)
+      # 13. Fazer upload do log do Gradle como artefato SEMPRE (sucesso ou falha)
+      - name: Salvar log completo do Gradle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: gradle-build.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # 14. Verificar APK gerado (FALHA explicitamente se nenhum APK existir)
       - name: Verificar APK gerado
         run: |
           echo "=== VERIFICACAO DE ARQUIVOS APK GERADOS ==="
@@ -293,10 +319,10 @@ jobs:
             exit 1
           fi
 
-          echo "Lista de APKs gerados:"
+          echo "Lista de APKs gerados com sucesso:"
           find android/app/build/outputs/apk -type f -name "*.apk"
 
-      # 14. Publicar o APK gerado como artefato do GitHub Actions
+      # 15. Publicar o APK gerado como artefato do GitHub Actions
       - name: Publicar APK no GitHub Actions (rotaly-apk)
         uses: actions/upload-artifact@v4
         with:
