@@ -14,6 +14,7 @@ on:
   push:
     branches:
       - main
+      - principal
     paths:
       - 'src/**'
       - 'android/**'
@@ -38,34 +39,20 @@ jobs:
       - name: Checkout do repositorio
         uses: actions/checkout@v4
 
-      # 2. Diagnóstico inicial do ambiente e arquivos Android
-      - name: Diagnostico do ambiente e arquivos
+      # 2. Diagnóstico inicial do ambiente
+      - name: Diagnostico do ambiente
         run: |
           echo "=== DIAGNOSTICO DO RUNNER (Ubuntu 24.04) ==="
           uname -a
           echo "ANDROID_HOME=${ANDROID_HOME}"
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
           echo "JAVA_HOME=${JAVA_HOME}"
-          echo "--- Conteudo da raiz ---"
+          echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+          echo "--- Estrutura raiz ---"
           ls -la
-          echo "--- Estrutura do diretorio android/ ---"
+          echo "--- Estrutura android/ ---"
           ls -la android/
-          echo "--- Wrapper do Gradle ---"
-          ls -la android/gradle/wrapper/ || echo "Diretorio wrapper nao encontrado"
-          if [ -x "android/gradlew" ]; then
-            echo "GRADLEW_STATUS: Executavel encontrado"
-          else
-            echo "GRADLEW_STATUS: gradlew AUSENTE ou sem permissao de execucao"
-          fi
-          echo "--- Android SDK Platforms ---"
-          ls -la "$ANDROID_HOME/platforms" 2>/dev/null || echo "Nenhuma plataforma encontrada"
-          echo "--- Android SDK Build-Tools ---"
-          ls -la "$ANDROID_HOME/build-tools" 2>/dev/null || echo "Nenhum build-tools encontrado"
-          if command -v sdkmanager >/dev/null 2>&1; then
-            echo "--- sdkmanager pacotes instalados (amostra) ---"
-            sdkmanager --list_installed 2>/dev/null | head -20 || true
-          fi
-          echo "=== FIM DO DIAGNOSTICO INICIAL ==="
+          echo "=== FIM DO DIAGNOSTICO ==="
 
       # 3. Configurar ambiente Bun para o frontend
       - name: Configurar Bun
@@ -84,7 +71,11 @@ jobs:
         run: |
           echo "Compilando versao web para pasta dist/..."
           bun run build
-          test -d dist && ls -la dist/ || (echo "ERRO: Pasta dist nao foi gerada" && exit 1)
+          if [ ! -d "dist" ] || [ -z "$(ls -A dist)" ]; then
+            echo "::error::Pasta dist ausente ou vazia apos o build do Vite!"
+            exit 1
+          fi
+          echo "Build Vite concluido com sucesso."
 
       # 6. Sincronizar assets do frontend no projeto Android
       - name: Sincronizar assets Web no Android
@@ -93,17 +84,23 @@ jobs:
           mkdir -p android/app/src/main/assets/public
           rm -rf android/app/src/main/assets/public/*
           cp -r dist/* android/app/src/main/assets/public/
-          echo "Total de arquivos copiados:"
+          echo "Assets copiados. Total de itens:"
           ls -lh android/app/src/main/assets/public/ | head -15
 
-      # 7. Configurar Java 17 JDK usando setup-java@v5
+      # 7. Configurar Java 17 JDK
       - name: Configurar Java 17 (JDK)
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 8. Decodificar Keystore de produção caso secrets estejam presentes
+      # 8. Configurar Gradle oficial
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2.1'
+
+      # 9. Decodificar Keystore de produção caso secrets estejam presentes
       - name: Configurar Assinatura do Keystore
         id: setup_keystore
         env:
@@ -114,81 +111,92 @@ jobs:
         run: |
           rm -f android/release.keystore
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > android/release.keystore
-            if [ -s "android/release.keystore" ]; then
+            echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > "$GITHUB_WORKSPACE/android/release.keystore"
+            if [ -s "$GITHUB_WORKSPACE/android/release.keystore" ]; then
               echo "has_keystore=true" >> "$GITHUB_OUTPUT"
-              echo "keystore_pass=$KEYSTORE_PASSWORD" >> "$GITHUB_OUTPUT"
-              echo "key_alias=$KEY_ALIAS" >> "$GITHUB_OUTPUT"
-              echo "key_pass=$KEY_PASSWORD" >> "$GITHUB_OUTPUT"
-              echo "Keystore de release decodificado com sucesso ($(stat -c%s android/release.keystore 2>/dev/null || wc -c < android/release.keystore) bytes)."
+              echo "keystore_path=$GITHUB_WORKSPACE/android/release.keystore" >> "$GITHUB_OUTPUT"
+              echo "Keystore de release decodificado com sucesso ($(wc -c < "$GITHUB_WORKSPACE/android/release.keystore") bytes)."
             else
-              echo "::warning::Falha na decodificacao do KEYSTORE_BASE64 (arquivo vazio). Fallback ativado."
+              echo "::warning::Falha na decodificacao do KEYSTORE_BASE64 (arquivo vazio). O build usara chave de debug."
               echo "has_keystore=false" >> "$GITHUB_OUTPUT"
+              echo "keystore_path=" >> "$GITHUB_OUTPUT"
             fi
           else
-            echo "::notice::Secrets de assinatura ausentes ou parciais. O build utilizara fallback assinado com debug.keystore automaticamente."
+            echo "::notice::Secrets de assinatura ausentes ou incompletos. O build usara chave de debug."
             echo "has_keystore=false" >> "$GITHUB_OUTPUT"
+            echo "keystore_path=" >> "$GITHUB_OUTPUT"
           fi
 
-      # 9. Garantir integridade do Gradle Wrapper antes da execução
+      # 10. Preparar Gradle Wrapper oficial
       - name: Preparar Gradle Wrapper
         run: |
           cd android
           mkdir -p gradle/wrapper
-          if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "gradle-wrapper.jar ausente ou vazio. Baixando wrapper oficial Gradle 8.2.1..."
-            curl -fSL --retry 3 --connect-timeout 10 -o gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.2.1/gradle/wrapper/gradle-wrapper.jar || \
-            curl -fSL --retry 3 --connect-timeout 10 -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.2.1/gradle/wrapper/gradle-wrapper.jar
+          if command -v gradle >/dev/null 2>&1; then
+            echo "Gerando gradle-wrapper via Gradle oficial instalado..."
+            gradle wrapper --gradle-version 8.2.1 --distribution-type bin
           fi
-          ls -la gradle/wrapper/
+          if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "Baixando gradle-wrapper.jar oficial de services.gradle.org..."
+            curl -fSL --retry 3 --connect-timeout 15 -o gradle/wrapper/gradle-wrapper.jar https://services.gradle.org/distributions/gradle-8.2.1-wrapper.jar || true
+          fi
+          if [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "::error::gradle-wrapper.jar nao pode ser gerado nem baixado!"
+            exit 1
+          fi
           chmod +x gradlew
-          ./gradlew --version || echo "Aviso: gradlew --version teve retorno nao-zero, prosseguindo com build..."
+          echo "Testando gradlew --version:"
+          ./gradlew --version
 
-      # 10. Compilação Gradle com fallback debug garantido e captura de log detalhado
+      # 11. Compilar APK Android com Gradle (falha real = falha do job)
       - name: Compilar APK Android com Gradle
         env:
-          KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.has_keystore == 'true' && '../release.keystore' || '' }}
-          KEYSTORE_PASSWORD: ${{ steps.setup_keystore.outputs.keystore_pass }}
-          KEY_ALIAS: ${{ steps.setup_keystore.outputs.key_alias }}
-          KEY_PASSWORD: ${{ steps.setup_keystore.outputs.key_pass }}
+          KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.keystore_path }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          BUILD_TYPE_INPUT: ${{ github.event.inputs.build_type }}
         run: |
           cd android
           chmod +x gradlew
-          BUILD_TYPE="${{ github.event.inputs.build_type || 'release' }}"
-          echo "=== INICIANDO COMPILACAO GRADLE (MODO SOLICITADO: $BUILD_TYPE) ==="
 
-          BUILD_FAILED=0
-          if [ "$BUILD_TYPE" = "release" ]; then
-            echo "Tentando compilar assembleRelease..."
-            ./gradlew assembleRelease --no-daemon --stacktrace --info 2>&1 | tee gradle-build.log || BUILD_FAILED=1
-          else
-            echo "Compilando assembleDebug diretamente..."
-            ./gradlew assembleDebug --no-daemon --stacktrace --info 2>&1 | tee gradle-build.log || BUILD_FAILED=1
-          fi
+          BUILD_MODE="${BUILD_TYPE_INPUT:-release}"
+          echo "=== INICIANDO COMPILACAO GRADLE (MODO: $BUILD_MODE) ==="
 
-          if [ $BUILD_FAILED -ne 0 ]; then
-            echo "::warning::Falha na compilacao principal ($BUILD_TYPE). Exibindo ultimas 200 linhas do log:"
-            tail -n 200 gradle-build.log || true
-
-            if [ "$BUILD_TYPE" = "release" ]; then
-              echo "=== ATIVANDO FALLBACK AUTOMATICO PARA assembleDebug ==="
-              ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee gradle-debug-fallback.log || {
-                echo "::error::Fallback assembleDebug tambem falhou. Ultimas 200 linhas:"
-                tail -n 200 gradle-debug-fallback.log || true
-                exit 1
-              }
+          if [ "$BUILD_MODE" = "release" ]; then
+            echo "Executando ./gradlew assembleRelease --no-daemon --stacktrace..."
+            if ./gradlew assembleRelease --no-daemon --stacktrace; then
+              echo "assembleRelease concluido com sucesso."
             else
-              exit 1
+              echo "::warning::assembleRelease falhou. Tentando fallback para assembleDebug..."
+              ./gradlew assembleDebug --no-daemon --stacktrace
             fi
+          else
+            echo "Executando ./gradlew assembleDebug --no-daemon --stacktrace..."
+            ./gradlew assembleDebug --no-daemon --stacktrace
           fi
 
-          echo "=== CONTEUDO DO DIRETORIO DE SAIDA DE APKS ==="
-          ls -la app/build/outputs/apk/release/ 2>/dev/null || echo "Sem pasta release"
-          ls -la app/build/outputs/apk/debug/ 2>/dev/null || echo "Sem pasta debug"
+      # 12. Verificar APK gerado (FALHA explicitamente se nenhum APK existir)
+      - name: Verificar APK gerado
+        run: |
+          echo "=== VERIFICACAO DE ARQUIVOS APK GERADOS ==="
+          APK_COUNT=0
+          if [ -d "android/app/build/outputs/apk" ]; then
+            find android/app/build/outputs/apk -type f -name "*.apk" -ls
+            APK_COUNT=$(find android/app/build/outputs/apk -type f -name "*.apk" | wc -l)
+          fi
 
-      # 11. Publicar o APK gerado como artefato do GitHub Actions
+          echo "Total de APKs encontrados: $APK_COUNT"
+          if [ "$APK_COUNT" -eq 0 ]; then
+            echo "::error::FALHA CRITICA: Nenhum arquivo APK foi gerado pelo processo Gradle!"
+            exit 1
+          fi
+
+          echo "Lista de APKs gerados:"
+          find android/app/build/outputs/apk -type f -name "*.apk"
+
+      # 13. Publicar o APK gerado como artefato do GitHub Actions
       - name: Publicar APK no GitHub Actions (rotaly-apk)
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rotaly-apk
@@ -196,4 +204,4 @@ jobs:
             android/app/build/outputs/apk/release/*.apk
             android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
