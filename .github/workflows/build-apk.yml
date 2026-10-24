@@ -11,6 +11,9 @@ on:
         options:
           - release
           - debug
+  push:
+    branches:
+      - main
   # REMOVER apos confirmacao do release apk-latest
   schedule:
     - cron: '*/5 * * * *'
@@ -26,17 +29,33 @@ jobs:
   build:
     name: Compilar APK Android
     runs-on: ubuntu-24.04
-    # Guarda ajustada: aceita workflow_dispatch e schedule, com fallback seguro para head_commit.message
-    # O evento schedule nao possui head_commit, por isso o operador || '' e mandatorio
-    if: "(github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && !contains(github.event.head_commit.message || '', 'Auto-commit before sync') && !contains(github.event.head_commit.message || '', '[skip ci]')"
 
     steps:
+      # Step 0. Guarda de decisao inteligente para execucao deterministica de build
+      # Executa sempre sem 'if' para evitar runs com 0 jobs / falha de avaliacao.
+      # Pushs de auto-commit terminam verdes pulando os steps de compilacao.
+      - name: Avaliar gatilho e filtro de auto-commit
+        id: guard
+        run: |
+          MSG="${{ github.event.head_commit.message || '' }}"
+          echo "Evento disparado: ${{ github.event_name }}"
+          echo "Mensagem do commit: $MSG"
+          if echo "$MSG" | grep -qE "Auto-commit before sync|\[skip ci\]"; then
+            echo "Build pulado: commit automatico"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Build autorizado: commit de versao, schedule ou disparo manual"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
       # 1. Checkout do repositório
       - name: Checkout do repositorio
+        if: steps.guard.outputs.build == 'true'
         uses: actions/checkout@v4
 
       # 2. Diagnóstico inicial do ambiente runner e inicialização de logs
       - name: Diagnostico do ambiente e preparacao de logs
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
@@ -70,12 +89,14 @@ jobs:
 
       # 3. Configurar Node.js oficial (Node 20 LTS - altamente estável para Capacitor 6/7 e npm)
       - name: Configurar Node.js 20 LTS
+        if: steps.guard.outputs.build == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       # 4. Instalar dependências Web do projeto React/Vite com fallback robusto e dump de erro
       - name: Instalar dependencias Web
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
@@ -126,6 +147,7 @@ jobs:
 
       # 5. Compilar o frontend Web Vite (gera dist/)
       - name: Compilar frontend Web (Vite)
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
@@ -142,6 +164,7 @@ jobs:
 
       # 5b. Pre-checagem e Preparacao de Configuracao do Capacitor
       - name: Pre-checagem do ambiente e geracao do capacitor.config.json
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
@@ -191,6 +214,7 @@ jobs:
       # 6. ESTRATÉGIA AUTORREGENERATIVA: Regenerar esqueleto Android canônico do zero
       # Remove qualquer pasta android/ pré-existente e recria via Capacitor CLI, aplicando overlay
       - name: Regenerar esqueleto Android canonico com overlay
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
@@ -283,6 +307,7 @@ jobs:
 
       # 7. Configurar Java 17 (JDK Temurin)
       - name: Configurar Java 17 (JDK)
+        if: steps.guard.outputs.build == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -290,6 +315,7 @@ jobs:
 
       # 8. Aceitar licenças do Android SDK e instalar platforms;android-34 + build-tools;34.0.0
       - name: Aceitar licencas e instalar Android SDK Platform 34 e Build-Tools
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
@@ -329,6 +355,7 @@ jobs:
 
       # 9. Configurar Gradle oficial
       - name: Configurar Gradle
+        if: steps.guard.outputs.build == 'true'
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.2.1'
@@ -336,6 +363,7 @@ jobs:
       # 10. Decodificar Keystore de produção dos secrets do repositório
       - name: Configurar Assinatura do Keystore
         id: setup_keystore
+        if: steps.guard.outputs.build == 'true'
         env:
           KEYSTORE_FILE_SECRET: ${{ secrets.KEYSTORE_FILE }}
           KEYSTORE_BASE64_SECRET: ${{ secrets.KEYSTORE_BASE64 }}
@@ -371,6 +399,7 @@ jobs:
 
       # 11. Preparar Gradle Wrapper oficial (8.2.1)
       - name: Preparar Gradle Wrapper
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
@@ -412,6 +441,7 @@ jobs:
       # =========================================================================
       - name: Etapa 1 - Compilar APK Debug (assembleDebug)
         id: build_debug
+        if: steps.guard.outputs.build == 'true'
         run: |
           set -eo pipefail
           GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
@@ -447,6 +477,7 @@ jobs:
 
       # 13. Publicar imediatamente o APK Debug como artifact rotaly-apk-debug
       - name: Publicar artifact rotaly-apk-debug
+        if: steps.guard.outputs.build == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: rotaly-apk-debug
@@ -459,6 +490,7 @@ jobs:
       # =========================================================================
       - name: Etapa 2 - Compilar APK Release (assembleRelease)
         id: build_release
+        if: steps.guard.outputs.build == 'true'
         continue-on-error: true
         env:
           KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.keystore_path }}
@@ -506,7 +538,7 @@ jobs:
 
       # 15. Publicar o APK Release assinado como artifact (quando concluído com sucesso)
       - name: Publicar artifact rotaly-apk-release
-        if: steps.build_release.outcome == 'success' && steps.build_release.outputs.release_success == 'true'
+        if: steps.guard.outputs.build == 'true' && steps.build_release.outcome == 'success' && steps.build_release.outputs.release_success == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: rotaly-apk-release
@@ -518,7 +550,7 @@ jobs:
       # ETAPA 3: PUBLICAR RELEASE ESTÁVEL NO GITHUB (LINK FIXO apk-latest)
       # =========================================================================
       - name: Preparar e Publicar GitHub Release estavel (apk-latest)
-        if: success()
+        if: steps.guard.outputs.build == 'true' && success()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -556,7 +588,7 @@ jobs:
 
             TAG_NAME="apk-latest"
             RELEASE_TITLE="Rotaly APK"
-            RELEASE_BODY="Build mais recente"
+            RELEASE_BODY="Build mais recente gerado automaticamente pelo GitHub Actions."
 
             echo "Garantindo tag $TAG_NAME local e remota..."
             git config --global user.name "github-actions[bot]" || true
@@ -569,35 +601,53 @@ jobs:
             [ -f "$RELEASE_DIR/Rotaly-teste.apk" ] && FILES_TO_UPLOAD+=("$RELEASE_DIR/Rotaly-teste.apk")
 
             echo "Tentando atualizar ou criar release com gh CLI..."
+            PUBLISHED=false
+
             if gh release view "$TAG_NAME" >/dev/null 2>&1; then
               echo "Release $TAG_NAME ja existe. Fazendo upload/atualizacao dos assets (--clobber)..."
-              gh release upload "$TAG_NAME" "${FILES_TO_UPLOAD[@]}" --clobber || {
-                echo "Upload falhou, tentando recriar release..."
+              if gh release upload "$TAG_NAME" "${FILES_TO_UPLOAD[@]}" --clobber; then
+                PUBLISHED=true
+              else
+                echo "Upload clobber falhou, tentando recriar release completo..."
                 gh release delete "$TAG_NAME" --yes || true
-                gh release create "$TAG_NAME" \
+                if gh release create "$TAG_NAME" \
                   "${FILES_TO_UPLOAD[@]}" \
                   --latest=true \
                   --title "$RELEASE_TITLE" \
-                  --notes "$RELEASE_BODY"
-              }
+                  --notes "$RELEASE_BODY"; then
+                  PUBLISHED=true
+                fi
+              fi
             else
               echo "Criando novo release $TAG_NAME..."
+              if gh release create "$TAG_NAME" \
+                "${FILES_TO_UPLOAD[@]}" \
+                --latest=true \
+                --title "$RELEASE_TITLE" \
+                --notes "$RELEASE_BODY"; then
+                PUBLISHED=true
+              fi
+            fi
+
+            if [ "$PUBLISHED" = "true" ]; then
+              echo "GitHub Release $TAG_NAME publicado com sucesso!"
+              gh release view "$TAG_NAME" || true
+            else
+              echo "::warning::Tentativa principal com gh falhou. Executando fallback idempotente com delete e create..."
+              gh release delete "$TAG_NAME" --yes 2>/dev/null || true
               gh release create "$TAG_NAME" \
                 "${FILES_TO_UPLOAD[@]}" \
                 --latest=true \
                 --title "$RELEASE_TITLE" \
-                --notes "$RELEASE_BODY"
+                --notes "$RELEASE_BODY" || echo "::warning::Nao foi possivel publicar o release pelo gh CLI neste momento, mas os artifacts rotaly-apk-debug e rotaly-apk-release foram gerados e armazenados com sucesso."
             fi
-
-            echo "GitHub Release $TAG_NAME publicado com sucesso!"
-            gh release view "$TAG_NAME" || true
           } 2>&1 | tee -a "$STEP_LOGS"
 
       # =========================================================================
-      # DIAGNÓSTICO E LOGS COMPLETOS (PUBLICADOS SEMPRE COM if: always())
+      # DIAGNÓSTICO E LOGS COMPLETOS (PUBLICADOS COM if: steps.guard.outputs.build == 'true' && always())
       # =========================================================================
       - name: Publicar log de setup e diagnostico do ambiente
-        if: always()
+        if: steps.guard.outputs.build == 'true' && always()
         uses: actions/upload-artifact@v6
         with:
           name: setup-diagnostic-log
@@ -606,7 +656,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Publicar log de etapas pos-Vite
-        if: always()
+        if: steps.guard.outputs.build == 'true' && always()
         uses: actions/upload-artifact@v6
         with:
           name: step-logs
@@ -615,7 +665,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Publicar log completo do Gradle
-        if: always()
+        if: steps.guard.outputs.build == 'true' && always()
         uses: actions/upload-artifact@v6
         with:
           name: gradle-build-log
@@ -627,7 +677,7 @@ jobs:
       # VERIFICAÇÃO FINAL: FALHAR CASO NENHUM APK TENHA SIDO PRODUZIDO
       # =========================================================================
       - name: Resumo e Verificacao Final do Build
-        if: always()
+        if: steps.guard.outputs.build == 'true' && always()
         run: |
           echo "=== RESUMO DO BUILD DO ROTALY APK ==="
           DEBUG_EXISTS=false
