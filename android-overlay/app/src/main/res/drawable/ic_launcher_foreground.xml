@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.55"
+        android:scaleY="0.55"
+        android:translateX="24.3"
+        android:translateY="24.3">
+        <!-- Haste vertical do R -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M18,22h13v54h-13z" />
+        <!-- Arco superior do R -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M31,22h24c13.2,0 21,6.5 21,17c0,10.5 -7.8,17 -21,17h-24v-11h23c6.5,0 10,-3 10,-6c0,-3.5 -3.5,-6 -10,-6h-23z" />
+        <!-- Perna diagonal do R -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M48,50l26,26h-12l-24,-24z" />
+        <!-- Faixa curva ciano / chevron Rotaly -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#00A8E8"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M18,78L42,62L72,84" />
+    </group>
+</vector>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Rotaly</string>
+    <string name="title_activity_main">Rotaly</string>
+    <string name="package_name">br.com.rotaly.app</string>
+</resources>

@@ -174,15 +174,20 @@ const densities = [
   { name: 'mipmap-xxxhdpi', size: 192 },
 ]
 
-const resBase = path.join(rootDir, 'android', 'app', 'src', 'main', 'res')
+const targetBases = [
+  path.join(rootDir, 'android', 'app', 'src', 'main', 'res'),
+  path.join(rootDir, 'android-overlay', 'app', 'src', 'main', 'res'),
+]
 
-for (const { name, size } of densities) {
-  const dirPath = path.join(resBase, name)
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true })
+for (const resBase of targetBases) {
+  for (const { name, size } of densities) {
+    const dirPath = path.join(resBase, name)
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true })
+    }
+    fs.writeFileSync(path.join(dirPath, 'ic_launcher.png'), createRotalyPngIcon(size, false))
+    fs.writeFileSync(path.join(dirPath, 'ic_launcher_round.png'), createRotalyPngIcon(size, true))
   }
-  fs.writeFileSync(path.join(dirPath, 'ic_launcher.png'), createRotalyPngIcon(size, false))
-  fs.writeFileSync(path.join(dirPath, 'ic_launcher_round.png'), createRotalyPngIcon(size, true))
 }
 
-console.log('[gen-icons] Todos os mipmaps gerados com sucesso!')
+console.log('[gen-icons] Todos os mipmaps gerados com sucesso em android/ e android-overlay/!')

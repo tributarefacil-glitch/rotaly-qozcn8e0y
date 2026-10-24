@@ -25,11 +25,11 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # 1. Checkout do repositório
+      # 1. Checkout do repositório via checkout@v5
       - name: Checkout do repositorio
         uses: actions/checkout@v5
 
-      # 2. Diagnóstico inicial do ambiente
+      # 2. Diagnóstico inicial do ambiente runner
       - name: Diagnostico do ambiente
         run: |
           echo "=== DIAGNOSTICO DO RUNNER (Ubuntu 24.04) ==="
@@ -41,13 +41,18 @@ jobs:
           echo "Commit SHA: ${{ github.sha }}"
           echo "Disparado por: ${{ github.actor }}"
           echo "Build Type solicitado: ${{ github.event.inputs.build_type || 'release' }}"
-          echo "--- Estrutura raiz ---"
+          echo "--- Conteudo raiz ---"
           ls -la
-          echo "--- Estrutura android/ ---"
-          ls -la android/
-          echo "=== FIM DO DIAGNOSTICO ==="
+          echo "--- Conteudo android-overlay/ ---"
+          if [ -d "android-overlay" ]; then
+            find android-overlay -maxdepth 4 -ls
+          else
+            echo "::error::Diretorio android-overlay ausente no checkout!"
+            exit 1
+          fi
+          echo "=== FIM DO DIAGNOSTICO INICIAL ==="
 
-      # 3. Configurar Node.js oficial (LTS v20) para o build web
+      # 3. Configurar Node.js oficial (LTS v20)
       - name: Configurar Node.js 20
         uses: actions/setup-node@v4
         with:
@@ -71,14 +76,32 @@ jobs:
           fi
           echo "Build Vite concluido com sucesso."
 
-      # 6. Sincronizar assets do frontend e metadados no projeto Android
-      - name: Sincronizar assets Web no Android
+      # 6. ESTRATÉGIA AUTORREGENERATIVA: Regenerar esqueleto Android canônico do zero
+      # Remove qualquer pasta android/ pré-existente (eliminando inconsistências/reversões de commit)
+      # e recria via Capacitor CLI canônico, aplicando em seguida o overlay versionado
+      - name: Regenerar esqueleto Android canônico com overlay
         run: |
-          echo "Copiando bundle web para android/app/src/main/assets/public/..."
-          mkdir -p android/app/src/main/assets/public
-          rm -rf android/app/src/main/assets/public/*
-          cp -r dist/* android/app/src/main/assets/public/
-          echo "Sincronizando capacitor.config.json no assets do Android..."
+          echo "=== REGENERANDO ESQUELETO ANDROID DO ZERO ==="
+          rm -rf android
+
+          echo "Executando: npx cap add android..."
+          npx cap add android
+
+          echo "Executando: npx cap sync android..."
+          npx cap sync android
+
+          echo "Aplicando android-overlay/ sobre o android/ canônico..."
+          if [ -d "android-overlay" ]; then
+            cp -r android-overlay/* android/
+            echo "Overlay nativo copiado com sucesso sobre android/."
+          else
+            echo "::error::Diretorio android-overlay nao encontrado!"
+            exit 1
+          fi
+
+          # Garantir sincronização do capacitor.config.json no assets
+          echo "Garantindo capacitor.config.json em assets..."
+          mkdir -p android/app/src/main/assets
           cat << 'EOF' > android/app/src/main/assets/capacitor.config.json
           {
             "appId": "br.com.rotaly.app",
@@ -101,8 +124,15 @@ jobs:
             }
           }
           EOF
-          echo "Assets copiados. Total de itens em public/:"
-          ls -lh android/app/src/main/assets/public/ | head -15
+
+          # Garantir que public/ dentro de assets contenha a compilação web recente
+          mkdir -p android/app/src/main/assets/public
+          cp -r dist/* android/app/src/main/assets/public/
+
+          echo "Conferindo estrutura resultante em android/app/src/main/java/br/com/rotaly/app/:"
+          ls -la android/app/src/main/java/br/com/rotaly/app/
+          ls -la android/app/src/main/java/br/com/rotaly/app/services/ || true
+          echo "=== REGENERACAO CONCLUIDA COM SUCESSO ==="
 
       # 7. Configurar Java 17 (JDK Temurin) com setup-java@v5
       - name: Configurar Java 17 (JDK)
@@ -111,7 +141,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # 8. Aceitar licenças do Android SDK e instalar plataformas/build-tools obrigatórias
+      # 8. Aceitar licenças do Android SDK e instalar platforms;android-34 + build-tools;34.0.0
       - name: Aceitar licencas e instalar Android SDK Platform 34 e Build-Tools
         run: |
           echo "=== CONFIGURANDO ANDROID SDK MANAGER E LICENCAS ==="
@@ -152,24 +182,28 @@ jobs:
         with:
           gradle-version: '8.2.1'
 
-      # 10. Decodificar Keystore de produção caso secrets estejam presentes
+      # 10. Decodificar Keystore de produção dos secrets do repositório
+      # Suporta tanto KEYSTORE_FILE (base64) quanto KEYSTORE_BASE64 com fallback debug tolerante
       - name: Configurar Assinatura do Keystore
         id: setup_keystore
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_FILE_SECRET: ${{ secrets.KEYSTORE_FILE }}
+          KEYSTORE_BASE64_SECRET: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           rm -f android/release.keystore
-          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
-            echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > "$GITHUB_WORKSPACE/android/release.keystore"
+          B64_DATA="${KEYSTORE_FILE_SECRET:-$KEYSTORE_BASE64_SECRET}"
+
+          if [ -n "$B64_DATA" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "$B64_DATA" | tr -d '\r\n ' | base64 -d > "$GITHUB_WORKSPACE/android/release.keystore"
             if [ -s "$GITHUB_WORKSPACE/android/release.keystore" ]; then
               echo "has_keystore=true" >> "$GITHUB_OUTPUT"
               echo "keystore_path=$GITHUB_WORKSPACE/android/release.keystore" >> "$GITHUB_OUTPUT"
               echo "Keystore de release decodificado com sucesso ($(wc -c < "$GITHUB_WORKSPACE/android/release.keystore") bytes)."
             else
-              echo "::warning::Falha na decodificacao do KEYSTORE_BASE64 (arquivo vazio). Release usara fallback de debug."
+              echo "::warning::Falha na decodificacao do Keystore Base64 (arquivo vazio). Release usara fallback de debug."
               echo "has_keystore=false" >> "$GITHUB_OUTPUT"
               echo "keystore_path=" >> "$GITHUB_OUTPUT"
             fi
@@ -201,7 +235,7 @@ jobs:
           ./gradlew --version
 
       # =========================================================================
-      # ETAPA 1: COMPILAÇÃO DO APK DEBUG (GARANTIA DE ENTREGÁVEL NATIVO)
+      # ETAPA 1: COMPILAÇÃO DO APK DEBUG (GARANTIA TOTAL DE ENTREGÁVEL NATIVO)
       # =========================================================================
       - name: Etapa 1 - Compilar APK Debug (assembleDebug)
         id: build_debug
@@ -233,7 +267,7 @@ jobs:
           fi
           echo "APK Debug gerado com sucesso: $DEBUG_APK ($(ls -lh "$DEBUG_APK" | awk '{print $5}'))"
 
-      # 13. Publicar imediatamente o APK Debug como artifact (garantido se Etapa 1 passou)
+      # 13. Publicar imediatamente o APK Debug como artifact rotaly-apk-debug
       - name: Publicar artifact rotaly-apk-debug
         uses: actions/upload-artifact@v4
         with:
@@ -286,7 +320,7 @@ jobs:
             exit 1
           fi
 
-      # 15. Publicar o APK Release assinado como artifact (somente se a Etapa 2 teve sucesso)
+      # 15. Publicar o APK Release assinado como artifact (quando concluído com sucesso)
       - name: Publicar artifact rotaly-apk-release
         if: steps.build_release.outcome == 'success' && steps.build_release.outputs.release_success == 'true'
         uses: actions/upload-artifact@v4
@@ -297,7 +331,7 @@ jobs:
           if-no-files-found: ignore
 
       # =========================================================================
-      # LOG DO GRADLE SEMPRE (SEMPRE PUBLICADO, INDEPENDENTE DO RESULTADO)
+      # LOG COMPLETO DO GRADLE (PUBLICADO SEMPRE, INDEPENDENTE DO RESULTADO)
       # =========================================================================
       - name: Salvar log completo do Gradle
         if: always()
@@ -309,9 +343,9 @@ jobs:
           if-no-files-found: ignore
 
       # =========================================================================
-      # RESUMO FINAL DA EXECUÇÃO
+      # VERIFICAÇÃO FINAL: FALHAR CASO NENHUM APK TENHA SIDO PRODUZIDO
       # =========================================================================
-      - name: Resumo do Build do APK
+      - name: Resumo e Verificacao Final do Build
         if: always()
         run: |
           echo "=== RESUMO DO BUILD DO ROTALY APK ==="
@@ -335,6 +369,7 @@ jobs:
           fi
 
           if [ "$DEBUG_EXISTS" = "false" ] && [ "$RELEASE_EXISTS" = "false" ]; then
-            echo "::error::Nenhum APK (debug ou release) foi gerado nesta execucao!"
+            echo "::error::Nenhum APK (debug ou release) foi gerado nesta execucao! Build finalizado com erro."
             exit 1
           fi
+          echo "Build finalizado com sucesso — pelo menos um APK valido foi gerado e empacotado."

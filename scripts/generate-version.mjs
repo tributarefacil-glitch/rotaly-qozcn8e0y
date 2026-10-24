@@ -27,10 +27,10 @@ try {
     2,
   )
 
-  // Executa gen-icons se os arquivos não existirem
-  const mdpiFile = path.join(
+  // Executa gen-icons se os arquivos não existirem (tanto em android/ quanto em android-overlay/)
+  const overlayMdpiFile = path.join(
     rootDir,
-    'android',
+    'android-overlay',
     'app',
     'src',
     'main',
@@ -38,7 +38,7 @@ try {
     'mipmap-mdpi',
     'ic_launcher.png',
   )
-  if (!fs.existsSync(mdpiFile)) {
+  if (!fs.existsSync(overlayMdpiFile)) {
     const genIconsScript = path.join(rootDir, 'scripts', 'gen-icons.mjs')
     if (fs.existsSync(genIconsScript)) {
       await import('./gen-icons.mjs')

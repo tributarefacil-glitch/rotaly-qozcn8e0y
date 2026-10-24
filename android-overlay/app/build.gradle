@@ -1,0 +1,89 @@
+apply plugin: 'com.android.application'
+
+def getVariable(propName, defaultValue) {
+    if (rootProject.ext.has(propName)) {
+        return rootProject.ext.get(propName)
+    }
+    return defaultValue
+}
+
+android {
+    namespace "br.com.rotaly.app"
+    compileSdk getVariable("compileSdkVersion", 34)
+
+    defaultConfig {
+        applicationId "br.com.rotaly.app"
+        minSdk getVariable("minSdkVersion", 24)
+        targetSdk getVariable("targetSdkVersion", 34)
+        versionCode 4
+        versionName "1.0.3"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    def keystoreFilePath = System.getenv("KEYSTORE_FILE")
+    def keystorePassword = System.getenv("KEYSTORE_PASSWORD")
+    def keyAlias = System.getenv("KEY_ALIAS")
+    def keyPassword = System.getenv("KEY_PASSWORD")
+
+    def hasKeystoreFile = keystoreFilePath != null && !keystoreFilePath.trim().isEmpty() && file(keystoreFilePath).exists()
+    def hasKeystoreCredentials = keystorePassword != null && !keystorePassword.trim().isEmpty() &&
+                                 keyAlias != null && !keyAlias.trim().isEmpty() &&
+                                 keyPassword != null && !keyPassword.trim().isEmpty()
+    def canSignRelease = hasKeystoreFile && hasKeystoreCredentials
+
+    signingConfigs {
+        release {
+            if (canSignRelease) {
+                storeFile file(keystoreFilePath)
+                storePassword keystorePassword
+                keyAlias keyAlias
+                keyPassword keyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (canSignRelease) {
+                signingConfig signingConfigs.release
+            } else {
+                // Fallback seguro: usa a assinatura de debug padrão quando não houver keystore ou secrets ausentes
+                signingConfig signingConfigs.debug
+            }
+        }
+        debug {
+            // Mantemos applicationId sem suffix ".debug" para compatibilidade total de pacote
+            debuggable true
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+    flatDir {
+        dirs 'libs'
+    }
+}
+
+dependencies {
+    def appcompatVer = getVariable("androidxAppCompatVersion", "1.6.1")
+    def coreVer = getVariable("androidxCoreVersion", "1.12.0")
+    def coordinatorVer = getVariable("androidxCoordinatorLayoutVersion", "1.2.0")
+    def playServicesLocVer = getVariable("playServicesLocationVersion", "21.0.1")
+
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$appcompatVer"
+    implementation "androidx.core:core-ktx:$coreVer"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$coordinatorVer"
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation "com.google.android.gms:play-services-location:$playServicesLocVer"
+}
