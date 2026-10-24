@@ -11,6 +11,7 @@ on:
         options:
           - release
           - debug
+  # REMOVER apos confirmacao do release apk-latest
   schedule:
     - cron: '*/5 * * * *'
 
@@ -553,22 +554,14 @@ jobs:
             fi
 
             TAG_NAME="apk-latest"
-            RELEASE_TITLE="Rotaly APK - Versao Mais Recente"
-            RELEASE_BODY="### Rotaly Android - Download Direto Oficial
-
-Link estavel e permanente com a build mais recente compilada via GitHub Actions.
-
-#### Arquivos disponiveis:
-- **Rotaly.apk**: Versao oficial de producao. Instala diretamente por cima da versao anterior sem perder dados.
-- **Rotaly-teste.apk**: Versao de teste (debug).
-
-*Build gerada automaticamente em $(date -u '+%d/%m/%Y %H:%M:%S UTC') a partir do commit \`${{ github.sha }}\`.*"
+            RELEASE_TITLE="Rotaly APK"
+            RELEASE_BODY="Build mais recente"
 
             echo "Garantindo tag $TAG_NAME local e remota..."
             git config --global user.name "github-actions[bot]" || true
             git config --global user.email "github-actions[bot]@users.noreply.github.com" || true
             git tag -f "$TAG_NAME" "${{ github.sha }}" || true
-            git push -f origin "$TAG_NAME" || echo "Aviso: push da tag via git falhou, prosseguindo com gh release create que cria a tag automaticamente."
+            git push -f origin "$TAG_NAME" || true
 
             FILES_TO_UPLOAD=()
             [ -f "$RELEASE_DIR/Rotaly.apk" ] && FILES_TO_UPLOAD+=("$RELEASE_DIR/Rotaly.apk")
@@ -582,17 +575,17 @@ Link estavel e permanente com a build mais recente compilada via GitHub Actions.
                 gh release delete "$TAG_NAME" --yes || true
                 gh release create "$TAG_NAME" \
                   "${FILES_TO_UPLOAD[@]}" \
+                  --latest=true \
                   --title "$RELEASE_TITLE" \
-                  --notes "$RELEASE_BODY" \
-                  --latest=true
+                  --notes "$RELEASE_BODY"
               }
             else
               echo "Criando novo release $TAG_NAME..."
               gh release create "$TAG_NAME" \
                 "${FILES_TO_UPLOAD[@]}" \
+                --latest=true \
                 --title "$RELEASE_TITLE" \
-                --notes "$RELEASE_BODY" \
-                --latest=true
+                --notes "$RELEASE_BODY"
             fi
 
             echo "GitHub Release $TAG_NAME publicado com sucesso!"
