@@ -14,15 +14,23 @@ android {
     }
 
     def keystoreFilePath = System.getenv("KEYSTORE_FILE")
-    def hasReleaseKeystore = keystoreFilePath != null && !keystoreFilePath.trim().isEmpty() && file(keystoreFilePath).exists()
+    def keystorePassword = System.getenv("KEYSTORE_PASSWORD")
+    def keyAlias = System.getenv("KEY_ALIAS")
+    def keyPassword = System.getenv("KEY_PASSWORD")
+
+    def hasKeystoreFile = keystoreFilePath != null && !keystoreFilePath.trim().isEmpty() && file(keystoreFilePath).exists()
+    def hasKeystoreCredentials = keystorePassword != null && !keystorePassword.trim().isEmpty() &&
+                                 keyAlias != null && !keyAlias.trim().isEmpty() &&
+                                 keyPassword != null && !keyPassword.trim().isEmpty()
+    def canSignRelease = hasKeystoreFile && hasKeystoreCredentials
 
     signingConfigs {
         release {
-            if (hasReleaseKeystore) {
+            if (canSignRelease) {
                 storeFile file(keystoreFilePath)
-                storePassword System.getenv("KEYSTORE_PASSWORD")
-                keyAlias System.getenv("KEY_ALIAS")
-                keyPassword System.getenv("KEY_PASSWORD")
+                storePassword keystorePassword
+                keyAlias keyAlias
+                keyPassword keyPassword
             }
         }
     }
@@ -31,10 +39,10 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            if (hasReleaseKeystore) {
+            if (canSignRelease) {
                 signingConfig signingConfigs.release
             } else {
-                // Fallback seguro: usa a assinatura de debug padrão quando não houver keystore de produção
+                // Fallback seguro: usa a assinatura de debug padrão quando não houver keystore ou secrets ausentes
                 signingConfig signingConfigs.debug
             }
         }
