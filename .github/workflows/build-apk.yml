@@ -4,40 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: 'Tipo de build (release ou debug)'
+        description: 'Tipo de build a compilar'
         required: true
         default: 'release'
         type: choice
         options:
           - release
           - debug
-  push:
-    branches:
-      - main
-      - principal
-    paths:
-      - 'src/**'
-      - 'android/**'
-      - 'capacitor.config.ts'
-      - 'package.json'
-      - '.github/workflows/build-apk.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: apk-build-${{ github.ref }}
+  group: apk-build-dispatch
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Criar APK para Android
+    name: Compilar APK Android
     runs-on: ubuntu-24.04
-    # Blinda contra execuções disparadas por sincronizações automáticas com mensagem "Auto-commit before sync"
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (!contains(github.event.head_commit.message, 'Auto-commit before sync') &&
-       !contains(github.event.head_commit.message, 'Confirmação automática antes da sincronização'))
 
     steps:
       # 1. Checkout do repositório
@@ -54,7 +39,8 @@ jobs:
           echo "JAVA_HOME=${JAVA_HOME}"
           echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
           echo "Commit SHA: ${{ github.sha }}"
-          echo "Commit Message: ${{ github.event.head_commit.message }}"
+          echo "Disparado por: ${{ github.actor }}"
+          echo "Build Type solicitado: ${{ github.event.inputs.build_type || 'release' }}"
           echo "--- Estrutura raiz ---"
           ls -la
           echo "--- Estrutura android/ ---"
@@ -183,12 +169,12 @@ jobs:
               echo "keystore_path=$GITHUB_WORKSPACE/android/release.keystore" >> "$GITHUB_OUTPUT"
               echo "Keystore de release decodificado com sucesso ($(wc -c < "$GITHUB_WORKSPACE/android/release.keystore") bytes)."
             else
-              echo "::warning::Falha na decodificacao do KEYSTORE_BASE64 (arquivo vazio). O build usara chave de debug."
+              echo "::warning::Falha na decodificacao do KEYSTORE_BASE64 (arquivo vazio). Release usara fallback de debug."
               echo "has_keystore=false" >> "$GITHUB_OUTPUT"
               echo "keystore_path=" >> "$GITHUB_OUTPUT"
             fi
           else
-            echo "::notice::Secrets de assinatura ausentes ou incompletos. O build usara chave de debug."
+            echo "::notice::Secrets de assinatura ausentes ou incompletos. Release usara fallback de debug."
             echo "has_keystore=false" >> "$GITHUB_OUTPUT"
             echo "keystore_path=" >> "$GITHUB_OUTPUT"
           fi
@@ -214,121 +200,141 @@ jobs:
           echo "Testando gradlew --version:"
           ./gradlew --version
 
-      # 12. Compilar APK Android com Gradle (com extração obrigatória de causas de erro e log detalhado)
-      - name: Compilar APK Android com Gradle
-        id: gradle_build
+      # =========================================================================
+      # ETAPA 1: COMPILAÇÃO DO APK DEBUG (GARANTIA DE ENTREGÁVEL NATIVO)
+      # =========================================================================
+      - name: Etapa 1 - Compilar APK Debug (assembleDebug)
+        id: build_debug
+        run: |
+          cd android
+          chmod +x gradlew
+          echo "=== [ETAPA 1/2] COMPILANDO APK DEBUG ==="
+          GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
+          echo "=== LOG ETAPA 1: assembleDebug ===" >> "$GRADLE_LOG_FILE"
+
+          if ./gradlew assembleDebug --no-daemon --stacktrace --warning-mode all 2>&1 | tee -a "$GRADLE_LOG_FILE"; then
+            echo "assembleDebug concluido com sucesso."
+          else
+            echo "::error::FALHA CRITICA no assembleDebug!"
+            if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
+              ROOT_CAUSE=$(grep -A 10 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g')
+              [ -n "$ROOT_CAUSE" ] && echo "::error title=Gradle Root Cause (Debug)::$ROOT_CAUSE"
+              CAUSED_BY=$(grep -A 5 "Caused by:" "$GRADLE_LOG_FILE" | head -n 5 | tr '\r\n' '  ' | sed 's/"/\\"/g')
+              [ -n "$CAUSED_BY" ] && echo "::error title=Gradle Caused By (Debug)::$CAUSED_BY"
+            fi
+            exit 1
+          fi
+
+          echo "=== CONFERINDO APK DEBUG GERADO ==="
+          DEBUG_APK=$(find app/build/outputs/apk/debug -type f -name "*.apk" | head -n 1)
+          if [ -z "$DEBUG_APK" ] || [ ! -f "$DEBUG_APK" ]; then
+            echo "::error::Nenhum APK debug encontrado apos assembleDebug!"
+            exit 1
+          fi
+          echo "APK Debug gerado com sucesso: $DEBUG_APK ($(ls -lh "$DEBUG_APK" | awk '{print $5}'))"
+
+      # 13. Publicar imediatamente o APK Debug como artifact (garantido se Etapa 1 passou)
+      - name: Publicar artifact rotaly-apk-debug
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotaly-apk-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      # =========================================================================
+      # ETAPA 2: COMPILAÇÃO DO APK RELEASE (ASSINADO)
+      # =========================================================================
+      - name: Etapa 2 - Compilar APK Release (assembleRelease)
+        id: build_release
+        continue-on-error: true
         env:
           KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.keystore_path }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          BUILD_TYPE_INPUT: ${{ github.event.inputs.build_type }}
         run: |
           cd android
           chmod +x gradlew
-
-          BUILD_MODE="${BUILD_TYPE_INPUT:-release}"
-          echo "=== INICIANDO COMPILACAO GRADLE (MODO: $BUILD_MODE) ==="
-
+          echo "=== [ETAPA 2/2] COMPILANDO APK RELEASE ==="
           GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
-          touch "$GRADLE_LOG_FILE"
+          echo -e "\n\n=== LOG ETAPA 2: assembleRelease ===" >> "$GRADLE_LOG_FILE"
 
-          run_gradle_task() {
-            local task_name="$1"
-            echo "Executando ./gradlew $task_name --no-daemon --stacktrace --warning-mode all ..."
-            if ./gradlew "$task_name" --no-daemon --stacktrace --warning-mode all 2>&1 | tee -a "$GRADLE_LOG_FILE"; then
-              echo "Tarefa $task_name concluida com sucesso."
-              return 0
-            else
-              local exit_code=$?
-              echo "::error::Tarefa $task_name FALHOU com codigo de saida $exit_code!"
-
-              echo "=== DIAGNOSTICO DETALHADO DO GRADLE: CAUSA RAIZ DA FALHA ==="
-              if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:|AAPT: error:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
-                echo "--- Secao 'FAILURE: Build failed / What went wrong:' ---"
-                grep -A 20 -E "FAILURE: Build failed|What went wrong:" "$GRADLE_LOG_FILE" || true
-                echo "----------------------------------------------------"
-                echo "--- Ocorrencias de 'Caused by:' ---"
-                grep -A 10 -E "Caused by:" "$GRADLE_LOG_FILE" | head -n 40 || true
-                echo "----------------------------------------------------"
-                echo "--- Ocorrencias de 'AAPT: error' ---"
-                grep -A 10 -E "AAPT: error" "$GRADLE_LOG_FILE" | head -n 40 || true
-
-                # Injeta anotacao estruturada no GitHub Actions com o bloco de causa raiz
-                local failure_summary
-                failure_summary=$(grep -A 15 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 15 | tr '\r\n' '  ' | sed 's/"/\\"/g')
-                if [ -n "$failure_summary" ]; then
-                  echo "::error title=Gradle Root Cause::$failure_summary"
-                else
-                  local caused_by_summary
-                  caused_by_summary=$(grep -A 5 "Caused by:" "$GRADLE_LOG_FILE" | head -n 5 | tr '\r\n' '  ' | sed 's/"/\\"/g')
-                  if [ -n "$caused_by_summary" ]; then
-                    echo "::error title=Gradle Caused By::$caused_by_summary"
-                  fi
-                fi
-              else
-                echo "Cabecalho padrao nao encontrado nos padroes conhecidos."
-              fi
-              echo "=== FIM DO DIAGNOSTICO DETALHADO ==="
-
-              echo "=== ULTIMAS 150 LINHAS DO LOG GRADLE ($task_name) ==="
-              tail -n 150 "$GRADLE_LOG_FILE"
-              echo "=== FIM DO LOG GRADLE ==="
-              return $exit_code
-            fi
-          }
-
-          if [ "$BUILD_MODE" = "release" ]; then
-            if ! run_gradle_task "assembleRelease"; then
-              echo "::warning::assembleRelease falhou. Tentando fallback para assembleDebug para inspecao..."
-              if ! run_gradle_task "assembleDebug"; then
-                echo "::error::Tanto assembleRelease quanto assembleDebug falharam. Encerrando com erro."
-                exit 1
-              fi
-            fi
-          else
-            if ! run_gradle_task "assembleDebug"; then
-              echo "::error::assembleDebug falhou. Encerrando com erro."
-              exit 1
-            fi
+          if [ "${{ steps.setup_keystore.outputs.has_keystore }}" != "true" ]; then
+            echo "::warning::Keystore nao configurado via secrets; build release caira no fallback de debug configurado no build.gradle."
           fi
 
-      # 13. Fazer upload do log do Gradle como artefato SEMPRE (sucesso ou falha)
+          if ./gradlew assembleRelease --no-daemon --stacktrace --warning-mode all 2>&1 | tee -a "$GRADLE_LOG_FILE"; then
+            RELEASE_APK=$(find app/build/outputs/apk/release -type f -name "*.apk" | head -n 1)
+            if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
+              echo "assembleRelease concluido com sucesso: $RELEASE_APK ($(ls -lh "$RELEASE_APK" | awk '{print $5}'))"
+              echo "release_success=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning title=Release Sem APK::assembleRelease terminou sem gerar arquivo APK em app/build/outputs/apk/release."
+              echo "release_success=false" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+          else
+            echo "::warning title=Falha no Release::RELEASE falhou, APK debug disponivel no artifact rotaly-apk-debug."
+            if grep -n -E "FAILURE: Build failed|What went wrong:|Caused by:" "$GRADLE_LOG_FILE" >/dev/null 2>&1; then
+              ROOT_CAUSE=$(grep -A 10 "What went wrong:" "$GRADLE_LOG_FILE" | head -n 10 | tr '\r\n' '  ' | sed 's/"/\\"/g')
+              [ -n "$ROOT_CAUSE" ] && echo "::warning title=Gradle Root Cause (Release)::$ROOT_CAUSE"
+              CAUSED_BY=$(grep -A 5 "Caused by:" "$GRADLE_LOG_FILE" | head -n 5 | tr '\r\n' '  ' | sed 's/"/\\"/g')
+              [ -n "$CAUSED_BY" ] && echo "::warning title=Gradle Caused By (Release)::$CAUSED_BY"
+            fi
+            echo "release_success=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      # 15. Publicar o APK Release assinado como artifact (somente se a Etapa 2 teve sucesso)
+      - name: Publicar artifact rotaly-apk-release
+        if: steps.build_release.outcome == 'success' && steps.build_release.outputs.release_success == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rotaly-apk-release
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # =========================================================================
+      # LOG DO GRADLE SEMPRE (SEMPRE PUBLICADO, INDEPENDENTE DO RESULTADO)
+      # =========================================================================
       - name: Salvar log completo do Gradle
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gradle-build-log
           path: gradle-build.log
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: ignore
 
-      # 14. Verificar APK gerado (FALHA explicitamente se nenhum APK existir)
-      - name: Verificar APK gerado
+      # =========================================================================
+      # RESUMO FINAL DA EXECUÇÃO
+      # =========================================================================
+      - name: Resumo do Build do APK
+        if: always()
         run: |
-          echo "=== VERIFICACAO DE ARQUIVOS APK GERADOS ==="
-          APK_COUNT=0
-          if [ -d "android/app/build/outputs/apk" ]; then
-            find android/app/build/outputs/apk -type f -name "*.apk" -ls
-            APK_COUNT=$(find android/app/build/outputs/apk -type f -name "*.apk" | wc -l)
+          echo "=== RESUMO DO BUILD DO ROTALY APK ==="
+          DEBUG_EXISTS=false
+          RELEASE_EXISTS=false
+
+          if [ -d "android/app/build/outputs/apk/debug" ] && [ -n "$(find android/app/build/outputs/apk/debug -type f -name '*.apk')" ]; then
+            DEBUG_EXISTS=true
+            echo "STATUS DEBUG: SUCESSO (Artifact rotaly-apk-debug disponivel)"
+            find android/app/build/outputs/apk/debug -type f -name "*.apk" -ls
+          else
+            echo "STATUS DEBUG: FALHOU OU AUSENTE"
           fi
 
-          echo "Total de APKs encontrados: $APK_COUNT"
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "::error::FALHA CRITICA: Nenhum arquivo APK foi gerado pelo processo Gradle!"
+          if [ -d "android/app/build/outputs/apk/release" ] && [ -n "$(find android/app/build/outputs/apk/release -type f -name '*.apk')" ]; then
+            RELEASE_EXISTS=true
+            echo "STATUS RELEASE: SUCESSO (Artifact rotaly-apk-release disponivel)"
+            find android/app/build/outputs/apk/release -type f -name "*.apk" -ls
+          else
+            echo "STATUS RELEASE: NAO GERADO OU FALHOU (Usar APK debug como plano B)"
+          fi
+
+          if [ "$DEBUG_EXISTS" = "false" ] && [ "$RELEASE_EXISTS" = "false" ]; then
+            echo "::error::Nenhum APK (debug ou release) foi gerado nesta execucao!"
             exit 1
           fi
-
-          echo "Lista de APKs gerados com sucesso:"
-          find android/app/build/outputs/apk -type f -name "*.apk"
-
-      # 15. Publicar o APK gerado como artefato do GitHub Actions
-      - name: Publicar APK no GitHub Actions (rotaly-apk)
-        uses: actions/upload-artifact@v4
-        with:
-          name: rotaly-apk
-          path: |
-            android/app/build/outputs/apk/release/*.apk
-            android/app/build/outputs/apk/debug/*.apk
-          retention-days: 30
-          if-no-files-found: error
