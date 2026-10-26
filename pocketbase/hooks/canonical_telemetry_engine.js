@@ -47,7 +47,67 @@ onRecordAfterUpdateSuccess((e) => {
     }
 
     /**
+     * Deduplicação canônica de fluxos concorrentes de GPS (APK nativo vs WebView/JS):
+     * Quando ambos os fluxos estão ativos para o mesmo entregador, ocorrem pings intercalados
+     * a cada 2-4 segundos a distâncias mínimas (< 10 metros).
+     * Regra de ouro: se existir outro ping em menos de 5 segundos e distância menor que 10 metros,
+     * descarta o ping redundante mantendo preferencialmente o fluxo nativo (location_timestamp preenchido).
+     */
+    function deduplicatePingList(rawList, distFn) {
+      if (!rawList || rawList.length <= 1) return rawList || []
+
+      // Ordenar estritamente por timestamp efetivo
+      const sorted = rawList.slice().sort((a, b) => {
+        const tA = new Date(a.getString('location_timestamp') || a.getString('created')).getTime()
+        const tB = new Date(b.getString('location_timestamp') || b.getString('created')).getTime()
+        return tA - tB
+      })
+
+      const deduped = []
+      for (let i = 0; i < sorted.length; i++) {
+        const curr = sorted[i]
+        const currLat = curr.getFloat('lat')
+        const currLng = curr.getFloat('lng')
+        const currTime = new Date(
+          curr.getString('location_timestamp') || curr.getString('created'),
+        ).getTime()
+        const currIsNative = Boolean(curr.getString('location_timestamp'))
+
+        if (deduped.length === 0) {
+          deduped.push(curr)
+          continue
+        }
+
+        const prev = deduped[deduped.length - 1]
+        const prevLat = prev.getFloat('lat')
+        const prevLng = prev.getFloat('lng')
+        const prevTime = new Date(
+          prev.getString('location_timestamp') || prev.getString('created'),
+        ).getTime()
+        const prevIsNative = Boolean(prev.getString('location_timestamp'))
+
+        const dtSec = Math.abs(currTime - prevTime) / 1000
+        const dM = distFn(prevLat, prevLng, currLat, currLng)
+
+        // Janela de duplicidade concorrente: intervalo < 5s e distância < 10m
+        if (dtSec < 5 && dM < 10) {
+          // Se o anterior for WebView e o atual for Nativo, substitui pelo Nativo (preferência ao nativo)
+          if (!prevIsNative && currIsNative) {
+            deduped[deduped.length - 1] = curr
+          }
+          // Caso contrário (ex.: prev já é nativo ou ambos iguais), descarta o atual
+          continue
+        }
+
+        deduped.push(curr)
+      }
+
+      return deduped
+    }
+
+    /**
      * Saneamento canônico de pings compartilhado e idempotente:
+     * - Deduplicação de fluxos concorrentes (nativo vs webview <5s / <10m)
      * - Descarte de pings com baixa precisão (accuracy > 100m)
      * - Descarte de velocidade impossível (> 200 km/h)
      * - Descarte de coordenada congelada repetida (<1.5m ou diferença angular <0.00002)
@@ -64,7 +124,7 @@ onRecordAfterUpdateSuccess((e) => {
       let currentSegment = []
 
       // Pré-filtrar pings com accuracy > 100m ou coordenadas inválidas
-      const validPings = []
+      const validPingsPre = []
       if (pingsList) {
         for (let idx = 0; idx < pingsList.length; idx++) {
           const p = pingsList[idx]
@@ -78,9 +138,14 @@ onRecordAfterUpdateSuccess((e) => {
             discardedCount++
             continue
           }
-          validPings.push(p)
+          validPingsPre.push(p)
         }
       }
+
+      // DEFESA NO BACKEND: Deduplica pings intercalados de múltiplos fluxos (janela 5s / 10m)
+      const validPings = deduplicatePingList(validPingsPre, distFn)
+      const dedupDiscarded = validPingsPre.length - validPings.length
+      discardedCount += dedupDiscarded
 
       const pCount = validPings.length
 
@@ -327,8 +392,9 @@ onRecordAfterUpdateSuccess((e) => {
         )
       } catch (_) {}
 
-      const pingsCount = pings.length
-
+      // DEDUPLICAÇÃO DE FLUXO PARA CONTAGEM E COMPARAÇÃO
+      const dedupedPings = deduplicatePingList(pings, haversineDistMeters)
+      const pingsCount = dedupedPings.length
       // GUARDA DE SANIDADE NO FECHAMENTO AUTOMÁTICO:
       // Se pings_count === 0 mas existem pings na janela temporal global:
       // Log de erro visível + registro em audit_trail (user_id='', actor_name='Sistema', metadata.system_trigger=true)
@@ -382,14 +448,14 @@ onRecordAfterUpdateSuccess((e) => {
       let firstPingAt = null
       let lastPingAt = null
       if (pingsCount > 0) {
-        firstPingAt = pings[0].getString('created')
-        lastPingAt = pings[pingsCount - 1].getString('created')
+        firstPingAt = dedupedPings[0].getString('created')
+        lastPingAt = dedupedPings[pingsCount - 1].getString('created')
       }
 
       // SANEAMENTO IDEMPOTENTE E CANÔNICO DE PINGS:
-      // Descarte de coordenada congelada repetida (<1.5m), descarte de saltos com velocidade impossível (>90 km/h)
-      // e detecção de lacunas de telemetria (>90s).
-      const sanitizedTelemetry = sanitizePingsAndComputeTelemetry(pings, haversineDistMeters)
+      // Deduplicação de fluxos concorrentes (<5s / <10m), descarte de coordenada congelada repetida (<1.5m),
+      // descarte de saltos com velocidade impossível (>90 km/h) e detecção de lacunas de telemetria (>90s).
+      const sanitizedTelemetry = sanitizePingsAndComputeTelemetry(dedupedPings, haversineDistMeters)
       const kmGpsTotalMeters = sanitizedTelemetry.kmGpsTotalMeters
       const telemetryGaps = sanitizedTelemetry.telemetryGaps
       const gapsCount = sanitizedTelemetry.gapsCount
@@ -488,14 +554,14 @@ onRecordAfterUpdateSuccess((e) => {
             : finishMs + TOLERANCE_MS
 
           for (let p = 1; p < pingsCount; p++) {
-            const ptTime = new Date(pings[p].getString('created')).getTime()
-            const prevPtTime = new Date(pings[p - 1].getString('created')).getTime()
+            const ptTime = new Date(dedupedPings[p].getString('created')).getTime()
+            const prevPtTime = new Date(dedupedPings[p - 1].getString('created')).getTime()
             const deltaSec = Math.max(0, Math.round((ptTime - prevPtTime) / 1000))
             if (deltaSec <= 90 && ptTime >= prevStopArrival && ptTime <= thisStopArrival) {
-              const pPrevLat = pings[p - 1].getFloat('lat')
-              const pPrevLng = pings[p - 1].getFloat('lng')
-              const pCurrLat = pings[p].getFloat('lat')
-              const pCurrLng = pings[p].getFloat('lng')
+              const pPrevLat = dedupedPings[p - 1].getFloat('lat')
+              const pPrevLng = dedupedPings[p - 1].getFloat('lng')
+              const pCurrLat = dedupedPings[p].getFloat('lat')
+              const pCurrLng = dedupedPings[p].getFloat('lng')
               const pDistM = haversineDistMeters(pPrevLat, pPrevLng, pCurrLat, pCurrLng)
               const pSpeedKmh = deltaSec > 0 ? (pDistM / deltaSec) * 3.6 : 0
               const isPerezFrozen =
@@ -594,7 +660,7 @@ onRecordAfterUpdateSuccess((e) => {
       let lastPingNearBaseIdx = -1
 
       for (let pIdx = 0; pIdx < pingsCount; pIdx++) {
-        const pingRecord = pings[pIdx]
+        const pingRecord = dedupedPings[pIdx]
         const pTime = new Date(pingRecord.getString('created')).getTime()
         if (pTime >= maxStopArrivalMs) {
           const pLat = pingRecord.getFloat('lat')

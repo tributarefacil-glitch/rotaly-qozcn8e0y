@@ -366,10 +366,41 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
     return true
   })
 
+  // DEDUPLICAÇÃO DE FLUXOS CONCORRENTES (APK nativo vs WebView/JS):
+  // Janela < 5s e distância < 10m: descarta redundâncias e prioriza fluxo nativo (location_timestamp presente)
+  const sortedPreDedup = [...initialValid].sort((a, b) => {
+    const tA = new Date(a.location_timestamp || a.created).getTime()
+    const tB = new Date(b.location_timestamp || b.created).getTime()
+    return tA - tB
+  })
+
+  const dedupedPoints: LocationRecord[] = []
+  for (let idx = 0; idx < sortedPreDedup.length; idx++) {
+    const curr = sortedPreDedup[idx]
+    if (dedupedPoints.length === 0) {
+      dedupedPoints.push(curr)
+      continue
+    }
+    const prev = dedupedPoints[dedupedPoints.length - 1]
+    const tPrev = new Date(prev.location_timestamp || prev.created).getTime()
+    const tCurr = new Date(curr.location_timestamp || curr.created).getTime()
+    const dt = Math.abs(tCurr - tPrev) / 1000
+    const dM = haversineDistanceMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+
+    if (dt < 5 && dM < 10) {
+      noiseCount++
+      const prevIsNative = Boolean(prev.location_timestamp)
+      const currIsNative = Boolean(curr.location_timestamp)
+      if (!prevIsNative && currIsNative) {
+        dedupedPoints[dedupedPoints.length - 1] = curr
+      }
+      continue
+    }
+    dedupedPoints.push(curr)
+  }
+
   // Ordenar cronologicamente
-  const sorted = [...initialValid].sort(
-    (a, b) => new Date(a.created).getTime() - new Date(b.created).getTime(),
-  )
+  const sorted = dedupedPoints
 
   if (sorted.length <= 1) {
     return { validPoints: sorted, noiseCount, discardedNoiseKm: 0 }

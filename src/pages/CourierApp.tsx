@@ -955,6 +955,21 @@ export default function CourierApp() {
       setGpsStatus('active')
       setGpsFailureDetail('none')
 
+      // REGRA FONTE ÚNICA NO APK:
+      // Quando o Foreground Service nativo está ativo no APK Android (RotalyGpsForegroundService),
+      // a camada nativa é a fonte exclusiva que grava os pings diretamente no PocketBase (com location_timestamp).
+      // A captura webview/JS NUNCA deve gravar pings concorrentes na coleção 'locations' para não duplicar telemetria.
+      if (nativeGpsBridge.isNativeEnvironment()) {
+        const trackingState = nativeGpsBridge.getRealTrackingState?.()
+        if (trackingState?.isTracking) {
+          // Apenas atualiza estado local da UI, nunca envia payload redundante para o backend
+          const nowTs = Date.now()
+          setLastSuccessfulPingTimestamp(nowTs)
+          setMinutesSinceLastPing(0)
+          return
+        }
+      }
+
       // Se outra gravação já estiver em voo, não enviar simultaneamente
       if (isSendingLocationRef.current) return
 
@@ -1229,10 +1244,15 @@ export default function CourierApp() {
         .catch((e) => console.warn('Erro ao iniciar native foreground GPS:', e))
     }
 
-    // Escutar coordenadas da ponte nativa Android
+    // Escutar coordenadas da ponte nativa Android apenas para atualizar estado da UI local (sem enviar para o backend)
     const unsubscribeNativeGps = nativeGpsBridge.onLocation((coord) => {
       if (!isEffectActive) return
-      processAndSendGps(coord.latitude, coord.longitude, coord.speed, coord.accuracy, false)
+      setCurrentCourierLocation({ lat: coord.latitude, lng: coord.longitude })
+      setGpsStatus('active')
+      setGpsFailureDetail('none')
+      const now = Date.now()
+      setLastSuccessfulPingTimestamp(now)
+      setMinutesSinceLastPing(0)
     })
 
     // Iniciar watchPosition contínuo (fallback web ou padrão enquanto app aberto)

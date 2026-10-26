@@ -1832,30 +1832,49 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                         {/* Coluna B: GPS Telemetria - Exclusivo Auditoria (MOTOR CANÔNICO DE TELEMETRIA) */}
                         {/* REGRA OBRIGATÓRIA: */}
                         {/* Exibir km_gps_total gravado pelo motor para o lote; NUNCA copiar Coluna A. GPS é exclusivamente auditoria. */}
-                        {/* Quando o lote tiver lacunas relevantes (telemetry_gaps não vazio), rotular a perna */}
-                        {/* "sem telemetria suficiente (N pings)" conforme os dados gravados. Comparação sempre lote×lote. */}
+                        {/* Julgamento de suficiência usa o fluxo deduplicado e rotula claramente se houver lacunas reais. */}
                         <td className="py-3 px-3 align-top text-center">
                           <div className="space-y-0.5">
                             {(() => {
+                              const hasBatchGps = typeof row.gpsKm === 'number' && row.gpsKm > 0
+                              const pings = row.telemetryPingsCount || 0
+                              const isAbundantPings = pings >= 15
+
                               // Se tem lacunas relevantes gravadas pelo motor
                               if (row.hasRelevantGaps) {
+                                const gapsList = row.canonicalBatchTelem?.telemetry_gaps || []
+                                const totalGapSecs =
+                                  row.canonicalBatchTelem?.gaps_total_seconds || 0
+                                const maxGapMins =
+                                  totalGapSecs > 0
+                                    ? Math.round(totalGapSecs / 60)
+                                    : gapsList.length > 0
+                                      ? Math.round(
+                                          Math.max(
+                                            ...gapsList.map(
+                                              (g: any) =>
+                                                g.duration_minutes ||
+                                                (g.duration_seconds ? g.duration_seconds / 60 : 0),
+                                            ),
+                                          ),
+                                        )
+                                      : 0
+
                                 return (
                                   <div className="space-y-0.5">
                                     <div className="flex items-center justify-center gap-1">
                                       <span className="font-mono text-sm font-bold text-amber-600">
-                                        {typeof row.gpsKm === 'number' && row.gpsKm > 0
-                                          ? `${row.gpsKm.toFixed(2)} km`
-                                          : '—'}
+                                        {hasBatchGps ? `${row.gpsKm.toFixed(2)} km` : '—'}
                                       </span>
                                     </div>
                                     <span className="text-[9px] text-amber-700 font-semibold block">
-                                      sem telemetria suficiente ({row.telemetryPingsCount} pings)
+                                      {maxGapMins > 0
+                                        ? `telemetria com lacunas (${maxGapMins} min sem sinal)`
+                                        : `telemetria com lacunas (${row.canonicalBatchTelem?.gaps_count || 'várias'})`}
                                     </span>
                                   </div>
                                 )
                               }
-
-                              const hasBatchGps = typeof row.gpsKm === 'number' && row.gpsKm > 0
 
                               if (hasBatchGps) {
                                 return (
@@ -1874,13 +1893,26 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                                 )
                               }
 
+                              if (!isAbundantPings) {
+                                return (
+                                  <div className="space-y-0.5">
+                                    <span className="font-mono text-sm font-bold text-slate-400">
+                                      —
+                                    </span>
+                                    <span className="text-[9px] text-slate-400 block">
+                                      sem telemetria suficiente ({pings} pings)
+                                    </span>
+                                  </div>
+                                )
+                              }
+
                               return (
                                 <div className="space-y-0.5">
                                   <span className="font-mono text-sm font-bold text-slate-400">
                                     —
                                   </span>
                                   <span className="text-[9px] text-slate-400 block">
-                                    sem telemetria suficiente ({row.telemetryPingsCount} pings)
+                                    aguardando telemetria ({pings} pings)
                                   </span>
                                 </div>
                               )
