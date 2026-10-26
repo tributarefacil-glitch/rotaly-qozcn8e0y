@@ -230,10 +230,10 @@ export default function CourierHistoryPage() {
       deliveredCount,
       issuesCount,
       inTransitCount,
-      totalOfficialKm: officialAccount?.totalOfficialKm ?? metrics.totalOfficialKm,
+      totalOfficialKm: officialAccount?.totalRouteKm ?? metrics.totalOfficialKm,
       totalDeviationKm: metrics.totalDeviationKm,
     }
-  }, [orders, officialAccount?.totalOfficialKm, metrics.totalOfficialKm, metrics.totalDeviationKm])
+  }, [orders, officialAccount?.totalRouteKm, metrics.totalOfficialKm, metrics.totalDeviationKm])
 
   // Lista filtrada por busca e status
   const filteredOrders = useMemo(() => {

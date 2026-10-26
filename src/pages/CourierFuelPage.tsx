@@ -305,15 +305,15 @@ export default function CourierFuelPage() {
 
   // Se o período for o mês (ou padrão), usa o motor oficial para saldo, adiantamentos, entregas e km
   const totalAdvances = officialAccount?.totalAdvances ?? metrics.totalAdvances
-  const totalSpent = officialAccount?.totalFuelExpense ?? metrics.totalSpent
-  const balance = officialAccount?.currentBalance ?? metrics.balance
+  const totalSpent = officialAccount?.totalSpent ?? metrics.totalSpent
+  const balance = officialAccount?.balance ?? metrics.balance
   const totalOfficialKm =
     periodFilter === 'month' || periodFilter === 'all'
-      ? (officialAccount?.totalOfficialKm ?? metrics.totalOfficialKm)
+      ? (officialAccount?.totalRouteKm ?? metrics.totalOfficialKm)
       : metrics.totalOfficialKm
   const advanceCount =
     periodFilter === 'month' || periodFilter === 'all'
-      ? (officialAccount?.advancesCount ?? metrics.advanceCount)
+      ? (officialAccount?.advanceCount ?? metrics.advanceCount)
       : metrics.advanceCount
   const totalDeviationKm = metrics.totalDeviationKm
   const pricePerLiter = metrics.pricePerLiter
