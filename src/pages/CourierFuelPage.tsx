@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { getOperationalWindow, getOperationalMonthStart } from '@/lib/operationalWindow'
 import {
   Fuel,
   Wallet,
@@ -35,6 +36,7 @@ import type {
   AppSettingsRecord,
   LocationRecord,
   OffRouteEventRecord,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -57,16 +59,61 @@ export default function CourierFuelPage() {
     if (!user?.id) return
 
     try {
-      // Usa o serviço unificado de combustível e queries resilientes com fallback individual
-      const [userAdvances, userOrders, appSettings, userLocations, userEvents] = await Promise.all([
+      setIsLoading(true)
+      const currentDate = new Date()
+      const opWindow = getOperationalWindow(currentDate)
+      const monthStart = getOperationalMonthStart(currentDate)
+
+      let periodFilterQuery = ''
+      if (periodFilter === 'today') {
+        periodFilterQuery = `courier_id = '${user.id}' && status != 'cancelled' && (route_started = true || actual_arrival != null) && (created >= '${opWindow.startPbString}' || route_finished_at >= '${opWindow.startPbString}' || actual_arrival >= '${opWindow.startPbString}')`
+      } else if (periodFilter === 'month') {
+        periodFilterQuery = `courier_id = '${user.id}' && status != 'cancelled' && (route_started = true || actual_arrival != null) && (created >= '${monthStart.pbString}' || route_finished_at >= '${monthStart.pbString}' || actual_arrival >= '${monthStart.pbString}')`
+      } else if (periodFilter === 'week') {
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
+        periodFilterQuery = `courier_id = '${user.id}' && status != 'cancelled' && (route_started = true || actual_arrival != null) && (created >= '${startStr}' || route_finished_at >= '${startStr}' || actual_arrival >= '${startStr}')`
+      } else {
+        periodFilterQuery = `courier_id = '${user.id}' && status != 'cancelled' && (route_started = true || actual_arrival != null)`
+      }
+
+      // Pool completo pós-corte sem corte de paginação (igual ao AdminDashboard)
+      const fullPostCutoffFilter = `courier_id = '${user.id}' && status != 'cancelled' && (route_started = true || actual_arrival != null)`
+
+      // Usa o serviço unificado de combustível e queries completas em lotes
+      const [
+        userAdvances,
+        periodOrders,
+        fullOrders,
+        appSettings,
+        userLocations,
+        userEvents,
+        batches,
+      ] = await Promise.all([
         fuelAccountService.getFuelAdvances(user.id).catch((err) => {
           console.warn('[CourierFuelPage] Falha ao carregar adiantamentos:', err)
           return [] as FuelAdvanceRecord[]
         }),
         deliveryService
-          .getOrders(`courier_id = '${user.id}'`, '-created', 'customer_id,courier_id,seller_id')
+          .getOrdersInBatches(
+            periodFilterQuery,
+            '-created',
+            'customer_id,courier_id,seller_id',
+            200,
+          )
           .catch((err) => {
-            console.warn('[CourierFuelPage] Falha ao carregar pedidos:', err)
+            console.warn('[CourierFuelPage] Falha ao carregar pedidos do período:', err)
+            return [] as OrderRecord[]
+          }),
+        deliveryService
+          .getOrdersInBatches(
+            fullPostCutoffFilter,
+            '-created',
+            'customer_id,courier_id,seller_id',
+            300,
+          )
+          .catch((err) => {
+            console.warn('[CourierFuelPage] Falha ao carregar histórico completo pós-corte:', err)
             return [] as OrderRecord[]
           }),
         deliveryService.getSettings().catch(() => null),
@@ -76,16 +123,20 @@ export default function CourierFuelPage() {
         deliveryService
           .getOffRouteEvents(`courier_id = '${user.id}'`)
           .catch(() => [] as OffRouteEventRecord[]),
+        deliveryService.listRouteBatchTelemetry().catch(() => [] as RouteBatchTelemetryRecord[]),
       ])
 
       setAdvances(userAdvances)
-      setOrders(userOrders)
+      setOrders(periodOrders)
+      setAllPostCutoffOrdersPool(fullOrders)
       setSettings(appSettings)
       setLocations(userLocations)
       setOffRouteEvents(userEvents)
+      if (batches && batches.length > 0) {
+        setTelemetryBatches(batches)
+      }
     } catch (err) {
       console.warn('Erro ao processar dados de combustível:', err)
-      // Não exibe toast de erro bloqueante; opera normalmente com fallback
     } finally {
       setIsLoading(false)
     }
@@ -93,7 +144,7 @@ export default function CourierFuelPage() {
 
   useEffect(() => {
     loadFinancialData()
-  }, [user])
+  }, [user, periodFilter])
 
   // Dedupe e lock de GPS na página de combustível
   const lastRecordedGpsRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
@@ -209,6 +260,38 @@ export default function CourierFuelPage() {
   // O card principal do entregador sempre reflete o MÊS CORRENTE com carry-over acumulado.
   // Se o usuário alternar tabs (all, month, week), o detalhamento abaixo se adapta,
   // mas no modo 'month' (ou padrão) o saldo inclui carry-over e km restrito ao mês corrente.
+  // Carregamento de telemetria dos lotes (route_batch_telemetry)
+  const [telemetryBatches, setTelemetryBatches] = useState<RouteBatchTelemetryRecord[]>([])
+  const [allPostCutoffOrdersPool, setAllPostCutoffOrdersPool] = useState<OrderRecord[]>([])
+
+  useEffect(() => {
+    let isMounted = true
+    deliveryService
+      .listRouteBatchTelemetry()
+      .then((data) => {
+        if (isMounted) setTelemetryBatches(data || [])
+      })
+      .catch((err) => {
+        console.warn('[CourierFuelPage] Erro ao carregar route_batch_telemetry:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  // Motor Oficial Único de Contabilidade (idêntico ao AdminDashboard e SellerFuelSection)
+  const officialAccount = useMemo(() => {
+    if (!user?.id) return null
+    return fuelAccountService.calculateAccountForCourier({
+      courier: user,
+      advances,
+      orders: allPostCutoffOrdersPool.length > 0 ? allPostCutoffOrdersPool : orders,
+      settings,
+      telemetryBatches,
+    })
+  }, [user, advances, allPostCutoffOrdersPool, orders, settings, telemetryBatches])
+
+  // Métricas do período selecionado usando a pool completa com filtro correto
   const metrics = useCourierFuelMetrics({
     courier: user,
     advances,
@@ -217,32 +300,40 @@ export default function CourierFuelPage() {
     offRouteEvents,
     settings,
     periodFilter,
+    telemetryBatches,
   })
 
-  // Métricas fixas do Mês Corrente para o Card de Saldo e Conta Corrente do Entregador
-  // garantindo consistência com Admin e Seller mesmo se a tab de detalhamento for alterada
-  const currentMonthMetrics = useCourierFuelMetrics({
-    courier: user,
-    advances,
-    orders,
-    locations,
-    offRouteEvents,
-    settings,
-    periodFilter: 'month',
-  })
+  // Se o período for o mês (ou padrão), usa o motor oficial para saldo, adiantamentos, entregas e km
+  const totalAdvances = officialAccount?.totalAdvances ?? metrics.totalAdvances
+  const totalSpent = officialAccount?.totalFuelExpense ?? metrics.totalSpent
+  const balance = officialAccount?.currentBalance ?? metrics.balance
+  const totalOfficialKm =
+    periodFilter === 'month' || periodFilter === 'all'
+      ? (officialAccount?.totalOfficialKm ?? metrics.totalOfficialKm)
+      : metrics.totalOfficialKm
+  const advanceCount =
+    periodFilter === 'month' || periodFilter === 'all'
+      ? (officialAccount?.advancesCount ?? metrics.advanceCount)
+      : metrics.advanceCount
+  const totalDeviationKm = metrics.totalDeviationKm
+  const pricePerLiter = metrics.pricePerLiter
+  const consumptionKml = metrics.consumptionKml
+  const vehicleCategory = metrics.vehicleCategory
+  const orderCalculations = metrics.orderCalculations
+  const fuelAccount = officialAccount || metrics.fuelAccount
 
-  const {
-    balance,
-    totalAdvances,
-    totalSpent,
-    totalOfficialKm,
-    totalDeviationKm,
-    pricePerLiter,
-    consumptionKml,
-    vehicleCategory,
-    orderCalculations,
-    fuelAccount,
-  } = metrics
+  // Objeto metrics unificado para passar ao CourierFuelSummaryCard
+  const unifiedMetrics = useMemo(() => {
+    return {
+      ...metrics,
+      balance,
+      totalAdvances,
+      totalSpent,
+      totalOfficialKm,
+      advanceCount,
+      fuelAccount,
+    }
+  }, [metrics, balance, totalAdvances, totalSpent, totalOfficialKm, advanceCount, fuelAccount])
 
   const isPositive = balance >= 0
 
@@ -311,9 +402,9 @@ export default function CourierFuelPage() {
 
         {/* COMPONENTE COMPARTILHADO: CARD DE CONTA CORRENTE (IDENTICO AO ADMIN) */}
         <CourierFuelSummaryCard
-          metrics={metrics}
+          metrics={unifiedMetrics}
           courier={user}
-          account={metrics.fuelAccount || fuelAccount}
+          account={officialAccount || unifiedMetrics.fuelAccount || fuelAccount}
           periodLabel={
             periodFilter === 'today'
               ? 'Hoje'
@@ -342,11 +433,11 @@ export default function CourierFuelPage() {
           <div className="flex items-center justify-between px-1">
             <h3 className="font-heading text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
               <Receipt className="h-4 w-4 text-[#00AA44]" />
-              Histórico de Adiantamentos Recebidos ({metrics.advanceCount})
+              Histórico de Adiantamentos Recebidos ({advanceCount})
             </h3>
           </div>
 
-          {metrics.advanceCount === 0 ? (
+          {advanceCount === 0 ? (
             <div className="rounded-xl border border-dashed border-[#1E2B58] bg-[#0E1738]/60 p-8 text-center text-slate-400 space-y-2">
               <Fuel className="h-8 w-8 mx-auto text-slate-500" />
               <p className="text-xs font-medium">
@@ -540,8 +631,8 @@ export default function CourierFuelPage() {
         isOpen={isHistoryModalOpen}
         onClose={() => setIsHistoryModalOpen(false)}
         courier={user}
-        fuelAccount={fuelAccount}
-        orders={orders}
+        fuelAccount={officialAccount || fuelAccount}
+        orders={allPostCutoffOrdersPool.length > 0 ? allPostCutoffOrdersPool : orders}
         offRouteEvents={offRouteEvents}
         locations={locations}
         settings={settings}

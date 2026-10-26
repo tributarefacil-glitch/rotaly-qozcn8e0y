@@ -16,15 +16,17 @@ import {
 import { Header } from '@/components/Header'
 import { CourierBottomNav } from '@/components/CourierBottomNav'
 import { deliveryService } from '@/services/deliveryService'
+import { fuelAccountService } from '@/services/fuelAccountService'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
 import { useCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import type {
-  OrderRecord,
   FuelAdvanceRecord,
+  OrderRecord,
   LocationRecord,
   OffRouteEventRecord,
   AppSettingsRecord,
+  RouteBatchTelemetryRecord,
 } from '@/types/delivery'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -38,6 +40,7 @@ export default function CourierHistoryPage() {
   const [locations, setLocations] = useState<LocationRecord[]>([])
   const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
+  const [telemetryBatches, setTelemetryBatches] = useState<RouteBatchTelemetryRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'delivered' | 'in_transit' | 'issues'>(
@@ -48,19 +51,32 @@ export default function CourierHistoryPage() {
   const loadData = async () => {
     if (!user?.id) return
     try {
-      const [userOrders, userAdvances, appSettings, userLocations, userEvents] = await Promise.all([
-        deliveryService.getOrders(`courier_id = '${user.id}'`, '-created'),
-        deliveryService.getFuelAdvances(`courier_id = '${user.id}'`, '-date,-created'),
-        deliveryService.getSettings(),
-        deliveryService.getLatestLocations(`user_id = '${user.id}'`),
-        deliveryService.getOffRouteEvents(`courier_id = '${user.id}'`),
-      ])
+      // Usa getOrdersInBatches para garantir que todo o histórico seja carregado sem corte de paginação
+      const [userOrders, userAdvances, appSettings, userLocations, userEvents, batches] =
+        await Promise.all([
+          deliveryService.getOrdersInBatches(
+            `courier_id = '${user.id}'`,
+            '-created',
+            'customer_id,courier_id,seller_id',
+            300,
+          ),
+          fuelAccountService.getFuelAdvances(user.id).catch(() => [] as FuelAdvanceRecord[]),
+          deliveryService.getSettings().catch(() => null),
+          deliveryService
+            .getLatestLocations(`user_id = '${user.id}'`)
+            .catch(() => [] as LocationRecord[]),
+          deliveryService
+            .getOffRouteEvents(`courier_id = '${user.id}'`)
+            .catch(() => [] as OffRouteEventRecord[]),
+          deliveryService.listRouteBatchTelemetry().catch(() => [] as RouteBatchTelemetryRecord[]),
+        ])
 
       setOrders(userOrders)
       setAdvances(userAdvances)
       setSettings(appSettings)
       setLocations(userLocations)
       setOffRouteEvents(userEvents)
+      setTelemetryBatches(batches || [])
     } catch (err) {
       console.error('Erro ao carregar histórico de entregas do entregador:', err)
     } finally {
@@ -164,6 +180,18 @@ export default function CourierHistoryPage() {
     return () => clearInterval(interval)
   }, [user])
 
+  // Motor Oficial Único de Contabilidade (idêntico ao AdminDashboard e SellerFuelSection)
+  const officialAccount = useMemo(() => {
+    if (!user?.id) return null
+    return fuelAccountService.calculateAccountForCourier({
+      courier: user,
+      advances,
+      orders,
+      settings,
+      telemetryBatches,
+    })
+  }, [user, advances, orders, settings, telemetryBatches])
+
   // Hook de métricas para obter km oficial consolidado
   const metrics = useCourierFuelMetrics({
     courier: user,
@@ -173,6 +201,7 @@ export default function CourierHistoryPage() {
     offRouteEvents,
     settings,
     periodFilter: 'all',
+    telemetryBatches,
   })
 
   // Itens calculados por entrega
@@ -201,10 +230,10 @@ export default function CourierHistoryPage() {
       deliveredCount,
       issuesCount,
       inTransitCount,
-      totalOfficialKm: metrics.totalOfficialKm,
+      totalOfficialKm: officialAccount?.totalOfficialKm ?? metrics.totalOfficialKm,
       totalDeviationKm: metrics.totalDeviationKm,
     }
-  }, [orders, metrics.totalOfficialKm, metrics.totalDeviationKm])
+  }, [orders, officialAccount?.totalOfficialKm, metrics.totalOfficialKm, metrics.totalDeviationKm])
 
   // Lista filtrada por busca e status
   const filteredOrders = useMemo(() => {
@@ -553,7 +582,7 @@ export default function CourierHistoryPage() {
         isOpen={isHistoryModalOpen}
         onClose={() => setIsHistoryModalOpen(false)}
         courier={user}
-        fuelAccount={metrics.fuelAccount}
+        fuelAccount={officialAccount || metrics.fuelAccount}
         orders={orders}
         offRouteEvents={offRouteEvents}
         locations={locations}
