@@ -52,6 +52,7 @@ export default function CourierFuelPage() {
   const [offRouteEvents, setOffRouteEvents] = useState<OffRouteEventRecord[]>([])
   const [settings, setSettings] = useState<AppSettingsRecord | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [periodFilter, setPeriodFilter] = useState<'all' | 'month' | 'week' | 'today'>('month')
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false)
 
@@ -60,6 +61,7 @@ export default function CourierFuelPage() {
 
     try {
       setIsLoading(true)
+      setLoadError(null)
       const currentDate = new Date()
       const opWindow = getOperationalWindow(currentDate)
       const monthStart = getOperationalMonthStart(currentDate)
@@ -81,6 +83,7 @@ export default function CourierFuelPage() {
       const fullPostCutoffFilter = `courier_id = '${user.id}' && status != 'cancelled' && (route_started = true || actual_arrival != null)`
 
       // Usa o serviço unificado de combustível e queries completas em lotes
+      let fetchBatchFailed = false
       const [
         userAdvances,
         periodOrders,
@@ -103,6 +106,7 @@ export default function CourierFuelPage() {
           )
           .catch((err) => {
             console.warn('[CourierFuelPage] Falha ao carregar pedidos do período:', err)
+            fetchBatchFailed = true
             return [] as OrderRecord[]
           }),
         deliveryService
@@ -114,6 +118,7 @@ export default function CourierFuelPage() {
           )
           .catch((err) => {
             console.warn('[CourierFuelPage] Falha ao carregar histórico completo pós-corte:', err)
+            fetchBatchFailed = true
             return [] as OrderRecord[]
           }),
         deliveryService.getSettings().catch(() => null),
@@ -126,6 +131,24 @@ export default function CourierFuelPage() {
         deliveryService.listRouteBatchTelemetry().catch(() => [] as RouteBatchTelemetryRecord[]),
       ])
 
+      // GUARDA: se o carregamento em lotes terminar com erro ou retornar 0 pedidos pós-corte,
+      // NUNCA renderizar saldo (nem de abertura) — renderizar card de erro com botão "Tentar novamente"
+      if (fetchBatchFailed) {
+        setLoadError(
+          'Erro ao carregar o histórico de pedidos pós-corte. Verifique sua conexão e tente novamente.',
+        )
+        setAllPostCutoffOrdersPool([])
+        setOrders([])
+        return
+      }
+
+      if (!fullOrders || fullOrders.length === 0) {
+        setLoadError('Nenhum pedido pós-corte encontrado para compor o saldo oficial.')
+        setAllPostCutoffOrdersPool([])
+        setOrders([])
+        return
+      }
+
       setAdvances(userAdvances)
       setOrders(periodOrders)
       setAllPostCutoffOrdersPool(fullOrders)
@@ -137,6 +160,7 @@ export default function CourierFuelPage() {
       }
     } catch (err) {
       console.warn('Erro ao processar dados de combustível:', err)
+      setLoadError('Erro ao carregar dados de combustível. Tente novamente.')
     } finally {
       setIsLoading(false)
     }
@@ -285,11 +309,25 @@ export default function CourierFuelPage() {
     return fuelAccountService.calculateAccountForCourier({
       courier: user,
       advances,
-      orders: allPostCutoffOrdersPool.length > 0 ? allPostCutoffOrdersPool : orders,
+      orders,
       settings,
+      locations,
+      offRouteEvents,
+      periodFilter,
+      allPostCutoffOrders: allPostCutoffOrdersPool.length > 0 ? allPostCutoffOrdersPool : orders,
       telemetryBatches,
     })
-  }, [user, advances, allPostCutoffOrdersPool, orders, settings, telemetryBatches])
+  }, [
+    user,
+    advances,
+    orders,
+    settings,
+    locations,
+    offRouteEvents,
+    periodFilter,
+    allPostCutoffOrdersPool,
+    telemetryBatches,
+  ])
 
   // Métricas do período selecionado usando a pool completa com filtro correto
   const metrics = useCourierFuelMetrics({
@@ -400,23 +438,52 @@ export default function CourierFuelPage() {
           </Tabs>
         </div>
 
-        {/* COMPONENTE COMPARTILHADO: CARD DE CONTA CORRENTE (IDENTICO AO ADMIN) */}
-        <CourierFuelSummaryCard
-          metrics={unifiedMetrics}
-          courier={user}
-          account={officialAccount || unifiedMetrics.fuelAccount || fuelAccount}
-          periodLabel={
-            periodFilter === 'today'
-              ? 'Hoje'
-              : periodFilter === 'month'
-                ? 'Este Mês'
-                : periodFilter === 'week'
-                  ? 'Últimos 7 dias'
-                  : 'Total desde o início'
-          }
-          onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
-          subtitle="Valores 100% sincronizados com o motor oficial da contabilidade do gestor"
-        />
+        {/* GUARDA DE ERRO: se houver falha de carregamento ou 0 pedidos pós-corte, renderiza card de erro */}
+        {loadError ? (
+          <Card className="border-rose-300 dark:border-rose-900/60 bg-rose-50/90 dark:bg-rose-950/40 p-6 text-center space-y-3">
+            <div className="flex justify-center">
+              <div className="p-3 bg-rose-100 dark:bg-rose-900/60 rounded-full text-rose-600 dark:text-rose-400">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+            </div>
+            <div>
+              <h3 className="font-bold text-rose-900 dark:text-rose-200 text-sm">
+                Não foi possível calcular o saldo oficial
+              </h3>
+              <p className="text-xs text-rose-700 dark:text-rose-300 mt-1 max-w-md mx-auto">
+                {loadError}
+              </p>
+            </div>
+            <div className="pt-2">
+              <Button
+                onClick={loadFinancialData}
+                size="sm"
+                className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs gap-1.5"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Tentar novamente
+              </Button>
+            </div>
+          </Card>
+        ) : (
+          /* COMPONENTE COMPARTILHADO: CARD DE CONTA CORRENTE (IDENTICO AO ADMIN) */
+          <CourierFuelSummaryCard
+            metrics={unifiedMetrics}
+            courier={user}
+            account={officialAccount || unifiedMetrics.fuelAccount || fuelAccount}
+            periodLabel={
+              periodFilter === 'today'
+                ? 'Hoje'
+                : periodFilter === 'month'
+                  ? 'Este Mês'
+                  : periodFilter === 'week'
+                    ? 'Últimos 7 dias'
+                    : 'Total desde o início'
+            }
+            onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
+            subtitle="Valores 100% sincronizados com o motor oficial da contabilidade do gestor"
+          />
+        )}
 
         {/* BOTÃO RÁPIDO PARA ABRIR O HISTÓRICO COMPLETO */}
         <Button
