@@ -539,9 +539,27 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // Assegura que globalInTransitOrders (entregadores em trânsito de toda a frota no dia)
   // seja carregado mesmo quando a Torre recebe orders da loja/vendedor via props,
   // permitindo que o perfil seller veja todos os entregadores em rota ativa.
+  // Throttle da consulta de pedidos em trânsito: no máximo uma consulta a cada 5s.
+  // Usa timeout em ref (e não debounce) porque o flush de locations seta lastUpdated a cada 2,5s:
+  // um debounce reiniciaria a cada evento e nunca dispararia durante o movimento da frota.
+  const globalTransitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const globalTransitAliveRef = useRef(true)
+
   useEffect(() => {
-    let isMounted = true
-    const loadGlobalTransit = async () => {
+    globalTransitAliveRef.current = true
+    return () => {
+      globalTransitAliveRef.current = false
+      if (globalTransitTimerRef.current) clearTimeout(globalTransitTimerRef.current)
+      globalTransitTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    // Já existe consulta agendada nesta janela: ela lê o estado mais recente ao disparar
+    if (globalTransitTimerRef.current) return
+    globalTransitTimerRef.current = setTimeout(async () => {
+      globalTransitTimerRef.current = null
+      if (!globalTransitAliveRef.current) return
       try {
         const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
         const fetchedGlobal = await deliveryService.getOrders(
@@ -549,7 +567,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           '-created',
           'customer_id,courier_id,seller_id',
         )
-        if (!isMounted) return
+        if (!globalTransitAliveRef.current) return
         const currentOpWindow = getOperationalWindow(new Date())
         const onlyTodayGlobal = (fetchedGlobal || []).filter((o) =>
           isTodayOrder(o, currentOpWindow),
@@ -558,11 +576,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       } catch (err) {
         console.warn('Torre de Controle: falha ao buscar pedidos em trânsito da frota:', err)
       }
-    }
-    loadGlobalTransit()
-    return () => {
-      isMounted = false
-    }
+    }, 5000)
   }, [lastUpdated])
 
   // Listener de falha de resequenciamento para alertar a Central (admin/operador)
