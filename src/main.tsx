@@ -233,55 +233,87 @@ if (typeof window !== 'undefined') {
       triggerAppReload('controllerchange')
     })
 
-    window.addEventListener('load', () => {
-      navigator.serviceWorker
-        .register('/sw.js', { updateViaCache: 'none' })
-        .then((reg) => {
-          console.log('[PWA] Service Worker registrado com sucesso no escopo:', reg.scope)
+    // Listener global para capturar rejeições não tratadas de scripts ou workers de terceiros/preview
+    // impedindo que erros do tipo "Failed to update a ServiceWorker" estourem em overlays de erro de runtime
+    window.addEventListener('unhandledrejection', (event) => {
+      const reasonStr = String(event.reason || '')
+      const reasonMsg = String(event.reason?.message || '')
+      if (
+        reasonStr.includes('ServiceWorker') ||
+        reasonStr.includes('sw.js') ||
+        reasonMsg.includes('ServiceWorker') ||
+        reasonMsg.includes('sw.js')
+      ) {
+        console.warn('[PWA Safe Guard] Rejeição de ServiceWorker suprimida:', event.reason)
+        event.preventDefault()
+      }
+    })
 
-          // Escuta atualizações encontradas
-          reg.addEventListener('updatefound', () => {
-            const newWorker = reg.installing
-            if (!newWorker) return
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                console.log('[PWA] Nova versão do Service Worker instalada!')
-                triggerAppReload('updatefound_installed')
+    window.addEventListener('load', () => {
+      try {
+        navigator.serviceWorker
+          .register('/sw.js', { updateViaCache: 'none' })
+          .then((reg) => {
+            console.log('[PWA] Service Worker registrado com sucesso no escopo:', reg.scope)
+
+            // Escuta atualizações encontradas
+            reg.addEventListener('updatefound', () => {
+              const newWorker = reg.installing
+              if (!newWorker) return
+              newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                  console.log('[PWA] Nova versão do Service Worker instalada!')
+                  triggerAppReload('updatefound_installed')
+                }
+              })
+            })
+
+            // Safe wrapper para atualizar o Service Worker sem lançar erro não tratado (ex: HTTP 503)
+            const safeUpdateRegistration = () => {
+              try {
+                reg.update().catch((updateErr) => {
+                  console.warn(
+                    '[PWA] Falha de rede ao verificar atualização do Service Worker (ignorado):',
+                    updateErr,
+                  )
+                })
+              } catch (syncErr) {
+                console.warn(
+                  '[PWA] Erro síncrono ao chamar update do Service Worker (ignorado):',
+                  syncErr,
+                )
+              }
+            }
+
+            // Força verificação imediata no boot (garante que reload simples F5 já cheque o servidor)
+            safeUpdateRegistration()
+
+            // Verificação periódica leve (a cada 30 segundos) e no retorno de visibilidade/foco da aba
+            const performPeriodicCheck = () => {
+              safeUpdateRegistration()
+              checkVersionJson()
+            }
+
+            setInterval(performPeriodicCheck, 30000)
+
+            // Sempre que o usuário voltar para a aba ou recuperar conexão, verifica imediatamente
+            window.addEventListener('focus', performPeriodicCheck)
+            window.addEventListener('online', performPeriodicCheck)
+            document.addEventListener('visibilitychange', () => {
+              if (document.visibilityState === 'visible') {
+                performPeriodicCheck()
               }
             })
           })
-
-          // Força verificação imediata no boot (garante que reload simples F5 já cheque o servidor)
-          try {
-            reg.update()
-          } catch {
-            /* noop */
-          }
-
-          // Verificação periódica leve (a cada 30 segundos) e no retorno de visibilidade/foco da aba
-          const performPeriodicCheck = () => {
-            try {
-              reg.update()
-              checkVersionJson()
-            } catch {
-              /* noop */
-            }
-          }
-
-          setInterval(performPeriodicCheck, 30000)
-
-          // Sempre que o usuário voltar para a aba ou recuperar conexão, verifica imediatamente
-          window.addEventListener('focus', performPeriodicCheck)
-          window.addEventListener('online', performPeriodicCheck)
-          document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-              performPeriodicCheck()
-            }
+          .catch((err) => {
+            console.warn(
+              '[PWA] Falha ao registrar Service Worker (ignorado para não afetar UI):',
+              err,
+            )
           })
-        })
-        .catch((err) => {
-          console.warn('[PWA] Falha ao registrar Service Worker:', err)
-        })
+      } catch (regSyncErr) {
+        console.warn('[PWA] Erro síncrono ao registrar Service Worker (ignorado):', regSyncErr)
+      }
     })
   }
 }

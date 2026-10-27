@@ -100,11 +100,17 @@ export const PwaInstallPrompt: React.FC = () => {
       if (perm === 'granted') {
         toast.success('Notificações nativas ativadas com sucesso!')
         if ('serviceWorker' in navigator) {
-          const reg = await navigator.serviceWorker.ready
-          reg.showNotification('Rotaly Entregas', {
-            body: 'Notificações push ativas! Você será avisado sobre novos pedidos e rotas.',
-            icon: '/icons/icon.svg',
-          })
+          try {
+            const reg = await navigator.serviceWorker.ready
+            if (reg && typeof reg.showNotification === 'function') {
+              await reg.showNotification('Rotaly Entregas', {
+                body: 'Notificações push ativas! Você será avisado sobre novos pedidos e rotas.',
+                icon: '/icons/icon.svg',
+              })
+            }
+          } catch (swErr) {
+            console.warn('[PWA] Não foi possível exibir notificação via Service Worker:', swErr)
+          }
         }
       } else {
         toast.info('Permissão de notificação negada ou não concedida.')
