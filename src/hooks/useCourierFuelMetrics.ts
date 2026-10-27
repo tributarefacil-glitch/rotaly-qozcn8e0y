@@ -125,6 +125,11 @@ export interface CourierFuelCalculationResult {
   periodAdvances?: number
   periodAdjustments?: number
   carryOverBalance?: number
+  // Derivados para pagamento de combustível (10% desconto a partir de 26/10)
+  km_pagamento?: number
+  combustivel_pagamento?: number
+  desconto_km?: number
+  desconto_combustivel?: number
 }
 
 export interface UseCourierFuelOptions {
@@ -746,6 +751,10 @@ export function calculateCourierFuelMetrics(params: {
     manualAdjustmentDeltaKm: canonicalTotals.manualAdjustmentDeltaKm,
     manualAdjustmentPeriodLabel: canonicalTotals.manualAdjustmentPeriodLabel,
     rawOfficialKmBeforeAdjustment: canonicalTotals.rawOfficialKmBeforeAdjustment,
+    km_pagamento: canonicalTotals.km_pagamento,
+    combustivel_pagamento: canonicalTotals.combustivel_pagamento,
+    desconto_km: canonicalTotals.desconto_km,
+    desconto_combustivel: canonicalTotals.desconto_combustivel,
   }
 }
 

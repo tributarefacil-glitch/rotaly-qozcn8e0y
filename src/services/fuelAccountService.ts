@@ -59,6 +59,11 @@ export interface UnifiedCourierFuelAccount {
   manualAdjustmentDeltaKm?: number
   manualAdjustmentPeriodLabel?: string
   rawOfficialKmBeforeAdjustment?: number
+  // Derivados de Pagamento de Combustível (10% desconto a partir de 26/10):
+  km_pagamento?: number
+  combustivel_pagamento?: number
+  desconto_km?: number
+  desconto_combustivel?: number
   todayAlertSent?: {
     id: string
     alert_date: string
@@ -318,6 +323,10 @@ export class FuelAccountService {
         availableBalance: 0,
         reachedAlertThreshold: false,
         averageLabel: 'Média 0d (registro inválido ignorado)',
+        km_pagamento: 0,
+        combustivel_pagamento: 0,
+        desconto_km: 0,
+        desconto_combustivel: 0,
       }
       return safeZeroAccount
     }
@@ -705,6 +714,10 @@ export class FuelAccountService {
       manualAdjustmentDeltaKm: canonicalTotals.manualAdjustmentDeltaKm,
       manualAdjustmentPeriodLabel: canonicalTotals.manualAdjustmentPeriodLabel,
       rawOfficialKmBeforeAdjustment: canonicalTotals.rawOfficialKmBeforeAdjustment,
+      km_pagamento: canonicalTotals.km_pagamento,
+      combustivel_pagamento: canonicalTotals.combustivel_pagamento,
+      desconto_km: canonicalTotals.desconto_km,
+      desconto_combustivel: canonicalTotals.desconto_combustivel,
     }
   }
   /**

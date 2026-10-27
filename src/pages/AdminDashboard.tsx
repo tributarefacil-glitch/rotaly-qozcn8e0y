@@ -2141,6 +2141,41 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   </div>
                                 )}
 
+                              {/* CARD EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-10% PÓS 26/10) */}
+                              <div className="p-2.5 rounded-lg bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800/60 space-y-1 text-[11px]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+                                    <Fuel className="h-3 w-3 text-emerald-600" />
+                                    KM Pagamento de Combustível
+                                  </span>
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] px-1.5 py-0 font-bold border-emerald-300 bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300"
+                                  >
+                                    Admin • -10% pós 26/10
+                                  </Badge>
+                                </div>
+                                <div className="flex items-baseline justify-between pt-0.5">
+                                  <span className="text-[10px] text-slate-500">
+                                    Base reembolso:{' '}
+                                    <strong className="text-emerald-700 dark:text-emerald-300">
+                                      {isBicycle
+                                        ? '0.0 km'
+                                        : `${Number(acc?.km_pagamento ?? canonicalBal.km_pagamento ?? totalRouteKmNum).toFixed(1)} km`}
+                                    </strong>
+                                  </span>
+                                  <span className="font-mono text-sm font-black text-emerald-700 dark:text-emerald-400">
+                                    {isBicycle
+                                      ? 'R$ 0,00'
+                                      : `R$ ${Number(acc?.combustivel_pagamento ?? canonicalBal.combustivel_pagamento ?? totalSpentNum).toFixed(2)}`}
+                                  </span>
+                                </div>
+                                <div className="text-[9px] text-slate-400 pt-0.5 border-t border-emerald-200/50 dark:border-emerald-900/40 flex justify-between">
+                                  <span>Viário oficial: {totalRouteKmNum.toFixed(1)} km</span>
+                                  <span>Combustível oficial: R$ {totalSpentNum.toFixed(2)}</span>
+                                </div>
+                              </div>
+
                               {/* KM Oficial vs KM Desvios com Badge da Fonte Real (Odômetro / Rota Viária / GPS) */}
                               <div className="flex items-center justify-between pt-0.5 text-[10px]">
                                 <button

@@ -16,6 +16,27 @@ import {
 import { deliveryService } from '@/services/deliveryService'
 import { groupOrdersByRouteBatch } from '@/lib/routeBatchHelper'
 
+/**
+ * Data de corte canônica da decisão de 26/10:
+ * "KM Pagamento de Combustível com DESCONTO DE 10% sobre o km viário".
+ * Data de corte: pedidos/rotas a partir de 26/10 00:00 Brasília (03:00 UTC / janela operacional a partir de 26/10).
+ * Pedidos criados antes desse corte mantêm km_pagamento = km viário sem desconto.
+ */
+export const FUEL_PAYMENT_DISCOUNT_CUTOFF_DATE = '2026-10-26'
+export const FUEL_PAYMENT_DISCOUNT_CUTOFF_TS = new Date('2026-10-26T00:00:00-03:00').getTime()
+export const FUEL_PAYMENT_DISCOUNT_RATE = 0.1 // 10% de desconto
+export const FUEL_PAYMENT_FACTOR = 0.9 // Multiplicador pós-corte
+
+/**
+ * Helper para verificar se um timestamp de criação ou data de rota cai a partir do corte de 26/10 no fuso de Brasília.
+ */
+export function isPostFuelPaymentCutoff(dateVal?: string | number | Date | null): boolean {
+  if (!dateVal && dateVal !== 0) return false
+  const ts = typeof dateVal === 'number' ? dateVal : new Date(dateVal).getTime()
+  if (isNaN(ts) || ts <= 0) return false
+  return ts >= FUEL_PAYMENT_DISCOUNT_CUTOFF_TS
+}
+
 export interface CanonicalBatchMetric {
   routeBatchKey: string
   officialKm: number
@@ -28,6 +49,9 @@ export interface CanonicalBatchMetric {
   dateIso: string
   isApproved: boolean
   approvedKm?: number
+  km_pagamento: number
+  combustivel_pagamento: number
+  isDiscountApplied: boolean
 }
 
 export interface CanonicalCourierTotals {
@@ -58,6 +82,9 @@ export interface CanonicalCourierTotals {
       maxDeviationMeters: number
       isJointSecondary: boolean
       isRealTelemetry: boolean
+      km_pagamento: number
+      combustivel_pagamento: number
+      isDiscountApplied: boolean
     }
   >
   hasManualAdjustment?: boolean
@@ -66,6 +93,11 @@ export interface CanonicalCourierTotals {
   manualAdjustmentDeltaKm?: number
   manualAdjustmentPeriodLabel?: string
   rawOfficialKmBeforeAdjustment?: number
+  // Novos valores derivados para pagamento de combustível (10% de desconto a partir de 26/10):
+  km_pagamento: number
+  combustivel_pagamento: number
+  desconto_km: number
+  desconto_combustivel: number
 }
 
 export interface CanonicalCourierBalanceResult {
@@ -87,6 +119,11 @@ export interface CanonicalCourierBalanceResult {
   manualAdjustmentKm?: number
   manualAdjustmentFuelCost?: number
   manualAdjustmentPeriodLabel?: string
+  // Novos valores derivados para pagamento de combustível:
+  km_pagamento: number
+  combustivel_pagamento: number
+  desconto_km: number
+  desconto_combustivel: number
 }
 
 export interface GetCanonicalCourierParams {
@@ -179,6 +216,10 @@ export function calculateCanonicalCourierTotals(
       deliveriesCount: 0,
       batchMetrics: [],
       orderAllocations: new Map(),
+      km_pagamento: 0,
+      combustivel_pagamento: 0,
+      desconto_km: 0,
+      desconto_combustivel: 0,
     }
   }
 
@@ -314,6 +355,7 @@ export function calculateCanonicalCourierTotals(
 
   // 6. Processamento dos lotes dedup 1x
   let totalOfficialKmPeriod = 0
+  let totalKmPagamentoPeriod = 0
   let totalPostCutoffKm = 0
   let totalDeviationEpisodes = 0
   let maxDeviationMetersAll = 0
@@ -327,6 +369,9 @@ export function calculateCanonicalCourierTotals(
       maxDeviationMeters: number
       isJointSecondary: boolean
       isRealTelemetry: boolean
+      km_pagamento: number
+      combustivel_pagamento: number
+      isDiscountApplied: boolean
     }
   >()
 
@@ -351,7 +396,7 @@ export function calculateCanonicalCourierTotals(
     }
     // REGRA DO USUÁRIO (20/10 & INVARIANTE AUDITORIA):
     // Prioridade canônica absoluta: km_viario_total do lote (inclui volta à base 1x por lote).
-    // O valor viário prevalece sempre sobre km_gps e sobre km_oficial antigo gravado com GPS.
+    // O valor viário prevalece sobre km_gps e sobre km_oficial antigo gravado com GPS.
     if (viario > 0) {
       kmOficial = viario
     } else if (kmOficial <= 0) {
@@ -381,6 +426,18 @@ export function calculateCanonicalCourierTotals(
 
     kmOficial = Number(kmOficial.toFixed(2))
 
+    // REGRA 26/10: KM Pagamento de Combustível com 10% de desconto a partir de 26/10
+    // Avaliar a data do lote/pedidos. Se pedidos/lote foram criados >= 26/10 00:00 Brasília (03:00 UTC),
+    // aplica-se desconto de 10% (fator 0.9). Caso contrário, sem desconto.
+    const earliestOrderTs = batchOrders.reduce((min, o) => {
+      const oCreated = o.created ? new Date(o.created).getTime() : 0
+      return oCreated > 0 && oCreated < min ? oCreated : min
+    }, dateTs)
+    const isDiscountEligible = isPostFuelPaymentCutoff(earliestOrderTs)
+    const kmPagamentoLote = Number(
+      (isDiscountEligible ? kmOficial * FUEL_PAYMENT_FACTOR : kmOficial).toFixed(2),
+    )
+
     // Desvio de rota: NUNCA soma km. CONTAGEM de episódios e distância máxima
     const rawDevs = batchRec.deviation_classification || []
     const episodesCount = Array.isArray(rawDevs) ? rawDevs.length : 0
@@ -396,6 +453,12 @@ export function calculateCanonicalCourierTotals(
       !isBicycle && consumptionKml > 0 ? Number((kmOficial / consumptionKml).toFixed(2)) : 0
     const batchFuelCost = !isBicycle ? Number((batchLiters * pricePerLiter).toFixed(2)) : 0
 
+    const batchPagamentoLiters =
+      !isBicycle && consumptionKml > 0 ? Number((kmPagamentoLote / consumptionKml).toFixed(2)) : 0
+    const batchCombustivelPagamento = !isBicycle
+      ? Number((batchPagamentoLiters * pricePerLiter).toFixed(2))
+      : 0
+
     const metric: CanonicalBatchMetric = {
       routeBatchKey: bKey,
       officialKm: kmOficial,
@@ -408,9 +471,11 @@ export function calculateCanonicalCourierTotals(
       dateIso: dateVal,
       isApproved,
       approvedKm: approvedKmVal,
+      km_pagamento: kmPagamentoLote,
+      combustivel_pagamento: batchCombustivelPagamento,
+      isDiscountApplied: isDiscountEligible,
     }
     batchMetrics.push(metric)
-
     // Checar elegibilidade pós-corte para compor o Saldo Invariante
     const isPostCutoff = !hasCutoff || dateTs >= cutoffTime
     if (isPostCutoff) {
@@ -421,6 +486,7 @@ export function calculateCanonicalCourierTotals(
     const isInPeriod = periodFilter === 'all' || (dateTs >= startTs && dateTs <= endTs)
     if (isInPeriod) {
       totalOfficialKmPeriod += kmOficial
+      totalKmPagamentoPeriod += kmPagamentoLote
       totalDeviationEpisodes += episodesCount
       if (batchMaxDevMeters > maxDeviationMetersAll) {
         maxDeviationMetersAll = batchMaxDevMeters
@@ -438,6 +504,11 @@ export function calculateCanonicalCourierTotals(
         )
         const shareKm = Number((kmOficial / orderCount).toFixed(1))
         const shareFuel = !isBicycle ? Number((batchFuelCost / orderCount).toFixed(2)) : 0
+        const shareKmPagamento = Number((kmPagamentoLote / orderCount).toFixed(1))
+        const shareCombustivelPagamento = !isBicycle
+          ? Number((batchCombustivelPagamento / orderCount).toFixed(2))
+          : 0
+
         batchOrders.forEach((bo) => {
           orderAllocations.set(bo.id, {
             officialKm: shareKm,
@@ -446,6 +517,9 @@ export function calculateCanonicalCourierTotals(
             maxDeviationMeters: batchMaxDevMeters,
             isJointSecondary: false,
             isRealTelemetry: hasGps,
+            km_pagamento: shareKmPagamento,
+            combustivel_pagamento: shareCombustivelPagamento,
+            isDiscountApplied: isDiscountEligible,
           })
         })
       }
@@ -544,6 +618,21 @@ export function calculateCanonicalCourierTotals(
   // O saldo conta corrente é mantido intacto conforme definido pelo fuelAccountService.
   const balance = Number((openingBalance + postCutoffAdvances - postCutoffSpent).toFixed(2))
 
+  // Derivação final do km_pagamento e combustivel_pagamento do período
+  // Se houver ajuste manual no período (ex: Edson 01/10-22/10), ele é pré-corte 26/10, logo km_pagamento = km_manual
+  let finalKmPagamentoPeriod = Number(totalKmPagamentoPeriod.toFixed(1))
+  if (appliesManualAdjustment && activeAdjustment) {
+    finalKmPagamentoPeriod = Number(activeAdjustment.km_manual.toFixed(1))
+  }
+  const finalCombustivelPagamento =
+    !isBicycle && consumptionKml > 0
+      ? Number(((finalKmPagamentoPeriod / consumptionKml) * pricePerLiter).toFixed(2))
+      : 0
+  const descontoKm = Number(Math.max(0, finalOfficialKmPeriod - finalKmPagamentoPeriod).toFixed(1))
+  const descontoCombustivel = Number(
+    Math.max(0, periodFuelCost - finalCombustivelPagamento).toFixed(2),
+  )
+
   return {
     courierId,
     courierName,
@@ -551,7 +640,7 @@ export function calculateCanonicalCourierTotals(
     consumptionKml,
     pricePerLiter,
     totalOfficialKm: finalOfficialKmPeriod,
-    totalSpent: periodSpent,
+    totalSpent: periodFuelCost,
     fuelCost: periodFuelCost,
     openingBalance: Number(openingBalance.toFixed(2)),
     totalAdvances: Number(totalAdvances.toFixed(2)),
@@ -571,6 +660,10 @@ export function calculateCanonicalCourierTotals(
     manualAdjustmentDeltaKm: appliesManualAdjustment ? manualAdjDeltaKm : undefined,
     manualAdjustmentPeriodLabel: appliesManualAdjustment ? manualAdjPeriodLabel : undefined,
     rawOfficialKmBeforeAdjustment: appliesManualAdjustment ? rawOfficialKmPeriod : undefined,
+    km_pagamento: finalKmPagamentoPeriod,
+    combustivel_pagamento: finalCombustivelPagamento,
+    desconto_km: descontoKm,
+    desconto_combustivel: descontoCombustivel,
   }
 }
 
@@ -695,5 +788,9 @@ export function getCanonicalCourierBalance(
     manualAdjustmentKm: totals.manualAdjustmentKm,
     manualAdjustmentFuelCost: totals.manualAdjustmentFuelCost,
     manualAdjustmentPeriodLabel: totals.manualAdjustmentPeriodLabel,
+    km_pagamento: totals.km_pagamento,
+    combustivel_pagamento: totals.combustivel_pagamento,
+    desconto_km: totals.desconto_km,
+    desconto_combustivel: totals.desconto_combustivel,
   }
 }

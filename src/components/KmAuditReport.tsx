@@ -63,6 +63,10 @@ import { haversineDistanceMeters } from '@/lib/geo'
 import { MapDataService } from '@/lib/mapDataService'
 import { compararKm, getLoteCanonico } from '@/utils/kmAudit'
 import {
+  FUEL_PAYMENT_FACTOR,
+  isPostFuelPaymentCutoff,
+} from '@/services/canonicalCourierTotalsService'
+import {
   formatDateInTz,
   formatPbTimestamp,
   getCustomOperationalWindow,
@@ -779,6 +783,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     let roadKmTotal = 0
     let gpsKmTotal = 0
     let afterApprovalKmTotal = 0
+    let kmPagamentoTotal = 0
 
     scopeBatches.forEach((batchRows) => {
       // KM viário original do lote contado 1x:
@@ -817,6 +822,14 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
         : bRoad
 
+      // REGRA 26/10: Desconto de 10% no km para pagamento de combustível a partir de 26/10
+      const earliestCreatedTs = batchRows.reduce((min, r) => {
+        const t = r.dateRaw ? new Date(r.dateRaw).getTime() : 0
+        return t > 0 && t < min ? t : min
+      }, Number.MAX_SAFE_INTEGER)
+      const isDiscountPostCutoff = isPostFuelPaymentCutoff(earliestCreatedTs)
+      const bKmPagamento = isDiscountPostCutoff ? bRoad * FUEL_PAYMENT_FACTOR : bRoad
+
       // KM GPS SANEADO/AUDITADO DO LOTE 1x (Coluna B, estritamente para comparação/auditoria):
       let bGps = batchRows.reduce((max, r) => {
         const telemKm = r.canonicalBatchTelem ? r.canonicalBatchTelem.km_gps_total : 0
@@ -826,6 +839,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       roadKmTotal += bRoad
       gpsKmTotal += bGps
       afterApprovalKmTotal += bAfter
+      kmPagamentoTotal += bKmPagamento
     })
 
     // REGRA DO USUÁRIO (Ajuste Manual Edson / Período):
@@ -861,6 +875,19 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     const finalAfterApprovalKmTotal = manualAdjustmentActive
       ? manualAdjTargetKm
       : Number(afterApprovalKmTotal.toFixed(1))
+    const finalKmPagamentoTotal = manualAdjustmentActive
+      ? manualAdjTargetKm
+      : Number(kmPagamentoTotal.toFixed(1))
+
+    // Cálculo do combustível sobre km_pagamento (usando taxa canônica de moto: 30 km/L, R$ 6,49/L ou settings)
+    const motoConsumption = Number(settings?.consumption_kml) || 30.0
+    const motoPrice = Number(settings?.fuel_price) || 6.49
+    const combustivelPagamentoTotal = Number(
+      ((finalKmPagamentoTotal / motoConsumption) * motoPrice).toFixed(2),
+    )
+    const combustivelViarioOficialTotal = Number(
+      ((finalRoadKmTotal / motoConsumption) * motoPrice).toFixed(2),
+    )
 
     return {
       roadKmTotal: finalRoadKmTotal,
@@ -877,6 +904,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       hasManualAdjustment: manualAdjustmentActive,
       manualAdjDelta,
       manualAdjPeriodText,
+      kmPagamentoTotal: finalKmPagamentoTotal,
+      combustivelPagamentoTotal,
+      combustivelViarioOficialTotal,
     }
   }, [
     auditRows,
@@ -1249,6 +1279,70 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           <span>Sincronizando entregas históricas do período selecionado sob demanda...</span>
         </div>
       )}
+
+      {/* CARD DESTAQUE EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-10% APÓS 26/10) */}
+      <Card className="border-emerald-300 border-l-4 border-l-emerald-500 bg-gradient-to-r from-emerald-50/70 via-white to-emerald-50/40 shadow-sm">
+        <CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 border border-emerald-300 shrink-0">
+                <Fuel className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                    KM Pagamento de Combustível
+                  </span>
+                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[9px] px-1.5 py-0 font-bold uppercase">
+                    Admin • -10% após 26/10
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  Base canônica para reembolso de combustível. Pedidos criados a partir de 26/10
+                  aplicam desconto de 10% sobre o KM viário.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4 sm:gap-6 bg-white p-2.5 px-4 rounded-xl border border-emerald-200 shadow-xs self-start sm:self-center">
+              <div>
+                <span className="text-[10px] text-slate-400 block uppercase font-semibold">
+                  KM Pagamento
+                </span>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-xl sm:text-2xl font-black font-mono text-emerald-700">
+                    {scopeSummary.kmPagamentoTotal.toFixed(1)}
+                  </span>
+                  <span className="text-xs text-slate-500 font-semibold">km</span>
+                </div>
+              </div>
+
+              <div className="h-8 w-px bg-slate-200" />
+
+              <div>
+                <span className="text-[10px] text-slate-400 block uppercase font-semibold">
+                  Combustível Pagamento
+                </span>
+                <span className="text-xl sm:text-2xl font-black font-mono text-slate-900">
+                  R$ {scopeSummary.combustivelPagamentoTotal.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="h-8 w-px bg-slate-200" />
+
+              <div>
+                <span className="text-[10px] text-slate-400 block uppercase font-semibold">
+                  Viário Oficial (Sem Desconto)
+                </span>
+                <span className="text-xs font-mono text-slate-600">
+                  {scopeSummary.roadKmTotal.toFixed(1)} km • R${' '}
+                  {scopeSummary.combustivelViarioOficialTotal.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* CARDS DE RESUMO RÁPIDO DO RELATÓRIO (MANTÉM VISÃO GLOBAL DO ESCOPO SELECIONADO) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
