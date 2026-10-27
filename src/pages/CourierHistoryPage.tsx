@@ -89,9 +89,21 @@ export default function CourierHistoryPage() {
   }, [user])
 
   // Realtime updates
+  // CORREÇÃO DE PERFORMANCE: eventos de realtime em rajada disparavam loadData() completo
+  // (todas as páginas de pedidos + telemetria de 24h + eventos de desvio + lotes) a cada
+  // atualização de pedido, gerando recargas concorrentes que travavam o carregamento da
+  // tela de histórico. Agora múltiplos eventos dentro de uma janela de 4s são consolidados
+  // em uma única recarga com debounce.
+  const realtimeReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useRealtime<OrderRecord>('orders', (e) => {
     if (e.record.courier_id === user?.id) {
-      loadData()
+      if (realtimeReloadTimerRef.current) {
+        clearTimeout(realtimeReloadTimerRef.current)
+      }
+      realtimeReloadTimerRef.current = setTimeout(() => {
+        realtimeReloadTimerRef.current = null
+        loadData()
+      }, 4000)
     }
   })
 
