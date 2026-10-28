@@ -125,7 +125,7 @@ export interface CourierFuelCalculationResult {
   periodAdvances?: number
   periodAdjustments?: number
   carryOverBalance?: number
-  // Derivados para pagamento de combustível (10% desconto a partir de 26/10)
+  // Derivados para pagamento de combustível (15% desconto a partir de 26/10)
   km_pagamento?: number
   combustivel_pagamento?: number
   desconto_km?: number

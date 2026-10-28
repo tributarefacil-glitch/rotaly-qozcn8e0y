@@ -2141,7 +2141,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                   </div>
                                 )}
 
-                              {/* CARD EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-10% PÓS 26/10) */}
+                              {/* CARD EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-15% PÓS 26/10) */}
                               <div className="p-2.5 rounded-lg bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800/60 space-y-1 text-[11px]">
                                 <div className="flex items-center justify-between">
                                   <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
@@ -2152,7 +2152,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                     variant="outline"
                                     className="text-[9px] px-1.5 py-0 font-bold border-emerald-300 bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300"
                                   >
-                                    Admin • -10% pós 26/10
+                                    Admin • -15% pós 26/10
                                   </Badge>
                                 </div>
                                 <div className="flex items-baseline justify-between pt-0.5">

@@ -822,7 +822,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
         : bRoad
 
-      // REGRA 26/10: Desconto de 10% no km para pagamento de combustível a partir de 26/10
+      // REGRA 26/10: Desconto de 15% no km para pagamento de combustível a partir de 26/10
       const earliestCreatedTs = batchRows.reduce((min, r) => {
         const t = r.dateRaw ? new Date(r.dateRaw).getTime() : 0
         return t > 0 && t < min ? t : min
@@ -1280,7 +1280,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         </div>
       )}
 
-      {/* CARD DESTAQUE EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-10% APÓS 26/10) */}
+      {/* CARD DESTAQUE EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-15% APÓS 26/10) */}
       <Card className="border-emerald-300 border-l-4 border-l-emerald-500 bg-gradient-to-r from-emerald-50/70 via-white to-emerald-50/40 shadow-sm">
         <CardContent className="p-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1294,12 +1294,12 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
                     KM Pagamento de Combustível
                   </span>
                   <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[9px] px-1.5 py-0 font-bold uppercase">
-                    Admin • -10% após 26/10
+                    Admin • -15% após 26/10
                   </Badge>
                 </div>
                 <p className="text-[11px] text-slate-600 mt-0.5">
                   Base canônica para reembolso de combustível. Pedidos criados a partir de 26/10
-                  aplicam desconto de 10% sobre o KM viário.
+                  aplicam desconto de 15% sobre o KM viário.
                 </p>
               </div>
             </div>

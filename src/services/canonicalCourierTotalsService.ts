@@ -18,14 +18,14 @@ import { groupOrdersByRouteBatch } from '@/lib/routeBatchHelper'
 
 /**
  * Data de corte canônica da decisão de 26/10:
- * "KM Pagamento de Combustível com DESCONTO DE 10% sobre o km viário".
+ * "KM Pagamento de Combustível com DESCONTO DE 15% sobre o km viário".
  * Data de corte: pedidos/rotas a partir de 26/10 00:00 Brasília (03:00 UTC / janela operacional a partir de 26/10).
  * Pedidos criados antes desse corte mantêm km_pagamento = km viário sem desconto.
  */
 export const FUEL_PAYMENT_DISCOUNT_CUTOFF_DATE = '2026-10-26'
 export const FUEL_PAYMENT_DISCOUNT_CUTOFF_TS = new Date('2026-10-26T00:00:00-03:00').getTime()
-export const FUEL_PAYMENT_DISCOUNT_RATE = 0.1 // 10% de desconto
-export const FUEL_PAYMENT_FACTOR = 0.9 // Multiplicador pós-corte
+export const FUEL_PAYMENT_DISCOUNT_RATE = 0.15 // 15% de desconto
+export const FUEL_PAYMENT_FACTOR = 0.85 // Multiplicador pós-corte
 
 /**
  * Helper para verificar se um timestamp de criação ou data de rota cai a partir do corte de 26/10 no fuso de Brasília.
@@ -93,7 +93,7 @@ export interface CanonicalCourierTotals {
   manualAdjustmentDeltaKm?: number
   manualAdjustmentPeriodLabel?: string
   rawOfficialKmBeforeAdjustment?: number
-  // Novos valores derivados para pagamento de combustível (10% de desconto a partir de 26/10):
+  // Novos valores derivados para pagamento de combustível (15% de desconto a partir de 26/10):
   km_pagamento: number
   combustivel_pagamento: number
   desconto_km: number
@@ -426,9 +426,9 @@ export function calculateCanonicalCourierTotals(
 
     kmOficial = Number(kmOficial.toFixed(2))
 
-    // REGRA 26/10: KM Pagamento de Combustível com 10% de desconto a partir de 26/10
+    // REGRA 26/10: KM Pagamento de Combustível com 15% de desconto a partir de 26/10
     // Avaliar a data do lote/pedidos. Se pedidos/lote foram criados >= 26/10 00:00 Brasília (03:00 UTC),
-    // aplica-se desconto de 10% (fator 0.9). Caso contrário, sem desconto.
+    // aplica-se desconto de 15% (fator 0.85). Caso contrário, sem desconto.
     const earliestOrderTs = batchOrders.reduce((min, o) => {
       const oCreated = o.created ? new Date(o.created).getTime() : 0
       return oCreated > 0 && oCreated < min ? oCreated : min

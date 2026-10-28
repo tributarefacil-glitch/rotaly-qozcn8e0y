@@ -59,7 +59,7 @@ export interface UnifiedCourierFuelAccount {
   manualAdjustmentDeltaKm?: number
   manualAdjustmentPeriodLabel?: string
   rawOfficialKmBeforeAdjustment?: number
-  // Derivados de Pagamento de Combustível (10% desconto a partir de 26/10):
+  // Derivados de Pagamento de Combustível (15% desconto a partir de 26/10):
   km_pagamento?: number
   combustivel_pagamento?: number
   desconto_km?: number

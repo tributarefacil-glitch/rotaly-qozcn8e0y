@@ -1096,7 +1096,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 
         {/* CORPO DO MODAL COM ROLAGEM */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
-          {/* CARD EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-10% PÓS 26/10) */}
+          {/* CARD EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-15% PÓS 26/10) */}
           <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-[#0E1738] to-emerald-900/30 border border-emerald-500/40 shadow-lg relative overflow-hidden">
             <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1110,12 +1110,12 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                       KM Pagamento de Combustível
                     </span>
                     <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[9px] px-1.5 py-0 font-bold uppercase">
-                      Admin • -10% após 26/10
+                      Admin • -15% após 26/10
                     </Badge>
                   </div>
                   <p className="text-[11px] text-slate-300 mt-0.5">
                     Base canônica para reembolso de combustível. Pedidos a partir de 26/10 aplicam
-                    desconto de 10% sobre o KM viário.
+                    desconto de 15% sobre o KM viário.
                   </p>
                 </div>
               </div>
