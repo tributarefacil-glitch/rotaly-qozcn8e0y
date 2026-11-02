@@ -101,6 +101,93 @@ onRecordCreateRequest((e) => {
         }
       }
 
+      // GUARDA DE FUTURO — ENDEREÇO ESCOLHIDO (bug Kely/Sara Andrade):
+      // Se o pedido declara customer_address_id, o destino DEVE ser o endereço ESCOLHIDO.
+      // Se as coordenadas recebidas apontam para o endereço PRINCIPAL do cliente (raiz)
+      // ou divergem do endereço escolhido, sobrescreve com coordenadas/texto do escolhido
+      // e registra audit_trail. Nunca deixa o pedido nascer apontando para o principal.
+      if (customerId && order.getString('customer_address_id')) {
+        try {
+          const guardCustomer = e.app.findRecordById('customers', customerId)
+          if (guardCustomer) {
+            const guardAddressId = order.getString('customer_address_id')
+            let guardAddrList = []
+            const guardRaw = guardCustomer.get('addresses')
+            try {
+              if (typeof guardRaw === 'string') guardAddrList = JSON.parse(guardRaw)
+              else if (Array.isArray(guardRaw)) guardAddrList = guardRaw
+            } catch (_) {
+              guardAddrList = []
+            }
+            const guardChosen = Array.isArray(guardAddrList)
+              ? guardAddrList.find((a) => a && a.id === guardAddressId)
+              : null
+            if (guardChosen) {
+              const chLat = Number(guardChosen.lat)
+              const chLng = Number(guardChosen.lng)
+              const chText = (guardChosen.address || guardChosen.street || '').trim()
+              const chValid = !isNaN(chLat) && !isNaN(chLng) && (chLat !== 0 || chLng !== 0)
+              const rootLat = Number(guardCustomer.get('lat'))
+              const rootLng = Number(guardCustomer.get('lng'))
+              const rootValid =
+                !isNaN(rootLat) && !isNaN(rootLng) && (rootLat !== 0 || rootLng !== 0)
+              const endValid =
+                !isNaN(numEndLat) && !isNaN(numEndLng) && (numEndLat !== 0 || numEndLng !== 0)
+              const distEndToChosen =
+                chValid && endValid ? calcDistMeters(numEndLat, numEndLng, chLat, chLng) : Infinity
+              const distEndToRoot =
+                rootValid && endValid
+                  ? calcDistMeters(numEndLat, numEndLng, rootLat, rootLng)
+                  : Infinity
+
+              if (chValid && (distEndToChosen > 50 || distEndToRoot <= 50)) {
+                const gOldText = order.getString('end_address_text')
+                const gOldLat = order.get('end_address_lat')
+                const gOldLng = order.get('end_address_lng')
+                order.set('end_address_lat', chLat)
+                order.set('end_address_lng', chLng)
+                if (chText) {
+                  order.set('end_address_text', chText)
+                }
+                order.set('end_address_name', guardCustomer.getString('name') || 'Cliente')
+                console.log(
+                  `[prevent_base_dest] Guarda de endereço escolhido aplicada no CREATE: destino realinhado ao endereço customer_address_id=${guardAddressId}`,
+                )
+                try {
+                  const gAuditCol = e.app.findCollectionByNameOrId('audit_trail')
+                  if (gAuditCol) {
+                    const gAudit = new Record(gAuditCol)
+                    gAudit.set('collection', 'orders')
+                    gAudit.set('record_id', order.id || 'NEW_RECORD')
+                    gAudit.set('action', 'order_address_choice_guard')
+                    gAudit.set('field', 'end_address')
+                    gAudit.set('old_value', `${gOldText} (${gOldLat}, ${gOldLng})`)
+                    gAudit.set('new_value', `${chText} (${chLat}, ${chLng})`)
+                    gAudit.set('user_id', '')
+                    gAudit.set('timestamp', new Date().toISOString())
+                    gAudit.set('metadata', {
+                      reason:
+                        'Guarda de futuro: destino do pedido apontava para o endereço principal do cliente em vez do endereço escolhido (customer_address_id)',
+                      customer_id: customerId,
+                      customer_address_id: guardAddressId,
+                      tracking_code: order.getString('tracking_code'),
+                      actor_name: 'Sistema',
+                      actor_role: 'system',
+                      system_trigger: true,
+                    })
+                    e.app.save(gAudit)
+                  }
+                } catch (gAuditErr) {
+                  console.warn('[prevent_base_dest] Falha ao gravar audit da guarda:', gAuditErr)
+                }
+              }
+            }
+          }
+        } catch (guardErr) {
+          console.warn('[prevent_base_dest] Falha na guarda de endereço escolhido:', guardErr)
+        }
+      }
+
       if (matchedBase) {
         console.log(
           `[prevent_base_dest] Interceptado pedido com destino igual à base em onRecordCreate! tracking=${order.getString('tracking_code') || order.id}`,
@@ -125,14 +212,10 @@ onRecordCreateRequest((e) => {
           )
         }
 
-        let custLat = Number(customer.get('lat'))
-        let custLng = Number(customer.get('lng'))
-        let custAddress = customer.getString('address') || customer.getString('street') || ''
-        const custName = customer.getString('name') || 'Cliente'
-
-        // Se o pedido tiver customer_address_id apontando para um endereço secundário do cliente,
-        // resolver preferencialmente a partir desse endereço do cliente (nunca impor o principal)
+        // REGRA: se o pedido declara customer_address_id, o endereço ESCOLHIDO é a fonte
+        // primária — o endereço principal (raiz) só entra se o escolhido for inválido.
         const orderAddressId = order.getString('customer_address_id')
+        let chosenValid = false
         if (orderAddressId) {
           try {
             const rawAddresses = customer.get('addresses')
@@ -152,12 +235,20 @@ onRecordCreateRequest((e) => {
                   custLat = aLat
                   custLng = aLng
                   if (aText.trim()) custAddress = aText.trim()
+                  chosenValid = true
                 }
               }
             }
           } catch (addrErr) {
             console.warn('[prevent_base_dest] Falha ao extrair addresses secundários:', addrErr)
           }
+        }
+        // Pedido declara endereço escolhido mas ele é inválido/sem coordenadas:
+        // NUNCA recorrer ao principal — recusa com mensagem clara (futuro protegido).
+        if (orderAddressId && !chosenValid) {
+          throw new BadRequestError(
+            'O endereço de entrega escolhido para este pedido está sem coordenadas válidas no cadastro. Calibre o pin do endereço escolhido do cliente antes de salvar o pedido (o sistema não pode substituí-lo pelo endereço principal).',
+          )
         }
 
         const baseLatNum = Number(matchedBase.get('lat'))
@@ -348,6 +439,94 @@ onRecordUpdateRequest((e) => {
         }
       }
 
+      // GUARDA DE FUTURO — ENDEREÇO ESCOLHIDO (bug Kely/Sara Andrade) na EDIÇÃO:
+      // destino declarado com customer_address_id deve apontar para o endereço escolhido,
+      // nunca para o principal do cliente. Corrige silenciosamente com audit_trail.
+      if (customerId && order.getString('customer_address_id')) {
+        try {
+          const guardCustomer = e.app.findRecordById('customers', customerId)
+          if (guardCustomer) {
+            const guardAddressId = order.getString('customer_address_id')
+            let guardAddrList = []
+            const guardRaw = guardCustomer.get('addresses')
+            try {
+              if (typeof guardRaw === 'string') guardAddrList = JSON.parse(guardRaw)
+              else if (Array.isArray(guardRaw)) guardAddrList = guardRaw
+            } catch (_) {
+              guardAddrList = []
+            }
+            const guardChosen = Array.isArray(guardAddrList)
+              ? guardAddrList.find((a) => a && a.id === guardAddressId)
+              : null
+            if (guardChosen) {
+              const chLat = Number(guardChosen.lat)
+              const chLng = Number(guardChosen.lng)
+              const chText = (guardChosen.address || guardChosen.street || '').trim()
+              const chValid = !isNaN(chLat) && !isNaN(chLng) && (chLat !== 0 || chLng !== 0)
+              const rootLat = Number(guardCustomer.get('lat'))
+              const rootLng = Number(guardCustomer.get('lng'))
+              const rootValid =
+                !isNaN(rootLat) && !isNaN(rootLng) && (rootLat !== 0 || rootLng !== 0)
+              const endValid =
+                !isNaN(numEndLat) && !isNaN(numEndLng) && (numEndLat !== 0 || numEndLng !== 0)
+              const distEndToChosen =
+                chValid && endValid ? calcDistMeters(numEndLat, numEndLng, chLat, chLng) : Infinity
+              const distEndToRoot =
+                rootValid && endValid
+                  ? calcDistMeters(numEndLat, numEndLng, rootLat, rootLng)
+                  : Infinity
+
+              if (chValid && (distEndToChosen > 50 || distEndToRoot <= 50)) {
+                const gOldText = order.getString('end_address_text')
+                const gOldLat = order.get('end_address_lat')
+                const gOldLng = order.get('end_address_lng')
+                order.set('end_address_lat', chLat)
+                order.set('end_address_lng', chLng)
+                if (chText) {
+                  order.set('end_address_text', chText)
+                }
+                order.set('end_address_name', guardCustomer.getString('name') || 'Cliente')
+                console.log(
+                  `[prevent_base_dest] Guarda de endereço escolhido aplicada no UPDATE: destino realinhado ao endereço customer_address_id=${guardAddressId}`,
+                )
+                try {
+                  const gAuditCol = e.app.findCollectionByNameOrId('audit_trail')
+                  if (gAuditCol) {
+                    const gAudit = new Record(gAuditCol)
+                    gAudit.set('collection', 'orders')
+                    gAudit.set('record_id', order.id || 'NEW_RECORD')
+                    gAudit.set('action', 'order_address_choice_guard')
+                    gAudit.set('field', 'end_address')
+                    gAudit.set('old_value', `${gOldText} (${gOldLat}, ${gOldLng})`)
+                    gAudit.set('new_value', `${chText} (${chLat}, ${chLng})`)
+                    gAudit.set('user_id', '')
+                    gAudit.set('timestamp', new Date().toISOString())
+                    gAudit.set('metadata', {
+                      reason:
+                        'Guarda de futuro (update): destino do pedido apontava para o endereço principal do cliente em vez do endereço escolhido (customer_address_id)',
+                      customer_id: customerId,
+                      customer_address_id: guardAddressId,
+                      tracking_code: order.getString('tracking_code'),
+                      actor_name: 'Sistema',
+                      actor_role: 'system',
+                      system_trigger: true,
+                    })
+                    e.app.save(gAudit)
+                  }
+                } catch (gAuditErr) {
+                  console.warn(
+                    '[prevent_base_dest] Falha ao gravar audit da guarda (update):',
+                    gAuditErr,
+                  )
+                }
+              }
+            }
+          }
+        } catch (guardErr) {
+          console.warn('[prevent_base_dest] Falha na guarda de endereço escolhido:', guardErr)
+        }
+      }
+
       if (matchedBase) {
         console.log(
           `[prevent_base_dest] Interceptado pedido com destino igual à base em onRecordUpdate! tracking=${order.getString('tracking_code') || order.id}`,
@@ -372,14 +551,10 @@ onRecordUpdateRequest((e) => {
           )
         }
 
-        let custLat = Number(customer.get('lat'))
-        let custLng = Number(customer.get('lng'))
-        let custAddress = customer.getString('address') || customer.getString('street') || ''
-        const custName = customer.getString('name') || 'Cliente'
-
-        // Se o pedido tiver customer_address_id apontando para um endereço secundário do cliente,
-        // resolver preferencialmente a partir desse endereço do cliente (nunca impor o principal)
+        // REGRA (update): se o pedido declara customer_address_id, o endereço ESCOLHIDO é
+        // a fonte primária — o endereço principal (raiz) só entra se o escolhido for inválido.
         const orderAddressId = order.getString('customer_address_id')
+        let chosenValid = false
         if (orderAddressId) {
           try {
             const rawAddresses = customer.get('addresses')
@@ -399,6 +574,7 @@ onRecordUpdateRequest((e) => {
                   custLat = aLat
                   custLng = aLng
                   if (aText.trim()) custAddress = aText.trim()
+                  chosenValid = true
                 }
               }
             }
@@ -408,6 +584,13 @@ onRecordUpdateRequest((e) => {
               addrErr,
             )
           }
+        }
+        // Pedido declara endereço escolhido mas ele é inválido/sem coordenadas (update):
+        // NUNCA recorrer ao principal — recusa com mensagem clara (futuro protegido).
+        if (orderAddressId && !chosenValid) {
+          throw new BadRequestError(
+            'O endereço de entrega escolhido para este pedido está sem coordenadas válidas no cadastro. Calibre o pin do endereço escolhido do cliente antes de salvar o pedido (o sistema não pode substituí-lo pelo endereço principal).',
+          )
         }
 
         const baseLatNum = Number(matchedBase.get('lat'))

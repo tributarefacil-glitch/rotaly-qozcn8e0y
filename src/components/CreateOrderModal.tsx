@@ -1358,31 +1358,74 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         ? chosenAddressObj.address || chosenAddressObj.street || ''
         : ''
 
-      const targetAddressText =
-        chosenAddressText.trim() ||
-        getFullFormattedAddress() ||
-        streetAndNumber.trim() ||
-        selectedCustomerRecord?.address ||
-        selectedCustomerRecord?.street ||
-        ''
+      // GUARDA DE FUTURO (bug Kely/Sara Andrade): com endereço específico escolhido,
+      // o pedido NUNCA pode cair no endereço principal do cliente. Se faltar texto ou
+      // coordenadas do endereço escolhido, RECUSA o salvamento em vez de sobrescrever
+      // com address/lat/lng da raiz do cliente.
+      const hasChosenCoords =
+        typeof chosenAddressObj?.lat === 'number' &&
+        !isNaN(chosenAddressObj.lat) &&
+        typeof chosenAddressObj?.lng === 'number' &&
+        !isNaN(chosenAddressObj.lng) &&
+        (chosenAddressObj.lat !== 0 || chosenAddressObj.lng !== 0)
+      const hasPinnedCoords =
+        typeof selectedCoords.lat === 'number' &&
+        !isNaN(selectedCoords.lat) &&
+        typeof selectedCoords.lng === 'number' &&
+        !isNaN(selectedCoords.lng) &&
+        (selectedCoords.lat !== 0 || selectedCoords.lng !== 0)
+
+      if (selectedCustomerAddressId && !chosenAddressObj) {
+        toast.error(
+          'O endereço escolhido não foi encontrado no cadastro do cliente. Reabra o seletor e escolha o endereço novamente.',
+        )
+        setIsSubmitting(false)
+        return
+      }
+      if (selectedCustomerAddressId && !chosenAddressText.trim()) {
+        toast.error(
+          'O endereço escolhido está sem texto no cadastro. Complete o endereço do cliente antes de registrar a venda.',
+        )
+        setIsSubmitting(false)
+        return
+      }
+      if (selectedCustomerAddressId && !hasChosenCoords && !hasPinnedCoords) {
+        toast.error(
+          'O endereço escolhido está sem coordenadas GPS. Calibre o pin deste endereço antes de registrar a venda.',
+        )
+        setIsSubmitting(false)
+        return
+      }
+
+      const targetAddressText = selectedCustomerAddressId
+        ? chosenAddressText.trim()
+        : getFullFormattedAddress() ||
+          streetAndNumber.trim() ||
+          selectedCustomerRecord?.address ||
+          selectedCustomerRecord?.street ||
+          ''
       const targetCustomerName = selectedCustomerRecord?.name || newCustName.trim() || 'Cliente'
 
       const chosenLat = chosenAddressObj?.lat
       const chosenLng = chosenAddressObj?.lng
 
-      const targetLat =
-        typeof chosenLat === 'number' &&
-        !isNaN(chosenLat) &&
-        (chosenLat !== 0 || (chosenLng !== 0 && chosenLng !== undefined))
+      // Com endereço escolhido: coordenadas vêm SEMPRE do endereço escolhido (ou do pin
+      // fixado a partir dele) — nunca do lat/lng raiz (principal) do cliente.
+      const targetLat = selectedCustomerAddressId
+        ? hasChosenCoords
+          ? chosenLat
+          : selectedCoords.lat
+        : hasChosenCoords
           ? chosenLat
           : typeof selectedCoords.lat === 'number' && !isNaN(selectedCoords.lat)
             ? selectedCoords.lat
             : selectedCustomerRecord?.lat
 
-      const targetLng =
-        typeof chosenLng === 'number' &&
-        !isNaN(chosenLng) &&
-        (chosenLng !== 0 || (chosenLat !== 0 && chosenLat !== undefined))
+      const targetLng = selectedCustomerAddressId
+        ? hasChosenCoords
+          ? chosenLng
+          : selectedCoords.lng
+        : hasChosenCoords
           ? chosenLng
           : typeof selectedCoords.lng === 'number' && !isNaN(selectedCoords.lng)
             ? selectedCoords.lng

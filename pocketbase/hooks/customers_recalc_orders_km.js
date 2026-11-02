@@ -145,12 +145,17 @@ onRecordUpdate((e) => {
     for (let i = 0; i < ordersToProcess.length; i++) {
       const order = ordersToProcess[i]
 
-      // GUARDA DE FUTURO: Se o pedido tem customer_address_id apontando para um endereço secundário
-      // ou possui endereço específico gravado que difere do endereço principal do cliente,
-      // NUNCA sobrescrever suas coordenadas nem recalcular seu km com o pin do endereço principal!
+      // GUARDA DE FUTURO (bug Kely/Sara Andrade): Se o pedido tem endereço próprio —
+      // coordenadas gravadas OU customer_address_id — NUNCA sobrescrever suas coordenadas
+      // com o pin do endereço principal do cliente, nem recalcular seu km com esse pin.
+      // Apenas o pedido SEM endereço próprio (herdado do principal) segue o pin do cliente.
       const orderAddrId = order.getString('customer_address_id')
-      if (orderAddrId) {
-        // Pedido explicitamente vinculado a endereço secundário/específico
+      const hasOwnCoords = (() => {
+        const oLat = order.getFloat('end_address_lat')
+        const oLng = order.getFloat('end_address_lng')
+        return !isNaN(oLat) && !isNaN(oLng) && (oLat !== 0 || oLng !== 0)
+      })()
+      if (orderAddrId || hasOwnCoords) {
         continue
       }
 
