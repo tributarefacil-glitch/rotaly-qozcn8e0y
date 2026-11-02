@@ -144,6 +144,16 @@ onRecordUpdate((e) => {
 
     for (let i = 0; i < ordersToProcess.length; i++) {
       const order = ordersToProcess[i]
+
+      // GUARDA DE FUTURO: Se o pedido tem customer_address_id apontando para um endereço secundário
+      // ou possui endereço específico gravado que difere do endereço principal do cliente,
+      // NUNCA sobrescrever suas coordenadas nem recalcular seu km com o pin do endereço principal!
+      const orderAddrId = order.getString('customer_address_id')
+      if (orderAddrId) {
+        // Pedido explicitamente vinculado a endereço secundário/específico
+        continue
+      }
+
       const oldKm = order.getFloat('distance_km') || 0
       const oldEndLat = order.getFloat('end_address_lat') || origLat
       const oldEndLng = order.getFloat('end_address_lng') || origLng

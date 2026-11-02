@@ -1944,18 +1944,46 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
           lng: endBase.lng || originPoint.lng,
         }
 
-        const candidates: StopCandidate[] = clusterOrders.map((co) => ({
-          id: co.order.id,
-          tracking_code: co.order.tracking_code,
-          priority: co.order.priority || 'normal',
-          status: co.order.status,
-          customer_name: co.customer?.name || 'Cliente',
-          address: co.customer?.address || 'Endereço a confirmar',
-          lat: co.lat,
-          lng: co.lng,
-          rawOrder: co.order,
-          rawCustomer: co.customer,
-        }))
+        const candidates: StopCandidate[] = clusterOrders.map((co) => {
+          // Resolver o endereço formatado a partir dos dados gravados no pedido (ou do endereço vinculado),
+          // nunca dependendo exclusivamente do endereço principal do cliente
+          let resolvedAddress =
+            co.order.end_address_text?.trim() || co.order.end_address_name?.trim() || ''
+
+          if (
+            !resolvedAddress &&
+            co.order.customer_address_id &&
+            Array.isArray(co.customer?.addresses)
+          ) {
+            const matched = co.customer.addresses.find(
+              (a: any) => a.id === co.order.customer_address_id,
+            )
+            if (matched) {
+              resolvedAddress = (matched.address || matched.street || '').trim()
+            }
+          }
+
+          if (!resolvedAddress) {
+            resolvedAddress = (
+              co.customer?.address ||
+              co.customer?.street ||
+              'Endereço a confirmar'
+            ).trim()
+          }
+
+          return {
+            id: co.order.id,
+            tracking_code: co.order.tracking_code,
+            priority: co.order.priority || 'normal',
+            status: co.order.status,
+            customer_name: co.customer?.name || co.order.end_address_name || 'Cliente',
+            address: resolvedAddress,
+            lat: co.lat,
+            lng: co.lng,
+            rawOrder: co.order,
+            rawCustomer: co.customer,
+          }
+        })
 
         const isCourierBike =
           courierData.courier.vehicle_type === 'bicicleta' ||
@@ -2415,6 +2443,16 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         ordersToShow.forEach((o, idx) => {
           const cust = localCustomers.find((c) => c.id === o.customer_id) || o.expand?.customer_id
           const cleanCust = MapDataService.getOrderDestination(o)
+          const displayAddress =
+            o.end_address_text ||
+            o.end_address_name ||
+            (o.customer_address_id && Array.isArray(cust?.addresses)
+              ? cust.addresses.find((a: any) => a.id === o.customer_address_id)?.address
+              : null) ||
+            cust?.address ||
+            'Sem endereço'
+          const displayName = cust?.name || o.end_address_name || 'Cliente'
+
           if (cleanCust) {
             if (safeExtendBounds(bounds, cleanCust)) {
               hasPoints = true
@@ -2423,7 +2461,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             const m = new google.maps.Marker({
               position: cleanCust,
               map: mapInstanceRef.current,
-              title: `#${idx + 1} - ${cust?.name || 'Cliente'} (${o.tracking_code})`,
+              title: `#${idx + 1} - ${displayName} (${o.tracking_code})`,
               label: {
                 text: `${idx + 1}`,
                 color: '#ffffff',
@@ -2442,8 +2480,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             const info = new google.maps.InfoWindow({
               content: `
                 <div style="padding: 6px; font-family: sans-serif; color: #0f172a; max-width: 220px;">
-                  <strong style="font-size: 12px; color: #f97316;">Parada #${idx + 1}: ${cust.name || 'Cliente'}</strong>
-                  <p style="font-size: 11px; margin: 2px 0; color: #475569;">📍 ${cust.address || 'Sem endereço'}</p>
+                  <strong style="font-size: 12px; color: #f97316;">Parada #${idx + 1}: ${displayName}</strong>
+                  <p style="font-size: 11px; margin: 2px 0; color: #475569;">📍 ${displayAddress}</p>
                   <p style="font-size: 10px; margin: 0; color: #64748b;">Código: <b>${o.tracking_code}</b></p>
                 </div>
               `,
@@ -2847,6 +2885,9 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             }
           }
 
+          // Preservar o destino específico do cliente registrado no pedido (end_address_* da entrega),
+          // atualizando apenas os metadados de roteamento (sequência, base de partida, km e custos).
+          // NUNCA sobrescrever end_address_* com a base de retorno.
           await deliveryService.updateOrder(stop.id, {
             courier_id: plan.courier.id,
             status: 'assigned', // Permite que o entregador veja na fila e acione "Iniciar Rota"
@@ -2865,10 +2906,6 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
             start_base_address: startBase?.address,
             start_base_lat: startBase?.lat,
             start_base_lng: startBase?.lng,
-            end_address_name: endBase?.name || startBase?.name || 'Base Central Rotaly',
-            end_address_text: endBase?.address || startBase?.address,
-            end_address_lat: endBase?.lat || startBase?.lat,
-            end_address_lng: endBase?.lng || startBase?.lng,
           })
           assignedCount++
         }

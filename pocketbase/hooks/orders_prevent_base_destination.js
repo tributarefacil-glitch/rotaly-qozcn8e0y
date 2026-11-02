@@ -125,10 +125,40 @@ onRecordCreateRequest((e) => {
           )
         }
 
-        const custLat = Number(customer.get('lat'))
-        const custLng = Number(customer.get('lng'))
-        const custAddress = customer.getString('address') || customer.getString('street') || ''
+        let custLat = Number(customer.get('lat'))
+        let custLng = Number(customer.get('lng'))
+        let custAddress = customer.getString('address') || customer.getString('street') || ''
         const custName = customer.getString('name') || 'Cliente'
+
+        // Se o pedido tiver customer_address_id apontando para um endereço secundário do cliente,
+        // resolver preferencialmente a partir desse endereço do cliente (nunca impor o principal)
+        const orderAddressId = order.getString('customer_address_id')
+        if (orderAddressId) {
+          try {
+            const rawAddresses = customer.get('addresses')
+            let addrList = []
+            if (typeof rawAddresses === 'string') {
+              addrList = JSON.parse(rawAddresses)
+            } else if (Array.isArray(rawAddresses)) {
+              addrList = rawAddresses
+            }
+            if (Array.isArray(addrList)) {
+              const matchedAddr = addrList.find((a) => a && a.id === orderAddressId)
+              if (matchedAddr) {
+                const aLat = Number(matchedAddr.lat)
+                const aLng = Number(matchedAddr.lng)
+                const aText = matchedAddr.address || matchedAddr.street || ''
+                if (!isNaN(aLat) && !isNaN(aLng) && (aLat !== 0 || aLng !== 0)) {
+                  custLat = aLat
+                  custLng = aLng
+                  if (aText.trim()) custAddress = aText.trim()
+                }
+              }
+            }
+          } catch (addrErr) {
+            console.warn('[prevent_base_dest] Falha ao extrair addresses secundários:', addrErr)
+          }
+        }
 
         const baseLatNum = Number(matchedBase.get('lat'))
         const baseLngNum = Number(matchedBase.get('lng'))
@@ -342,10 +372,43 @@ onRecordUpdateRequest((e) => {
           )
         }
 
-        const custLat = Number(customer.get('lat'))
-        const custLng = Number(customer.get('lng'))
-        const custAddress = customer.getString('address') || customer.getString('street') || ''
+        let custLat = Number(customer.get('lat'))
+        let custLng = Number(customer.get('lng'))
+        let custAddress = customer.getString('address') || customer.getString('street') || ''
         const custName = customer.getString('name') || 'Cliente'
+
+        // Se o pedido tiver customer_address_id apontando para um endereço secundário do cliente,
+        // resolver preferencialmente a partir desse endereço do cliente (nunca impor o principal)
+        const orderAddressId = order.getString('customer_address_id')
+        if (orderAddressId) {
+          try {
+            const rawAddresses = customer.get('addresses')
+            let addrList = []
+            if (typeof rawAddresses === 'string') {
+              addrList = JSON.parse(rawAddresses)
+            } else if (Array.isArray(rawAddresses)) {
+              addrList = rawAddresses
+            }
+            if (Array.isArray(addrList)) {
+              const matchedAddr = addrList.find((a) => a && a.id === orderAddressId)
+              if (matchedAddr) {
+                const aLat = Number(matchedAddr.lat)
+                const aLng = Number(matchedAddr.lng)
+                const aText = matchedAddr.address || matchedAddr.street || ''
+                if (!isNaN(aLat) && !isNaN(aLng) && (aLat !== 0 || aLng !== 0)) {
+                  custLat = aLat
+                  custLng = aLng
+                  if (aText.trim()) custAddress = aText.trim()
+                }
+              }
+            }
+          } catch (addrErr) {
+            console.warn(
+              '[prevent_base_dest] Falha ao extrair addresses secundários (update):',
+              addrErr,
+            )
+          }
+        }
 
         const baseLatNum = Number(matchedBase.get('lat'))
         const baseLngNum = Number(matchedBase.get('lng'))

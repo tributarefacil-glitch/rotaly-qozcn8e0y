@@ -1346,22 +1346,47 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
       // Validação e preenchimento autoritativo do destino do cliente (end_address_*)
       // Garante que o pedido nunca nasça vazio nem com endereço/coordenadas da base
+      // Se o vendedor selecionou um endereço específico do cliente (selectedCustomerAddressId),
+      // o pedido DEVE gravar texto e coordenadas DESSE endereço escolhido, nunca do principal.
       const selectedCustomerRecord = localCustomers.find((c) => c.id === finalCustomerId)
+      const chosenAddressObj =
+        selectedCustomerAddressId && Array.isArray(selectedCustomerRecord?.addresses)
+          ? selectedCustomerRecord?.addresses.find((a) => a.id === selectedCustomerAddressId)
+          : null
+
+      const chosenAddressText = chosenAddressObj
+        ? chosenAddressObj.address || chosenAddressObj.street || ''
+        : ''
+
       const targetAddressText =
-        selectedCustomerRecord?.address ||
-        selectedCustomerRecord?.street ||
+        chosenAddressText.trim() ||
         getFullFormattedAddress() ||
         streetAndNumber.trim() ||
+        selectedCustomerRecord?.address ||
+        selectedCustomerRecord?.street ||
         ''
       const targetCustomerName = selectedCustomerRecord?.name || newCustName.trim() || 'Cliente'
+
+      const chosenLat = chosenAddressObj?.lat
+      const chosenLng = chosenAddressObj?.lng
+
       const targetLat =
-        typeof selectedCoords.lat === 'number' && !isNaN(selectedCoords.lat)
-          ? selectedCoords.lat
-          : selectedCustomerRecord?.lat
+        typeof chosenLat === 'number' &&
+        !isNaN(chosenLat) &&
+        (chosenLat !== 0 || (chosenLng !== 0 && chosenLng !== undefined))
+          ? chosenLat
+          : typeof selectedCoords.lat === 'number' && !isNaN(selectedCoords.lat)
+            ? selectedCoords.lat
+            : selectedCustomerRecord?.lat
+
       const targetLng =
-        typeof selectedCoords.lng === 'number' && !isNaN(selectedCoords.lng)
-          ? selectedCoords.lng
-          : selectedCustomerRecord?.lng
+        typeof chosenLng === 'number' &&
+        !isNaN(chosenLng) &&
+        (chosenLng !== 0 || (chosenLat !== 0 && chosenLat !== undefined))
+          ? chosenLng
+          : typeof selectedCoords.lng === 'number' && !isNaN(selectedCoords.lng)
+            ? selectedCoords.lng
+            : selectedCustomerRecord?.lng
 
       // Retry silencioso de criação de pedido: até 3 tentativas gerando novo tracking_code
       // com backoff curto (~200ms) para neutralizar eventuais colisões de concorrência.

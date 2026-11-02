@@ -83,19 +83,48 @@ export const MapDataService = {
   getOrderDestination(order: any): CleanCoords | null {
     if (!order) return null
 
-    const candidates = [
-      { lat: order.end_address_lat, lng: order.end_address_lng },
-      { lat: order.expand?.customer_id?.lat, lng: order.expand?.customer_id?.lng },
-      { lat: order.expand?.customer?.lat, lng: order.expand?.customer?.lng },
+    // 1. Prioridade absoluta: coordenadas gravadas diretamente no pedido (endereço específico da venda)
+    const orderSpecificCoords = toLatLngSegura(order.end_address_lat, order.end_address_lng)
+    if (orderSpecificCoords) {
+      return orderSpecificCoords
+    }
+
+    // 2. Se o pedido tiver customer_address_id vinculado, buscar endereço correspondente na lista do cliente
+    if (order.customer_address_id) {
+      const custAddresses =
+        order.expand?.customer_id?.addresses ||
+        order.expand?.customer?.addresses ||
+        order.customer?.addresses ||
+        order._customerAddresses
+      if (Array.isArray(custAddresses)) {
+        const matchedAddr = custAddresses.find((a: any) => a.id === order.customer_address_id)
+        if (matchedAddr) {
+          const cleanAddr = toLatLngSegura(matchedAddr.lat, matchedAddr.lng)
+          if (cleanAddr) return cleanAddr
+        }
+      }
+    }
+
+    // 3. Outros campos legados no próprio pedido
+    const orderLegacyCandidates = [
       { lat: order.customer_latitude, lng: order.customer_longitude },
       { lat: order.destination_latitude, lng: order.destination_longitude },
       { lat: order.lat, lng: order.lng },
       { lat: order.latitude, lng: order.longitude },
+    ]
+    for (const c of orderLegacyCandidates) {
+      const clean = toLatLngSegura(c.lat, c.lng)
+      if (clean) return clean
+    }
+
+    // 4. Último fallback: endereço principal (raiz) do cliente apenas se o pedido não tiver endereço próprio
+    const customerRootCandidates = [
+      { lat: order.expand?.customer_id?.lat, lng: order.expand?.customer_id?.lng },
+      { lat: order.expand?.customer?.lat, lng: order.expand?.customer?.lng },
       { lat: order.expand?.customer_id?.latitude, lng: order.expand?.customer_id?.longitude },
       { lat: order.expand?.customer?.latitude, lng: order.expand?.customer?.longitude },
     ]
-
-    for (const c of candidates) {
+    for (const c of customerRootCandidates) {
       const clean = toLatLngSegura(c.lat, c.lng)
       if (clean) return clean
     }
