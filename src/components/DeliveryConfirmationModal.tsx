@@ -470,22 +470,43 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
     const currentLoc = await getFreshLocation()
     setIsCapturingGps(false)
 
-    // Coordenadas canônicas do cliente (REFERÊNCIA ÚNICA: pin cadastrado do cliente)
+    // Coordenadas canônicas de referência da validação de entrega (v0.0.530):
+    // REGRA PERMANENTE — a comparação de pin/geofence é feita contra o ENDEREÇO ESCOLHIDO NO PEDIDO
+    // (customer_address_id + end_address_lat/lng gravados no pedido pela vendedora),
+    // NUNCA contra o endereço principal (raiz) do cliente. O pin do cliente raiz só é usado
+    // quando o pedido NÃO declara um endereço próprio (end_address ausente/zerado).
     // Se order.expand não trouxer ou for 0, buscar o registro direto do cliente
-    let clientLat =
-      typeof order.expand?.customer_id?.lat === 'number' && order.expand.customer_id.lat !== 0
-        ? order.expand.customer_id.lat
-        : typeof order.end_address_lat === 'number' && order.end_address_lat !== 0
-          ? order.end_address_lat
-          : null
-    let clientLng =
-      typeof order.expand?.customer_id?.lng === 'number' && order.expand.customer_id.lng !== 0
-        ? order.expand.customer_id.lng
-        : typeof order.end_address_lng === 'number' && order.end_address_lng !== 0
-          ? order.end_address_lng
-          : null
+    const orderHasOwnEndAddress =
+      typeof order.end_address_lat === 'number' &&
+      order.end_address_lat !== 0 &&
+      typeof order.end_address_lng === 'number' &&
+      order.end_address_lng !== 0
 
-    // Fallback garantido: consultar customer no banco se lat/lng estiver ausente no expand
+    let clientLat: number | null = orderHasOwnEndAddress ? order.end_address_lat : null
+    let clientLng: number | null = orderHasOwnEndAddress ? order.end_address_lng : null
+
+    // Fallback: endereço escolhido na lista do cliente via customer_address_id (coords do endereço alternativo)
+    if (
+      !orderHasOwnEndAddress &&
+      order.customer_address_id &&
+      order.expand?.customer_id?.addresses
+    ) {
+      const chosenAddr = (order.expand.customer_id.addresses as any[]).find(
+        (a) => a?.id === order.customer_address_id,
+      )
+      if (
+        chosenAddr &&
+        typeof chosenAddr.lat === 'number' &&
+        chosenAddr.lat !== 0 &&
+        typeof chosenAddr.lng === 'number' &&
+        chosenAddr.lng !== 0
+      ) {
+        clientLat = chosenAddr.lat
+        clientLng = chosenAddr.lng
+      }
+    }
+
+    // Último fallback: pin raiz do cliente — SOMENTE para pedidos sem endereço próprio
     if ((clientLat === null || clientLng === null) && order.customer_id) {
       try {
         const liveCust = await pb
@@ -1025,6 +1046,13 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       // É PROIBIDO sobrescrever customer e order prematuramente antes da decisão do admin!
       // Apenas atualiza o cadastro do cliente diretamente se o desvio for tolerado (<= 500m ou ok).
       const requiresAdminApproval = geofenceFlag === 'pendente_aprovacao_gt_500m'
+
+      // v0.0.530 — REGRA DO ENDEREÇO ESCOLHIDO: a atualização de coordenadas do cliente (pin)
+      // só é aplicada ao cadastro RAIZ do cliente quando o pedido NÃO declara um endereço próprio
+      // (customer_address_id / end_address). Quando o pedido usa um endereço alternativo escolhido
+      // pela vendedora, o pin capturado atualiza o endereço ESCOLHIDO (via customerAddressId) e
+      // NUNCA sobrescreve o pin principal do cliente.
+      const orderUsesOwnAddress = Boolean(order.customer_address_id || orderHasOwnEndAddress)
 
       if (isDelivered && currentLoc && order.customer_id && !requiresAdminApproval) {
         try {

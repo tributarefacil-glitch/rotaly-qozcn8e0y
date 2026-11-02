@@ -5100,8 +5100,54 @@ export const deliveryService = {
       return null
     }
 
-    // GUARDA DE SANIDADE v0.0.472 (FUTURO):
-    // Se o pin sugerido/entrega estiver a <= 150m do pin atual cadastrado do cliente,
+    // GUARDA DE SANIDADE v0.0.472 / v0.0.530 (FUTURO):
+    // REGRA DO ENDEREÇO ESCOLHIDO (v0.0.530):
+    // Se o pedido usou endereço alternativo (customer_address_id preenchido) e a entrega ocorreu
+    // no endereço escolhido gravado no pedido (end_address_lat/lng ou na lista de endereços do cliente):
+    // NUNCA criar alerta de endereço suspeito! É falso positivo gerado pela distância ao pin principal.
+    if (data.order_id || data.tracking_code || (data.notes && data.notes.includes('TRK-'))) {
+      try {
+        const orderTracking =
+          data.tracking_code || data.notes?.match(/TRK-[0-9-]+/)?.[0] || undefined
+        let matchedOrd: any = null
+        if (data.order_id) {
+          try {
+            matchedOrd = await pb.collection('orders').getOne(data.order_id, { requestKey: null })
+          } catch {
+            /* intentionally ignored */
+          }
+        }
+        if (!matchedOrd && orderTracking) {
+          try {
+            matchedOrd = await pb
+              .collection('orders')
+              .getFirstListItem(`tracking_code = '${orderTracking}'`, { requestKey: null })
+          } catch {
+            /* intentionally ignored */
+          }
+        }
+
+        if (matchedOrd && matchedOrd.customer_address_id) {
+          const ordEndLat = Number(matchedOrd.end_address_lat || 0)
+          const ordEndLng = Number(matchedOrd.end_address_lng || 0)
+          if (!isNaN(ordEndLat) && !isNaN(ordEndLng) && ordEndLat !== 0 && ordEndLng !== 0) {
+            const distToChosen = Math.round(haversineDistanceMeters(lat, lng, ordEndLat, ordEndLng))
+            if (distToChosen <= 150) {
+              console.warn(
+                `[createAddressAlert] [FALSO POSITIVO SUPRIMIDO v0.0.530]: pedido ${matchedOrd.tracking_code} entregue a ${distToChosen}m do endereço escolhido (customer_address_id=${matchedOrd.customer_address_id}). Alerta suprimido.`,
+              )
+              return null
+            }
+          }
+        }
+      } catch (errCheckChosen) {
+        console.warn(
+          '[createAddressAlert] Falha ao verificar proximidade com endereço escolhido do pedido:',
+          errCheckChosen,
+        )
+      }
+    }
+
     // GUARDA DE SANIDADE REFORÇADA (v0.0.472 / v0.0.473):
     // 1. Se o pin sugerido estiver a <= 150m do pin cadastrado do cliente: 100% falso positivo, abortar.
     // 2. Se o pedido referenciado nas notas (TRK-xxxx) foi entregue a <= 150m do pin cadastrado: falso positivo, abortar.

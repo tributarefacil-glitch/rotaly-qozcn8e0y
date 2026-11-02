@@ -169,10 +169,53 @@ onRecordUpdateRequest((e) => {
     const delLat = targetOrder.getFloat('delivery_lat') || endLat
     const delLng = targetOrder.getFloat('delivery_lng') || endLng
 
-    // GUARDA DE SANIDADE REFORÇADA (v0.0.473):
-    // 1. A referência canônica ÚNICA de comparação é o pin cadastrado do cliente (customers.lat/lng).
-    // 2. Se houver coordenadas de entrega no pedido e coordenadas do cliente cadastradas:
-    //    calcular OBRIGATORIAMENTE o desvio real no backend via Haversine, nunca confiar cegamente no entrega_fora_pin_m vindo do frontend.
+    // GUARDA DE SANIDADE REFORÇADA (v0.0.530):
+    // REGRA PERMANENTE DE ENDEREÇO ESCOLHIDO:
+    // 1. Se o pedido declara customer_address_id OU end_address_lat/lng próprio válido (>0),
+    //    a referência canônica de validação de pin/geofence DEVE SER o endereço ESCOLHIDO no pedido
+    //    (end_address_lat/lng ou coordenadas do customer_address_id da lista do cliente).
+    // 2. NUNCA comparar contra o pin raiz/principal do cliente quando a vendedora selecionou um endereço secundário.
+    // 3. O pin raiz do cliente só é usado como referência quando o pedido NÃO tem endereço próprio.
+    const orderCustomerAddressId = targetOrder.getString('customer_address_id') || ''
+    let refTargetLat = 0
+    let refTargetLng = 0
+
+    if (endLat !== 0 && endLng !== 0) {
+      // Prioridade absoluta: coordenadas gravadas no próprio pedido
+      refTargetLat = endLat
+      refTargetLng = endLng
+    } else if (orderCustomerAddressId && customerIdVal) {
+      // Tentar resolver na lista de endereços do cliente
+      try {
+        const custRec = $app.findRecordById('customers', customerIdVal)
+        if (custRec) {
+          const rawAddrs = custRec.get('addresses')
+          let addrList = []
+          if (Array.isArray(rawAddrs)) {
+            addrList = rawAddrs
+          } else if (typeof rawAddrs === 'string' && rawAddrs.trim()) {
+            try {
+              addrList = JSON.parse(rawAddrs)
+            } catch (_) {}
+          }
+          if (Array.isArray(addrList)) {
+            for (let ai = 0; ai < addrList.length; ai++) {
+              const a = addrList[ai]
+              if (a && a.id === orderCustomerAddressId) {
+                const aLat = parseFloat(a.lat) || 0
+                const aLng = parseFloat(a.lng) || 0
+                if (aLat !== 0 && aLng !== 0) {
+                  refTargetLat = aLat
+                  refTargetLng = aLng
+                  break
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     let custLat = 0
     let custLng = 0
     let isCustomerCalibrated = false
@@ -195,34 +238,39 @@ onRecordUpdateRequest((e) => {
       } catch (_) {}
     }
 
+    // Se o pedido tiver endereço escolhido resolvido, usa ele como referência canônica;
+    // caso contrário, recai no pin raiz do cliente.
+    const effectiveRefLat = refTargetLat !== 0 ? refTargetLat : custLat
+    const effectiveRefLng = refTargetLng !== 0 ? refTargetLng : custLng
+
     let calculatedDistM =
       targetOrder.getFloat('entrega_fora_pin_m') ||
       targetOrder.getFloat('entrega_distance_to_pin_m') ||
       0
 
-    if (custLat !== 0 && custLng !== 0 && delLat !== 0 && delLng !== 0) {
-      const dLat = ((custLat - delLat) * Math.PI) / 180
-      const dLon = ((custLng - delLng) * Math.PI) / 180
+    if (effectiveRefLat !== 0 && effectiveRefLng !== 0 && delLat !== 0 && delLng !== 0) {
+      const dLat = ((effectiveRefLat - delLat) * Math.PI) / 180
+      const dLon = ((effectiveRefLng - delLng) * Math.PI) / 180
       const aH =
         Math.sin(dLat / 2) * Math.sin(dLat / 2) +
         Math.cos((delLat * Math.PI) / 180) *
-          Math.cos((custLat * Math.PI) / 180) *
+          Math.cos((effectiveRefLat * Math.PI) / 180) *
           Math.sin(dLon / 2) *
           Math.sin(dLon / 2)
       const realDistM = Math.round(6371000 * 2 * Math.atan2(Math.sqrt(aH), Math.sqrt(1 - aH)))
 
       if (realDistM <= 150) {
-        // Entrega realizada no pin cadastrado (<= 150m) — 100% falso positivo de desvio
+        // Entrega realizada no endereço de referência escolhido (<= 150m) — 100% falso positivo de desvio
         calculatedDistM = 0
         targetOrder.set('entrega_fora_pin_m', 0)
         targetOrder.set('entrega_distance_to_pin_m', 0)
         geofenceFlag = 'ok'
         targetOrder.set('entrega_geofence_flag', 'ok')
         console.log(
-          `[orders_guard] Sanidade v0.0.473: entrega de ${trackingCode} confirmada dentro do pin cadastrado do cliente (distância real: ${realDistM}m). Falso positivo cancelado e flag zerada para 'ok'.`,
+          `[orders_guard] Sanidade v0.0.530: entrega de ${trackingCode} confirmada dentro do endereço escolhido do pedido (distância real: ${realDistM}m). Falso positivo cancelado e flag zerada para 'ok'.`,
         )
       } else {
-        // Recalcular com a distância matemática canônica
+        // Recalcular com a distância matemática canônica contra o endereço escolhido
         calculatedDistM = realDistM
         targetOrder.set('entrega_fora_pin_m', realDistM)
       }
@@ -455,13 +503,17 @@ onRecordUpdateRequest((e) => {
       }
     }
 
-    // BLOCO NOVO (decisão do dono 12/10):
+    // BLOCO NOVO (decisão do dono 12/10 + v0.0.530):
     // Ao confirmar entrega (status 'delivered'), o pin do entregador no local preenche coordenadas
     // APENAS se o cliente ainda não possuir nenhuma coordenada e não for entrega pendente de aprovação (>500m).
     // PROIBIDO sobrescrever coordenadas de cliente antes da aprovação do alerta pela central!
+    // REGRA v0.0.530: NUNCA preencher coordenadas raiz do cliente se o pedido usava endereço alternativo (customer_address_id preenchido)!
+    const isOrderWithAlternativeAddress = Boolean(orderCustomerAddressId)
+
     if (
       newStatus === 'delivered' &&
       customerIdVal &&
+      !isOrderWithAlternativeAddress &&
       geofenceFlag !== 'pendente_aprovacao_gt_500m'
     ) {
       try {
