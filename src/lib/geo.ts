@@ -31,10 +31,6 @@ export function isSuspectPin(
   lng: number | null | undefined,
   notes?: string | null,
 ): boolean {
-  if (notes && typeof notes === 'string' && notes.toLowerCase().includes('fallback detectado')) {
-    return true
-  }
-
   if (lat === null || lat === undefined || isNaN(lat)) return true
   if (lng === null || lng === undefined || isNaN(lng)) return true
 
@@ -48,7 +44,102 @@ export function isSuspectPin(
     return true
   }
 
+  // Se a coordenada for de fato a de contingência ou 0,0 já foi bloqueado acima.
+  // A nota histórica 'fallback detectado' só é considerada suspeita se a coordenada for exatamente nula/inválida
+  // ou coincidir com o ponto de contingência. Se possui coordenada real e válida, não deve ser bloqueado.
+  if (notes && typeof notes === 'string' && notes.toLowerCase().includes('fallback detectado')) {
+    // Se caiu aqui, a coordenada é numérica finita e não é o ponto de contingência.
+    // Preservamos falso para não bloquear clientes que já possuem coordenadas reais calibradas ou no pedido.
+    return false
+  }
+
   return false
+}
+
+/**
+ * Interface auxiliar para resolução completa de coordenadas de uma parada/pedido.
+ */
+export interface OrderStopCoords {
+  lat: number
+  lng: number
+  source: 'order_end_address' | 'customer_address' | 'customer_root'
+}
+
+/**
+ * Resolve as coordenadas de destino de um pedido com a prioridade estrita:
+ * 1. Endereço gravado diretamente no pedido (end_address_lat / end_address_lng)
+ * 2. Endereço selecionado pelo customer_address_id
+ * 3. Campos legados do pedido
+ * 4. Coordenadas do cliente (lat / lng raiz)
+ *
+ * Retorna { lat, lng, source } se encontrar coordenada válida e não-suspeita, ou null se não houver nenhuma.
+ */
+export function resolveOrderDestinationCoords(order: any, customer?: any): OrderStopCoords | null {
+  if (!order) return null
+
+  const parseCoords = (valLat: any, valLng: any): { lat: number; lng: number } | null => {
+    const nLat =
+      typeof valLat === 'string' ? parseFloat(valLat) : typeof valLat === 'number' ? valLat : NaN
+    const nLng =
+      typeof valLng === 'string' ? parseFloat(valLng) : typeof valLng === 'number' ? valLng : NaN
+    if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) return null
+    if (nLat === 0 && nLng === 0) return null
+    if (nLat < -90 || nLat > 90 || nLng < -180 || nLng > 180) return null
+    if (isSuspectPin(nLat, nLng)) return null
+    return { lat: nLat, lng: nLng }
+  }
+
+  // 1. Endereço gravado diretamente no pedido
+  const direct = parseCoords(order.end_address_lat, order.end_address_lng)
+  if (direct) {
+    return { ...direct, source: 'order_end_address' }
+  }
+
+  // 2. Endereço associado via customer_address_id
+  const targetCust =
+    customer || order.expand?.customer_id || order.expand?.customer || order.customer
+  if (order.customer_address_id && targetCust) {
+    const custAddresses = targetCust.addresses || order._customerAddresses
+    if (Array.isArray(custAddresses)) {
+      const matched = custAddresses.find((a: any) => a && a.id === order.customer_address_id)
+      if (matched) {
+        const fromAddr = parseCoords(matched.lat, matched.lng)
+        if (fromAddr) {
+          return { ...fromAddr, source: 'customer_address' }
+        }
+      }
+    }
+  }
+
+  // 3. Campos legados do pedido
+  const legacyCandidates = [
+    { lat: order.customer_latitude, lng: order.customer_longitude },
+    { lat: order.destination_latitude, lng: order.destination_longitude },
+    { lat: order.lat, lng: order.lng },
+    { lat: order.latitude, lng: order.longitude },
+  ]
+  for (const leg of legacyCandidates) {
+    const fromLeg = parseCoords(leg.lat, leg.lng)
+    if (fromLeg) {
+      return { ...fromLeg, source: 'order_end_address' }
+    }
+  }
+
+  // 4. Coordenadas do cliente (lat/lng raiz)
+  if (targetCust) {
+    const rootCandidates = [
+      { lat: targetCust.lat, lng: targetCust.lng },
+      { lat: targetCust.latitude, lng: targetCust.longitude },
+    ]
+    for (const root of rootCandidates) {
+      const fromRoot = parseCoords(root.lat, root.lng)
+      if (fromRoot) {
+        return { ...fromRoot, source: 'customer_root' }
+      }
+    }
+  }
+
+  return null
 }
 
 /**

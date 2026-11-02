@@ -1541,12 +1541,19 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
     }
 
     // BLOQUEIO RIGOROSO DE PIN SUSPEITO / SEM PIN CALIBRADO:
-    // Não permitir gerar nem salvar rota se qualquer pedido selecionado tiver pin suspeito
-    // (dispersão aleatória removida por completo).
+    // Resolução: 1º endereço gravado no pedido (end_address_lat/lng, customer_address_id),
+    // depois coordenadas do cliente (lat/lng raiz).
+    // Só bloquear quando NENHUMA das fontes possuir coordenada válida.
     for (const ord of ordersToOptimize) {
       const cust = localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
       const customerName = cust?.name || ord.end_address_name || 'Cliente'
-      const cleanDest = MapDataService.getOrderDestination(ord)
+      const cleanDest = MapDataService.getOrderDestination({
+        ...ord,
+        expand: {
+          ...ord.expand,
+          customer_id: cust || ord.expand?.customer_id,
+        },
+      })
       const lat = cleanDest ? cleanDest.lat : null
       const lng = cleanDest ? cleanDest.lng : null
       const notes = ord.notes || cust?.notes || ''
@@ -1624,7 +1631,13 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
 
       for (const ord of ordersToOptimize) {
         const cust = localCustomers.find((c) => c.id === ord.customer_id) || ord.expand?.customer_id
-        const cleanDest = MapDataService.getOrderDestination(ord)
+        const cleanDest = MapDataService.getOrderDestination({
+          ...ord,
+          expand: {
+            ...ord.expand,
+            customer_id: cust || ord.expand?.customer_id,
+          },
+        })
 
         if (cleanDest) {
           validOrdersWithCoords.push({
@@ -2681,11 +2694,31 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
         const cust =
           localCustomers.find((c) => c.id === ord?.customer_id) || ord?.expand?.customer_id
         const customerName = stop.customer_name || cust?.name || 'Cliente'
-        const lat = stop.lat ?? cust?.lat ?? null
-        const lng = stop.lng ?? cust?.lng ?? null
+        // Resolução: parada já tem stop.lat/lng calculados a partir do pedido/cliente;
+        // caso ausente, reavaliar via MapDataService no pedido e depois no cliente
+        let resolvedLat = typeof stop.lat === 'number' && !isNaN(stop.lat) ? stop.lat : null
+        let resolvedLng = typeof stop.lng === 'number' && !isNaN(stop.lng) ? stop.lng : null
+        if (resolvedLat === null || resolvedLng === null) {
+          const cleanDest = ord
+            ? MapDataService.getOrderDestination({
+                ...ord,
+                expand: {
+                  ...ord.expand,
+                  customer_id: cust || ord.expand?.customer_id,
+                },
+              })
+            : null
+          if (cleanDest) {
+            resolvedLat = cleanDest.lat
+            resolvedLng = cleanDest.lng
+          } else {
+            resolvedLat = cust?.lat ?? null
+            resolvedLng = cust?.lng ?? null
+          }
+        }
         const notes = ord?.notes || cust?.notes || ''
 
-        if (isSuspectPin(lat, lng, notes)) {
+        if (isSuspectPin(resolvedLat, resolvedLng, notes)) {
           toast.error(`Cliente sem pin calibrado — calibre antes: ${customerName}`, {
             description: 'Ajuste o pin no mapa do cliente antes de salvar a rota.',
             duration: 7000,
@@ -2698,7 +2731,7 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
               collection: 'orders',
               record_id: stop.id,
               field: 'pin_calibration',
-              old_value: `${lat ?? 'null'}, ${lng ?? 'null'}`,
+              old_value: `${resolvedLat ?? 'null'}, ${resolvedLng ?? 'null'}`,
               new_value: 'calibration_required',
               courier_id: plan.courier.id,
               metadata: {
@@ -2708,8 +2741,8 @@ export const RouteOptimizerModal: React.FC<RouteOptimizerModalProps> = ({
                 order_id: stop.id,
                 tracking_code: stop.tracking_code,
                 reason: 'Bloqueio ao salvar rota: cliente sem pin calibrado',
-                lat,
-                lng,
+                lat: resolvedLat,
+                lng: resolvedLng,
                 notes,
               },
             })
