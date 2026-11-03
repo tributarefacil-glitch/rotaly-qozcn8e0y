@@ -2196,19 +2196,23 @@ export const deliveryService = {
   async getLatestLocations(filter = '', sort = '-created', minutesWindow = 1440) {
     // Sanitização técnica: a coleção PocketBase 'locations' usa 'user_id', NÃO 'courier_id'
     const sanitizedFilter = (filter || '').replace(/\bcourier_id\b/g, 'user_id')
-    let finalFilter = sanitizedFilter
+    const zombieFilter = '(accuracy = null || accuracy < 100)'
+    let finalFilter = sanitizedFilter ? `(${sanitizedFilter}) && (${zombieFilter})` : zombieFilter
     if (minutesWindow && minutesWindow > 0) {
       const windowStartIso = new Date(Date.now() - minutesWindow * 60 * 1000).toISOString()
       const timeFilter = `created >= '${windowStartIso}'`
-      finalFilter = sanitizedFilter ? `(${sanitizedFilter}) && (${timeFilter})` : timeFilter
+      finalFilter = `(${finalFilter}) && (${timeFilter})`
     }
 
-    return pb.collection<LocationRecord>('locations').getFullList({
+    const rawList = await pb.collection<LocationRecord>('locations').getFullList({
       filter: finalFilter,
       sort,
       expand: 'user_id',
       requestKey: null,
     })
+
+    // Filtro adicional em memória: descarta pings com accuracy >= 100 por segurança extra
+    return rawList.filter((loc) => typeof loc.accuracy !== 'number' || loc.accuracy < 100)
   },
 
   /**
@@ -2224,7 +2228,7 @@ export const deliveryService = {
     if (!cleanUserId) return []
 
     const windowStartIso = new Date(Date.now() - minutesWindow * 60 * 1000).toISOString()
-    const filter = `user_id = '${cleanUserId}' && created >= '${windowStartIso}'`
+    const filter = `user_id = '${cleanUserId}' && created >= '${windowStartIso}' && (accuracy = null || accuracy < 100)`
 
     try {
       const res = await pb.collection<LocationRecord>('locations').getList(1, 50, {
@@ -2232,7 +2236,9 @@ export const deliveryService = {
         sort: '-created',
         requestKey: null,
       })
-      return res.items || []
+      return (res.items || []).filter(
+        (loc) => typeof loc.accuracy !== 'number' || loc.accuracy < 100,
+      )
     } catch (err) {
       console.warn('[getRecentLocationsForCourier] Falha ao buscar localizações recentes:', err)
       return []
@@ -2252,7 +2258,7 @@ export const deliveryService = {
     const cleanUserId = params.courierUserId ? String(params.courierUserId).trim() : ''
     if (!cleanUserId) return []
 
-    const filters: string[] = [`user_id = '${cleanUserId}'`]
+    const filters: string[] = [`user_id = '${cleanUserId}'`, '(accuracy = null || accuracy < 100)']
 
     const formatPbDate = (val: string | Date): string => {
       if (typeof val === 'string') {
@@ -2287,7 +2293,7 @@ export const deliveryService = {
         sort: '+created',
         requestKey: null,
       })
-      return records
+      return (records || []).filter((loc) => typeof loc.accuracy !== 'number' || loc.accuracy < 100)
     } catch (err: any) {
       console.warn('[fetchCourierRoutePings] Erro ao buscar pings por user_id e janela:', err)
       return []

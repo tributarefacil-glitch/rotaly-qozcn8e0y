@@ -158,8 +158,9 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
         } catch {
           rawPings = locationsPool.filter((loc) => {
             if (loc.user_id !== courierId) return false
-            const t = new Date(loc.created).getTime()
-            return t >= startTs && t <= endTs
+            if (typeof loc.accuracy === 'number' && loc.accuracy >= 100) return false
+            const pingTime = new Date(loc.created).getTime()
+            return pingTime >= startTs && pingTime <= endTs
           })
         }
 
@@ -171,7 +172,7 @@ export const AuditRouteMapModal: React.FC<AuditRouteMapModalProps> = ({
         for (const loc of chronologicalPings) {
           const clean = MapDataService.cleanCoords(loc.lat, loc.lng)
           if (!clean) continue
-          if (typeof loc.accuracy === 'number' && loc.accuracy > 100) continue
+          if (typeof loc.accuracy === 'number' && loc.accuracy >= 100) continue
           sanitizedPings.push({
             ...loc,
             lat: clean.lat,

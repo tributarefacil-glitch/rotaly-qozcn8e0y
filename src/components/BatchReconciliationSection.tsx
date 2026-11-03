@@ -131,9 +131,10 @@ export function BatchReconciliationSection({
         let gpsPointsCount = 0
 
         if (batchStart > 0 && batchEnd > 0 && batchEnd >= batchStart) {
-          // Filtrar pontos de GPS do entregador dentro da janela do lote
+          // Filtrar pontos de GPS do entregador dentro da janela do lote (ignorando pings com accuracy >= 100)
           const batchGpsPoints = locations.filter((loc) => {
             if (loc.user_id !== courierId) return false
+            if (typeof loc.accuracy === 'number' && loc.accuracy >= 100) return false
             const t = new Date(loc.created).getTime()
             return t >= batchStart - 60000 && t <= batchEnd + 60000
           })

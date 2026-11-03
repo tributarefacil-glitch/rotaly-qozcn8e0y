@@ -1224,7 +1224,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     )
 
     return couriers.map((courier) => {
-      const courierLocs = locations.filter((l) => l.user_id === courier.id)
+      const courierLocs = locations.filter(
+        (l) => l.user_id === courier.id && (typeof l.accuracy !== 'number' || l.accuracy < 100),
+      )
       const latestLoc =
         courierLocs.length > 1
           ? [...courierLocs].sort(
@@ -4044,6 +4046,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         const drawerCourierPings = locations
           .filter((loc) => {
             if (loc.user_id !== courierData.courier.id) return false
+            if (typeof loc.accuracy === 'number' && loc.accuracy >= 100) return false
             if (drawerRouteStartTime > 0) {
               const pingTime = parseSafeTimestamp(loc.created || loc.updated)
               if (pingTime > 0 && pingTime < drawerRouteStartTime) return false

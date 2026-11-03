@@ -340,8 +340,8 @@ export function sanitizeGpsPoints(points: LocationRecord[]): {
       noiseCount++
       return false
     }
-    // Descartar se precisão GPS informada for ruim (> 100m)
-    if (typeof p.accuracy === 'number' && p.accuracy > 100) {
+    // Descartar se precisão GPS informada for ruim (>= 100m) ou zumbi (accuracy 200)
+    if (typeof p.accuracy === 'number' && p.accuracy >= 100) {
       noiseCount++
       return false
     }

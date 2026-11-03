@@ -155,10 +155,13 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
       return
     }
 
-    // Busca estritamente a última location real do entregador na collection locations
+    // Busca estritamente a última location real do entregador na collection locations (descartando pings zumbis com accuracy >= 100)
     const courierLocs = (locations || []).filter(
       (l) =>
-        l.user_id === selectedCourier.id && typeof l.lat === 'number' && typeof l.lng === 'number',
+        l.user_id === selectedCourier.id &&
+        typeof l.lat === 'number' &&
+        typeof l.lng === 'number' &&
+        (typeof l.accuracy !== 'number' || l.accuracy < 100),
     )
     const latestCourierLocation =
       courierLocs.length > 0
