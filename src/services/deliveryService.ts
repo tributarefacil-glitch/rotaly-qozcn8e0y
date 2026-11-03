@@ -112,10 +112,10 @@ export function sanitizeLocationPayload(params: {
 
   // FILTROS DE SANIDADE DE TELEMETRIA:
   // Rejeição ou descarte de velocidade impossível (> 200 km/h)
-  // Rejeição de accuracy absurda (> 100m)
-  if (typeof accuracy === 'number' && !isNaN(accuracy) && accuracy > 100) {
+  // Rejeição de accuracy absurda ou zumbi (accuracy >= 100m)
+  if (typeof accuracy === 'number' && !isNaN(accuracy) && accuracy >= 100) {
     throw new Error(
-      `[sanitizeLocationPayload] Ping descartado por baixa precisão (accuracy=${accuracy}m > 100m)`,
+      `[sanitizeLocationPayload] Ping descartado por baixa precisão ou zumbi (accuracy=${accuracy}m >= 100m)`,
     )
   }
 
@@ -2339,16 +2339,29 @@ export const deliveryService = {
         locationTimestamp: extra?.location_timestamp,
       })
 
-      // Rejeição de saltos impossíveis (> 200 km/h implícito entre pings consecutivos)
+      // Rejeição de coordenadas congeladas e saltos impossíveis (> 200 km/h implícito entre pings consecutivos)
       const prevCached = this._lastCourierLocationRecordMap.get(userId)
       if (prevCached && prevCached.timestamp) {
-        const deltaSec = Math.max(1, (now - prevCached.timestamp) / 1000)
         const distMeters = haversineDistanceMeters(
           prevCached.lat,
           prevCached.lng,
           sanitizedPayload.lat!,
           sanitizedPayload.lng!,
         )
+
+        // Se a coordenada for idêntica ou a distância for desprezível (< 0.5m)
+        const isFrozen =
+          (Math.abs(prevCached.lat - sanitizedPayload.lat!) < 0.000001 &&
+            Math.abs(prevCached.lng - sanitizedPayload.lng!) < 0.000001) ||
+          distMeters < 0.5
+
+        if (isFrozen) {
+          throw new Error(
+            `[sanitizeLocationPayload] Coordenada congelada descartada (dist=${distMeters.toFixed(2)}m)`,
+          )
+        }
+
+        const deltaSec = Math.max(1, (now - prevCached.timestamp) / 1000)
         const speedKmh = (distMeters / deltaSec) * 3.6
         if (speedKmh > 200) {
           console.warn('[TELEMETRIA] Salto impossível descartado (>200 km/h):', {

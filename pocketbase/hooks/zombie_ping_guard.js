@@ -27,9 +27,21 @@ onRecordCreate('locations', (e) => {
   const rec = e.record
 
   const accuracy = rec.getFloat('accuracy')
-  if (!(accuracy >= 100)) {
-    e.next()
-    return
+
+  // Descarte imediato de accuracy >= 200 (impossível ser leitura real de GPS em moto)
+  if (accuracy >= 200) {
+    throw new ApiError(
+      400,
+      'Ping de telemetria rejeitado: accuracy >= 200m (impossivel leitura real de GPS em moto).',
+    )
+  }
+
+  // Descarte imediato de accuracy >= 100
+  if (accuracy >= 100) {
+    throw new ApiError(
+      400,
+      'Ping de telemetria rejeitado: accuracy >= 100m (baixa precisao / sem fix de GPS).',
+    )
   }
 
   // Pings do buffer offline são reenvios cronológicos legítimos: fora do escopo desta guarda.
@@ -55,31 +67,31 @@ onRecordCreate('locations', (e) => {
   }
 
   // Janela de 10 minutos: qualquer ping anterior do mesmo usuário com coordenadas idênticas
-  const sinceIso = new Date(Date.now() - 10 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19)
+  const sinceIso = new Date(Date.now() - 10 * 60 * 1000)
+    .toISOString()
+    .replace('T', ' ')
+    .slice(0, 19)
 
   try {
     const recent = $app.findRecordsByFilter(
       'locations',
-      `user_id = "${userId}" && created >= "${sinceIso} 00:00:00.000Z"`.replace(
-        `"${sinceIso} 00:00:00.000Z"`,
-        `"${sinceIso}"`,
-      ) + ` && accuracy >= 100`,
+      `user_id = "${userId}" && created >= "${sinceIso}"`,
       '-created',
-      50,
+      10,
       0,
     )
 
-    for (let i = 0; i < recent.length; i++) {
-      const prev = recent[i]
+    if (recent && recent.length > 0) {
+      const prev = recent[0]
       const prevLat = round6(prev.getFloat('lat'))
       const prevLng = round6(prev.getFloat('lng'))
       if (prevLat === lat && prevLng === lng) {
         console.log(
-          `[zombie_ping_guard] Ping zumbi rejeitado: user=${userId} accuracy=${accuracy} lat=${lat} lng=${lng} (coordenadas repetidas na janela de 10 min).`,
+          `[zombie_ping_guard] Ping com coordenada identica rejeitado: user=${userId} lat=${lat} lng=${lng}.`,
         )
         throw new ApiError(
           400,
-          'Ping de telemetria rejeitado: accuracy >= 100m com coordenadas repetidas (ping zumbi de GPS em cache).',
+          'Ping de telemetria rejeitado: coordenadas exatamente idênticas ao ping anterior do mesmo entregador.',
         )
       }
     }

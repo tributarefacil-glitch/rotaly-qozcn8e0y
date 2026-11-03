@@ -1015,11 +1015,11 @@ export default function CourierApp() {
 
       const now = Date.now()
 
-      // FILTRO DE SANIDADE DE TELEMETRIA ( accuracy > 100m, vel > 200 km/h, saltos impossíveis )
-      // Descartar pings absurdos antes de qualquer persistência ou cálculo
-      if (typeof accuracyVal === 'number' && accuracyVal > 100) {
+      // FILTRO DE SANIDADE DE TELEMETRIA:
+      // Descartar pings absurdos ou zumbis (accuracy >= 100m, vel > 200 km/h, saltos impossíveis, coordenadas congeladas)
+      if (typeof accuracyVal === 'number' && accuracyVal >= 100) {
         console.warn(
-          '[TELEMETRIA] Ping descartado por baixa precisão (accuracy > 100m):',
+          '[TELEMETRIA] Ping descartado por baixa precisão ou zumbi (accuracy >= 100m):',
           accuracyVal,
         )
         return
@@ -1027,8 +1027,17 @@ export default function CourierApp() {
 
       const last = lastRecordedGpsRef.current
       if (last && last.timestamp) {
-        const deltaSec = Math.max(0.5, (now - last.timestamp) / 1000)
         const distMeters = haversineDistanceMeters(last.lat, last.lng, lat, lng)
+        const isFrozenCoord =
+          (Math.abs(last.lat - lat) < 0.000001 && Math.abs(last.lng - lng) < 0.000001) ||
+          distMeters < 0.5
+        if (isFrozenCoord) {
+          // Coordenada congelada: atualiza apenas referência local sem persistir no backend
+          lastRecordedGpsRef.current = { lat, lng, accuracy: accuracyVal, timestamp: now }
+          return
+        }
+
+        const deltaSec = Math.max(0.5, (now - last.timestamp) / 1000)
         const speedKmh = (distMeters / deltaSec) * 3.6
         if (speedKmh > 200) {
           console.warn('[TELEMETRIA] Salto/teleporte impossível descartado (>200 km/h):', {

@@ -361,6 +361,12 @@ class NativeGpsBridgeService {
    * Emite uma coordenada para todos os ouvintes registrados
    */
   public emitCoordinate(coord: NativeGpsCoordinate) {
+    // Guarda de sanidade: rejeitar pings zumbi com accuracy >= 100 antes de emitir para listeners
+    if (typeof coord.accuracy === 'number' && coord.accuracy >= 100) {
+      console.warn('[NativeGpsBridge] Coordenada descartada por accuracy >= 100m:', coord.accuracy)
+      return
+    }
+
     for (const listener of this.listeners) {
       try {
         listener(coord)
