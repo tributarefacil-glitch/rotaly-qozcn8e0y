@@ -121,6 +121,7 @@ class NativeGpsBridgeService {
   public getRealTrackingState(): {
     isTracking: boolean
     lastPingTimestamp: number
+    lastLocationTime: number
     lastPingAgeSeconds: number
     isDegraded: boolean
   } {
@@ -129,9 +130,11 @@ class NativeGpsBridgeService {
         const raw = window.RotalyNativeGps.isTrackingActive()
         if (typeof raw === 'string') {
           const parsed = JSON.parse(raw)
+          const ts = Number(parsed.lastPingTimestamp || parsed.lastLocationTime) || 0
           return {
             isTracking: Boolean(parsed.isTracking),
-            lastPingTimestamp: Number(parsed.lastPingTimestamp) || 0,
+            lastPingTimestamp: ts,
+            lastLocationTime: ts,
             lastPingAgeSeconds: Number(parsed.lastPingAgeSeconds) || -1,
             isDegraded: Boolean(parsed.isDegraded),
           }
@@ -140,6 +143,7 @@ class NativeGpsBridgeService {
         return {
           isTracking: active,
           lastPingTimestamp: 0,
+          lastLocationTime: 0,
           lastPingAgeSeconds: -1,
           isDegraded: false,
         }
@@ -150,6 +154,7 @@ class NativeGpsBridgeService {
     return {
       isTracking: this.isTracking,
       lastPingTimestamp: 0,
+      lastLocationTime: 0,
       lastPingAgeSeconds: -1,
       isDegraded: false,
     }

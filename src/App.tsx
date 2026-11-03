@@ -14,6 +14,10 @@ import RegisterPage from './pages/RegisterPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import PendingApprovalPage from './pages/PendingApprovalPage'
 import { Suspense, lazy, useState, useEffect } from 'react'
+import { appVersionService, VersionCheckResult } from '@/services/appVersionService'
+import { otaUpdaterService } from '@/services/otaUpdaterService'
+import { MinVersionGuardModal } from '@/components/MinVersionGuardModal'
+import { APP_VERSION } from '@/lib/version'
 import CourierFuelPage from './pages/CourierFuelPage'
 import CourierHistoryPage from './pages/CourierHistoryPage'
 import CourierProfilePage from './pages/CourierProfilePage'
@@ -500,6 +504,72 @@ function SettingsRoute() {
   return <AdminDashboard defaultTab="settings" />
 }
 
+// Componente de guarda de versão e OTA ativo em toda a aplicação
+function GlobalVersionGuard() {
+  const [versionCheck, setVersionCheck] = useState<VersionCheckResult | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+
+  const runVersionCheck = async () => {
+    try {
+      const res = await appVersionService.checkVersion(APP_VERSION)
+      setVersionCheck(res)
+
+      // Se a versão atual estiver abaixo da versão mínima (bloqueio obrigatório)
+      // ou se houver atualização crítica disponível
+      if (res.isBelowMinimum) {
+        setIsModalOpen(true)
+      } else if (res.isOutdated) {
+        // Tentar atualização OTA silenciosa das telas primeiro se estiver no APK nativo
+        if (otaUpdaterService.isNativeApk()) {
+          const otaResult = await otaUpdaterService.checkForUpdate()
+          if (otaResult.hasUpdate) {
+            console.info(
+              `[OTA LiveUpdate] Versão nova detectada (${otaResult.targetVersion}). Atualizando telas...`,
+            )
+            await otaUpdaterService.applyUpdate()
+            return
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[GlobalVersionGuard] Erro ao consultar versão:', e)
+    }
+  }
+
+  useEffect(() => {
+    runVersionCheck()
+
+    // Reavaliar quando a janela voltar ao foco
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        runVersionCheck()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [])
+
+  if (!versionCheck || !versionCheck.isBelowMinimum) {
+    return null
+  }
+
+  return (
+    <MinVersionGuardModal
+      isOpen={isModalOpen}
+      isBlocking={versionCheck.isBelowMinimum}
+      currentVersion={versionCheck.currentVersion}
+      minVersion={versionCheck.minVersion}
+      latestVersion={versionCheck.latestVersion}
+      downloadUrl={versionCheck.downloadUrl}
+      releaseNotes={versionCheck.releaseNotes}
+      onClose={() => setIsModalOpen(false)}
+      onCheckAgain={runVersionCheck}
+    />
+  )
+}
+
 const App = () => (
   <BrowserRouter>
     <GlobalErrorBoundary>
@@ -508,6 +578,7 @@ const App = () => (
           <TooltipProvider>
             <Toaster />
             <Sonner richColors position="top-right" />
+            <GlobalVersionGuard />
             <Routes>
               {/* Página Pública de Download do APK Android Nativo para Entregadores */}
               <Route
