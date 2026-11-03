@@ -122,15 +122,17 @@ onRecordBeforeUpdate((e) => {
   e.next()
 }, 'orders')
 
-// Endpoint customizado seguro para verificação atômica de status do entregador antes de iniciar
-routerAdd('GET', '/backend/v1/courier/check-active-route', (c) => {
+// Endpoint customizado seguro para verificação atômica de status do entregador antes de iniciar.
+// Suporta /backend/v1/check-active-route e /backend/v1/courier/check-active-route com o mesmo contrato.
+const handleCheckActiveRoute = (c) => {
   const authRecord =
     (typeof c.Auth === 'function' ? c.Auth() : null) || c.auth || c.get('authRecord')
   if (!authRecord) {
     return c.json(401, { error: 'Requer autenticação.' })
   }
 
-  const courierId = (c.requestInfo().query.courier_id || authRecord.id || '').trim()
+  const queryInfo = c.requestInfo()?.query || {}
+  const courierId = (queryInfo.courier_id || authRecord.id || '').trim()
   if (!courierId) {
     return c.json(400, { error: 'courier_id é obrigatório.' })
   }
@@ -146,9 +148,14 @@ routerAdd('GET', '/backend/v1/courier/check-active-route', (c) => {
 
     if (!activeOrders || activeOrders.length === 0) {
       return c.json(200, {
+        active: false,
         has_active_route: false,
+        route_id: null,
         active_orders_count: 0,
+        pending_deliveries_count: 0,
         active_batch_key: null,
+        route_started_at: null,
+        first_order_id: null,
       })
     }
 
@@ -161,7 +168,9 @@ routerAdd('GET', '/backend/v1/courier/check-active-route', (c) => {
     ).length
 
     return c.json(200, {
+      active: true,
       has_active_route: true,
+      route_id: firstActive.id,
       active_orders_count: activeOrders.length,
       pending_deliveries_count: pendingDeliveries,
       active_batch_key: batchKey,
@@ -172,4 +181,7 @@ routerAdd('GET', '/backend/v1/courier/check-active-route', (c) => {
     console.error('[check-active-route] Erro ao consultar rota ativa:', err)
     return c.json(500, { error: 'Erro ao verificar rota ativa do entregador.' })
   }
-})
+}
+
+routerAdd('GET', '/backend/v1/courier/check-active-route', handleCheckActiveRoute)
+routerAdd('GET', '/backend/v1/check-active-route', handleCheckActiveRoute)

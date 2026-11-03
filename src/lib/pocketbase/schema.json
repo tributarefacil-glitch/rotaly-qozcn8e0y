@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02T20:34:31.831Z",
+  "generatedAt": "2026-11-03T05:33:03.928Z",
   "collections": [
     {
       "name": "users",
@@ -2938,6 +2938,97 @@
         "CREATE INDEX idx_manual_adj_courier ON courier_period_manual_adjustments (courier_id)",
         "CREATE INDEX idx_manual_adj_dates ON courier_period_manual_adjustments (periodo_inicio, periodo_fim)"
       ]
+    },
+    {
+      "name": "route_batches",
+      "type": "view",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": null,
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "route_batch_key",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "km_viario_total",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "km_gps_total",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "km_oficial",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "pings_count",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gaps_count",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "gaps_total_seconds",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["processed", "yellow_flag", "blocked_admin_decision"]
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": []
     }
   ]
 }

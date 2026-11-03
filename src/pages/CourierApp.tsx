@@ -955,18 +955,31 @@ export default function CourierApp() {
       setGpsStatus('active')
       setGpsFailureDetail('none')
 
-      // REGRA FONTE ÚNICA NO APK:
-      // Quando o Foreground Service nativo está ativo no APK Android (RotalyGpsForegroundService),
-      // a camada nativa é a fonte exclusiva que grava os pings diretamente no PocketBase (com location_timestamp).
-      // A captura webview/JS NUNCA deve gravar pings concorrentes na coleção 'locations' para não duplicar telemetria.
+      // GPS À PROVA DE SILÊNCIO (REGRA ATUALIZADA):
+      // O serviço nativo (Foreground Service) é a fonte primária quando está REALMENTE entregando pings.
+      // Se não houver pings confirmados do nativo há mais de 3 minutos (ou se o nativo nunca enviou),
+      // a camada JavaScript assume automaticamente a gravação em locations para garantir telemetria contínua.
+      // Quando o nativo retoma a entrega, a camada JS volta a ficar em espera.
+      // O backend deduplica fluxos intercalados (janela 5s/10m com prioridade ao nativo).
       if (nativeGpsBridge.isNativeEnvironment()) {
         const trackingState = nativeGpsBridge.getRealTrackingState?.()
-        if (trackingState?.isTracking) {
-          // Apenas atualiza estado local da UI, nunca envia payload redundante para o backend
+        const lastNativePing = trackingState?.lastLocationTime || 0
+        const isNativeActivelyDelivering =
+          trackingState?.isTracking &&
+          lastNativePing > 0 &&
+          Date.now() - lastNativePing < 3 * 60 * 1000
+
+        if (isNativeActivelyDelivering) {
+          // Nativo ativo e entregando pings frescos: apenas atualiza UI local sem duplicar
           const nowTs = Date.now()
           setLastSuccessfulPingTimestamp(nowTs)
           setMinutesSinceLastPing(0)
           return
+        } else {
+          // Nativo silencioso (>3min) ou inativo: fallback automático via camada JS
+          console.warn(
+            '[GPS Fallback JS] Nativo silencioso ou ausente há >3 min. Camada JavaScript gravando telemetria...',
+          )
         }
       }
 

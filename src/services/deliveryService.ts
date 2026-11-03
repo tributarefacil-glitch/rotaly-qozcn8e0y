@@ -2961,22 +2961,40 @@ export const deliveryService = {
     routeStartedAt: string | null
   }> {
     try {
-      // 1. Consulta rápida ao endpoint customizado no backend
+      // 1. Consulta rápida ao endpoint customizado no backend (/backend/v1/check-active-route ou /backend/v1/courier/check-active-route)
       try {
-        const res = await pb.send<{
-          has_active_route: boolean
-          active_orders_count: number
-          pending_deliveries_count: number
-          active_batch_key: string | null
-          route_started_at: string | null
-        }>('/backend/v1/courier/check-active-route', {
-          method: 'GET',
-          params: { courier_id: courierId },
-        })
+        const res = await pb
+          .send<{
+            active?: boolean
+            has_active_route?: boolean
+            route_id?: string | null
+            active_orders_count?: number
+            pending_deliveries_count?: number
+            active_batch_key?: string | null
+            route_started_at?: string | null
+          }>('/backend/v1/check-active-route', {
+            method: 'GET',
+            params: { courier_id: courierId },
+          })
+          .catch(() => {
+            return pb.send<{
+              active?: boolean
+              has_active_route?: boolean
+              route_id?: string | null
+              active_orders_count?: number
+              pending_deliveries_count?: number
+              active_batch_key?: string | null
+              route_started_at?: string | null
+            }>('/backend/v1/courier/check-active-route', {
+              method: 'GET',
+              params: { courier_id: courierId },
+            })
+          })
         if (res) {
+          const isActive = Boolean(res.active ?? res.has_active_route)
           return {
-            hasActiveRoute: Boolean(res.has_active_route),
-            activeOrdersCount: res.active_orders_count || 0,
+            hasActiveRoute: isActive,
+            activeOrdersCount: res.active_orders_count || (isActive ? 1 : 0),
             pendingDeliveriesCount: res.pending_deliveries_count || 0,
             activeBatchKey: res.active_batch_key || null,
             routeStartedAt: res.route_started_at || null,
