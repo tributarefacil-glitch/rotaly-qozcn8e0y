@@ -20,24 +20,36 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    def keystoreFilePath = System.getenv("KEYSTORE_FILE")
-    def keystorePassword = System.getenv("KEYSTORE_PASSWORD")
-    def keyAlias = System.getenv("KEY_ALIAS")
-    def keyPassword = System.getenv("KEY_PASSWORD")
+    def rawKeystoreFile = System.getenv("KEYSTORE_FILE") ?: System.getenv("KEYSTORE_PATH")
+    def rawStorePassword = System.getenv("KEYSTORE_PASSWORD") ?: System.getenv("STORE_PASSWORD")
+    def rawKeyAlias = System.getenv("KEY_ALIAS") ?: System.getenv("ALIAS")
+    def rawKeyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("KEYSTORE_KEY_PASSWORD")
 
-    def hasKeystoreFile = keystoreFilePath != null && !keystoreFilePath.trim().isEmpty() && file(keystoreFilePath).exists()
-    def hasKeystoreCredentials = keystorePassword != null && !keystorePassword.trim().isEmpty() &&
-                                 keyAlias != null && !keyAlias.trim().isEmpty() &&
-                                 keyPassword != null && !keyPassword.trim().isEmpty()
+    def keystoreFilePath = (rawKeystoreFile != null) ? rawKeystoreFile.trim() : ""
+    def storePassword = (rawStorePassword != null) ? rawStorePassword.trim() : ""
+    def signingKeyAlias = (rawKeyAlias != null) ? rawKeyAlias.trim() : ""
+    // Fallback robusto: se a senha da chave (keyPassword) não estiver definida, usa a própria storePassword
+    def signingKeyPassword = (rawKeyPassword != null && !rawKeyPassword.trim().isEmpty()) ? rawKeyPassword.trim() : storePassword
+
+    def hasKeystoreFile = !keystoreFilePath.isEmpty() && file(keystoreFilePath).exists()
+    def hasKeystoreCredentials = !storePassword.isEmpty() &&
+                                 !signingKeyAlias.isEmpty() &&
+                                 !signingKeyPassword.isEmpty()
     def canSignRelease = hasKeystoreFile && hasKeystoreCredentials
 
     signingConfigs {
         release {
             if (canSignRelease) {
                 storeFile = file(keystoreFilePath)
-                storePassword = keystorePassword
-                keyAlias = keyAlias
-                keyPassword = keyPassword
+                storePassword = storePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
+            } else {
+                // Previne erro de SigningConfig "release" incompleto se referenciado acidentalmente
+                storeFile = signingConfigs.debug.storeFile
+                storePassword = signingConfigs.debug.storePassword
+                keyAlias = signingConfigs.debug.keyAlias
+                keyPassword = signingConfigs.debug.keyPassword
             }
         }
     }

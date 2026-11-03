@@ -420,11 +420,11 @@ jobs:
         id: setup_keystore
         if: steps.guard.outputs.build == 'true'
         env:
-          KEYSTORE_FILE_SECRET: ${{ secrets.KEYSTORE_FILE }}
-          KEYSTORE_BASE64_SECRET: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_FILE_SECRET: ${{ secrets.KEYSTORE_FILE || secrets.KEYSTORE_FILE_BASE64 }}
+          KEYSTORE_BASE64_SECRET: ${{ secrets.KEYSTORE_BASE64 || secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || secrets.KEYSTORE_PASS || secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || secrets.KEYALIAS || secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEY_PASS || secrets.KEYPASSWORD || secrets.KEYSTORE_PASSWORD || secrets.STORE_PASSWORD }}
         run: |
           set -eo pipefail
           SETUP_LOG="$GITHUB_WORKSPACE/setup-diagnostic.log"
@@ -433,8 +433,9 @@ jobs:
             echo "=== [PASSO 10] CONFIGURACAO DO KEYSTORE ==="
             rm -f android/release.keystore
             B64_DATA="${KEYSTORE_FILE_SECRET:-$KEYSTORE_BASE64_SECRET}"
+            ACTUAL_KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
 
-            if [ -n "$B64_DATA" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            if [ -n "$B64_DATA" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$ACTUAL_KEY_PASSWORD" ]; then
               echo "$B64_DATA" | tr -d '\r\n ' | base64 -d > "$GITHUB_WORKSPACE/android/release.keystore"
               if [ -s "$GITHUB_WORKSPACE/android/release.keystore" ]; then
                 echo "has_keystore=true" >> "$GITHUB_OUTPUT"
@@ -546,9 +547,9 @@ jobs:
         continue-on-error: true
         env:
           KEYSTORE_FILE: ${{ steps.setup_keystore.outputs.keystore_path }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || secrets.KEYSTORE_PASS || secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || secrets.KEYALIAS || secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEY_PASS || secrets.KEYPASSWORD || secrets.KEYSTORE_PASSWORD || secrets.STORE_PASSWORD }}
         run: |
           set -eo pipefail
           GRADLE_LOG_FILE="$GITHUB_WORKSPACE/gradle-build.log"
