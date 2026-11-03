@@ -105,6 +105,49 @@ export function isBeforeCurrentMonthInTz(
   return ts < monthStart.timestamp
 }
 
+/**
+ * Retorna o intervalo do mês operacional anterior no fuso de São Paulo (America/Sao_Paulo).
+ * Início: 05:00:00.000 do dia 1 do mês anterior.
+ * Fim: 04:59:59.999 do dia 1 do mês corrente (imediatamente antes do início operacional do mês atual).
+ */
+export function getOperationalPreviousMonthRange(referenceDate: Date = new Date()): {
+  start: number
+  end: number
+  startPbString: string
+  endPbString: string
+  dateStr: string
+} {
+  const currentMonthStart = getOperationalMonthStart(referenceDate)
+  const prevMonthDate = new Date(currentMonthStart.timestamp - 24 * 60 * 60 * 1000)
+  const prevMonthStart = getOperationalMonthStart(prevMonthDate)
+
+  const start = prevMonthStart.timestamp
+  const end = currentMonthStart.timestamp - 1
+
+  const startPbString = new Date(start).toISOString().replace('T', ' ')
+  const endPbString = new Date(end).toISOString().replace('T', ' ')
+
+  const parts = getCivilPartsInTz(new Date(start))
+  const monthStr = String(parts.month).padStart(2, '0')
+  const dateStr = `${parts.year}-${monthStr}`
+
+  return { start, end, startPbString, endPbString, dateStr }
+}
+
+/**
+ * Avalia se um timestamp pertence ao mês operacional anterior no fuso de São Paulo.
+ */
+export function isPreviousMonthInTz(
+  dateOrStrOrTs?: Date | string | number | null,
+  referenceDate: Date = new Date(),
+): boolean {
+  if (!dateOrStrOrTs) return false
+  const ts = parseSafeTimestamp(dateOrStrOrTs)
+  if (ts <= 0) return false
+  const prevRange = getOperationalPreviousMonthRange(referenceDate)
+  return ts >= prevRange.start && ts <= prevRange.end
+}
+
 export function formatTimeInTz(
   dateOrStrOrTs: Date | string | number | null | undefined,
   includeSeconds = false,
@@ -356,7 +399,7 @@ export function getOperationalMonthStart(referenceDate: Date = new Date()): {
  */
 export function isOrderInPeriod(
   dateVal: string | number | Date | null | undefined,
-  periodFilter: 'all' | 'today' | 'week' | 'month',
+  periodFilter: 'all' | 'today' | 'week' | 'month' | 'previous_month',
   referenceDate: Date = new Date(),
 ): boolean {
   if (periodFilter === 'all') return true
@@ -377,6 +420,10 @@ export function isOrderInPeriod(
 
   if (periodFilter === 'month') {
     return isCurrentMonthInTz(ts, referenceDate)
+  }
+
+  if (periodFilter === 'previous_month') {
+    return isPreviousMonthInTz(ts, referenceDate)
   }
 
   return true

@@ -1448,7 +1448,19 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                         customEndDate || defaultCustomDates.endDate,
                       )
                     }
-                    className="h-8 w-36 text-xs bg-[#0E1738] border-[#1E2B58] text-white rounded-lg focus-visible:ring-1 focus-visible:ring-[#60A5FA]"
+                    onClick={(e) => {
+                      const input = e.currentTarget as HTMLInputElement & {
+                        showPicker?: () => void
+                      }
+                      if (typeof input.showPicker === 'function') {
+                        try {
+                          input.showPicker()
+                        } catch {
+                          /* noop */
+                        }
+                      }
+                    }}
+                    className="h-8 w-36 text-xs bg-[#0E1738] border-[#1E2B58] text-white rounded-lg focus-visible:ring-1 focus-visible:ring-[#60A5FA] cursor-pointer"
                   />
                 </div>
 
@@ -1463,7 +1475,19 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                         e.target.value,
                       )
                     }
-                    className="h-8 w-36 text-xs bg-[#0E1738] border-[#1E2B58] text-white rounded-lg focus-visible:ring-1 focus-visible:ring-[#60A5FA]"
+                    onClick={(e) => {
+                      const input = e.currentTarget as HTMLInputElement & {
+                        showPicker?: () => void
+                      }
+                      if (typeof input.showPicker === 'function') {
+                        try {
+                          input.showPicker()
+                        } catch {
+                          /* noop */
+                        }
+                      }
+                    }}
+                    className="h-8 w-36 text-xs bg-[#0E1738] border-[#1E2B58] text-white rounded-lg focus-visible:ring-1 focus-visible:ring-[#60A5FA] cursor-pointer"
                   />
                 </div>
 

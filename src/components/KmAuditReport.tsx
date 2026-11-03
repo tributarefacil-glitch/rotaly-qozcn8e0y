@@ -71,9 +71,11 @@ import {
   formatPbTimestamp,
   getCustomOperationalWindow,
   getOperationalMonthStart,
+  getOperationalPreviousMonthRange,
   getOperationalWindow,
   isCurrentMonthInTz,
   isOrderInPeriod,
+  isPreviousMonthInTz,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
 import { AuditRouteMapModal } from '@/components/AuditRouteMapModal'
@@ -188,6 +190,11 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
           .replace('T', ' ')
           .substring(0, 19)
         filterStr = `status != 'cancelled' && (route_started = true || actual_arrival != null) && (created >= '${isoStart}' || route_started_at >= '${isoStart}' || route_finished_at >= '${isoStart}')`
+      } else if (selectedDateFilter === 'previous_month') {
+        const prevRange = getOperationalPreviousMonthRange(now)
+        const isoStart = new Date(prevRange.start).toISOString().replace('T', ' ').substring(0, 19)
+        const isoEnd = new Date(prevRange.end).toISOString().replace('T', ' ').substring(0, 19)
+        filterStr = `status != 'cancelled' && (route_started = true || actual_arrival != null) && ((created >= '${isoStart}' && created <= '${isoEnd}') || (route_started_at >= '${isoStart}' && route_started_at <= '${isoEnd}') || (route_finished_at >= '${isoStart}' && route_finished_at <= '${isoEnd}'))`
       } else if (selectedDateFilter === 'custom') {
         const custWin = getCustomOperationalWindow(
           customStartDate,
@@ -249,6 +256,9 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       } else if (selectedDateFilter === 'month') {
         const monthStartObj = getOperationalMonthStart(now)
         options = { startDate: monthStartObj.pbString }
+      } else if (selectedDateFilter === 'previous_month') {
+        const prevRange = getOperationalPreviousMonthRange(now)
+        options = { startDate: prevRange.startPbString, endDate: prevRange.endPbString }
       } else if (selectedDateFilter === 'week') {
         const opWindow = getOperationalWindow(now)
         const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
@@ -743,9 +753,17 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       } else if (
         selectedDateFilter === 'today' ||
         selectedDateFilter === 'week' ||
-        selectedDateFilter === 'month'
+        selectedDateFilter === 'month' ||
+        selectedDateFilter === 'previous_month'
       ) {
-        if (!isOrderInPeriod(rowTs, selectedDateFilter as 'today' | 'week' | 'month', now)) return
+        if (
+          !isOrderInPeriod(
+            rowTs,
+            selectedDateFilter as 'today' | 'week' | 'month' | 'previous_month',
+            now,
+          )
+        )
+          return
       }
       if (selectedBatchKey !== 'all' && r.batchDisplay !== selectedBatchKey) return
       if (searchQuery.trim()) {
@@ -949,9 +967,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       } else if (
         selectedDateFilter === 'today' ||
         selectedDateFilter === 'week' ||
-        selectedDateFilter === 'month'
+        selectedDateFilter === 'month' ||
+        selectedDateFilter === 'previous_month'
       ) {
-        if (!isOrderInPeriod(rowTs, selectedDateFilter as 'today' | 'week' | 'month', now))
+        if (
+          !isOrderInPeriod(
+            rowTs,
+            selectedDateFilter as 'today' | 'week' | 'month' | 'previous_month',
+            now,
+          )
+        )
           return false
       }
 
@@ -1435,12 +1460,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
       {/* BARRA DE FILTROS */}
       <Card className="border-slate-200/80 shadow-xs">
         <CardContent className="p-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+          <div
+            className={`grid grid-cols-1 sm:grid-cols-2 ${
+              selectedDateFilter === 'custom' ? 'lg:grid-cols-6' : 'md:grid-cols-4 lg:grid-cols-4'
+            } gap-3 items-end`}
+          >
             {/* Filtro Entregador */}
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0">
               <Label className="text-xs font-semibold text-slate-600">Entregador</Label>
               <Select value={selectedCourierId} onValueChange={setSelectedCourierId}>
-                <SelectTrigger className="h-9 text-xs">
+                <SelectTrigger className="h-9 text-xs w-full">
                   <SelectValue placeholder="Todos os entregadores" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1455,51 +1484,76 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             </div>
 
             {/* Filtro Data */}
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0">
               <Label className="text-xs font-semibold text-slate-600">Período / Data</Label>
               <Select value={selectedDateFilter} onValueChange={setSelectedDateFilter}>
-                <SelectTrigger className="h-9 text-xs">
+                <SelectTrigger className="h-9 text-xs w-full">
                   <SelectValue placeholder="Selecione o período" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="today">☀️ Hoje</SelectItem>
                   <SelectItem value="week">🗓️ Últimos 7 dias</SelectItem>
                   <SelectItem value="month">📅 Este Mês</SelectItem>
+                  <SelectItem value="previous_month">⏮️ Mês anterior</SelectItem>
                   <SelectItem value="custom">🔍 Personalizado (De – Até)</SelectItem>
                   <SelectItem value="all">🌐 Todo o Histórico</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            {/* Campo Data Específica (Intervalo De - Até) */}
+            {/* Campos de Data Específica: cada um em sua própria coluna dedicada no grid */}
             {selectedDateFilter === 'custom' && (
-              <div className="flex items-center gap-2">
-                <div className="space-y-1 flex-1">
+              <>
+                <div className="space-y-1 min-w-0">
                   <Label className="text-xs font-semibold text-slate-600">De</Label>
                   <Input
                     type="date"
                     value={customStartDate}
                     onChange={(e) => setCustomStartDate(e.target.value)}
-                    className="h-9 text-xs font-mono"
+                    onClick={(e) => {
+                      const input = e.currentTarget as HTMLInputElement & {
+                        showPicker?: () => void
+                      }
+                      if (typeof input.showPicker === 'function') {
+                        try {
+                          input.showPicker()
+                        } catch {
+                          /* noop */
+                        }
+                      }
+                    }}
+                    className="h-9 text-xs font-mono w-full cursor-pointer bg-white"
                   />
                 </div>
-                <div className="space-y-1 flex-1">
+                <div className="space-y-1 min-w-0">
                   <Label className="text-xs font-semibold text-slate-600">Até</Label>
                   <Input
                     type="date"
                     value={customEndDate}
                     onChange={(e) => setCustomEndDate(e.target.value)}
-                    className="h-9 text-xs font-mono"
+                    onClick={(e) => {
+                      const input = e.currentTarget as HTMLInputElement & {
+                        showPicker?: () => void
+                      }
+                      if (typeof input.showPicker === 'function') {
+                        try {
+                          input.showPicker()
+                        } catch {
+                          /* noop */
+                        }
+                      }
+                    }}
+                    className="h-9 text-xs font-mono w-full cursor-pointer bg-white"
                   />
                 </div>
-              </div>
+              </>
             )}
 
             {/* Filtro Lote de Rota */}
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0">
               <Label className="text-xs font-semibold text-slate-600">Lote de Rota</Label>
               <Select value={selectedBatchKey} onValueChange={setSelectedBatchKey}>
-                <SelectTrigger className="h-9 text-xs">
+                <SelectTrigger className="h-9 text-xs w-full">
                   <SelectValue placeholder="Todos os lotes" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1514,16 +1568,16 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
             </div>
 
             {/* Busca Rápida */}
-            <div className="space-y-1 sm:col-span-2 md:col-span-1">
+            <div className="space-y-1 min-w-0">
               <Label className="text-xs font-semibold text-slate-600">Buscar</Label>
-              <div className="relative">
+              <div className="relative w-full">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
                 <Input
                   type="text"
                   placeholder="Cliente, endereço, rastreio..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-9 pl-8 text-xs"
+                  className="h-9 pl-8 text-xs w-full"
                 />
               </div>
             </div>

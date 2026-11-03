@@ -171,4 +171,19 @@ describe('operationalWindow (fuso America/Sao_Paulo)', () => {
     // Formato incorreto
     expect(getCustomOperationalWindow('invalid', '2026-10-01')).toBeNull()
   })
+
+  it('isPreviousMonthInTz e isOrderInPeriod com previous_month filtram o mês anterior no fuso de São Paulo', () => {
+    // Referência em 15/10/2026
+    const ref = new Date('2026-10-15T12:00:00.000Z')
+    // Data em setembro/2026: 15/09/2026 14:00 BRT = 17:00 UTC
+    const sepDate = '2026-09-15T17:00:00.000Z'
+    // Data em outubro/2026: 05/10/2026
+    const octDate = '2026-10-05T17:00:00.000Z'
+    // Data em agosto/2026: 20/08/2026
+    const augDate = '2026-08-20T17:00:00.000Z'
+
+    expect(isOrderInPeriod(sepDate, 'previous_month', ref)).toBe(true)
+    expect(isOrderInPeriod(octDate, 'previous_month', ref)).toBe(false)
+    expect(isOrderInPeriod(augDate, 'previous_month', ref)).toBe(false)
+  })
 })

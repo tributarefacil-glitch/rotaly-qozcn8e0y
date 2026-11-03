@@ -29,6 +29,7 @@ import {
   formatDateInTz,
   formatTimeInTz,
   getCustomOperationalWindow,
+  getOperationalPreviousMonthRange,
   getOperationalWindow,
   isCurrentMonthInTz,
   parseSafeTimestamp,
@@ -81,6 +82,11 @@ export const AuditTrailSection: React.FC<AuditTrailSectionProps> = ({
         const y = now.getFullYear()
         const m = String(now.getMonth() + 1).padStart(2, '0')
         filterParts.push(`created >= '${y}-${m}-01 00:00:00'`)
+      } else if (selectedPeriod === 'previous_month') {
+        const prevRange = getOperationalPreviousMonthRange(now)
+        filterParts.push(
+          `created >= '${prevRange.startPbString}' && created <= '${prevRange.endPbString}'`,
+        )
       } else if (selectedPeriod === 'custom' && customStartDate) {
         const customWindow = getCustomOperationalWindow(
           customStartDate,
@@ -457,6 +463,7 @@ export const AuditTrailSection: React.FC<AuditTrailSectionProps> = ({
                   <SelectItem value="today">☀️ Hoje</SelectItem>
                   <SelectItem value="week">🗓️ Últimos 7 dias</SelectItem>
                   <SelectItem value="month">📅 Este Mês</SelectItem>
+                  <SelectItem value="previous_month">⏮️ Mês anterior</SelectItem>
                   <SelectItem value="custom">🔍 Personalizado (De – Até)</SelectItem>
                 </SelectContent>
               </Select>
@@ -490,7 +497,17 @@ export const AuditTrailSection: React.FC<AuditTrailSectionProps> = ({
                     setCustomStartDate(e.target.value)
                     setCurrentPage(1)
                   }}
-                  className="h-9 text-xs font-mono"
+                  onClick={(e) => {
+                    const input = e.currentTarget as HTMLInputElement & { showPicker?: () => void }
+                    if (typeof input.showPicker === 'function') {
+                      try {
+                        input.showPicker()
+                      } catch {
+                        /* noop */
+                      }
+                    }
+                  }}
+                  className="h-9 text-xs font-mono cursor-pointer bg-white"
                 />
               </div>
               <div className="space-y-1">
@@ -502,7 +519,17 @@ export const AuditTrailSection: React.FC<AuditTrailSectionProps> = ({
                     setCustomEndDate(e.target.value)
                     setCurrentPage(1)
                   }}
-                  className="h-9 text-xs font-mono"
+                  onClick={(e) => {
+                    const input = e.currentTarget as HTMLInputElement & { showPicker?: () => void }
+                    if (typeof input.showPicker === 'function') {
+                      try {
+                        input.showPicker()
+                      } catch {
+                        /* noop */
+                      }
+                    }
+                  }}
+                  className="h-9 text-xs font-mono cursor-pointer bg-white"
                 />
               </div>
             </div>

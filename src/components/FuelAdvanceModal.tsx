@@ -483,7 +483,19 @@ export const FuelAdvanceModal: React.FC<FuelAdvanceModalProps> = ({
                       type="date"
                       value={createDate}
                       onChange={(e) => setCreateDate(e.target.value)}
-                      className="h-9 text-xs"
+                      onClick={(e) => {
+                        const input = e.currentTarget as HTMLInputElement & {
+                          showPicker?: () => void
+                        }
+                        if (typeof input.showPicker === 'function') {
+                          try {
+                            input.showPicker()
+                          } catch {
+                            /* noop */
+                          }
+                        }
+                      }}
+                      className="h-9 text-xs cursor-pointer"
                       required
                     />
                   </div>
