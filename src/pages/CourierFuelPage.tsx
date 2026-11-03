@@ -366,6 +366,7 @@ export default function CourierFuelPage() {
       ...metrics,
       balance,
       totalAdvances,
+      periodAdvances: totalAdvances,
       totalSpent,
       totalOfficialKm,
       advanceCount,

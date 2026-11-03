@@ -432,17 +432,15 @@ export class FuelAccountService {
     )
 
     // Sincronizar o objeto metrics interno para carregar o saldo oficial invariante
+    // mas expor no totalAdvances e advanceCount os valores do período selecionado
+    // (espelhando useCourierFuelMetrics e canonicalCourierTotalsService)
     metrics.balance = finalBalance
-    metrics.totalAdvances = Number(totalPostCutoffAdvances.toFixed(2))
-    metrics.advanceCount = postCutoffAdvances.filter(
-      (a) => !a.entry_type || a.entry_type === 'advance',
-    ).length
+    metrics.totalAdvances = canonicalTotals.totalAdvances
+    metrics.advanceCount = canonicalTotals.advanceCount
     if (metrics.fuelAccount) {
       metrics.fuelAccount.balance = finalBalance
-      metrics.fuelAccount.totalAdvances = Number(totalPostCutoffAdvances.toFixed(2))
-      metrics.fuelAccount.advanceCount = postCutoffAdvances.filter(
-        (a) => !a.entry_type || a.entry_type === 'advance',
-      ).length
+      metrics.fuelAccount.totalAdvances = canonicalTotals.totalAdvances
+      metrics.fuelAccount.advanceCount = canonicalTotals.advanceCount
       metrics.fuelAccount.totalSpent = periodSpent
       metrics.fuelAccount.deliveriesCount =
         metrics.totalOfficialKm > 0 || metrics.orderCalculations.length > 0
@@ -680,22 +678,21 @@ export class FuelAccountService {
 
     // Contagem e total de adiantamentos respeitam estritamente o período selecionado:
     // Para 'all', somam todos pós-corte; para 'month', apenas os do mês corrente, etc.
-    const periodAdvancesCount = periodFilteredAdvances.length
-
+    // Espelha fielmente a fonte única canônica canonicalTotals.
     return {
       courier,
-      totalAdvances: Number(periodAdvances.toFixed(2)),
+      totalAdvances: canonicalTotals.totalAdvances,
       totalRouteKm: metrics.totalOfficialKm,
       totalSpent: periodSpent,
       balance: finalBalance,
-      advanceCount: periodAdvancesCount,
+      advanceCount: canonicalTotals.advanceCount,
       deliveriesCount: metrics.deliveriesCount,
       advances: courierAdvances,
       calculationSource: metrics.calculationSource,
       metrics,
       openingBalance,
       cutoffDate: cutoffDateStr,
-      periodAdvances: Number(periodAdvances.toFixed(2)),
+      periodAdvances: canonicalTotals.periodAdvances,
       periodAdjustments,
       periodSpent,
       carryOverBalance: openingBalance,

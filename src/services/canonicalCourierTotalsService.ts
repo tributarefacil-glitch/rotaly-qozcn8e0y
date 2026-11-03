@@ -213,6 +213,8 @@ export function calculateCanonicalCourierTotals(
       fuelCost: 0,
       openingBalance: 0,
       totalAdvances: 0,
+      periodAdvances: 0,
+      advanceCount: 0,
       postCutoffAdvances: 0,
       postCutoffSpent: 0,
       balance: 0,

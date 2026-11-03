@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calculateCourierFuelMetrics } from './useCourierFuelMetrics'
 import { fuelAccountService } from '@/services/fuelAccountService'
+import { calculateCanonicalCourierTotals } from '@/services/canonicalCourierTotalsService'
 import type { UserRecord, OrderRecord, FuelAdvanceRecord } from '@/types/delivery'
 
 describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de saldos', () => {
@@ -640,6 +641,128 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
 
       expect(res.totalOfficialKm).toBe(481.7)
       expect(res.totalSpent).toBe(73.34)
+    })
+
+    it('deve derivar Total Adiantado e advanceCount estritamente do período selecionado mantendo o saldo invariante (caso Guilherme)', () => {
+      // Simulação do Guilherme:
+      // Opening balance: R$ 42.35
+      // Adiantamentos:
+      // 1. Mês anterior / histórico: R$ 371.49
+      // 2. Mês anterior / histórico: R$ 300.00
+      // 3. Mês corrente: R$ 100.00
+      // Total pós-corte geral = 771.49 (3 adiantamentos)
+      // Total mês corrente = 100.00 (1 adiantamento)
+      const mockGuilherme: UserRecord = {
+        id: 'guilherme_test_id',
+        collectionId: 'users_coll',
+        collectionName: 'users',
+        name: 'Guilherme de Paiva',
+        email: 'guilherme@test.com',
+        role: 'courier',
+        status: 'active',
+        vehicle_type: 'moto',
+        opening_balance: 42.35,
+        cutoff_date: '2026-09-01T00:00:00Z',
+        created: '2026-09-01T00:00:00Z',
+        updated: '2026-11-01T00:00:00Z',
+      } as unknown as UserRecord
+
+      const advances: FuelAdvanceRecord[] = [
+        {
+          id: 'adv_1',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: mockGuilherme.id,
+          amount: 371.49,
+          entry_type: 'advance',
+          status: 'paid',
+          date: '2026-09-15 12:00:00.000Z',
+          created: '2026-09-15 12:00:00.000Z',
+        } as unknown as FuelAdvanceRecord,
+        {
+          id: 'adv_2',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: mockGuilherme.id,
+          amount: 300.0,
+          entry_type: 'advance',
+          status: 'paid',
+          date: '2026-10-10 12:00:00.000Z',
+          created: '2026-10-10 12:00:00.000Z',
+        } as unknown as FuelAdvanceRecord,
+        {
+          id: 'adv_3',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: mockGuilherme.id,
+          amount: 100.0,
+          entry_type: 'advance',
+          status: 'paid',
+          date: new Date().toISOString(), // Mês corrente
+          created: new Date().toISOString(),
+        } as unknown as FuelAdvanceRecord,
+      ]
+
+      // 1. Consulta com periodFilter = 'all': deve trazer 771.49 e contagem 3
+      const totalsAll = calculateCanonicalCourierTotals({
+        courier: mockGuilherme,
+        advances,
+        orders: [],
+        periodFilter: 'all',
+      })
+
+      expect(totalsAll.totalAdvances).toBe(771.49)
+      expect(totalsAll.periodAdvances).toBe(771.49)
+      expect(totalsAll.advanceCount).toBe(3)
+      // Saldo da conta corrente é opening_balance (42.35) + postCutoffAdvances (771.49) - gasto (0) = 813.84
+      expect(totalsAll.balance).toBe(813.84)
+      expect(totalsAll.openingBalance).toBe(42.35)
+
+      // 2. Consulta com periodFilter = 'month': deve trazer 100.00 e contagem 1
+      const totalsMonth = calculateCanonicalCourierTotals({
+        courier: mockGuilherme,
+        advances,
+        orders: [],
+        periodFilter: 'month',
+      })
+
+      expect(totalsMonth.totalAdvances).toBe(100.0)
+      expect(totalsMonth.periodAdvances).toBe(100.0)
+      expect(totalsMonth.advanceCount).toBe(1)
+      // Saldo da conta corrente deve permanecer o saldo INVARIANTE cumulativo: 813.84
+      expect(totalsMonth.balance).toBe(813.84)
+      expect(totalsMonth.openingBalance).toBe(42.35)
+
+      // 3. Integração com useCourierFuelMetrics:
+      const metricsMonth = calculateCourierFuelMetrics({
+        courier: mockGuilherme,
+        advances,
+        orders: [],
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      expect(metricsMonth.totalAdvances).toBe(100.0)
+      expect(metricsMonth.periodAdvances).toBe(100.0)
+      expect(metricsMonth.advanceCount).toBe(1)
+      expect(metricsMonth.balance).toBe(813.84)
+      expect(metricsMonth.openingBalance).toBe(42.35)
+
+      // 4. Integração com fuelAccountService:
+      const accountMonth = fuelAccountService.calculateAccountForCourier({
+        courier: mockGuilherme,
+        advances,
+        orders: [],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      expect(accountMonth.totalAdvances).toBe(100.0)
+      expect(accountMonth.periodAdvances).toBe(100.0)
+      expect(accountMonth.advanceCount).toBe(1)
+      expect(accountMonth.balance).toBe(813.84)
     })
   })
 })
