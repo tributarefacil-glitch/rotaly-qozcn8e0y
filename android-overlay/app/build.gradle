@@ -34,10 +34,10 @@ android {
     signingConfigs {
         release {
             if (canSignRelease) {
-                storeFile file(keystoreFilePath)
-                storePassword keystorePassword
-                keyAlias keyAlias
-                keyPassword keyPassword
+                storeFile = file(keystoreFilePath)
+                storePassword = keystorePassword
+                keyAlias = keyAlias
+                keyPassword = keyPassword
             }
         }
     }
