@@ -2212,6 +2212,34 @@ export const deliveryService = {
   },
 
   /**
+   * BUSCA ECONÔMICA DE LOCALIZAÇÕES RECENTES DO ENTREGADOR (APP MOBILE)
+   * Limita a busca a 50 registros recentes dentro da janela (padrão 15 min),
+   * evitando download de milhares de pings de 24h na rede móvel.
+   */
+  async getRecentLocationsForCourier(
+    userId: string,
+    minutesWindow = 15,
+  ): Promise<LocationRecord[]> {
+    const cleanUserId = userId ? String(userId).trim() : ''
+    if (!cleanUserId) return []
+
+    const windowStartIso = new Date(Date.now() - minutesWindow * 60 * 1000).toISOString()
+    const filter = `user_id = '${cleanUserId}' && created >= '${windowStartIso}'`
+
+    try {
+      const res = await pb.collection<LocationRecord>('locations').getList(1, 50, {
+        filter,
+        sort: '-created',
+        requestKey: null,
+      })
+      return res.items || []
+    } catch (err) {
+      console.warn('[getRecentLocationsForCourier] Falha ao buscar localizações recentes:', err)
+      return []
+    }
+  },
+
+  /**
    * FUNÇÃO ÚNICA CANÔNICA DE BUSCA DE PINGS DE TELEMETRIA
    * Filtro estrito em locations por user_id do entregador + janela UTC [route_started_at, route_finished_at].
    * O campo é user_id, NUNCA courier_id (courier_id gera 400).

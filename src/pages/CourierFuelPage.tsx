@@ -123,7 +123,7 @@ export default function CourierFuelPage() {
           }),
         deliveryService.getSettings().catch(() => null),
         deliveryService
-          .getLatestLocations(`user_id = '${user.id}'`)
+          .getRecentLocationsForCourier(user.id, 60)
           .catch(() => [] as LocationRecord[]),
         deliveryService
           .getOffRouteEvents(`courier_id = '${user.id}'`)

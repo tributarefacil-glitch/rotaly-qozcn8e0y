@@ -334,6 +334,7 @@ export default function CourierApp() {
   }
 
   // Carregar dados de conta corrente e configurações para manter paridade com o motor de combustível
+  // CORREÇÃO 1: Usa getRecentLocationsForCourier (15 min, max 50 pings) para não baixar gigabytes de telemetria do dia
   const loadFuelAndAccountData = async (options?: { force?: boolean }) => {
     if (!user?.id) return
     const now = Date.now()
@@ -347,7 +348,7 @@ export default function CourierApp() {
       const [userAdvances, appSettings, userLocations, userEvents] = await Promise.all([
         deliveryService.getFuelAdvances(`courier_id = '${user.id}'`, '-date,-created'),
         deliveryService.getSettings(),
-        deliveryService.getLatestLocations(`user_id = '${user.id}'`),
+        deliveryService.getRecentLocationsForCourier(user.id, 15),
         deliveryService.getOffRouteEvents(`courier_id = '${user.id}'`),
       ])
       setAdvances(userAdvances)
@@ -459,23 +460,34 @@ export default function CourierApp() {
     }
   }, [user?.id])
 
+  // Ref para acompanhar se há rota ativa sem recriar timers/intervals de polling
+  const hasActiveStartedRouteRef = useRef<boolean>(false)
+  const lastPollingTickRef = useRef<number>(Date.now())
+
   // REFORÇO DE RECEPÇÃO ECONÔMICO:
   // - Pausa polling de pedidos quando app está em background (document.hidden) para economizar bateria e rede
   // - Retoma com força única ao voltar ao foco (visibilitychange / focus) ou online
+  // - Polling adaptativo: 35s se rota ativa, 60s se sem rota ativa (Causa 4)
   useEffect(() => {
     if (!user?.id) return
 
-    // 1. Polling a cada 35 segundos APENAS se a janela estiver visível
+    // Checagem a cada 5s para disparar o polling no intervalo adequado (35s rota ativa / 60s ocioso)
     const intervalTimer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return // Economiza rede e bateria quando tela apagada / app em background
       }
-      loadCourierOrders()
-    }, 35000)
+      const now = Date.now()
+      const threshold = hasActiveStartedRouteRef.current ? 35000 : 60000
+      if (now - lastPollingTickRef.current >= threshold) {
+        lastPollingTickRef.current = now
+        loadCourierOrders()
+      }
+    }, 5000)
 
     // 2. Ao voltar para foco (visibilitychange / focus) — dispara apenas 1 recarga com throttle
     const handleVisibilityOrFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        lastPollingTickRef.current = Date.now()
         loadCourierOrders({ force: true })
         loadFuelAndAccountData({ force: true })
         checkBackgroundPermissionHealth()
@@ -484,6 +496,7 @@ export default function CourierApp() {
 
     // 3. Ao voltar a ficar online
     const handleNetworkOnline = () => {
+      lastPollingTickRef.current = Date.now()
       loadCourierOrders({ force: true })
       loadFuelAndAccountData({ force: true })
     }
@@ -500,12 +513,21 @@ export default function CourierApp() {
     }
   }, [user?.id])
 
-  // Realtime hook para pedidos
+  // Realtime hook para pedidos (CORREÇÃO 2: guarda estrita por pertencimento ou fila chegando)
   useRealtime<OrderRecord>('orders', (e) => {
+    if (!user?.id) return
     if (e.action === 'create' || e.action === 'update' || e.action === 'delete') {
+      const isMyOrder = e.record.courier_id === user.id
+      const isQueueComing = !hasActiveStartedRouteRef.current && e.record.route_released === true
+
+      // Se o pedido não pertence ao entregador E não é fila liberada para quem está sem rota ativa, ignora em silêncio
+      if (!isMyOrder && !isQueueComing) {
+        return
+      }
+
       if (
         (e.action === 'create' || e.action === 'update') &&
-        e.record.courier_id === user?.id &&
+        isMyOrder &&
         (e.record.route_released === true ||
           e.record.status === 'in_transit' ||
           e.record.status === 'delivered')
@@ -540,9 +562,9 @@ export default function CourierApp() {
     }
   })
 
-  // Realtime para adiantamentos de combustível
+  // Realtime para adiantamentos de combustível (CORREÇÃO 3: recarga restrita ao entregador)
   useRealtime<FuelAdvanceRecord>('fuel_advances', (e) => {
-    if (e.record.courier_id === user?.id) {
+    if (user?.id && e.record.courier_id === user.id) {
       if (e.action === 'create') {
         toast.success(
           `⛽ Novo adiantamento recebido: R$ ${Number(e.record.amount || 0).toFixed(2)}`,
@@ -552,9 +574,9 @@ export default function CourierApp() {
     }
   })
 
-  // Realtime para desvios de rota
+  // Realtime para desvios de rota (CORREÇÃO 3: recarga restrita ao entregador)
   useRealtime<OffRouteEventRecord>('off_route_events', (e) => {
-    if (e.record.courier_id === user?.id) {
+    if (user?.id && e.record.courier_id === user.id) {
       loadFuelAndAccountData()
     }
   })
@@ -625,6 +647,11 @@ export default function CourierApp() {
   )
 
   const hasActiveStartedRoute = activeStartedOrders.length > 0
+
+  // Atualizar a ref para manter sincronismo com os intervals e handlers sem re-renderizar
+  useEffect(() => {
+    hasActiveStartedRouteRef.current = hasActiveStartedRoute
+  }, [hasActiveStartedRoute])
 
   // FILA DE ROTAS:
   // Se houver uma rota em andamento (route_started=true e route_finished!=true):
