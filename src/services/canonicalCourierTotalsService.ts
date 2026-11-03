@@ -9,9 +9,11 @@ import {
 import {
   getOperationalWindow,
   getOperationalMonthStart,
+  getOperationalPreviousMonthRange,
   getCustomOperationalWindow,
   isCurrentMonthInTz,
   isAdvancePostCutoff,
+  parseSafeTimestamp,
 } from '@/lib/operationalWindow'
 import { deliveryService } from '@/services/deliveryService'
 import { groupOrdersByRouteBatch } from '@/lib/routeBatchHelper'
@@ -65,6 +67,8 @@ export interface CanonicalCourierTotals {
   fuelCost: number
   openingBalance: number
   totalAdvances: number
+  periodAdvances: number
+  advanceCount: number
   postCutoffAdvances: number
   postCutoffSpent: number
   balance: number
@@ -113,6 +117,8 @@ export interface CanonicalCourierBalanceResult {
   batchesCount: number
   openingBalance: number
   totalAdvances: number
+  periodAdvances: number
+  advanceCount: number
   postCutoffAdvances: number
   postCutoffSpent: number
   hasManualAdjustment?: boolean
@@ -264,6 +270,10 @@ export function calculateCanonicalCourierTotals(
     const monthStart = getOperationalMonthStart(now)
     startTs = monthStart.timestamp
     endTs = opWindow.end
+  } else if ((periodFilter as string) === 'previous_month') {
+    const prevRange = getOperationalPreviousMonthRange(now)
+    startTs = prevRange.start
+    endTs = prevRange.end
   } else if (periodFilter === 'custom' && customStartDate && customEndDate) {
     const win = getCustomOperationalWindow(customStartDate, customEndDate)
     if (win) {
@@ -289,14 +299,25 @@ export function calculateCanonicalCourierTotals(
     return isAdvancePostCutoff(a.date || a.created, cutoffDateStr)
   })
 
-  const totalAdvances = courierAdvances
-    .filter((a) => !a.entry_type || a.entry_type === 'advance')
-    .reduce((sum, a) => sum + (Number(a.amount) || 0), 0)
-
+  // Adiantamentos pós-corte acumulados de todos os tempos (usados no Saldo Canônico Invariante)
   const postCutoffAdvances = postCutoffAdvancesList.reduce(
     (sum, a) => sum + (Number(a.amount) || 0),
     0,
   )
+
+  // Adiantamentos pós-corte filtrados estritamente pelo período selecionado
+  const periodFilteredAdvancesList = postCutoffAdvancesList.filter((a) => {
+    if (periodFilter === 'all') return true
+    const advRaw = a.date || a.created
+    const advTs = parseSafeTimestamp(advRaw) || new Date(advRaw).getTime()
+    return advTs >= startTs && advTs <= endTs
+  })
+
+  const periodAdvancesTotal = periodFilteredAdvancesList.reduce(
+    (sum, a) => sum + (Number(a.amount) || 0),
+    0,
+  )
+  const periodAdvanceCount = periodFilteredAdvancesList.length
 
   // 5. Deduplicação e apuração de lotes de telemetria
   // Mapa de lotes por route_batch_key (dedup 1x)
@@ -643,7 +664,9 @@ export function calculateCanonicalCourierTotals(
     totalSpent: periodFuelCost,
     fuelCost: periodFuelCost,
     openingBalance: Number(openingBalance.toFixed(2)),
-    totalAdvances: Number(totalAdvances.toFixed(2)),
+    totalAdvances: Number(periodAdvancesTotal.toFixed(2)),
+    periodAdvances: Number(periodAdvancesTotal.toFixed(2)),
+    advanceCount: periodAdvanceCount,
     postCutoffAdvances: Number(postCutoffAdvances.toFixed(2)),
     postCutoffSpent: Number(postCutoffSpent.toFixed(2)),
     balance,
@@ -782,6 +805,8 @@ export function getCanonicalCourierBalance(
     batchesCount: totals.batchesCount,
     openingBalance: totals.openingBalance,
     totalAdvances: totals.totalAdvances,
+    periodAdvances: totals.periodAdvances,
+    advanceCount: totals.advanceCount,
     postCutoffAdvances: totals.postCutoffAdvances,
     postCutoffSpent: totals.postCutoffSpent,
     hasManualAdjustment: totals.hasManualAdjustment,

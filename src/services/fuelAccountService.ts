@@ -678,24 +678,24 @@ export class FuelAccountService {
       reachedAlertThreshold = true
     }
 
-    const realAdvancesCount = postCutoffAdvances.filter(
-      (a) => !a.entry_type || a.entry_type === 'advance',
-    ).length
+    // Contagem e total de adiantamentos respeitam estritamente o período selecionado:
+    // Para 'all', somam todos pós-corte; para 'month', apenas os do mês corrente, etc.
+    const periodAdvancesCount = periodFilteredAdvances.length
 
     return {
       courier,
-      totalAdvances: Number(totalPostCutoffAdvances.toFixed(2)),
+      totalAdvances: Number(periodAdvances.toFixed(2)),
       totalRouteKm: metrics.totalOfficialKm,
       totalSpent: periodSpent,
       balance: finalBalance,
-      advanceCount: realAdvancesCount,
+      advanceCount: periodAdvancesCount,
       deliveriesCount: metrics.deliveriesCount,
       advances: courierAdvances,
       calculationSource: metrics.calculationSource,
       metrics,
       openingBalance,
       cutoffDate: cutoffDateStr,
-      periodAdvances,
+      periodAdvances: Number(periodAdvances.toFixed(2)),
       periodAdjustments,
       periodSpent,
       carryOverBalance: openingBalance,

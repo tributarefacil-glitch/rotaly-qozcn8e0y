@@ -278,10 +278,12 @@ export const CourierFuelSummaryCard: React.FC<CourierFuelSummaryCardProps> = ({
           </div>
           <div className="text-right shrink-0">
             <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-medium">
-              {Number(metrics?.advanceCount) || 0} adiantamento(s) pós-corte
+              {Number(account?.advanceCount ?? metrics?.advanceCount) || 0} adiantamento(s)
+              pós-corte
             </span>
             <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-medium">
-              {Number(metrics?.deliveriesCount) || 0} entrega(s) pós-corte
+              {Number(account?.deliveriesCount ?? metrics?.deliveriesCount) || 0} entrega(s)
+              pós-corte
             </span>
           </div>
         </div>

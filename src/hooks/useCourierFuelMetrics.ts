@@ -300,17 +300,24 @@ export function calculateCourierFuelMetrics(params: {
 
   let periodAdvances = 0
   let periodAdjustments = 0
+  let periodAdvancesCount = 0
   periodFilteredAdvances.forEach((a) => {
     const val = Number(a.amount) || 0
     if (a.entry_type === 'balance_adjustment') {
       periodAdjustments += val
     } else if (!a.entry_type || a.entry_type === 'advance') {
       periodAdvances += val
+      periodAdvancesCount++
     }
   })
 
-  // totalAdvances do objeto reflete os adiantamentos reais (regra 1a)
-  const totalAdvances = totalPostCutoffAdvances
+  // Total Adiantado exibido no card e métricas do entregador DEVE respeitar o período selecionado:
+  // Se 'all', soma todos pós-corte; se 'month', apenas os do mês corrente, etc.
+  const totalAdvances = periodFilter === 'all' ? totalPostCutoffAdvances : periodAdvances
+  const advanceCount =
+    periodFilter === 'all'
+      ? allPostCutoffAdvances.filter((a) => !a.entry_type || a.entry_type === 'advance').length
+      : periodAdvancesCount
 
   // 2. Filtrar telemetria e ocorrências do entregador
   const baseLatFallback = activeBaseCoords?.lat ?? -22.6977499
@@ -708,7 +715,7 @@ export function calculateCourierFuelMetrics(params: {
     totalRouteKm: Number(totalOfficialKm.toFixed(1)),
     totalSpent: Number(totalSpent.toFixed(2)),
     balance: Number(balance.toFixed(2)),
-    advanceCount: allPostCutoffAdvances.length,
+    advanceCount,
     deliveriesCount: eligibleOrders.length,
     advances: allPostCutoffAdvances,
     openingBalance: Number(openingBalance.toFixed(2)),
@@ -727,7 +734,7 @@ export function calculateCourierFuelMetrics(params: {
     totalDeviationKm: Number(totalDeviationKm.toFixed(1)),
     totalOdometerKm: Number(totalOdometerKm.toFixed(1)),
     totalLiters: Number(totalLiters.toFixed(2)),
-    advanceCount: allPostCutoffAdvances.length,
+    advanceCount,
     deliveriesCount: eligibleOrders.length,
     pricePerLiter,
     consumptionKml,
