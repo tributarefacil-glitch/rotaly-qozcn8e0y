@@ -33,6 +33,7 @@ import { CreateCustomerModal } from '@/components/CreateCustomerModal'
 import { CustomerSearchModal } from '@/components/CustomerSearchModal'
 import { AiLogisticsAssistant } from '@/components/AiLogisticsAssistant'
 import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
+import { PendingTrackingOrdersSection } from '@/components/PendingTrackingOrdersSection'
 
 // Lazy loading das seções e modais pesados com named exports
 const LiveMap = lazy(() => import('@/components/LiveMap').then((m) => ({ default: m.LiveMap })))
@@ -1646,6 +1647,14 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
                   }}
                 />
               </div>
+
+              {/* SEÇÃO DE RASTREAMENTOS PENDENTES DE ENVIO (WHATSAPP DEEP LINK) */}
+              <PendingTrackingOrdersSection
+                orders={orders}
+                currentUserId={user?.id}
+                isAdminView={user?.role === 'admin' || user?.role === 'master'}
+                onOrderUpdated={loadData}
+              />
 
               {/* KPI Summary Cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

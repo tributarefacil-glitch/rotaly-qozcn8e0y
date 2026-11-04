@@ -104,6 +104,7 @@ function SectionSkeleton() {
   )
 }
 import { SuspiciousAddressesBox } from '@/components/SuspiciousAddressesBox'
+import { PendingTrackingOrdersSection } from '@/components/PendingTrackingOrdersSection'
 import { CustomerQualityReport } from '@/components/CustomerQualityReport'
 import { CustomerDuplicatesPanel } from '@/components/CustomerDuplicatesPanel'
 import { FuelAdvanceModal } from '@/components/FuelAdvanceModal'
@@ -3331,6 +3332,14 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     }}
                   />
                 </div>
+
+                {/* SEÇÃO DE RASTREAMENTOS PENDENTES DE ENVIO (WHATSAPP DEEP LINK) */}
+                <PendingTrackingOrdersSection
+                  orders={orders}
+                  currentUserId={user?.id}
+                  isAdminView={true}
+                  onOrderUpdated={loadData}
+                />
 
                 {/* KPI CARDS */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
