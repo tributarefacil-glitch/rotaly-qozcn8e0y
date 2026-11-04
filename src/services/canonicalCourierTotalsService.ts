@@ -587,13 +587,32 @@ export function calculateCanonicalCourierTotals(
     } as unknown as CourierPeriodManualAdjustmentRecord
   }
 
-  // Verificar se o período do filtro intersecta ou engloba o período do ajuste (01/10 a 22/10)
-  // No caso de month (mês 10), all, ou custom que sobreponha 01/10–22/10:
+  // Verificar se o período do filtro intersecta ou engloba o período do ajuste (ex: 01/10 a 22/10).
+  // REGRA DO PROJETO: Ajustes de meses anteriores (ex: outubro) pertencem ao histórico daquele mês.
+  // No mês corrente (ex: novembro) ou em janelas pós-corte onde cutoff_date >= periodo_fim,
+  // o ajuste NÃO pode vazar nem ser aplicado ao gasto do mês atual.
   let appliesManualAdjustment = false
   if (activeAdjustment) {
-    if (periodFilter === 'all' || periodFilter === 'month') {
-      // Mês 10 ou all cobre o mês de outubro de 2026
-      appliesManualAdjustment = true
+    const adjStartIso = `${activeAdjustment.periodo_inicio}T00:00:00.000Z`
+    const adjEndIso = `${activeAdjustment.periodo_fim}T23:59:59.999Z`
+    const adjStartTs = new Date(adjStartIso).getTime()
+    const adjEndTs = new Date(adjEndIso).getTime()
+
+    // Se o cutoff_date do entregador for posterior ao término do ajuste,
+    // o ajuste já foi absorvido no opening_balance / carry-over e não entra no pós-corte nem no mês corrente.
+    const isPriorToCutoff = hasCutoff && cutoffTime > adjEndTs
+
+    if (periodFilter === 'all') {
+      // 'all' cobre todo o histórico, mas se o entregador já teve cutoff pós-ajuste,
+      // o gasto pós-corte e o card corrente não devem inflar com ajuste pré-corte.
+      appliesManualAdjustment = !isPriorToCutoff
+    } else if (periodFilter === 'month') {
+      // 'month' representa o mês operacional selecionado.
+      // Se a janela do mês (startTs..endTs) engloba o ajuste, aplica;
+      // se o mês selecionado for posterior (ex: novembro para ajuste de outubro), NÃO aplica.
+      if (!isPriorToCutoff && startTs <= adjEndTs && endTs >= adjStartTs) {
+        appliesManualAdjustment = true
+      }
     } else if (periodFilter === 'custom' && customStartDate && customEndDate) {
       // Se a janela customizada engloba ou sobrepõe o ajuste
       if (
@@ -624,7 +643,8 @@ export function calculateCanonicalCourierTotals(
       : 0
   const periodSpent = isBicycle ? 0 : periodFuelCost
 
-  // Se houver ajuste no período pós-corte, refletir também no gasto pós-corte
+  // Se houver ajuste no período pós-corte (ou seja, se o ajuste NÃO for anterior à data de corte),
+  // refletir no gasto pós-corte
   const postCutoffKmWithAdj =
     appliesManualAdjustment && activeAdjustment
       ? Math.max(totalPostCutoffKm, activeAdjustment.km_manual)

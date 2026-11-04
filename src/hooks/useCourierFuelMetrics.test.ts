@@ -764,5 +764,217 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
       expect(accountMonth.advanceCount).toBe(1)
       expect(accountMonth.balance).toBe(813.84)
     })
+
+    it('trava canônica: fechamento de mês e carry-over de novembro do Guilherme (12,78 + 100,00 = 112,78 antes das rotas)', () => {
+      // Regra de fechamento do Guilherme na v0.0.544 (migração 0178/0197):
+      // Opening balance: R$ 12.78 (carry-over de outubro para novembro)
+      // Cutoff date: 01/11/2026
+      // Adiantamento de novembro: R$ 100.00
+      // Saldo antes das rotas: 12.78 + 100.00 = 112.78
+      const mockGuilhermeNov: UserRecord = {
+        id: '15q1s10wim498t3',
+        collectionId: 'users_coll',
+        collectionName: 'users',
+        name: 'Guilherme de Paiva',
+        email: 'guilherme@test.com',
+        role: 'courier',
+        status: 'active',
+        vehicle_type: 'moto',
+        opening_balance: 12.78,
+        cutoff_date: '2026-11-01 03:00:00.000Z',
+        created: '2026-09-01T00:00:00Z',
+        updated: '2026-11-04T00:00:00Z',
+      } as unknown as UserRecord
+
+      const advancesNov: FuelAdvanceRecord[] = [
+        // Adiantamento antigo em outubro (pré-corte 01/11) -> NUNCA entra
+        {
+          id: 'adv_oct',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: mockGuilhermeNov.id,
+          amount: 200.0,
+          entry_type: 'advance',
+          status: 'paid',
+          date: '2026-10-20 12:00:00.000Z',
+          created: '2026-10-20 12:00:00.000Z',
+        } as unknown as FuelAdvanceRecord,
+        // Adiantamento pós-corte em novembro: R$ 100.00
+        {
+          id: 'adv_nov',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: mockGuilhermeNov.id,
+          amount: 100.0,
+          entry_type: 'advance',
+          status: 'paid',
+          date: '2026-11-03 12:00:00.000Z',
+          created: '2026-11-03 12:00:00.000Z',
+        } as unknown as FuelAdvanceRecord,
+      ]
+
+      const metrics = calculateCourierFuelMetrics({
+        courier: mockGuilhermeNov,
+        advances: advancesNov,
+        orders: [],
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      expect(metrics.openingBalance).toBe(12.78)
+      expect(metrics.totalAdvances).toBe(100.0)
+      expect(metrics.advanceCount).toBe(1)
+      expect(metrics.totalSpent).toBe(0)
+      expect(metrics.balance).toBe(112.78)
+    })
+
+    it('trava canônica: fechamento de mês e carry-over de novembro do Edson Pereira (5,32 + 100,00 = 105,32 antes das rotas, gasto 17,48 -> saldo 87,84, ajuste de outubro isolado)', () => {
+      // Regra de fechamento do Edson declarada pelo dono na v0.0.545 (migração 0198):
+      // - Edson trouxe R$ 5,32 do mês anterior (carry-over real).
+      // - Já gastou R$ 17,48 em novembro (este mês corrente).
+      // - Hoje (03/11) recebeu R$ 100,00 de adiantamento.
+      // - Portanto o saldo da conta corrente dele deveria ser R$ 105,32 de manhã, antes das rotas de hoje,
+      //   e R$ 105,32 − 17,48 = R$ 87,84 considerando o gasto do período.
+      // - O ajuste manual de outubro (731 km / R$ 155,70) está isolado no histórico de outubro e NÃO entra no mês corrente.
+      const mockEdsonNov: UserRecord = {
+        id: 'tetrfu5oi19jbwz',
+        collectionId: 'users_coll',
+        collectionName: 'users',
+        name: 'Edson Pereira da Silva Junior',
+        plate: 'RIT9I49',
+        email: 'edson@test.com',
+        role: 'courier',
+        status: 'active',
+        vehicle_type: 'moto',
+        opening_balance: 5.32,
+        cutoff_date: '2026-11-01 03:00:00.000Z',
+        created: '2026-09-01T00:00:00Z',
+        updated: '2026-11-04T00:00:00Z',
+      } as unknown as UserRecord
+
+      const advancesEdson: FuelAdvanceRecord[] = [
+        // Adiantamentos antigos de outubro (pré-corte 01/11) -> NUNCA somam no pós-corte nem no mês corrente
+        {
+          id: 'adv_edson_oct_1',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: mockEdsonNov.id,
+          amount: 200.0,
+          entry_type: 'advance',
+          status: 'paid',
+          date: '2026-10-10 12:00:00.000Z',
+          created: '2026-10-10 12:00:00.000Z',
+        } as unknown as FuelAdvanceRecord,
+        {
+          id: 'adv_edson_oct_2',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: mockEdsonNov.id,
+          amount: 150.0,
+          entry_type: 'advance',
+          status: 'paid',
+          date: '2026-10-25 12:00:00.000Z',
+          created: '2026-10-25 12:00:00.000Z',
+        } as unknown as FuelAdvanceRecord,
+        // Adiantamento recebido em 03/11 pós-corte: R$ 100,00
+        {
+          id: 'adv_edson_nov_1',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: mockEdsonNov.id,
+          amount: 100.0,
+          entry_type: 'advance',
+          status: 'paid',
+          date: '2026-11-03 12:00:00.000Z',
+          created: '2026-11-03 12:00:00.000Z',
+        } as unknown as FuelAdvanceRecord,
+      ]
+
+      // 1. Cenário de manhã (antes das rotas): carry-over 5.32 + adiantamento 100.00 = 105.32
+      const metricsMorning = calculateCourierFuelMetrics({
+        courier: mockEdsonNov,
+        advances: advancesEdson,
+        orders: [],
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      expect(metricsMorning.openingBalance).toBe(5.32)
+      expect(metricsMorning.totalAdvances).toBe(100.0)
+      expect(metricsMorning.advanceCount).toBe(1)
+      expect(metricsMorning.totalSpent).toBe(0)
+      expect(metricsMorning.balance).toBe(105.32)
+      expect(metricsMorning.hasManualAdjustment).toBe(false)
+      expect(metricsMorning.manualAdjustmentKm).toBeUndefined()
+
+      // 2. Cenário com gasto de novembro de R$ 17,48
+      // Moto: consumo 30 km/L, preço R$ 6,49/L -> fator = 6,49 / 30 = 0,216333... R$/km
+      // Para dar exatamente R$ 17,48: km = 17,48 / (6,49 / 30) = 80,7996... ~ 80.8 km
+      // Mock de uma ordem pós-corte em novembro com km suficiente para R$ 17,48
+      const novOrder: OrderRecord = {
+        id: 'ord_edson_nov_1',
+        collectionId: 'orders_coll',
+        collectionName: 'orders',
+        courier_id: mockEdsonNov.id,
+        status: 'delivered',
+        created: '2026-11-03 14:00:00.000Z',
+        actual_arrival: '2026-11-03 14:30:00.000Z',
+        total_route_with_return_km: 80.8,
+        start_base_lat: -22.6977499,
+        start_base_lng: -43.2936013,
+      } as unknown as OrderRecord
+
+      const metricsWithSpent = calculateCourierFuelMetrics({
+        courier: mockEdsonNov,
+        advances: advancesEdson,
+        orders: [novOrder],
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      expect(metricsWithSpent.openingBalance).toBe(5.32)
+      expect(metricsWithSpent.totalAdvances).toBe(100.0)
+      expect(metricsWithSpent.advanceCount).toBe(1)
+      expect(metricsWithSpent.totalSpent).toBe(17.48)
+      expect(metricsWithSpent.balance).toBe(87.84)
+      // Ajuste manual de outubro não aparece no card de novembro
+      expect(metricsWithSpent.hasManualAdjustment).toBe(false)
+
+      // 3. Mesma coerência via canonicalCourierTotalsService
+      const canonicalTotals = calculateCanonicalCourierTotals({
+        courier: mockEdsonNov,
+        advances: advancesEdson,
+        orders: [novOrder],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      expect(canonicalTotals.openingBalance).toBe(5.32)
+      expect(canonicalTotals.totalAdvances).toBe(100.0)
+      expect(canonicalTotals.totalSpent).toBe(17.48)
+      expect(canonicalTotals.balance).toBe(87.84)
+      expect(canonicalTotals.hasManualAdjustment).toBe(false)
+
+      // 4. Mesma coerência via fuelAccountService
+      const fuelAccount = fuelAccountService.calculateAccountForCourier({
+        courier: mockEdsonNov,
+        advances: advancesEdson,
+        orders: [novOrder],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      expect(fuelAccount.openingBalance).toBe(5.32)
+      expect(fuelAccount.totalAdvances).toBe(100.0)
+      expect(fuelAccount.totalSpent).toBe(17.48)
+      expect(fuelAccount.balance).toBe(87.84)
+      expect(fuelAccount.hasManualAdjustment).toBe(false)
+    })
   })
 })
