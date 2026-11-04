@@ -23,37 +23,30 @@ export function useRealtime<TRecord extends RecordModel = RecordModel>(
   callback: (data: RecordSubscription<TRecord>) => void,
   optionsOrEnabled: boolean | UseRealtimeOptions = true,
 ) {
-  const options: UseRealtimeOptions =
-    typeof optionsOrEnabled === 'boolean'
-      ? { enabled: optionsOrEnabled }
-      : { enabled: true, ...optionsOrEnabled }
+  const isEnabled =
+    typeof optionsOrEnabled === 'boolean' ? optionsOrEnabled : (optionsOrEnabled?.enabled ?? true)
 
-  const enabled = options.enabled ?? true
-  const debounceMs = options.debounceMs ?? 0
+  const debounceMs =
+    typeof optionsOrEnabled === 'object' && typeof optionsOrEnabled?.debounceMs === 'number'
+      ? optionsOrEnabled.debounceMs
+      : 0
 
   const callbackRef = useRef(callback)
   callbackRef.current = callback
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastEventRef = useRef<RecordSubscription<TRecord> | null>(null)
 
   useEffect(() => {
-    if (!enabled) return
+    if (!isEnabled) return
 
     let unsubscribeFn: (() => Promise<void>) | undefined
     let cancelled = false
 
     const handleEvent = (e: RecordSubscription<TRecord>) => {
       if (debounceMs > 0) {
-        lastEventRef.current = e
-        if (debounceTimerRef.current) {
-          clearTimeout(debounceTimerRef.current)
-        }
+        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
         debounceTimerRef.current = setTimeout(() => {
-          if (lastEventRef.current) {
-            callbackRef.current(lastEventRef.current)
-            lastEventRef.current = null
-          }
+          callbackRef.current(e)
         }, debounceMs)
       } else {
         callbackRef.current(e)
@@ -75,13 +68,12 @@ export function useRealtime<TRecord extends RecordModel = RecordModel>(
       cancelled = true
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current)
-        debounceTimerRef.current = null
       }
       if (unsubscribeFn) {
         unsubscribeFn().catch(() => {})
       }
     }
-  }, [collectionName, enabled, debounceMs])
+  }, [collectionName, isEnabled, debounceMs])
 }
 
 export default useRealtime

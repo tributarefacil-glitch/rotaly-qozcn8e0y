@@ -1237,9 +1237,12 @@ export const deliveryService = {
     const digits = rawPhone.replace(/\D/g, '')
     if (!digits || digits.length < 8) return null
 
+    // Se o número buscado tiver 8 ou 9 dígitos sem DDD, o padrão RJ é 21
+    const dddDigits = digits.length === 8 || digits.length === 9 ? `21${digits}` : digits
+
     try {
-      // Direct query with exact or clean match across phone, phone2 and phone3
-      const filter = `phone ~ '${digits}' || phone2 ~ '${digits}' || phone3 ~ '${digits}' || phone = '${rawPhone}'`
+      // Direct query with exact or clean match across phone, phone2 and phone3 (busca por 8/9 dígitos e com DDD 21)
+      const filter = `phone ~ '${digits}' || phone2 ~ '${digits}' || phone3 ~ '${digits}' || phone ~ '${dddDigits}' || phone2 ~ '${dddDigits}' || phone3 ~ '${dddDigits}' || phone = '${rawPhone}'`
       const records = await pb.collection<CustomerRecord>('customers').getList(1, 20, {
         filter,
         sort: '-created',

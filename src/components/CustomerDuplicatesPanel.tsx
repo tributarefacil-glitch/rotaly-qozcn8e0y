@@ -16,6 +16,7 @@ import {
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { normalizeCustomerPhone } from '@/lib/whatsappTracking'
 import { Input } from '@/components/ui/input'
 import {
   Dialog,
@@ -69,6 +70,7 @@ export const CustomerDuplicatesPanel: React.FC<CustomerDuplicatesPanelProps> = (
     const seenPairKeys = new Set<string>()
 
     const cleanDigits = (v?: string | null) => (v ? v.replace(/\D/g, '') : '')
+    const cleanPhoneDigits = (v?: string | null) => normalizeCustomerPhone(v)
 
     // Indexar por CPF
     const docMap = new Map<string, CustomerRecord[]>()
@@ -83,9 +85,9 @@ export const CustomerDuplicatesPanel: React.FC<CustomerDuplicatesPanelProps> = (
         docMap.set(doc, list)
       }
 
-      const p1 = cleanDigits(c.phone)
-      const p2 = cleanDigits(c.phone2)
-      const p3 = cleanDigits(c.phone3)
+      const p1 = cleanPhoneDigits(c.phone)
+      const p2 = cleanPhoneDigits(c.phone2)
+      const p3 = cleanPhoneDigits(c.phone3)
 
       const phones = [p1, p2, p3].filter((p) => p && p.length >= 8)
       for (const p of phones) {

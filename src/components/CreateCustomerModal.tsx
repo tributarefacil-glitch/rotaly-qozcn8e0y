@@ -29,6 +29,7 @@ import {
 } from '@/lib/googleMaps'
 import { normalizeCustomerAddressFields } from '@/lib/loteQuadraNormalizer'
 import { encodePlusCode } from '@/lib/plusCode'
+import { normalizeCustomerPhone, normalizeWhatsAppPhone } from '@/lib/whatsappTracking'
 import { haversineDistanceMeters } from '@/lib/geo'
 import {
   BaseAddressAutocomplete,
@@ -1106,14 +1107,16 @@ export function CreateCustomerModal({
     }
 
     const trimmedName = name.trim()
-    const mainPhone = phone.trim()
+    const rawMainPhone = phone.trim()
+    // Normaliza o telefone garantindo DDD 21 caso o usuário digite sem DDD (regra Rotaly RJ)
+    const mainPhone = normalizeCustomerPhone(rawMainPhone)
 
     if (!trimmedName) {
       toast.error('Preencha o nome do cliente.')
       return
     }
 
-    if (!mainPhone) {
+    if (!rawMainPhone || !mainPhone) {
       toast.error('Preencha ao menos um telefone de contato (WhatsApp).')
       return
     }
@@ -1150,7 +1153,11 @@ export function CreateCustomerModal({
       return
     }
 
-    const phonesToValidate = [mainPhone, phone2.trim() || undefined, phone3.trim() || undefined]
+    const phonesToValidate = [
+      mainPhone,
+      phone2.trim() ? normalizeCustomerPhone(phone2) : undefined,
+      phone3.trim() ? normalizeCustomerPhone(phone3) : undefined,
+    ]
 
     // DOUTRINA: "Pino Explícito é Soberano"
     // Se o usuário calibrou o pino conscientemente (arraste, clique, URL Google Maps, lat/lng manual
@@ -1322,8 +1329,8 @@ export function CreateCustomerModal({
       document: document.trim() || undefined,
       phone: mainPhone,
       email: email.trim() || undefined,
-      phone2: phone2.trim() || undefined,
-      phone3: phone3.trim() || undefined,
+      phone2: phone2.trim() ? normalizeCustomerPhone(phone2) : undefined,
+      phone3: phone3.trim() ? normalizeCustomerPhone(phone3) : undefined,
       address: defaultAddress.address || fullAddress,
       street: defaultAddress.street || effectiveStreet.trim(),
       neighborhood: defaultAddress.neighborhood || neighborhood.trim(),
@@ -1379,12 +1386,12 @@ export function CreateCustomerModal({
         if (isIncomplete) {
           const origin = typeof window !== 'undefined' ? window.location.origin : ''
           const pinUrl = `${origin}/pin/${created.id}`
-          const phoneDigits = (created.phone || '').replace(/\D/g, '')
+          const waPhone = normalizeWhatsAppPhone(created.phone)
           const msg = encodeURIComponent(
             `Olá ${created.name}, tudo bem? Para que seu pedido chegue certinho e sem atrasos, por favor confirme ou ajuste a localização do seu endereço clicando aqui: ${pinUrl}`,
           )
-          const waUrl = phoneDigits
-            ? `https://wa.me/55${phoneDigits}?text=${msg}`
+          const waUrl = waPhone
+            ? `https://wa.me/${waPhone}?text=${msg}`
             : `https://wa.me/?text=${msg}`
           toast.info('Cadastro salvo na fila "Cadastro Incompleto"!', {
             description: 'Envie o link para o cliente enviar a localização exata.',

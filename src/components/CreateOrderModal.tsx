@@ -75,7 +75,7 @@ import { BaseAddressAutocomplete, BaseAddressResult } from '@/components/BaseAdd
 import { FormErrorBoundary } from '@/components/FormErrorBoundary'
 import { CustomerSearchCombobox } from '@/components/CustomerSearchCombobox'
 import { WhatsAppTrackingPromptModal } from '@/components/WhatsAppTrackingPromptModal'
-import { buildTrackingWhatsAppUrl } from '@/lib/whatsappTracking'
+import { buildTrackingWhatsAppUrl, normalizeCustomerPhone } from '@/lib/whatsappTracking'
 
 interface CreateOrderModalProps {
   open: boolean
@@ -1035,8 +1035,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
     let finalCustomerId = customerId
 
-    // Helper para sanitizar telefones (remover máscaras e espaços)
-    const sanitizePhone = (val: string) => val.replace(/\D/g, '')
+    // Helper para sanitizar telefones (remover máscaras e espaços, garantindo DDD 21 padrão RJ)
+    const sanitizePhone = (val: string) => normalizeCustomerPhone(val)
 
     // If using inline customer form (New or existing matched by phone/editing)
     if (isAddingCustomer) {
@@ -1047,7 +1047,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
       const rawMainPhone = newCustPhone.trim()
       const cleanMainPhone = sanitizePhone(rawMainPhone)
-      if (!rawMainPhone || cleanMainPhone.length < 8) {
+      if (!rawMainPhone || cleanMainPhone.length < 10) {
         toast.error('Preencha ao menos um telefone de contato válido com DDD para o cliente.')
         return
       }
@@ -1190,8 +1190,12 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         return
       }
 
-      const cleanPhone2 = newCustPhone2.trim() ? sanitizePhone(newCustPhone2) : undefined
-      const cleanPhone3 = newCustPhone3.trim() ? sanitizePhone(newCustPhone3) : undefined
+      const cleanPhone2 = newCustPhone2.trim()
+        ? normalizeCustomerPhone(sanitizePhone(newCustPhone2))
+        : undefined
+      const cleanPhone3 = newCustPhone3.trim()
+        ? normalizeCustomerPhone(sanitizePhone(newCustPhone3))
+        : undefined
 
       const computedPlusCode =
         parsedLat && parsedLng ? encodePlusCode(parsedLat, parsedLng) : plusCode
