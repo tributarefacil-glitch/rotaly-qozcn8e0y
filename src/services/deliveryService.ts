@@ -5,6 +5,7 @@ import { MapDataService } from '@/lib/mapDataService'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { recalcularLote, RecalcularLoteResult } from '@/services/recalcularLoteHelper'
 import { getOperationalWindow } from '../lib/operationalWindow'
+import { pbWriteRetry, sleepWithJitter } from '@/lib/pbWriteRetry'
 import type {
   OrderRecord,
   CustomerRecord,
@@ -981,7 +982,9 @@ export const deliveryService = {
   },
 
   async updateOrder(id: string, data: Partial<OrderRecord> | FormData) {
-    return pb.collection<OrderRecord>('orders').update(id, data)
+    return pbWriteRetry(() => pb.collection<OrderRecord>('orders').update(id, data), {
+      op: 'updateOrder',
+    })
   },
 
   /**
@@ -989,9 +992,13 @@ export const deliveryService = {
    */
   async markTrackingLinkSent(orderId: string, sentAt?: string) {
     const timestamp = sentAt || new Date().toISOString()
-    return pb.collection<OrderRecord>('orders').update(orderId, {
-      tracking_link_sent_at: timestamp,
-    })
+    return pbWriteRetry(
+      () =>
+        pb.collection<OrderRecord>('orders').update(orderId, {
+          tracking_link_sent_at: timestamp,
+        }),
+      { op: 'markTrackingLinkSent' },
+    )
   },
 
   /**
@@ -3246,6 +3253,8 @@ export const deliveryService = {
         const hasFile = !!odometerData?.foto_odometro_inicial
         const hasOdom =
           typeof odometerData?.odometro_inicial === 'number' && odometerData.odometro_inicial > 0
+        // Escalonamento entre PATCHs do lote: evita rajada que satura o backend (429)
+        if (updatedCount > 0) await sleepWithJitter(150, 0.5)
         if (hasFile || hasOdom) {
           const formData = new FormData()
           formData.append('route_started', 'true')
@@ -3258,14 +3267,20 @@ export const deliveryService = {
           if (hasFile) {
             formData.append('foto_odometro_inicial', odometerData!.foto_odometro_inicial!)
           }
-          await pb.collection('orders').update(order.id, formData)
-        } else {
-          await pb.collection('orders').update(order.id, {
-            route_started: true,
-            route_started_at: order.route_started_at || startedAtIso,
-            route_batch_key: canonicalKey,
-            status: order.status === 'assigned' ? 'in_transit' : order.status,
+          await pbWriteRetry(() => pb.collection('orders').update(order.id, formData), {
+            op: 'startCourierRoute',
           })
+        } else {
+          await pbWriteRetry(
+            () =>
+              pb.collection('orders').update(order.id, {
+                route_started: true,
+                route_started_at: order.route_started_at || startedAtIso,
+                route_batch_key: canonicalKey,
+                status: order.status === 'assigned' ? 'in_transit' : order.status,
+              }),
+            { op: 'startCourierRoute' },
+          )
         }
         updatedCount++
       }
@@ -3382,6 +3397,8 @@ export const deliveryService = {
 
       let updatedCount = 0
       for (const order of ordersToUpdate) {
+        // Escalonamento entre PATCHs do fechamento: evita rajada que satura o backend (429)
+        if (updatedCount > 0) await sleepWithJitter(150, 0.5)
         const isDelivered = order.status === 'delivered'
         const hasFile = !!odometerData?.foto_odometro_final
         const odomFinal = odometerData?.odometro_final
@@ -3396,17 +3413,21 @@ export const deliveryService = {
             : order.notes
 
         if (!isDelivered) {
-          await pb.collection('orders').update(order.id, {
-            courier_id: null,
-            status: 'pending',
-            sequence: null,
-            route_released: false,
-            route_released_at: null,
-            route_started: false,
-            route_started_at: null,
-            route_finished: false,
-            route_finished_at: null,
-          })
+          await pbWriteRetry(
+            () =>
+              pb.collection('orders').update(order.id, {
+                courier_id: null,
+                status: 'pending',
+                sequence: null,
+                route_released: false,
+                route_released_at: null,
+                route_started: false,
+                route_started_at: null,
+                route_finished: false,
+                route_finished_at: null,
+              }),
+            { op: 'finishCourierRoute' },
+          )
         } else {
           if (hasFile || hasOdom) {
             const formData = new FormData()
@@ -3426,13 +3447,19 @@ export const deliveryService = {
             if (hasFile) {
               formData.append('foto_odometro_final', odometerData!.foto_odometro_final!)
             }
-            await pb.collection('orders').update(order.id, formData)
-          } else {
-            await pb.collection('orders').update(order.id, {
-              route_finished: true,
-              route_finished_at: now,
-              notes: pendingNote,
+            await pbWriteRetry(() => pb.collection('orders').update(order.id, formData), {
+              op: 'finishCourierRoute',
             })
+          } else {
+            await pbWriteRetry(
+              () =>
+                pb.collection('orders').update(order.id, {
+                  route_finished: true,
+                  route_finished_at: now,
+                  notes: pendingNote,
+                }),
+              { op: 'finishCourierRoute' },
+            )
           }
         }
         updatedCount++

@@ -478,6 +478,8 @@ export default function CourierApp() {
   // Ref para acompanhar se há rota ativa sem recriar timers/intervals de polling
   const hasActiveStartedRouteRef = useRef<boolean>(false)
   const lastPollingTickRef = useRef<number>(Date.now())
+  // Ref do throttle anti-echo: limita recargas por updates recorrentes de pedido em trânsito
+  const lastInTransitEchoReloadRef = useRef<number>(0)
 
   // REFORÇO DE RECEPÇÃO ECONÔMICO:
   // - Pausa polling de pedidos quando app está em background (document.hidden) para economizar bateria e rede
@@ -561,7 +563,23 @@ export default function CourierApp() {
           )
         }
       }
-      loadCourierOrders({ force: true })
+      // DEFESA CONTRA ECOS: pedidos em trânsito geram atualizações constantes (GPS/ETA/ordem);
+      // recarregar o conjunto completo a cada update alimenta rajadas de leitura/escrita sob carga.
+      // Throttle: no máximo 1 recarga a cada 10s para ecos de update do MESMO pedido em trânsito;
+      // create/delete e mudanças de estado relevante continuam recarregando imediatamente.
+      const isOwnInTransitEcho =
+        e.action === 'update' &&
+        isMyOrder &&
+        e.record.status === 'in_transit' &&
+        e.record.route_released === true
+      if (isOwnInTransitEcho) {
+        const nowTs = Date.now()
+        if (nowTs - lastInTransitEchoReloadRef.current < 10000) return
+        lastInTransitEchoReloadRef.current = nowTs
+      } else {
+        lastInTransitEchoReloadRef.current = 0
+      }
+      loadCourierOrders({ force: isOwnInTransitEcho ? false : true })
       loadFuelAndAccountData()
     }
   })
