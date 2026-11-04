@@ -321,6 +321,21 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         }
 
         @JavascriptInterface
+        public boolean isIgnoringBatteryOptimizations() {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                    if (pm != null) {
+                        return pm.isIgnoringBatteryOptimizations(getPackageName());
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Falha ao checar isIgnoringBatteryOptimizations:", e);
+            }
+            return false;
+        }
+
+        @JavascriptInterface
         public boolean requestIgnoreBatteryOptimizations() {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -332,10 +347,12 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         intent.setData(Uri.parse("package:" + packageName));
                         startActivity(intent);
                         return true;
+                    } else if (pm != null && pm.isIgnoringBatteryOptimizations(packageName)) {
+                        return true;
                     }
                 }
             } catch (Exception e) {
-                Log.w(TAG, "Falha ao solicitar diálogo de isenção direta de bateria:", e);
+                Log.w(TAG, "Falha ao solicitar diálogo de isenção direta de bateria, usando fallback de configurações:", e);
                 openBatteryOptimizationSettings();
             }
             return false;
