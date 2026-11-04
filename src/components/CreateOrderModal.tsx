@@ -74,6 +74,8 @@ import { MapDataService } from '@/lib/mapDataService'
 import { BaseAddressAutocomplete, BaseAddressResult } from '@/components/BaseAddressAutocomplete'
 import { FormErrorBoundary } from '@/components/FormErrorBoundary'
 import { CustomerSearchCombobox } from '@/components/CustomerSearchCombobox'
+import { WhatsAppTrackingPromptModal } from '@/components/WhatsAppTrackingPromptModal'
+import { buildTrackingWhatsAppUrl } from '@/lib/whatsappTracking'
 
 interface CreateOrderModalProps {
   open: boolean
@@ -167,6 +169,15 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
   // Link parsing input state
   const [locationLinkInput, setLocationLinkInput] = useState('')
+
+  // Modal pós-salvamento: envio de link de rastreamento via WhatsApp
+  const [createdOrderForWa, setCreatedOrderForWa] = useState<{
+    id: string
+    tracking_code: string
+    estimated_arrival?: string | null
+    customerName: string
+    customerPhone: string | null
+  } | null>(null)
   const [isParsingLink, setIsParsingLink] = useState(false)
 
   // Google Maps state & warnings
@@ -1502,6 +1513,41 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       }
 
       toast.success(`Pedido ${usedTrackingCode} registrado com sucesso!`)
+
+      // Identificar telefone e nome do cliente para abertura do WhatsApp
+      const resolvedCustomerPhone =
+        selectedCustomerRecord?.phone ||
+        newCustPhone.trim() ||
+        selectedCustomerRecord?.phone2 ||
+        newCustPhone2.trim() ||
+        null
+
+      // Preparar modal de envio de rastreamento do WhatsApp (Momento 1)
+      setCreatedOrderForWa({
+        id: createdOrder.id,
+        tracking_code: usedTrackingCode,
+        estimated_arrival: createdOrder.estimated_arrival,
+        customerName: targetCustomerName,
+        customerPhone: resolvedCustomerPhone,
+      })
+
+      // Se houver telefone válido, já abre o deep link wa.me diretamente (sem bloquear)
+      if (resolvedCustomerPhone) {
+        const directWaUrl = buildTrackingWhatsAppUrl(resolvedCustomerPhone, {
+          customerName: targetCustomerName,
+          trackingCode: usedTrackingCode,
+          estimatedArrival: createdOrder.estimated_arrival,
+          includeEta: Boolean(createdOrder.estimated_arrival),
+        })
+        if (directWaUrl) {
+          try {
+            window.open(directWaUrl, '_blank', 'noopener,noreferrer')
+          } catch (openErr) {
+            console.warn('[CreateOrderModal] Bloqueio de popup para WhatsApp:', openErr)
+          }
+        }
+      }
+
       onOrderCreated()
       onOpenChange(false)
 
@@ -2548,6 +2594,25 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           </form>
         </FormErrorBoundary>
       </DialogContent>
+
+      {/* Modal pós-salvamento: envio e confirmação do rastreamento via WhatsApp (Momento 1) */}
+      {createdOrderForWa && (
+        <WhatsAppTrackingPromptModal
+          open={Boolean(createdOrderForWa)}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) setCreatedOrderForWa(null)
+          }}
+          order={{
+            id: createdOrderForWa.id,
+            tracking_code: createdOrderForWa.tracking_code,
+            estimated_arrival: createdOrderForWa.estimated_arrival,
+          }}
+          customerName={createdOrderForWa.customerName}
+          customerPhone={createdOrderForWa.customerPhone}
+          onSent={() => setCreatedOrderForWa(null)}
+          onSkip={() => setCreatedOrderForWa(null)}
+        />
+      )}
     </Dialog>
   )
 }

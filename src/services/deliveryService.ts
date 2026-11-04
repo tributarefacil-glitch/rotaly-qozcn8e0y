@@ -985,6 +985,16 @@ export const deliveryService = {
   },
 
   /**
+   * Marca que o link de rastreamento foi enviado ao cliente via WhatsApp
+   */
+  async markTrackingLinkSent(orderId: string, sentAt?: string) {
+    const timestamp = sentAt || new Date().toISOString()
+    return pb.collection<OrderRecord>('orders').update(orderId, {
+      tracking_link_sent_at: timestamp,
+    })
+  },
+
+  /**
    * Atualiza o pin (lat, lng) do endereço entregue do cliente.
    * Se o pedido estiver vinculado a um customer_address_id e o cliente tiver lista de endereços,
    * atualiza o item correspondente em `addresses`.
@@ -3043,6 +3053,29 @@ export const deliveryService = {
           })
         } catch {
           /* intentionally ignored */
+        }
+      }
+
+      // MOMENTO 2 — REDE DE SEGURANÇA:
+      // Quando a rota do pedido for otimizada/liberada e o link AINDA NÃO foi enviado ao cliente
+      // (sem tracking_link_sent_at), disparar notificação no sino do vendedor responsável.
+      // Quem já enviou no momento 1 NÃO recebe notificação.
+      for (const order of ordersToUpdate) {
+        if (!order.tracking_link_sent_at && order.seller_id) {
+          try {
+            await this.createNotification({
+              user_id: order.seller_id,
+              title: `Pedido ${order.tracking_code} aguardando envio do rastreamento`,
+              message: `A rota do pedido ${order.tracking_code} foi liberada. Toque para abrir o WhatsApp e enviar o link ao cliente.`,
+              type: 'order',
+              read: false,
+            })
+          } catch (notifSellerErr) {
+            console.warn(
+              '[releaseRouteForOrders] Erro ao notificar vendedor sobre envio pendente:',
+              notifSellerErr,
+            )
+          }
         }
       }
 

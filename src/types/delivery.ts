@@ -312,6 +312,8 @@ export interface OrderRecord extends RecordModel {
   entrega_admin_unlock_reason?: string
   entrega_admin_unlock_by?: string
   customer_address_id?: string
+  // WhatsApp Tracking Link
+  tracking_link_sent_at?: string
   // expanded relations
   expand?: {
     customer_id?: CustomerRecord
