@@ -684,13 +684,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     }
   })
 
-  // Assinar realtime da coleção fuel_advances para refletir adiantamentos/cancelamentos/ajustes instantaneamente
-  useRealtime<FuelAdvanceRecord>('fuel_advances', () => {
-    loadData()
-    if (activeTab === 'fuel' || isCourierHistoryModalOpen) {
-      fetchFuelHistoryOrders(true)
-    }
-  })
+  // Assinar realtime da coleção fuel_advances para refletir adiantamentos/cancelamentos/ajustes instantaneamente com debounce de ~3s
+  useRealtime<FuelAdvanceRecord>(
+    'fuel_advances',
+    () => {
+      loadData()
+      if (activeTab === 'fuel' || isCourierHistoryModalOpen) {
+        fetchFuelHistoryOrders(true)
+      }
+    },
+    { debounceMs: 3000 },
+  )
 
   // Save Admin Settings (all categories in batch)
   // CORREÇÃO (C): Alinhado com recarregamento completo loadData(), sincronização total e limpeza de dirty
@@ -1238,6 +1242,41 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     return { totalKmRodada: km, totalFuelCostCalculated: fuel }
   }, [isReportsTabActive, filteredReportOrders, locations, offRouteEvents, orders, users, settings])
 
+  // Função auxiliar para filtrar pedidos por período em memória (evita reconsultas pesadas)
+  const filterOrdersByFuelPeriod = (
+    pool: OrderRecord[],
+    period: 'all' | 'month' | 'week' | 'today',
+    windowObj: ReturnType<typeof getOperationalWindow>,
+    refDate: Date,
+  ): OrderRecord[] => {
+    if (period === 'all') return pool
+    const monthStart = getOperationalMonthStart(refDate)
+    const sevenDaysAgoStart = windowObj.start - 6 * 24 * 60 * 60 * 1000
+
+    return pool.filter((o) => {
+      if (o.status === 'cancelled') return false
+      if (o.route_started !== true && o.actual_arrival == null) return false
+
+      const created = o.created || ''
+      const finished = o.route_finished_at || ''
+      const arrival = o.actual_arrival || ''
+
+      if (period === 'today') {
+        const startStr = windowObj.startPbString
+        return created >= startStr || finished >= startStr || arrival >= startStr
+      }
+      if (period === 'month') {
+        const startStr = monthStart.pbString
+        return created >= startStr || finished >= startStr || arrival >= startStr
+      }
+      if (period === 'week') {
+        const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
+        return created >= startStr || finished >= startStr || arrival >= startStr
+      }
+      return true
+    })
+  }
+
   // Carregamento sob demanda dos pedidos históricos de combustível com cache em memória (5 min)
   const isFuelViewActive = activeTab === 'fuel' || isCourierHistoryModalOpen
 
@@ -1303,32 +1342,74 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
       setIsLoadingFuelOrders(true)
       try {
-        // Busca paralela: pedidos do filtro + pedidos completos pós-corte se ainda não em cache
-        const promises: [Promise<OrderRecord[]>, Promise<OrderRecord[]> | null] = [
-          deliveryService.getOrdersInBatches(
+        // Otimização Rotaly (v0.0.548):
+        // Se o período for 'all', o pool do período JÁ É o pool completo pós-corte.
+        // Se já temos cachedFull válido em memória, derivamos os pedidos do período diretamente dele.
+        // Caso contrário, busca PRIMEIRO os pedidos da janela do período selecionado (alimenta os cards em <1s),
+        // e se necessário carrega o histórico completo em segundo plano sem travar a renderização inicial.
+        if (cachedFull && !forceRefresh) {
+          // Derivar da fatia completa em memória sem nova requisição de rede
+          const derived = filterOrdersByFuelPeriod(
+            cachedFull.data,
+            fuelPeriodFilter,
+            opWindow,
+            currentDate,
+          )
+          fuelOrdersCacheRef.current.set(cacheKey, { data: derived, timestamp: Date.now() })
+          setFuelHistoryOrders(derived)
+          setLoadedFuelPeriod(fuelPeriodFilter)
+          setIsLoadingFuelOrders(false)
+          return
+        }
+
+        if (fuelPeriodFilter === 'all') {
+          // Busca ÚNICA que atende tanto o período quanto o pool completo
+          const fetchedFull = await deliveryService.getOrdersInBatches(
+            `status != 'cancelled' && (route_started = true || actual_arrival != null)`,
+            '-created',
+            'customer_id,courier_id,seller_id',
+            300,
+          )
+          fuelOrdersCacheRef.current.set(cacheKey, { data: fetchedFull, timestamp: Date.now() })
+          fuelOrdersCacheRef.current.set(fullCacheKey, { data: fetchedFull, timestamp: Date.now() })
+          setFuelHistoryOrders(fetchedFull)
+          setAllPostCutoffOrdersPool(fetchedFull)
+          setLoadedFuelPeriod(fuelPeriodFilter)
+        } else {
+          // 1. Carrega primeiro a janela do período selecionado (<1s para pintar cards)
+          const fetchedPeriod = await deliveryService.getOrdersInBatches(
             filter,
             '-created',
             'customer_id,courier_id,seller_id',
             200,
-          ),
-          !cachedFull || forceRefresh
-            ? deliveryService.getOrdersInBatches(
-                `status != 'cancelled' && (route_started = true || actual_arrival != null)`, // histórico completo pós-corte sem cancelados
+          )
+          fuelOrdersCacheRef.current.set(cacheKey, { data: fetchedPeriod, timestamp: Date.now() })
+          setFuelHistoryOrders(fetchedPeriod)
+          setLoadedFuelPeriod(fuelPeriodFilter)
+
+          // 2. Histórico completo pós-corte carregado em segundo plano se ainda não estiver pronto
+          if (!cachedFull || forceRefresh) {
+            deliveryService
+              .getOrdersInBatches(
+                `status != 'cancelled' && (route_started = true || actual_arrival != null)`,
                 '-created',
                 'customer_id,courier_id,seller_id',
                 300,
               )
-            : null,
-        ]
-
-        const [fetched, fetchedFull] = await Promise.all(promises)
-        fuelOrdersCacheRef.current.set(cacheKey, { data: fetched, timestamp: Date.now() })
-        setFuelHistoryOrders(fetched)
-        setLoadedFuelPeriod(fuelPeriodFilter)
-
-        if (fetchedFull) {
-          fuelOrdersCacheRef.current.set(fullCacheKey, { data: fetchedFull, timestamp: Date.now() })
-          setAllPostCutoffOrdersPool(fetchedFull)
+              .then((fetchedFull) => {
+                fuelOrdersCacheRef.current.set(fullCacheKey, {
+                  data: fetchedFull,
+                  timestamp: Date.now(),
+                })
+                setAllPostCutoffOrdersPool(fetchedFull)
+              })
+              .catch((fullErr) => {
+                console.warn(
+                  '[AdminDashboard] Falha ao carregar pool completo em segundo plano:',
+                  fullErr,
+                )
+              })
+          }
         }
       } catch (err) {
         console.error('Erro ao carregar pedidos de combustível do período:', err)

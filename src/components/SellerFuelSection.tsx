@@ -101,6 +101,9 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
   // Versão de sincronização global para invalidar caches legados e forçar recarga imediata
   const FUEL_GLOBAL_VERSION = 'v0325_period_pool_sync'
 
+  // Pool completo pós-corte em cache no seller para permitir derivação em memória quando já carregado
+  const fullSellerOrdersCacheRef = useRef<OrderRecord[] | null>(null)
+
   const fetchFuelHistoryOrders = useCallback(
     async (forceRefresh = false) => {
       const cacheKey = `${fuelPeriodFilter}_${FUEL_GLOBAL_VERSION}`
@@ -113,10 +116,43 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
         return
       }
 
-      let filter = ''
       const currentDate = new Date()
       const opWindow = getOperationalWindow(currentDate)
 
+      // Se já temos a pool 'all' ou o histórico em cache, podemos derivar em memória
+      if (
+        !forceRefresh &&
+        fullSellerOrdersCacheRef.current &&
+        fullSellerOrdersCacheRef.current.length > 0
+      ) {
+        const full = fullSellerOrdersCacheRef.current
+        const monthStart = getOperationalMonthStart(currentDate)
+        const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+        const derived = full.filter((o) => {
+          if (fuelPeriodFilter === 'all') return true
+          const created = o.created || ''
+          const finished = o.route_finished_at || ''
+          const arrival = o.actual_arrival || ''
+          if (fuelPeriodFilter === 'month') {
+            return (
+              created >= monthStart.pbString ||
+              finished >= monthStart.pbString ||
+              arrival >= monthStart.pbString
+            )
+          }
+          if (fuelPeriodFilter === 'week') {
+            const startStr = formatPbTimestamp(new Date(sevenDaysAgoStart))
+            return created >= startStr || finished >= startStr || arrival >= startStr
+          }
+          return true
+        })
+        fuelOrdersCacheRef.current.set(cacheKey, { data: derived, timestamp: Date.now() })
+        setFuelHistoryOrders(derived)
+        setLoadedFuelPeriod(fuelPeriodFilter)
+        return
+      }
+
+      let filter = ''
       if (fuelPeriodFilter === 'month') {
         const monthStart = getOperationalMonthStart(currentDate)
         filter = `created >= '${monthStart.pbString}' || route_finished_at >= '${monthStart.pbString}' || actual_arrival >= '${monthStart.pbString}'`
@@ -139,6 +175,9 @@ export const SellerFuelSection: React.FC<SellerFuelSectionProps> = ({
           200,
           targetCompanyId,
         )
+        if (fuelPeriodFilter === 'all') {
+          fullSellerOrdersCacheRef.current = fetched
+        }
         fuelOrdersCacheRef.current.set(cacheKey, { data: fetched, timestamp: Date.now() })
         setFuelHistoryOrders(fetched)
         setLoadedFuelPeriod(fuelPeriodFilter)

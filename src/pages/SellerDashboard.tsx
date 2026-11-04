@@ -456,10 +456,14 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     }
   })
 
-  // Realtime hook for fuel_advances (adiantamentos e compensações de combustível sincronizados em tempo real)
-  useRealtime<FuelAdvanceRecord>('fuel_advances', () => {
-    loadData()
-  })
+  // Realtime hook for fuel_advances (adiantamentos e compensações de combustível sincronizados em tempo real) com debounce de ~3s
+  useRealtime<FuelAdvanceRecord>(
+    'fuel_advances',
+    () => {
+      loadData()
+    },
+    { debounceMs: 3000 },
+  )
 
   // Realtime hook for seller notifications (off-route alerts and base arrival warnings)
   useRealtime<NotificationRecord>('notifications', async (e) => {

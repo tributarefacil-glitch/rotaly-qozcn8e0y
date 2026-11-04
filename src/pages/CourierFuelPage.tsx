@@ -82,54 +82,43 @@ export default function CourierFuelPage() {
       // Pool completo pós-corte sem corte de paginação (igual ao AdminDashboard)
       const fullPostCutoffFilter = `courier_id = '${user.id}' && status != 'cancelled' && (route_started = true || actual_arrival != null)`
 
-      // Usa o serviço unificado de combustível e queries completas em lotes
+      // Otimização Rotaly (v0.0.548):
+      // Uma única busca cobrindo o período necessário (ou a mais larga / histórico completo se 'all'),
+      // ou carrega primeiro o período selecionado (<1s para renderizar cards) e o histórico completo em 2º plano,
+      // ou busca direto o histórico pós-corte (fullPostCutoffFilter) e deriva a fatia do período em memória!
+      // Como fullPostCutoffFilter é apenas para este courier_id específico (normalmente poucas páginas de 300),
+      // buscar fullPostCutoffFilter UMA VEZ permite derivar o período instantaneamente sem NENHUMA 2ª busca!
       let fetchBatchFailed = false
-      const [
-        userAdvances,
-        periodOrders,
-        fullOrders,
-        appSettings,
-        userLocations,
-        userEvents,
-        batches,
-      ] = await Promise.all([
-        fuelAccountService.getFuelAdvances(user.id).catch((err) => {
-          console.warn('[CourierFuelPage] Falha ao carregar adiantamentos:', err)
-          return [] as FuelAdvanceRecord[]
-        }),
-        deliveryService
-          .getOrdersInBatches(
-            periodFilterQuery,
-            '-created',
-            'customer_id,courier_id,seller_id',
-            200,
-          )
-          .catch((err) => {
-            console.warn('[CourierFuelPage] Falha ao carregar pedidos do período:', err)
-            fetchBatchFailed = true
-            return [] as OrderRecord[]
+      const [userAdvances, fullOrders, appSettings, userLocations, userEvents, batches] =
+        await Promise.all([
+          fuelAccountService.getFuelAdvances(user.id).catch((err) => {
+            console.warn('[CourierFuelPage] Falha ao carregar adiantamentos:', err)
+            return [] as FuelAdvanceRecord[]
           }),
-        deliveryService
-          .getOrdersInBatches(
-            fullPostCutoffFilter,
-            '-created',
-            'customer_id,courier_id,seller_id',
-            300,
-          )
-          .catch((err) => {
-            console.warn('[CourierFuelPage] Falha ao carregar histórico completo pós-corte:', err)
-            fetchBatchFailed = true
-            return [] as OrderRecord[]
-          }),
-        deliveryService.getSettings().catch(() => null),
-        deliveryService
-          .getRecentLocationsForCourier(user.id, 60)
-          .catch(() => [] as LocationRecord[]),
-        deliveryService
-          .getOffRouteEvents(`courier_id = '${user.id}'`)
-          .catch(() => [] as OffRouteEventRecord[]),
-        deliveryService.listRouteBatchTelemetry().catch(() => [] as RouteBatchTelemetryRecord[]),
-      ])
+          deliveryService
+            .getOrdersInBatches(
+              fullPostCutoffFilter,
+              '-created',
+              'customer_id,courier_id,seller_id',
+              300,
+            )
+            .catch((err) => {
+              console.warn(
+                '[CourierFuelPage] Falha ao carregar histórico pós-corte do entregador:',
+                err,
+              )
+              fetchBatchFailed = true
+              return [] as OrderRecord[]
+            }),
+          deliveryService.getSettings().catch(() => null),
+          deliveryService
+            .getRecentLocationsForCourier(user.id, 60)
+            .catch(() => [] as LocationRecord[]),
+          deliveryService
+            .getOffRouteEvents(`courier_id = '${user.id}'`)
+            .catch(() => [] as OffRouteEventRecord[]),
+          deliveryService.listRouteBatchTelemetry().catch(() => [] as RouteBatchTelemetryRecord[]),
+        ])
 
       // GUARDA: se o carregamento em lotes terminar com erro ou retornar 0 pedidos pós-corte,
       // NUNCA renderizar saldo (nem de abertura) — renderizar card de erro com botão "Tentar novamente"
@@ -149,8 +138,32 @@ export default function CourierFuelPage() {
         return
       }
 
+      // Derivação em memória do período selecionado a partir do fullOrders (sem 2ª requisição getOrdersInBatches)
+      const derivedPeriodOrders = fullOrders.filter((o) => {
+        if (periodFilter === 'all') return true
+        const created = o.created || ''
+        const finished = o.route_finished_at || ''
+        const arrival = o.actual_arrival || ''
+
+        if (periodFilter === 'today') {
+          const startStr = opWindow.startPbString
+          return created >= startStr || finished >= startStr || arrival >= startStr
+        }
+        if (periodFilter === 'month') {
+          const monthStart = getOperationalMonthStart(currentDate)
+          const startStr = monthStart.pbString
+          return created >= startStr || finished >= startStr || arrival >= startStr
+        }
+        if (periodFilter === 'week') {
+          const sevenDaysAgoStart = opWindow.start - 6 * 24 * 60 * 60 * 1000
+          const startStr = new Date(sevenDaysAgoStart).toISOString().replace('T', ' ')
+          return created >= startStr || finished >= startStr || arrival >= startStr
+        }
+        return true
+      })
+
       setAdvances(userAdvances)
-      setOrders(periodOrders)
+      setOrders(derivedPeriodOrders)
       setAllPostCutoffOrdersPool(fullOrders)
       setSettings(appSettings)
       setLocations(userLocations)
@@ -255,29 +268,41 @@ export default function CourierFuelPage() {
     return () => clearInterval(interval)
   }, [user])
 
-  // Realtime updates for fuel advances, orders, locations and off_route_events
-  useRealtime<FuelAdvanceRecord>('fuel_advances', (e) => {
-    if (e.record.courier_id === user?.id) {
-      if (e.action === 'create') {
-        toast.success(
-          `⛽ Novo adiantamento recebido: R$ ${Number(e.record.amount || 0).toFixed(2)}`,
-        )
+  // Realtime updates for fuel advances, orders, locations and off_route_events com debounce de ~3s
+  useRealtime<FuelAdvanceRecord>(
+    'fuel_advances',
+    (e) => {
+      if (e.record.courier_id === user?.id) {
+        if (e.action === 'create') {
+          toast.success(
+            `⛽ Novo adiantamento recebido: R$ ${Number(e.record.amount || 0).toFixed(2)}`,
+          )
+        }
+        loadFinancialData()
       }
-      loadFinancialData()
-    }
-  })
+    },
+    { debounceMs: 3000 },
+  )
 
-  useRealtime<OrderRecord>('orders', (e) => {
-    if (e.record.courier_id === user?.id) {
-      loadFinancialData()
-    }
-  })
+  useRealtime<OrderRecord>(
+    'orders',
+    (e) => {
+      if (e.record.courier_id === user?.id) {
+        loadFinancialData()
+      }
+    },
+    { debounceMs: 3000 },
+  )
 
-  useRealtime<OffRouteEventRecord>('off_route_events', (e) => {
-    if (e.record.courier_id === user?.id) {
-      loadFinancialData()
-    }
-  })
+  useRealtime<OffRouteEventRecord>(
+    'off_route_events',
+    (e) => {
+      if (e.record.courier_id === user?.id) {
+        loadFinancialData()
+      }
+    },
+    { debounceMs: 3000 },
+  )
 
   // Hook Compartilhado: mesmo motor de telemetria e regras de consumo do Admin
   // REGRA CONTRATUAL DO ROTALY:

@@ -562,24 +562,32 @@ export default function CourierApp() {
     }
   })
 
-  // Realtime para adiantamentos de combustível (CORREÇÃO 3: recarga restrita ao entregador)
-  useRealtime<FuelAdvanceRecord>('fuel_advances', (e) => {
-    if (user?.id && e.record.courier_id === user.id) {
-      if (e.action === 'create') {
-        toast.success(
-          `⛽ Novo adiantamento recebido: R$ ${Number(e.record.amount || 0).toFixed(2)}`,
-        )
+  // Realtime para adiantamentos de combustível (CORREÇÃO 3: recarga restrita ao entregador) com debounce de ~3s
+  useRealtime<FuelAdvanceRecord>(
+    'fuel_advances',
+    (e) => {
+      if (user?.id && e.record.courier_id === user.id) {
+        if (e.action === 'create') {
+          toast.success(
+            `⛽ Novo adiantamento recebido: R$ ${Number(e.record.amount || 0).toFixed(2)}`,
+          )
+        }
+        loadFuelAndAccountData()
       }
-      loadFuelAndAccountData()
-    }
-  })
+    },
+    { debounceMs: 3000 },
+  )
 
-  // Realtime para desvios de rota (CORREÇÃO 3: recarga restrita ao entregador)
-  useRealtime<OffRouteEventRecord>('off_route_events', (e) => {
-    if (user?.id && e.record.courier_id === user.id) {
-      loadFuelAndAccountData()
-    }
-  })
+  // Realtime para desvios de rota (CORREÇÃO 3: recarga restrita ao entregador) com debounce de ~3s
+  useRealtime<OffRouteEventRecord>(
+    'off_route_events',
+    (e) => {
+      if (user?.id && e.record.courier_id === user.id) {
+        loadFuelAndAccountData()
+      }
+    },
+    { debounceMs: 3000 },
+  )
 
   // Realtime para notificações / avisos de desvio e chegada à base
   useRealtime<NotificationRecord>('notifications', (e) => {

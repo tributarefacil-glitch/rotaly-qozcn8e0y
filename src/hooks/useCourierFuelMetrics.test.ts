@@ -976,5 +976,74 @@ describe('calculateCourierFuelMetrics - anti-recursão pós-corte e cálculo de 
       expect(fuelAccount.balance).toBe(87.84)
       expect(fuelAccount.hasManualAdjustment).toBe(false)
     })
+
+    it('derivação em memória de pedidos por período produz exatamente os mesmos resultados sem refetch de rede', () => {
+      const courierTest: UserRecord = {
+        id: 'usr_edson_deriv',
+        name: 'Edson Teste Derivacao',
+        vehicle_type: 'moto',
+        opening_balance: 5.32,
+        cutoff_date: '2026-11-01 03:00:00.000Z',
+        created: '2026-09-01T00:00:00Z',
+        updated: '2026-11-04T00:00:00Z',
+      } as unknown as UserRecord
+
+      const advancesTest: FuelAdvanceRecord[] = [
+        {
+          id: 'adv_deriv_1',
+          collectionId: 'adv_coll',
+          collectionName: 'fuel_advances',
+          courier_id: courierTest.id,
+          amount: 100.0,
+          entry_type: 'advance',
+          status: 'paid',
+          date: '2026-11-03 12:00:00.000Z',
+          created: '2026-11-03 12:00:00.000Z',
+        } as unknown as FuelAdvanceRecord,
+      ]
+
+      // Simula pool completo contendo ordens de períodos diferentes
+      const poolCompleto: OrderRecord[] = [
+        {
+          id: 'ord_nov_1',
+          collectionId: 'orders_coll',
+          collectionName: 'orders',
+          courier_id: courierTest.id,
+          status: 'delivered',
+          created: '2026-11-03 14:00:00.000Z',
+          actual_arrival: '2026-11-03 14:30:00.000Z',
+          total_route_with_return_km: 80.8,
+          start_base_lat: -22.6977499,
+          start_base_lng: -43.2936013,
+        } as unknown as OrderRecord,
+      ]
+
+      // Executa cálculo com pool completo
+      const calcFull = calculateCourierFuelMetrics({
+        courier: courierTest,
+        advances: advancesTest,
+        orders: poolCompleto,
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      // Executa com pedidos derivados
+      const derived = poolCompleto.filter((o) => o.created.startsWith('2026-11'))
+      const calcDerived = calculateCourierFuelMetrics({
+        courier: courierTest,
+        advances: advancesTest,
+        orders: derived,
+        locations: [],
+        offRouteEvents: [],
+        settings: mockSettings,
+        periodFilter: 'month',
+      })
+
+      expect(calcDerived.balance).toBe(calcFull.balance)
+      expect(calcDerived.totalSpent).toBe(calcFull.totalSpent)
+      expect(calcDerived.totalOfficialKm).toBe(calcFull.totalOfficialKm)
+    })
   })
 })

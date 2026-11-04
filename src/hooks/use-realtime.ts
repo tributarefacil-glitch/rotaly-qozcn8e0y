@@ -13,13 +13,27 @@ import pb from '@/lib/pocketbase/client'
  * `useRealtime<MyRecord>(...)` to get a typed subscription payload
  * instead of `unknown`.
  */
+export interface UseRealtimeOptions {
+  enabled?: boolean
+  debounceMs?: number
+}
+
 export function useRealtime<TRecord extends RecordModel = RecordModel>(
   collectionName: string,
   callback: (data: RecordSubscription<TRecord>) => void,
-  enabled: boolean = true,
+  enabledOrOptions: boolean | UseRealtimeOptions = true,
 ) {
   const callbackRef = useRef(callback)
   callbackRef.current = callback
+
+  const options: UseRealtimeOptions =
+    typeof enabledOrOptions === 'boolean'
+      ? { enabled: enabledOrOptions, debounceMs: 0 }
+      : { enabled: enabledOrOptions.enabled ?? true, debounceMs: enabledOrOptions.debounceMs ?? 0 }
+
+  const enabled = options.enabled ?? true
+  const debounceMs = options.debounceMs ?? 0
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!enabled) return
@@ -29,7 +43,17 @@ export function useRealtime<TRecord extends RecordModel = RecordModel>(
 
     pb.collection<TRecord>(collectionName)
       .subscribe('*', (e) => {
-        callbackRef.current(e)
+        if (debounceMs > 0) {
+          if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current)
+          }
+          debounceTimerRef.current = setTimeout(() => {
+            debounceTimerRef.current = null
+            callbackRef.current(e)
+          }, debounceMs)
+        } else {
+          callbackRef.current(e)
+        }
       })
       .then((fn) => {
         if (cancelled) {
@@ -42,11 +66,15 @@ export function useRealtime<TRecord extends RecordModel = RecordModel>(
 
     return () => {
       cancelled = true
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+        debounceTimerRef.current = null
+      }
       if (unsubscribeFn) {
         unsubscribeFn().catch(() => {})
       }
     }
-  }, [collectionName, enabled])
+  }, [collectionName, enabled, debounceMs])
 }
 
 export default useRealtime
