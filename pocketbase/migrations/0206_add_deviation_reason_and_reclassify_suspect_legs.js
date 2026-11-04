@@ -25,7 +25,10 @@ migrate(
         }
       }
     } catch (errStatus) {
-      console.log('[0206] Erro ao atualizar select analysis_status em route_leg_analysis:', errStatus)
+      console.log(
+        '[0206] Erro ao atualizar select analysis_status em route_leg_analysis:',
+        errStatus,
+      )
     }
 
     // 2. Campo deviation_reason na coleção off_route_events
@@ -76,7 +79,8 @@ migrate(
         leg.set('is_insufficient_data', false)
 
         const meta = leg.get('metadata') || {}
-        meta.suspect_pins_reason = 'Perna com km planejado < 0.15 km (< 150m) descartada de candidatura inteligente'
+        meta.suspect_pins_reason =
+          'Perna com km planejado < 0.15 km (< 150m) descartada de candidatura inteligente'
         meta.reclassified_at = new Date().toISOString()
         leg.set('metadata', meta)
 
@@ -113,7 +117,9 @@ migrate(
         }
       }
 
-      console.log(`[0206] Sucesso: ${reclassifiedCount} pernas de rota com km planejado < 0.15 km reclassificadas como pins_suspeitos.`)
+      console.log(
+        `[0206] Sucesso: ${reclassifiedCount} pernas de rota com km planejado < 0.15 km reclassificadas como pins_suspeitos.`,
+      )
     } catch (errLegs) {
       console.log('[0206] Erro ao reclassificar pernas em route_leg_analysis:', errLegs)
     }

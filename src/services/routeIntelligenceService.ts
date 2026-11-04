@@ -35,6 +35,7 @@ export interface RouteLegItem {
   started_at?: string | null
   finished_at?: string | null
   batch_finished_at?: string | null
+  deviation_reason?: string | null
   metadata?: Record<string, unknown>
 }
 
@@ -85,8 +86,8 @@ export const MIN_PINGS_PER_LEG = 5
 
 export function getRequiredPingsForLeg(kmPlanned: number): number {
   const safeKm = Math.max(0, Number(kmPlanned) || 0)
-  if (safeKm <= 0.5) return 4
-  if (safeKm <= 1.0) return 5
+  if (safeKm <= 0.5) return 5
+  if (safeKm <= 1.0) return 6
   // Para pernas maiores: 3 pings por km planejado, com piso de 5 e teto de 30
   return Math.min(30, Math.max(5, Math.ceil(safeKm * 3)))
 }
@@ -117,12 +118,18 @@ export function classifyRouteLeg(
 } {
   const safePlanned = Number((Number(kmPlanned) || 0).toFixed(2))
 
-  // REGRA PERMANENTE: Pernas com km planejado < 0.15 km (< 150m) indicam pins praticamente colados
-  // (ex.: clara -> DANIELLE 0,07 km). NUNCA podem ser candidatas a rota melhor (nem positiva nem negativamente).
-  if (safePlanned < 0.15) {
-    const safeRealized = kmRealized !== null && kmRealized !== undefined ? Number((Number(kmRealized) || 0).toFixed(2)) : null
+  // REGRA PERMANENTE: Pernas com km planejado < 0.30 km (< 300m) entre paradas indicam pins praticamente colados
+  // (caso real: clara -> DANIELLE 0,07 km). NUNCA podem ser candidatas a rota melhor (nem positiva nem negativamente).
+  if (safePlanned < 0.3) {
+    const safeRealized =
+      kmRealized !== null && kmRealized !== undefined
+        ? Number((Number(kmRealized) || 0).toFixed(2))
+        : null
     const diff = safeRealized !== null ? Number((safeRealized - safePlanned).toFixed(2)) : null
-    const pct = safeRealized !== null && safePlanned > 0 ? Number(((diff! / safePlanned) * 100).toFixed(1)) : null
+    const pct =
+      safeRealized !== null && safePlanned > 0
+        ? Number(((diff! / safePlanned) * 100).toFixed(1))
+        : null
 
     return {
       status: 'pins_suspeitos',
@@ -358,6 +365,12 @@ export async function fetchRouteIntelligenceAnalysis(
 
       const classification = classifyRouteLeg(kmPlanned, kmRealized, legPings)
 
+      const legDeviationReason =
+        leg.deviation_reason ||
+        leg.reason ||
+        (batch.deviation_reasons && leg.order_id ? batch.deviation_reasons[leg.order_id] : null) ||
+        null
+
       const legItem: RouteLegItem = {
         route_batch_key: batch.route_batch_key,
         courier_id: batch.courier_id,
@@ -381,6 +394,7 @@ export async function fetchRouteIntelligenceAnalysis(
         started_at: batch.route_started_at || null,
         finished_at: batch.route_finished_at || null,
         batch_finished_at: batch.route_finished_at || batch.created || null,
+        deviation_reason: legDeviationReason,
         metadata: {
           batch_status: batch.status,
           batch_total_pings: totalBatchPings,
@@ -540,6 +554,7 @@ async function persistLegsAnalysisArchive(legs: RouteLegItem[]): Promise<void> {
       analysis_status: leg.analysis_status,
       started_at: leg.started_at || undefined,
       finished_at: leg.finished_at || undefined,
+      deviation_reason: leg.deviation_reason || undefined,
       metadata: leg.metadata || {},
     }
 

@@ -885,13 +885,21 @@ export async function optimizeRouteSequence(params: {
     outboundDistanceMeters += stepMeters
     totalDurationSeconds += stepDurationSec
 
+    // GUARDA CONTRA PINS COLADOS:
+    // Se a distância em linha reta entre paradas de clientes distintos for < 100m,
+    // sinaliza como perna suspeita para nunca ser tratada como atalho 'melhor' pela IA/otimizador
+    const directBetweenStops = calcDistanceMeters(curLat, curLng, stop.lat, stop.lng)
+    const isSuspectLeg = i > 0 && directBetweenStops < 100
+
     sequencedStops.push({
       ...stop,
       sequence: i + 1,
       step_distance_meters: stepMeters,
       cumulative_distance_meters: outboundDistanceMeters,
       step_duration_seconds: stepDurationSec,
-    })
+      is_suspect_leg: isSuspectLeg,
+      direct_distance_meters: directBetweenStops,
+    } as any)
 
     curLat = stop.lat
     curLng = stop.lng

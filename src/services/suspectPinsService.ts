@@ -21,7 +21,9 @@ export interface SuspectPinClusterPair {
 /**
  * Extrai coordenadas numéricas válidas de um cliente.
  */
-export function extractCustomerCoords(customer: Partial<CustomerRecord>): { lat: number; lng: number } | null {
+export function extractCustomerCoords(
+  customer: Partial<CustomerRecord>,
+): { lat: number; lng: number } | null {
   const lat = typeof customer.lat === 'number' ? customer.lat : Number(customer.lat)
   const lng = typeof customer.lng === 'number' ? customer.lng : Number(customer.lng)
 
@@ -33,7 +35,11 @@ export function extractCustomerCoords(customer: Partial<CustomerRecord>): { lat:
   if (Array.isArray(customer.addresses) && customer.addresses.length > 0) {
     const def = customer.addresses.find((a) => a.is_default) || customer.addresses[0]
     if (def && typeof def.lat === 'number' && typeof def.lng === 'number') {
-      if (Number.isFinite(def.lat) && Number.isFinite(def.lng) && (def.lat !== 0 || def.lng !== 0)) {
+      if (
+        Number.isFinite(def.lat) &&
+        Number.isFinite(def.lng) &&
+        (def.lat !== 0 || def.lng !== 0)
+      ) {
         return { lat: def.lat, lng: def.lng }
       }
     }
@@ -53,7 +59,13 @@ export async function checkNearbyCustomerPinConflict(params: {
   excludeCustomerId?: string
   thresholdMeters?: number
 }): Promise<NearbyPinConflict | null> {
-  const { lat, lng, empresaId, excludeCustomerId, thresholdMeters = SUSPECT_PIN_THRESHOLD_METERS } = params
+  const {
+    lat,
+    lng,
+    empresaId,
+    excludeCustomerId,
+    thresholdMeters = SUSPECT_PIN_THRESHOLD_METERS,
+  } = params
 
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) {
     return null
@@ -71,7 +83,8 @@ export async function checkNearbyCustomerPinConflict(params: {
     const filter = filterParts.join(' && ')
     const customers = await pb.collection('customers').getFullList<CustomerRecord>({
       filter,
-      fields: 'id,name,phone,phone2,address,street,neighborhood,city,state,complement,lat,lng,addresses,active,empresa_id',
+      fields:
+        'id,name,phone,phone2,address,street,neighborhood,city,state,complement,lat,lng,addresses,active,empresa_id',
       requestKey: null,
     })
 
@@ -155,13 +168,17 @@ export async function findSuspectPinPairs(params?: {
     const filter = params?.empresaId ? `empresa_id = '${params.empresaId}'` : undefined
     const customers = await pb.collection('customers').getFullList<CustomerRecord>({
       filter,
-      fields: 'id,name,phone,phone2,address,street,neighborhood,city,state,complement,lat,lng,addresses,active,empresa_id',
+      fields:
+        'id,name,phone,phone2,address,street,neighborhood,city,state,complement,lat,lng,addresses,active,empresa_id',
       requestKey: null,
     })
 
     const withCoords = customers
       .map((c) => ({ customer: c, coords: extractCustomerCoords(c) }))
-      .filter((item): item is { customer: CustomerRecord; coords: { lat: number; lng: number } } => item.coords !== null)
+      .filter(
+        (item): item is { customer: CustomerRecord; coords: { lat: number; lng: number } } =>
+          item.coords !== null,
+      )
 
     const pairs: SuspectPinClusterPair[] = []
     const seen = new Set<string>()

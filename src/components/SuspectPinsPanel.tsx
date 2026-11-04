@@ -11,7 +11,10 @@ interface SuspectPinsPanelProps {
   onEditCustomer?: (customerId: string) => void
 }
 
-export const SuspectPinsPanel: React.FC<SuspectPinsPanelProps> = ({ empresaId, onEditCustomer }) => {
+export const SuspectPinsPanel: React.FC<SuspectPinsPanelProps> = ({
+  empresaId,
+  onEditCustomer,
+}) => {
   const [pairs, setPairs] = useState<SuspectPinClusterPair[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date())
@@ -42,8 +45,9 @@ export const SuspectPinsPanel: React.FC<SuspectPinsPanelProps> = ({ empresaId, o
             Pins Suspeitos &lt; 40 Metros (Auditoria de Precisão)
           </CardTitle>
           <CardDescription className="text-xs text-slate-500">
-            Clientes distintos cujos pins estão praticamente colados (mesmo imóvel, duplicatas ou vizinhos).
-            Exibição somente leitura para análise humana — o sistema não funde clientes automaticamente.
+            Clientes distintos cujos pins estão praticamente colados (mesmo imóvel, duplicatas ou
+            vizinhos). Exibição somente leitura para análise humana — o sistema não funde clientes
+            automaticamente.
           </CardDescription>
         </div>
         <div className="flex items-center gap-2">
@@ -66,10 +70,13 @@ export const SuspectPinsPanel: React.FC<SuspectPinsPanelProps> = ({ empresaId, o
       <CardContent className="p-4 space-y-3">
         <Alert className="bg-amber-50/70 border-amber-200 text-amber-900 py-2.5 px-3">
           <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-          <AlertTitle className="text-xs font-semibold">Prevenção contra contaminação de IA</AlertTitle>
+          <AlertTitle className="text-xs font-semibold">
+            Prevenção contra contaminação de IA
+          </AlertTitle>
           <AlertDescription className="text-[11px] leading-relaxed">
-            Pins a menos de 40 metros geram pernas irrealistas (como a de 0,07 km clara → DANIELLE) que foram
-            excluídas do aprendizado de rota. Revise abaixo para corrigir números de porta e complementos.
+            Pins a menos de 40 metros geram pernas irrealistas (como a de 0,07 km clara → DANIELLE)
+            que foram excluídas do aprendizado de rota. Revise abaixo para corrigir números de porta
+            e complementos.
           </AlertDescription>
         </Alert>
 
@@ -84,7 +91,9 @@ export const SuspectPinsPanel: React.FC<SuspectPinsPanelProps> = ({ empresaId, o
               <MapPin className="h-4 w-4" />
               Nenhum pin suspeito (&lt; 40 metros) encontrado na base.
             </p>
-            <p className="text-slate-400">Todos os clientes ativos possuem distâncias viáveis entre seus pins.</p>
+            <p className="text-slate-400">
+              Todos os clientes ativos possuem distâncias viáveis entre seus pins.
+            </p>
           </div>
         ) : (
           <div className="space-y-2.5 max-h-[480px] overflow-y-auto pr-1">
@@ -99,18 +108,24 @@ export const SuspectPinsPanel: React.FC<SuspectPinsPanelProps> = ({ empresaId, o
                     {/* Cliente A */}
                     <div className="p-2.5 rounded bg-white border border-slate-100 space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-900 truncate">{pair.customerA.name}</span>
+                        <span className="font-bold text-slate-900 truncate">
+                          {pair.customerA.name}
+                        </span>
                         <Badge variant="secondary" className="text-[10px] font-mono">
                           ID: {pair.customerA.id.slice(-6)}
                         </Badge>
                       </div>
                       <div className="text-slate-600 text-[11px] flex items-start gap-1">
                         <Home className="h-3 w-3 text-slate-400 shrink-0 mt-0.5" />
-                        <span className="truncate">{pair.customerA.address || 'Sem endereço textual'}</span>
+                        <span className="truncate">
+                          {pair.customerA.address || 'Sem endereço textual'}
+                        </span>
                       </div>
                       <div className="text-slate-500 text-[11px] flex items-center gap-1">
                         <Phone className="h-3 w-3 text-slate-400 shrink-0" />
-                        <span>{pair.customerA.phone || pair.customerA.phone2 || 'Sem telefone'}</span>
+                        <span>
+                          {pair.customerA.phone || pair.customerA.phone2 || 'Sem telefone'}
+                        </span>
                       </div>
                       {onEditCustomer && (
                         <Button
@@ -127,18 +142,24 @@ export const SuspectPinsPanel: React.FC<SuspectPinsPanelProps> = ({ empresaId, o
                     {/* Cliente B */}
                     <div className="p-2.5 rounded bg-white border border-slate-100 space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-900 truncate">{pair.customerB.name}</span>
+                        <span className="font-bold text-slate-900 truncate">
+                          {pair.customerB.name}
+                        </span>
                         <Badge variant="secondary" className="text-[10px] font-mono">
                           ID: {pair.customerB.id.slice(-6)}
                         </Badge>
                       </div>
                       <div className="text-slate-600 text-[11px] flex items-start gap-1">
                         <Home className="h-3 w-3 text-slate-400 shrink-0 mt-0.5" />
-                        <span className="truncate">{pair.customerB.address || 'Sem endereço textual'}</span>
+                        <span className="truncate">
+                          {pair.customerB.address || 'Sem endereço textual'}
+                        </span>
                       </div>
                       <div className="text-slate-500 text-[11px] flex items-center gap-1">
                         <Phone className="h-3 w-3 text-slate-400 shrink-0" />
-                        <span>{pair.customerB.phone || pair.customerB.phone2 || 'Sem telefone'}</span>
+                        <span>
+                          {pair.customerB.phone || pair.customerB.phone2 || 'Sem telefone'}
+                        </span>
                       </div>
                       {onEditCustomer && (
                         <Button
@@ -155,12 +176,12 @@ export const SuspectPinsPanel: React.FC<SuspectPinsPanelProps> = ({ empresaId, o
 
                   {/* Badge de Distância entre os pins */}
                   <div className="flex md:flex-col items-center justify-between md:justify-center gap-1.5 shrink-0 px-2 py-1 md:min-w-[120px]">
-                    <span className="text-[10px] text-slate-500 uppercase font-semibold">Distância</span>
+                    <span className="text-[10px] text-slate-500 uppercase font-semibold">
+                      Distância
+                    </span>
                     <Badge
                       className={`text-xs font-mono font-bold ${
-                        isExtremelyClose
-                          ? 'bg-rose-600 text-white'
-                          : 'bg-amber-500 text-white'
+                        isExtremelyClose ? 'bg-rose-600 text-white' : 'bg-amber-500 text-white'
                       }`}
                     >
                       {pair.distanceMeters} m
