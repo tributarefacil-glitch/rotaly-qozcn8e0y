@@ -50,6 +50,16 @@ describe('routeIntelligenceService', () => {
       expect(res.isExcess).toBe(false)
       expect(res.status).toBe('equivalent')
     })
+
+    it('deve classificar pernas com km planejado < 0.15 km como pins_suspeitos e descartar de rota melhor', () => {
+      // Caso real: perna clara -> DANIELLE com 0.07 km (70 metros)
+      const res = classifyRouteLeg(0.07, 0.03, 10)
+      expect(res.status).toBe('pins_suspeitos')
+      expect(res.isBetter).toBe(false)
+      expect(res.isExcess).toBe(false)
+      expect(res.isInsufficient).toBe(false)
+      expect(res.isSuspectPins).toBe(true)
+    })
   })
 
   describe('sanitizeGpsLocations', () => {

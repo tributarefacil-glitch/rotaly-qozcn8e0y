@@ -24,6 +24,7 @@ import {
   fetchRouteIntelligenceAnalysis,
   RouteLegItem,
 } from '@/services/routeIntelligenceService'
+import { SuspectPinsPanel } from '@/components/SuspectPinsPanel'
 import {
   Brain,
   Sparkles,
@@ -59,7 +60,7 @@ export function RouteIntelligenceSection({
   const [customEndDate, setCustomEndDate] = useState<string>('')
   const [selectedCourierId, setSelectedCourierId] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<
-    'all' | 'better' | 'deviation' | 'insufficient' | 'equivalent'
+    'all' | 'better' | 'deviation' | 'insufficient' | 'equivalent' | 'pins_suspeitos'
   >('all')
   const [searchQuery, setSearchQuery] = useState<string>('')
 
@@ -426,6 +427,7 @@ export function RouteIntelligenceSection({
                   <SelectItem value="all">Todas as Pernas</SelectItem>
                   <SelectItem value="better">✨ Candidatas a Rota Melhor</SelectItem>
                   <SelectItem value="deviation">⚠️ Desvios Excessivos</SelectItem>
+                  <SelectItem value="pins_suspeitos">📍 Pins Suspeitos (&lt; 0,15 km)</SelectItem>
                   <SelectItem value="equivalent">➡️ Equivalentes (Dentro da margem)</SelectItem>
                   <SelectItem value="insufficient">❓ Dados Insuficientes</SelectItem>
                 </SelectContent>
@@ -449,6 +451,9 @@ export function RouteIntelligenceSection({
           </div>
         </CardContent>
       </Card>
+
+      {/* Seção de Pins Suspeitos < 40m (Auditoria para Prevenção de Otimização sobre Pins Colados) */}
+      <SuspectPinsPanel empresaId={empresaId} />
 
       {/* Tabela Detalhada por Perna de Rota */}
       <Card className="shadow-sm">
@@ -509,6 +514,7 @@ export function RouteIntelligenceSection({
                     const isCandidate = leg.analysis_status === 'candidate_better'
                     const isExcess = leg.analysis_status === 'excess_deviation'
                     const isInsufficient = leg.analysis_status === 'insufficient_data'
+                    const isSuspectPins = leg.analysis_status === 'pins_suspeitos'
 
                     return (
                       <TableRow
@@ -518,9 +524,11 @@ export function RouteIntelligenceSection({
                             ? 'bg-emerald-50/60 hover:bg-emerald-50 border-l-4 border-l-emerald-500'
                             : isExcess
                               ? 'bg-rose-50/40 hover:bg-rose-50/70 border-l-4 border-l-rose-500'
-                              : isInsufficient
-                                ? 'bg-slate-50/40 hover:bg-slate-50/80 text-slate-500'
-                                : 'hover:bg-slate-50/80'
+                              : isSuspectPins
+                                ? 'bg-amber-50/50 hover:bg-amber-50/80 border-l-4 border-l-amber-500'
+                                : isInsufficient
+                                  ? 'bg-slate-50/40 hover:bg-slate-50/80 text-slate-500'
+                                  : 'hover:bg-slate-50/80'
                         }`}
                       >
                         {/* Lote / Entregador */}
@@ -650,6 +658,14 @@ export function RouteIntelligenceSection({
                               Desvio Excessivo
                             </Badge>
                           )}
+                          {isSuspectPins && (
+                            <Badge
+                              variant="outline"
+                              className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] font-semibold"
+                            >
+                              Pins Suspeitos (&lt; 0,15 km)
+                            </Badge>
+                          )}
                           {isInsufficient && (
                             <Badge
                               variant="outline"
@@ -658,7 +674,7 @@ export function RouteIntelligenceSection({
                               Dados Insuficientes
                             </Badge>
                           )}
-                          {!isCandidate && !isExcess && !isInsufficient && (
+                          {!isCandidate && !isExcess && !isInsufficient && !isSuspectPins && (
                             <Badge
                               variant="secondary"
                               className="bg-slate-100 text-slate-700 text-[10px] font-normal"

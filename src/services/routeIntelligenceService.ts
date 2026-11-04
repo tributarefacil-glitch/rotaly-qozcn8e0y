@@ -9,6 +9,7 @@ export type RouteLegAnalysisStatus =
   | 'excess_deviation' // GPS >> Planejado (> 35% a mais, desvio ou erro)
   | 'equivalent' // GPS ~= Planejado (dentro da margem normal)
   | 'insufficient_data' // Menos de MIN_PINGS_PER_LEG pings válidos
+  | 'pins_suspeitos' // Perna com km planejado < 0.15 km (< 150m) descartada de candidatura
 
 export interface RouteLegItem {
   id?: string
@@ -70,7 +71,7 @@ export interface FetchRouteIntelligenceOptions {
   customStartDate?: string // YYYY-MM-DD
   customEndDate?: string // YYYY-MM-DD
   courierId?: string | 'all'
-  statusFilter?: 'all' | 'better' | 'deviation' | 'insufficient' | 'equivalent'
+  statusFilter?: 'all' | 'better' | 'deviation' | 'insufficient' | 'equivalent' | 'pins_suspeitos'
   empresaId?: string
   persistArchive?: boolean // se true, salva/atualiza registros na coleção route_leg_analysis
 }
@@ -112,8 +113,28 @@ export function classifyRouteLeg(
   isBetter: boolean
   isExcess: boolean
   isInsufficient: boolean
+  isSuspectPins: boolean
 } {
   const safePlanned = Number((Number(kmPlanned) || 0).toFixed(2))
+
+  // REGRA PERMANENTE: Pernas com km planejado < 0.15 km (< 150m) indicam pins praticamente colados
+  // (ex.: clara -> DANIELLE 0,07 km). NUNCA podem ser candidatas a rota melhor (nem positiva nem negativamente).
+  if (safePlanned < 0.15) {
+    const safeRealized = kmRealized !== null && kmRealized !== undefined ? Number((Number(kmRealized) || 0).toFixed(2)) : null
+    const diff = safeRealized !== null ? Number((safeRealized - safePlanned).toFixed(2)) : null
+    const pct = safeRealized !== null && safePlanned > 0 ? Number(((diff! / safePlanned) * 100).toFixed(1)) : null
+
+    return {
+      status: 'pins_suspeitos',
+      kmDiff: diff,
+      diffPct: pct,
+      isBetter: false,
+      isExcess: false,
+      isInsufficient: false,
+      isSuspectPins: true,
+    }
+  }
+
   const requiredPings = getRequiredPingsForLeg(safePlanned)
 
   // Se a perna não possui pings suficientes para a extensão do trajeto, fica como dados insuficientes
@@ -125,6 +146,7 @@ export function classifyRouteLeg(
       isBetter: false,
       isExcess: false,
       isInsufficient: true,
+      isSuspectPins: false,
     }
   }
 
@@ -142,6 +164,7 @@ export function classifyRouteLeg(
       isBetter: false,
       isExcess: false,
       isInsufficient: true,
+      isSuspectPins: false,
     }
   }
 
@@ -168,6 +191,7 @@ export function classifyRouteLeg(
     isBetter,
     isExcess,
     isInsufficient: false,
+    isSuspectPins: false,
   }
 }
 
@@ -382,6 +406,7 @@ export async function fetchRouteIntelligenceAnalysis(
     if (statusFilter === 'deviation') return leg.analysis_status === 'excess_deviation'
     if (statusFilter === 'insufficient') return leg.analysis_status === 'insufficient_data'
     if (statusFilter === 'equivalent') return leg.analysis_status === 'equivalent'
+    if (statusFilter === 'pins_suspeitos') return leg.analysis_status === 'pins_suspeitos'
     return true
   })
 
@@ -410,8 +435,11 @@ export async function fetchRouteIntelligenceAnalysis(
     const agg = courierMap.get(cId)!
     agg.total_legs++
 
-    if (leg.is_insufficient_data) {
-      agg.insufficient_data_legs++
+    // Pernas de pins suspeitos ou dados insuficientes não contam como pernas válidas de rota para aprendizado
+    if (leg.is_insufficient_data || leg.analysis_status === 'pins_suspeitos') {
+      if (leg.is_insufficient_data) {
+        agg.insufficient_data_legs++
+      }
     } else {
       agg.valid_legs++
       agg.total_km_planned = Number((agg.total_km_planned + leg.km_planned).toFixed(2))
@@ -453,6 +481,8 @@ export async function fetchRouteIntelligenceAnalysis(
   for (const leg of rawLegs) {
     if (leg.is_insufficient_data) {
       totalInsufficient++
+    } else if (leg.analysis_status === 'pins_suspeitos') {
+      // Pins suspeitos são descartados das métricas globais de rota melhor
     } else {
       totalValidLegs++
       totalKmPlannedValid += leg.km_planned

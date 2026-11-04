@@ -408,6 +408,12 @@ export interface ReviewRecord extends RecordModel {
 
 export type OffRouteEventType = 'route_deviation' | 'unexpected_stop'
 
+export type OffRouteDeviationReason =
+  | 'wrong_route' // Rota sugerida estava errada/proibida
+  | 'shortcut' // Atalho que conheço
+  | 'other_dropoff' // Entrega em outro ponto
+  | 'other' // Outro motivo
+
 export interface OffRouteEventRecord extends RecordModel {
   courier_id: string
   order_id?: string
@@ -418,6 +424,7 @@ export interface OffRouteEventRecord extends RecordModel {
   lng: number
   address?: string
   notes?: string
+  deviation_reason?: OffRouteDeviationReason | string
   expand?: {
     courier_id?: UserRecord
     order_id?: OrderRecord
