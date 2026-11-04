@@ -121,10 +121,18 @@ routerAdd('POST', '/backend/v1/telemetry-batch', (e) => {
       continue
     }
 
-    // Guarda de velocidade impossível (> 200 km/h)
+    // GUARDA DE PLAUSIBILIDADE DE VELOCIDADE: descartar ping com velocidade > 140 km/h
     let speed = typeof it.speed === 'number' ? it.speed : parseFloat(it.speed) || 0.0
-    if (speed > 200) {
-      speed = 0.0
+    if (speed > 140) {
+      discardedCount++
+      console.log(
+        '[telemetry_batch] Descartado ping com velocidade implausível (' +
+          speed +
+          ' km/h > 140 km/h) para user ' +
+          itemUserId,
+      )
+      results.push({ index: i, saved: false, reason: 'speed_implausible' })
+      continue
     }
 
     const heading = typeof it.heading === 'number' ? it.heading : parseFloat(it.heading) || 0.0

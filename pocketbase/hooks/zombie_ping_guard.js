@@ -44,6 +44,17 @@ onRecordCreate('locations', (e) => {
     )
   }
 
+  // Descarte imediato de velocidade implausível (> 140 km/h)
+  const speed = rec.getFloat('speed')
+  if (speed > 140) {
+    console.log(
+      '[zombie_ping_guard] Ping rejeitado com velocidade implausivel: ' +
+        speed +
+        ' km/h > 140 km/h.',
+    )
+    throw new ApiError(400, 'Ping de telemetria rejeitado: velocidade implausivel (> 140 km/h).')
+  }
+
   // Pings do buffer offline são reenvios cronológicos legítimos: fora do escopo desta guarda.
   const offlineBuffered = rec.getBool('offline_buffered')
   if (offlineBuffered) {
@@ -93,6 +104,38 @@ onRecordCreate('locations', (e) => {
           400,
           'Ping de telemetria rejeitado: coordenadas exatamente idênticas ao ping anterior do mesmo entregador.',
         )
+      }
+
+      // GUARDA DE SALTO IMPOSSÍVEL (> 140 km/h) entre pings consecutivos
+      const prevCreatedStr = prev.getString('created')
+      if (prevLat && prevLng && prevCreatedStr) {
+        const prevTime = new Date(prevCreatedStr.replace(' ', 'T') + 'Z').getTime()
+        const nowTime = Date.now()
+        const deltaSec = Math.max(1, (nowTime - prevTime) / 1000)
+        if (deltaSec < 300) {
+          const toRad = (v) => (v * Math.PI) / 180
+          const R = 6371000
+          const dLat = toRad(lat - prevLat)
+          const dLng = toRad(lng - prevLng)
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRad(prevLat)) *
+              Math.cos(toRad(lat)) *
+              Math.sin(dLng / 2) *
+              Math.sin(dLng / 2)
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+          const distMeters = R * c
+          const jumpSpeedKmh = (distMeters / deltaSec) * 3.6
+          if (jumpSpeedKmh > 140) {
+            console.log(
+              `[zombie_ping_guard] Salto impossivel rejeitado: user=${userId} vel=${Math.round(jumpSpeedKmh)} km/h dist=${Math.round(distMeters)}m tempo=${Math.round(deltaSec)}s.`,
+            )
+            throw new ApiError(
+              400,
+              'Ping de telemetria rejeitado: salto impossivel de telemetria (> 140 km/h).',
+            )
+          }
+        }
       }
     }
   } catch (err) {

@@ -366,11 +366,12 @@ onRecordAfterCreateSuccess((e) => {
   }
 
   // 2. CHECAGEM DE DESVIO DE ROTA EM DESLOCAMENTO (> 600 metros fora do corredor da rota)
-  // Requisitos:
+  // Requisitos robustos contra falso positivo:
   // (a) Avaliar apenas sinais GPS recentes (descartar sinais com mais de 3 minutos)
-  // (b) Exigir N (2) pontos consecutivos fora da rota antes de disparar alarme (debounce)
+  // (b) Exigir 3 pings CONSECUTIVOS válidos (ou pelo menos 2 anteriores confirmados) fora da rota antes de disparar alarme (debounce)
   // (c) Limiar intocável de 600 metros mantido rigorosamente
-  // (d) 1 evento = 1 episódio, dedupe por courier enquanto o episódio estiver aberto (< 5 minutos).
+  // (d) Velocidade plausível: speedKmh deve estar entre 10 e 140 km/h (descarte de saltos aberrantes)
+  // (e) 1 evento = 1 episódio, dedupe por courier enquanto o episódio estiver aberto (< 5 minutos).
   //     Em vez de criar dezenas de registros repetidos no mesmo minuto, atualiza o episódio aberto
   //     (mantendo a maior distância de desvio, atualizando updated e coordenadas finais).
 
@@ -381,41 +382,72 @@ onRecordAfterCreateSuccess((e) => {
     Math.abs(prevLat - lat) < 0.0000001 &&
     Math.abs(prevLng - lng) < 0.0000001
 
-  if (speedKmh > 10 && prevLat && prevLng && isGpsSignalFresh && !isFrozenCoordWithPrev) {
+  // Função auxiliar para medir distância de um ponto a rota
+  const calcDistToRoutePoints = (pLat, pLng) => {
+    let mDist = Infinity
+    for (let w = 0; w < routeWaypoints.length; w++) {
+      const dW = calcHaversineMeters(pLat, pLng, routeWaypoints[w].lat, routeWaypoints[w].lng)
+      if (dW < mDist) mDist = dW
+    }
+    if (routeWaypoints.length >= 2) {
+      for (let w = 0; w < routeWaypoints.length - 1; w++) {
+        const sDist = calcPointToSegmentMeters(
+          pLat,
+          pLng,
+          routeWaypoints[w].lat,
+          routeWaypoints[w].lng,
+          routeWaypoints[w + 1].lat,
+          routeWaypoints[w + 1].lng,
+        )
+        if (sDist < mDist) mDist = sDist
+      }
+    }
+    return mDist
+  }
+
+  if (
+    speedKmh > 10 &&
+    speedKmh <= 140 &&
+    prevLat &&
+    prevLng &&
+    isGpsSignalFresh &&
+    !isFrozenCoordWithPrev
+  ) {
     if (minDistanceToRouteCorridor >= DEVIATION_THRESHOLD_METERS) {
-      // Debounce: verificar se o ponto anterior também estava a >= 600m da rota
-      let prevIsDeviated = false
-      if (prevLocations.length > 0) {
-        let prevMinDist = Infinity
-        for (let w = 0; w < routeWaypoints.length; w++) {
-          const dW = calcHaversineMeters(
-            prevLat,
-            prevLng,
-            routeWaypoints[w].lat,
-            routeWaypoints[w].lng,
-          )
-          if (dW < prevMinDist) prevMinDist = dW
-        }
-        if (routeWaypoints.length >= 2) {
-          for (let w = 0; w < routeWaypoints.length - 1; w++) {
-            const sDist = calcPointToSegmentMeters(
-              prevLat,
-              prevLng,
-              routeWaypoints[w].lat,
-              routeWaypoints[w].lng,
-              routeWaypoints[w + 1].lat,
-              routeWaypoints[w + 1].lng,
-            )
-            if (sDist < prevMinDist) prevMinDist = sDist
-          }
-        }
-        if (prevMinDist >= DEVIATION_THRESHOLD_METERS) {
-          prevIsDeviated = true
+      // Debounce robusto: checar pings anteriores válidos.
+      // Exigir pelo menos 2 pontos anteriores CONSECUTIVOS também fora da rota (total 3 pings)
+      // OU se só houver 1 anterior disponível, esse único deve ser estritamente fora e recente (<90s)
+      let consecutiveDeviatedCount = 1 // o ponto atual é o 1º
+      for (let pIdx = 0; pIdx < prevLocations.length; pIdx++) {
+        const pRec = prevLocations[pIdx]
+        const pLat = pRec.getFloat('lat')
+        const pLng = pRec.getFloat('lng')
+        const pAcc = pRec.getFloat('accuracy')
+        const pSpd = pRec.getFloat('speed')
+        const pCreatedStr = pRec.getString('created')
+        const pTime = pCreatedStr ? new Date(pCreatedStr.replace(' ', 'T') + 'Z').getTime() : 0
+        const pAgeSec = (currentLocTime - pTime) / 1000
+
+        // Ponto anterior deve ter boa acurácia e velocidade plausível
+        if (!isNaN(pAcc) && pAcc >= 100) break
+        if (!isNaN(pSpd) && pSpd > 140) break
+        if (pAgeSec > 180) break // ponto muito antigo não conta na sequência
+
+        const pDist = calcDistToRoutePoints(pLat, pLng)
+        if (pDist >= DEVIATION_THRESHOLD_METERS) {
+          consecutiveDeviatedCount++
+        } else {
+          // Interrompe contagem consecutiva se um ponto estava na rota
+          break
         }
       }
 
-      // Disparar apenas se houver pontos consecutivos fora da rota
-      if (prevIsDeviated) {
+      // Regra: exige pelo menos 2 pontos confirmados consecutivos fora da rota (preferencialmente 3 quando houver histórico)
+      const isConfirmedDeviation =
+        consecutiveDeviatedCount >= 2 && (prevLocations.length < 2 || consecutiveDeviatedCount >= 3)
+
+      // Disparar apenas se houver confirmação com pings consecutivos fora da rota
+      if (isConfirmedDeviation) {
         // Formatar timestamp no padrão SQLite/PocketBase: YYYY-MM-DD HH:MM:SS (sem 'T' nem 'Z')
         const formatDbDate = (d) => {
           const pad = (n) => String(n).padStart(2, '0')

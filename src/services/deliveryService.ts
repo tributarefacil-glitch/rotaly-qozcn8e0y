@@ -111,7 +111,7 @@ export function sanitizeLocationPayload(params: {
   const cleanLng = Math.round(numLng * 1e6) / 1e6
 
   // FILTROS DE SANIDADE DE TELEMETRIA:
-  // Rejeição ou descarte de velocidade impossível (> 200 km/h)
+  // Rejeição de velocidade implausível (> 140 km/h para motos/carros urbanos)
   // Rejeição de accuracy absurda ou zumbi (accuracy >= 100m)
   if (typeof accuracy === 'number' && !isNaN(accuracy) && accuracy >= 100) {
     throw new Error(
@@ -119,16 +119,16 @@ export function sanitizeLocationPayload(params: {
     )
   }
 
-  if (typeof speed === 'number' && !isNaN(speed) && speed > 200) {
+  if (typeof speed === 'number' && !isNaN(speed) && speed > 140) {
     throw new Error(
-      `[sanitizeLocationPayload] Velocidade impossível descartada (${speed} km/h > 200 km/h)`,
+      `[sanitizeLocationPayload] Velocidade impossível descartada (${speed} km/h > 140 km/h)`,
     )
   }
 
-  // Speed: número >= 0, teto 200, 1 decimal, senão 0
+  // Speed: número >= 0, teto 140, 1 decimal, senão 0
   let cleanSpeed = 0
   if (typeof speed === 'number' && !isNaN(speed) && isFinite(speed) && speed >= 0) {
-    cleanSpeed = Math.round(Math.min(200, speed) * 10) / 10
+    cleanSpeed = Math.round(Math.min(140, speed) * 10) / 10
   }
 
   // Heading: 0..360, 1 decimal, senão 0
@@ -2389,8 +2389,8 @@ export const deliveryService = {
 
         const deltaSec = Math.max(1, (now - prevCached.timestamp) / 1000)
         const speedKmh = (distMeters / deltaSec) * 3.6
-        if (speedKmh > 200) {
-          console.warn('[TELEMETRIA] Salto impossível descartado (>200 km/h):', {
+        if (speedKmh > 140) {
+          console.warn('[TELEMETRIA] Salto impossível descartado (>140 km/h):', {
             speedKmh: Math.round(speedKmh),
             distMeters: Math.round(distMeters),
             deltaSec,
@@ -2398,7 +2398,7 @@ export const deliveryService = {
             next: { lat: sanitizedPayload.lat, lng: sanitizedPayload.lng },
           })
           throw new Error(
-            `[sanitizeLocationPayload] Salto impossível de telemetria (${Math.round(speedKmh)} km/h)`,
+            `[sanitizeLocationPayload] Salto impossível de telemetria (${Math.round(speedKmh)} km/h > 140 km/h)`,
           )
         }
       }

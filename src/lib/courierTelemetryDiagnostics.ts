@@ -154,13 +154,30 @@ export function diagnoseCourierTelemetry(
   let speedKmh = 0
   if (typeof rawSpeed === 'number' && !isNaN(rawSpeed) && rawSpeed > 0) {
     // Se o valor tiver casas decimais (ex.: 8.8, 10.2) ou se for explicitamente vindo de coords.speed em m/s
-    // Ou se estiver na faixa de m/s: 8.8 m/s = 31.68 km/h.
-    // Se vier do app antigo já em km/h (inteiro arredondado > 30), mantém; se for float ou < 28, multiplica por 3.6 caso pareça m/s
-    if (!Number.isInteger(rawSpeed) || (rawSpeed > 0 && rawSpeed <= 25)) {
-      speedKmh = Math.round(rawSpeed * 3.6)
+    // Se rawSpeed > 45, já é km/h (45 m/s seria 162 km/h, o que seria implausível multiplicar por 3.6).
+    // Se rawSpeed <= 40 e tiver float ou for claramente m/s:
+    // Regra segura: se rawSpeed <= 35 e não for explicitamente em km/h (ex.: float ou valor nativo m/s), multiplica por 3.6.
+    // MAS se rawSpeed já foi gravado em km/h no backend (ex.: 45.8 km/h), multiplicar daria 165 km/h!
+    // Para evitar falsa multiplicação: se multiplicar por 3.6 ultrapassar 140 km/h, rawSpeed JÁ ESTAVA em km/h!
+    if (rawSpeed > 38) {
+      // Já está em km/h (ou é velocidade alta em km/h)
+      speedKmh = Math.round(rawSpeed)
+    } else if (!Number.isInteger(rawSpeed) || (rawSpeed > 0 && rawSpeed <= 25)) {
+      const candidateKmh = rawSpeed * 3.6
+      if (candidateKmh > 140) {
+        // Seria velocidade absurda se fosse m/s; portanto já era km/h
+        speedKmh = Math.round(rawSpeed)
+      } else {
+        speedKmh = Math.round(candidateKmh)
+      }
     } else {
       speedKmh = Math.round(rawSpeed)
     }
+  }
+
+  // GUARDA PERMANENTE DE PLAUSIBILIDADE: se ainda assim ultrapassar 140 km/h, sanar para 0
+  if (speedKmh > 140) {
+    speedKmh = 0
   }
 
   let isStopped = false

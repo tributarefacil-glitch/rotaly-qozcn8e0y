@@ -174,6 +174,26 @@ class OfflineTelemetryBufferService {
       }
     }
 
+    // GUARDA DE PLAUSIBILIDADE: descartar velocidade > 140 km/h ou accuracy >= 100m
+    if (typeof point.speed === 'number' && !isNaN(point.speed) && point.speed > 140) {
+      console.warn(
+        '[offlineTelemetryBuffer] Ping com velocidade implausível descartado (>140 km/h):',
+        point.speed,
+      )
+      return {
+        ...point,
+        id: `discarded_speed_${point.timestamp}`,
+        synced: true,
+      }
+    }
+    if (typeof point.accuracy === 'number' && !isNaN(point.accuracy) && point.accuracy >= 100) {
+      return {
+        ...point,
+        id: `discarded_accuracy_${point.timestamp}`,
+        synced: true,
+      }
+    }
+
     const current = this.getBuffer(point.userId)
     current.sort((a, b) => a.timestamp - b.timestamp)
 
@@ -186,6 +206,24 @@ class OfflineTelemetryBufferService {
       // REGRA: Nunca empilhar coordenada idêntica consecutiva no buffer offline
       const isIdenticalCoords =
         Math.abs(last.lat - point.lat) < 0.0000001 && Math.abs(last.lng - point.lng) < 0.0000001
+
+      // GUARDA DE SALTO IMPOSSÍVEL ENTRE PINGS CONSECUTIVOS (> 140 km/h)
+      if (timeDiff > 0) {
+        const deltaSec = Math.max(0.5, timeDiff / 1000)
+        const jumpSpeedKmh = (distMeters / deltaSec) * 3.6
+        if (jumpSpeedKmh > 140) {
+          console.warn('[offlineTelemetryBuffer] Salto impossível descartado (>140 km/h):', {
+            jumpSpeedKmh: Math.round(jumpSpeedKmh),
+            distMeters: Math.round(distMeters),
+            deltaSec,
+          })
+          return {
+            ...point,
+            id: `discarded_jump_${point.timestamp}`,
+            synced: true,
+          }
+        }
+      }
 
       // Deduplicação defensiva no enfileiramento:
       // Se coordenada for idêntica OU mudou menos de 10m OU fix fraco (<30m / 60s):
