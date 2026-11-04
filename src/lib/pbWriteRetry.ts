@@ -12,7 +12,7 @@
  *  - 400 "Values don't match"  → não retentar (payload inválido p/ regra de coleção)
  *  - outros erros de rede      → 1 tentativa extra após backoff curto
  */
-import ClientResponseError from 'pocketbase'
+import { ClientResponseError } from 'pocketbase'
 
 const MAX_ATTEMPTS = 3
 const BASE_DELAY_MS = 600
