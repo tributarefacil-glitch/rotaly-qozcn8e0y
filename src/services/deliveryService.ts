@@ -2491,6 +2491,43 @@ export const deliveryService = {
     }
   },
 
+  /**
+   * Envio de telemetria em lote estilo iFood:
+   * Envia array de pontos num único POST HTTP para /backend/v1/telemetry-batch.
+   * Reduz latência, consumo de internet e mitiga falhas em conexões instáveis.
+   */
+  async sendTelemetryBatch(
+    userId: string,
+    items: Array<{
+      lat: number
+      lng: number
+      speed?: number
+      heading?: number
+      accuracy?: number
+      battery_level?: number
+      timestamp?: number | string
+      gps_status?: string
+      gps_reason?: string
+      offline_buffered?: boolean
+    }>,
+  ) {
+    if (!items || items.length === 0) return { success: true, saved: 0 }
+    return pb.send<{
+      success: boolean
+      total: number
+      saved: number
+      discarded: number
+      results?: Array<{ index: number; saved: boolean; id?: string; reason?: string }>
+    }>('/backend/v1/telemetry-batch', {
+      method: 'POST',
+      body: {
+        user_id: userId,
+        items,
+      },
+      requestKey: null,
+    })
+  },
+
   async getLatestLocationForCourier(courierId: string) {
     try {
       const records = await pb.collection<LocationRecord>('locations').getList(1, 1, {

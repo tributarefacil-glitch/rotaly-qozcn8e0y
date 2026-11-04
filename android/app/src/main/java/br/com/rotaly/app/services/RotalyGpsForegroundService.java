@@ -35,7 +35,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
@@ -43,6 +45,18 @@ import java.util.concurrent.Executors;
 
 import br.com.rotaly.app.MainActivity;
 
+/**
+ * RotalyGpsForegroundService
+ *
+ * Foreground Service nativo do Android para rastreamento contínuo em segundo plano (estilo iFood).
+ * - FusedLocationProviderClient com PRIORITY_HIGH_ACCURACY.
+ * - Coleta pings a cada ~5s.
+ * - TELEMETRIA EM LOTE: Acumula pings localmente e sobe em lotes (a cada 10 posições ou 30s, o que vier primeiro)
+ *   no endpoint /backend/v1/telemetry-batch, reduzindo drasticamente consumo de internet, overhead HTTP e perda de pings.
+ * - Fallback automático para o endpoint unitário /api/collections/locations/records se o backend não tiver o batch ou falhar.
+ * - Buffer offline persistente no SharedPreferences para perda total de rede, integrado com a fila de envio.
+ * - Retry exponencial curto em falhas transitórias.
+ */
 public class RotalyGpsForegroundService extends Service {
     private static final String TAG = "RotalyGpsService";
     private static final String CHANNEL_ID = "rotaly_gps_channel_v1";
@@ -65,6 +79,11 @@ public class RotalyGpsForegroundService extends Service {
     private static final String PREF_OFFLINE_QUEUE = "pref_offline_queue";
     private static final String PREF_LAST_PING_TIMESTAMP = "pref_last_ping_timestamp";
 
+    // Constantes de Lote (estilo iFood)
+    private static final int BATCH_SIZE_TRIGGER = 10; // Envia ao atingir 10 pings
+    private static final long BATCH_TIME_TRIGGER_MS = 30000L; // Ou a cada 30 segundos
+    private static final int MAX_OFFLINE_QUEUE_ITEMS = 1000;
+
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
     private PowerManager.WakeLock wakeLock;
@@ -80,6 +99,10 @@ public class RotalyGpsForegroundService extends Service {
     private String baseUrl = "";
     private String authToken = "";
     private String userId = "";
+
+    // Fila em memória para acúmulo de lote rápido
+    private final List<JSONObject> pendingBatchList = new ArrayList<>();
+    private long lastBatchSendTime = System.currentTimeMillis();
 
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
 
@@ -121,6 +144,8 @@ public class RotalyGpsForegroundService extends Service {
                 parseOptionsAndPersist(optionsJson, prefs);
                 startTrackingForeground();
             } else if (ACTION_STOP.equals(action)) {
+                // Forçar envio do que resta antes de parar
+                flushBatchAndOfflineQueue(true);
                 stopTrackingForeground();
                 prefs.edit().putBoolean(PREF_IS_TRACKING, false).apply();
                 stopSelf();
@@ -192,7 +217,7 @@ public class RotalyGpsForegroundService extends Service {
         requestLocationUpdates();
 
         // Tentar enviar fila offline remanescente se houver
-        flushOfflineQueue();
+        flushBatchAndOfflineQueue(false);
 
         Log.i(TAG, "Foreground tracking iniciado com sucesso!");
     }
@@ -211,12 +236,13 @@ public class RotalyGpsForegroundService extends Service {
 
         releaseWakeLock();
         stopForeground(true);
-        Log.i(TAG, "Foreground tracking finalizado.");
+        Log.i(TAG, "Foreground tracking parado.");
     }
 
     private void requestLocationUpdates() {
         try {
-            long minFastestIntervalMs = 3000L;
+            long minFastestIntervalMs = Math.max(1000L, intervalMs / 2);
+
             LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
                     .setMinUpdateIntervalMillis(minFastestIntervalMs)
                     .setMinUpdateDistanceMeters(minDistanceM)
@@ -245,8 +271,8 @@ public class RotalyGpsForegroundService extends Service {
                     .apply();
         } catch (Exception ignored) {}
 
-        // 1. Gravar DIRETAMENTE no PocketBase via HTTP POST em thread assíncrona
-        postLocationDirectly(location, now);
+        // 1. Processar e enfileirar no lote de telemetria
+        queueLocationForBatch(location, now);
 
         // 2. Broadcast para a UI (Capacitor/WebView) vira secundário para animação
         broadcastLocation(location);
@@ -286,64 +312,164 @@ public class RotalyGpsForegroundService extends Service {
         return -1;
     }
 
-    private void postLocationDirectly(Location location, long originalTimestamp) {
-        networkExecutor.execute(() -> {
-            boolean success = false;
-            try {
-                if (baseUrl == null || baseUrl.isEmpty() || userId == null || userId.isEmpty()) {
-                    // Sem credenciais ainda, enfileirar localmente
-                    enqueueOfflinePing(location, originalTimestamp);
+    /**
+     * Acumula o ping no lote de telemetria e dispara envio quando atinge 10 posições ou 30 segundos.
+     */
+    private synchronized void queueLocationForBatch(Location location, long originalTimestamp) {
+        float acc = location.hasAccuracy() ? location.getAccuracy() : 10.0f;
+        if (acc > 2000f) {
+            Log.w(TAG, "Ping nativo descartado por accuracy absurda: " + acc + "m");
+            return;
+        }
+
+        float rawSpeedMps = location.hasSpeed() ? location.getSpeed() : 0.0f;
+        float speedKmh = rawSpeedMps * 3.6f;
+        if (speedKmh > 200f) {
+            speedKmh = 0.0f;
+        }
+
+        try {
+            JSONObject item = new JSONObject();
+            item.put("lat", location.getLatitude());
+            item.put("lng", location.getLongitude());
+            item.put("speed", Math.round(speedKmh * 10.0f) / 10.0);
+            item.put("heading", location.hasBearing() ? location.getBearing() : 0.0);
+            item.put("accuracy", Math.round(acc * 10.0f) / 10.0);
+            item.put("timestamp", originalTimestamp);
+            item.put("gps_status", "active");
+            item.put("offline_buffered", false);
+
+            int battery = getNativeBatteryLevel();
+            if (battery > 0 && battery <= 100) {
+                item.put("battery_level", battery);
+            }
+
+            // Deduplicação defensiva local de coordenadas congeladas consecutivas
+            if (!pendingBatchList.isEmpty()) {
+                JSONObject last = pendingBatchList.get(pendingBatchList.size() - 1);
+                double lastLat = last.optDouble("lat", Double.NaN);
+                double lastLng = last.optDouble("lng", Double.NaN);
+                if (Math.abs(lastLat - location.getLatitude()) < 0.0000001 &&
+                        Math.abs(lastLng - location.getLongitude()) < 0.0000001) {
+                    last.put("timestamp", originalTimestamp);
                     return;
                 }
+            }
 
-                String cleanUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-                URL endpoint = new URL(cleanUrl + "/api/collections/locations/records");
-                HttpURLConnection conn = (HttpURLConnection) endpoint.openConnection();
+            pendingBatchList.add(item);
+            long now = System.currentTimeMillis();
+
+            // Dispara envio se atingir 10 posições ou 30s desde o último envio
+            boolean timeExpired = (now - lastBatchSendTime) >= BATCH_TIME_TRIGGER_MS;
+            boolean countExceeded = pendingBatchList.size() >= BATCH_SIZE_TRIGGER;
+
+            if (countExceeded || timeExpired) {
+                flushBatchAndOfflineQueue(false);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Erro ao preparar item de telemetria em lote:", e);
+        }
+    }
+
+    /**
+     * Esvazia o lote em memória e a fila offline persistente, enviando ao backend.
+     */
+    private synchronized void flushBatchAndOfflineQueue(boolean forceImmediate) {
+        if (baseUrl == null || baseUrl.isEmpty() || userId == null || userId.isEmpty()) {
+            persistBatchToOfflineQueue();
+            return;
+        }
+
+        // Move itens do pendingBatchList para a lista de envio
+        final List<JSONObject> toSend = new ArrayList<>(pendingBatchList);
+        pendingBatchList.clear();
+        lastBatchSendTime = System.currentTimeMillis();
+
+        networkExecutor.execute(() -> {
+            boolean batchSuccess = false;
+            if (!toSend.isEmpty()) {
+                batchSuccess = sendBatchWithRetry(toSend, 2);
+                if (!batchSuccess) {
+                    // Se falhar o lote, adiciona de volta à fila offline persistida
+                    enqueueItemsToOfflineQueue(toSend);
+                }
+            }
+
+            // Agora verifica se há itens antigos no buffer offline persistido para esvaziar
+            flushPersistentOfflineQueue();
+        });
+    }
+
+    private synchronized void persistBatchToOfflineQueue() {
+        if (pendingBatchList.isEmpty()) return;
+        enqueueItemsToOfflineQueue(new ArrayList<>(pendingBatchList));
+        pendingBatchList.clear();
+    }
+
+    private synchronized void enqueueItemsToOfflineQueue(List<JSONObject> items) {
+        try {
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            String queueStr = prefs.getString(PREF_OFFLINE_QUEUE, "[]");
+            JSONArray arr = new JSONArray(queueStr);
+
+            for (JSONObject it : items) {
+                // Se for para o buffer offline, marcar offline_buffered
+                it.put("offline_buffered", true);
+                arr.put(it);
+            }
+
+            // Trim se passar de 1000 itens
+            if (arr.length() > MAX_OFFLINE_QUEUE_ITEMS) {
+                JSONArray trimmed = new JSONArray();
+                for (int i = arr.length() - 900; i < arr.length(); i++) {
+                    trimmed.put(arr.get(i));
+                }
+                arr = trimmed;
+            }
+
+            prefs.edit().putString(PREF_OFFLINE_QUEUE, arr.toString()).apply();
+            Log.i(TAG, "Itens salvos no buffer offline persistente (total na fila: " + arr.length() + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "Erro ao persistir itens na fila offline:", e);
+        }
+    }
+
+    /**
+     * Envia um lote de posições via POST /backend/v1/telemetry-batch com fallback e retry exponencial curto.
+     */
+    private boolean sendBatchWithRetry(List<JSONObject> items, int maxRetries) {
+        if (items.isEmpty()) return true;
+
+        String cleanUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS'Z'", Locale.US);
+        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            HttpURLConnection conn = null;
+            try {
+                URL batchEndpoint = new URL(cleanUrl + "/backend/v1/telemetry-batch");
+                conn = (HttpURLConnection) batchEndpoint.openConnection();
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
+                conn.setReadTimeout(12000);
                 if (authToken != null && !authToken.isEmpty()) {
                     conn.setRequestProperty("Authorization", authToken);
                 }
                 conn.setDoOutput(true);
 
-                // FILTRO DE QUALIDADE NATIVO:
-                // Descartar pings com accuracy absurda (> 2000m) e velocidade impossível (> 200 km/h)
-                float acc = location.hasAccuracy() ? location.getAccuracy() : 10.0f;
-                if (acc > 2000f) {
-                    Log.w(TAG, "Ping nativo descartado por accuracy absurda: " + acc + "m");
-                    conn.disconnect();
-                    return;
-                }
-
-                float rawSpeedMps = location.hasSpeed() ? location.getSpeed() : 0.0f;
-                float speedKmh = rawSpeedMps * 3.6f;
-                if (speedKmh > 200f) {
-                    Log.w(TAG, "Velocidade impossível reportada pelo GPS (" + speedKmh + " km/h) — forçando speed para 0");
-                    speedKmh = 0.0f;
+                JSONArray batchItems = new JSONArray();
+                for (JSONObject it : items) {
+                    JSONObject copy = new JSONObject(it.toString());
+                    copy.put("user_id", userId);
+                    long ts = copy.optLong("timestamp", System.currentTimeMillis());
+                    copy.put("location_timestamp", sdf.format(new Date(ts)));
+                    batchItems.put(copy);
                 }
 
                 JSONObject payload = new JSONObject();
                 payload.put("user_id", userId);
-                payload.put("lat", location.getLatitude());
-                payload.put("lng", location.getLongitude());
-                payload.put("speed", Math.round(speedKmh * 10.0f) / 10.0);
-                payload.put("heading", location.hasBearing() ? location.getBearing() : 0.0);
-                payload.put("accuracy", Math.round(acc * 10.0f) / 10.0);
-                payload.put("gps_status", "active");
-                payload.put("offline_buffered", false);
-
-                // Leitura nativa real da bateria: NUNCA grava 0 falso
-                int battery = getNativeBatteryLevel();
-                if (battery > 0 && battery <= 100) {
-                    payload.put("battery_level", battery);
-                }
-
-                // Timestamp original do ping formatado em UTC ISO 8601
-                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS'Z'", Locale.US);
-                sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-                payload.put("location_timestamp", sdf.format(new Date(originalTimestamp)));
+                payload.put("items", batchItems);
 
                 byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
                 try (OutputStream os = conn.getOutputStream()) {
@@ -352,183 +478,114 @@ public class RotalyGpsForegroundService extends Service {
 
                 int code = conn.getResponseCode();
                 if (code >= 200 && code < 300) {
-                    success = true;
+                    Log.i(TAG, "Lote de telemetria enviado com SUCESSO (" + items.size() + " pings, HTTP " + code + ")");
+                    return true;
+                } else if (code == 404) {
+                    // Se o endpoint de lote não existir (ex: proxy desatualizado), fallback para envio individual
+                    Log.w(TAG, "Endpoint /backend/v1/telemetry-batch retornou 404. Executando fallback para pings individuais.");
+                    return sendItemsIndividuallyFallback(items);
+                } else if (code == 400) {
+                    // 400 Bad Request permanente: descartar para evitar loop
+                    Log.w(TAG, "Lote de telemetria rejeitado com HTTP 400 — descartando.");
+                    return true;
                 } else {
-                    Log.w(TAG, "POST direto de ping retornou HTTP " + code);
+                    Log.w(TAG, "Tentativa " + attempt + " de envio de lote falhou com HTTP " + code);
                 }
-                conn.disconnect();
             } catch (Exception e) {
-                Log.w(TAG, "Falha de rede ao enviar pingo direto:", e);
+                Log.w(TAG, "Tentativa " + attempt + " de envio de lote falhou por exceção de rede: " + e.getMessage());
+            } finally {
+                if (conn != null) {
+                    try { conn.disconnect(); } catch (Exception ignored) {}
+                }
             }
 
-            if (!success) {
-                enqueueOfflinePing(location, originalTimestamp);
-            } else {
-                // Ao conseguir enviar com sucesso, tentar esvaziar fila pendente
-                flushOfflineQueue();
+            if (attempt < maxRetries) {
+                try {
+                    // Retry exponencial curto: 1.5s, 3s
+                    Thread.sleep(attempt * 1500L);
+                } catch (InterruptedException ignored) {}
             }
-        });
+        }
+
+        return false;
     }
 
-    private synchronized void enqueueOfflinePing(Location location, long originalTimestamp) {
+    /**
+     * Fallback de envio individual se o endpoint de lote falhar com 404.
+     */
+    private boolean sendItemsIndividuallyFallback(List<JSONObject> items) {
+        String cleanUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS'Z'", Locale.US);
+        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+
+        boolean allSuccess = true;
+        for (JSONObject item : items) {
+            HttpURLConnection conn = null;
+            try {
+                URL endpoint = new URL(cleanUrl + "/api/collections/locations/records");
+                conn = (HttpURLConnection) endpoint.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setConnectTimeout(6000);
+                conn.setReadTimeout(6000);
+                if (authToken != null && !authToken.isEmpty()) {
+                    conn.setRequestProperty("Authorization", authToken);
+                }
+                conn.setDoOutput(true);
+
+                JSONObject payload = new JSONObject(item.toString());
+                payload.put("user_id", userId);
+                long ts = payload.optLong("timestamp", System.currentTimeMillis());
+                payload.put("location_timestamp", sdf.format(new Date(ts)));
+
+                byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(body);
+                }
+
+                int code = conn.getResponseCode();
+                if (code < 200 || code >= 300) {
+                    allSuccess = false;
+                }
+            } catch (Exception e) {
+                allSuccess = false;
+            } finally {
+                if (conn != null) {
+                    try { conn.disconnect(); } catch (Exception ignored) {}
+                }
+            }
+        }
+        return allSuccess;
+    }
+
+    /**
+     * Esvazia a fila offline do SharedPreferences enviando em lotes de até 50 itens.
+     */
+    private synchronized void flushPersistentOfflineQueue() {
         try {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
             String queueStr = prefs.getString(PREF_OFFLINE_QUEUE, "[]");
             JSONArray arr = new JSONArray(queueStr);
+            if (arr.length() == 0) return;
 
-            double lat = location.getLatitude();
-            double lng = location.getLongitude();
-
-            // REGRA: Nunca enfileirar coordenada idêntica consecutiva no buffer offline
-            if (arr.length() > 0) {
-                JSONObject lastItem = arr.getJSONObject(arr.length() - 1);
-                double lastLat = lastItem.optDouble("lat", Double.NaN);
-                double lastLng = lastItem.optDouble("lng", Double.NaN);
-                if (Math.abs(lastLat - lat) < 0.0000001 && Math.abs(lastLng - lng) < 0.0000001) {
-                    // Atualizar apenas o timestamp do último item ao invés de duplicar
-                    lastItem.put("timestamp", originalTimestamp);
-                    if (location.hasSpeed()) lastItem.put("speed", location.getSpeed());
-                    if (location.hasAccuracy()) lastItem.put("accuracy", location.getAccuracy());
-                    prefs.edit().putString(PREF_OFFLINE_QUEUE, arr.toString()).apply();
-                    return;
-                }
+            List<JSONObject> chunk = new ArrayList<>();
+            int takeCount = Math.min(arr.length(), 50);
+            for (int i = 0; i < takeCount; i++) {
+                chunk.add(arr.getJSONObject(i));
             }
 
-            JSONObject item = new JSONObject();
-            item.put("lat", lat);
-            item.put("lng", lng);
-            float speedKmh = location.hasSpeed() ? (location.getSpeed() * 3.6f) : 0.0f;
-            if (speedKmh > 200f) speedKmh = 0.0f;
-            item.put("speed", Math.round(speedKmh * 10.0f) / 10.0);
-            item.put("heading", location.hasBearing() ? location.getBearing() : 0.0);
-            item.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : 10.0);
-            item.put("timestamp", originalTimestamp);
-
-            int battery = getNativeBatteryLevel();
-            if (battery > 0 && battery <= 100) {
-                item.put("battery_level", battery);
-            }
-
-            // Limitar fila a 1000 pings mais recentes para não esgotar memória
-            if (arr.length() > 1000) {
-                JSONArray trimmed = new JSONArray();
-                for (int i = arr.length() - 900; i < arr.length(); i++) {
-                    trimmed.put(arr.get(i));
-                }
-                arr = trimmed;
-            }
-            arr.put(item);
-
-            prefs.edit().putString(PREF_OFFLINE_QUEUE, arr.toString()).apply();
-            Log.i(TAG, "Ping enfileirado na memória offline (total na fila: " + arr.length() + ")");
-        } catch (Exception e) {
-            Log.e(TAG, "Erro ao enfileirar ping offline:", e);
-        }
-    }
-
-    private synchronized void flushOfflineQueue() {
-        networkExecutor.execute(() -> {
-            try {
-                SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                String queueStr = prefs.getString(PREF_OFFLINE_QUEUE, "[]");
-                JSONArray arr = new JSONArray(queueStr);
-                if (arr.length() == 0) return;
-
-                if (baseUrl == null || baseUrl.isEmpty() || userId == null || userId.isEmpty()) return;
-
-                String cleanUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS'Z'", Locale.US);
-                sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-
-                int firstFailedIndex = -1;
-                double lastSentLat = Double.NaN;
-                double lastSentLng = Double.NaN;
-
-                for (int i = 0; i < arr.length(); i++) {
-                    JSONObject item = arr.getJSONObject(i);
-                    double itemLat = item.optDouble("lat", Double.NaN);
-                    double itemLng = item.optDouble("lng", Double.NaN);
-
-                    // GUARD: Nunca reenviar coordenada idêntica consecutiva da fila
-                    if (!Double.isNaN(lastSentLat) && !Double.isNaN(lastSentLng)
-                            && Math.abs(lastSentLat - itemLat) < 0.0000001
-                            && Math.abs(lastSentLng - itemLng) < 0.0000001) {
-                        // Descarta/consome duplicata consecutiva idêntica sem disparar requisição ao backend
-                        continue;
-                    }
-
-                    boolean itemSuccess = false;
-                    boolean shouldDiscardOnError = false;
-                    try {
-                        URL endpoint = new URL(cleanUrl + "/api/collections/locations/records");
-                        HttpURLConnection conn = (HttpURLConnection) endpoint.openConnection();
-                        conn.setRequestMethod("POST");
-                        conn.setRequestProperty("Content-Type", "application/json");
-                        conn.setConnectTimeout(6000);
-                        conn.setReadTimeout(6000);
-                        if (authToken != null && !authToken.isEmpty()) {
-                            conn.setRequestProperty("Authorization", authToken);
-                        }
-                        conn.setDoOutput(true);
-
-                        JSONObject payload = new JSONObject();
-                        payload.put("user_id", userId);
-                        payload.put("lat", itemLat);
-                        payload.put("lng", itemLng);
-                        payload.put("speed", item.optDouble("speed", 0.0));
-                        payload.put("heading", item.optDouble("heading", 0.0));
-                        payload.put("accuracy", item.optDouble("accuracy", 10.0));
-                        payload.put("gps_status", "active");
-                        payload.put("offline_buffered", true);
-
-                        int itemBattery = item.optInt("battery_level", -1);
-                        if (itemBattery > 0 && itemBattery <= 100) {
-                            payload.put("battery_level", itemBattery);
-                        }
-
-                        payload.put("location_timestamp", sdf.format(new Date(item.getLong("timestamp"))));
-
-                        byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
-                        try (OutputStream os = conn.getOutputStream()) {
-                            os.write(body);
-                        }
-
-                        int code = conn.getResponseCode();
-                        conn.disconnect();
-                        if (code >= 200 && code < 300) {
-                            itemSuccess = true;
-                            lastSentLat = itemLat;
-                            lastSentLng = itemLng;
-                        } else if (code == 400) {
-                            // 400 Bad Request: payload inválido/rejeitado permanentemente pelo backend — descartar item para evitar loop
-                            shouldDiscardOnError = true;
-                            Log.w(TAG, "Item do buffer rejeitado com HTTP 400 — descartando para evitar loop.");
-                        }
-                    } catch (Exception sendErr) {
-                        Log.w(TAG, "Falha de rede ao descarregar item " + i + " do buffer:", sendErr);
-                    }
-
-                    if (!itemSuccess && !shouldDiscardOnError) {
-                        // Falha de rede / 5xx transitória: interrompe o loop e mantém a partir deste item
-                        firstFailedIndex = i;
-                        break;
-                    }
-                }
-
+            boolean ok = sendBatchWithRetry(chunk, 1);
+            if (ok) {
                 JSONArray remaining = new JSONArray();
-                if (firstFailedIndex >= 0) {
-                    for (int k = firstFailedIndex; k < arr.length(); k++) {
-                        remaining.put(arr.getJSONObject(k));
-                    }
+                for (int i = takeCount; i < arr.length(); i++) {
+                    remaining.put(arr.getJSONObject(i));
                 }
-                // Se firstFailedIndex == -1, todos os itens foram consumidos/enviados ou descartados com 400!
-
                 prefs.edit().putString(PREF_OFFLINE_QUEUE, remaining.toString()).apply();
-                Log.i(TAG, "Flush de fila offline concluído. Consumidos: " + (arr.length() - remaining.length()) + ", Restantes: " + remaining.length());
-            } catch (Exception e) {
-                Log.e(TAG, "Erro ao esvaziar fila offline:", e);
+                Log.i(TAG, "Lote do buffer offline enviado com sucesso. Restam " + remaining.length() + " pings.");
             }
-        });
+        } catch (Exception e) {
+            Log.e(TAG, "Erro ao esvaziar fila persistente offline:", e);
+        }
     }
 
     private void broadcastLocation(Location location) {
@@ -639,6 +696,7 @@ public class RotalyGpsForegroundService extends Service {
 
     @Override
     public void onDestroy() {
+        flushBatchAndOfflineQueue(true);
         stopTrackingForeground();
         networkExecutor.shutdown();
         super.onDestroy();

@@ -443,6 +443,21 @@ export default function CourierApp() {
         .catch(() => {})
     }
 
+    // Checar primeira abertura do app para solicitar isenção de otimização de bateria (uma única vez)
+    if (typeof window !== 'undefined' && user?.id) {
+      try {
+        const batteryAck = localStorage.getItem(BATTERY_OPTIMIZATION_ACK_KEY)
+        if (!batteryAck) {
+          const timer = setTimeout(() => {
+            setIsBatteryGuideOpen(true)
+          }, 1200)
+          return () => clearTimeout(timer)
+        }
+      } catch (err) {
+        console.warn('Erro ao checar BATTERY_OPTIMIZATION_ACK_KEY:', err)
+      }
+    }
+
     // Checar se é a primeira abertura do app do entregador para exibir o tutorial de boas-vindas
     if (typeof window !== 'undefined' && user?.id) {
       try {

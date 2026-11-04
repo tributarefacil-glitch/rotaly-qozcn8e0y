@@ -376,106 +376,111 @@ class OfflineTelemetryBufferService {
 
       const lastOnlinePingTime = this.lastSuccessfulOnlinePingTimes.get(userId) || 0
 
-      for (let i = 0; i < deduplicatedPoints.length; i++) {
-        const pt = deduplicatedPoints[i]
-
-        // Se o ponto coincidir exatamente (<30s) com um ping que já foi enviado online, não reenviar
+      // TELEMETRIA EM LOTE (estilo iFood):
+      // Tentar enviar todos os pontos elegíveis do buffer em lotes de até 25 posições num único POST HTTP.
+      // Se o endpoint de lote falhar ou rejeitar, executa fallback individual preservando compatibilidade.
+      const candidatePoints: OfflineTelemetryPoint[] = []
+      for (const pt of deduplicatedPoints) {
         if (lastOnlinePingTime > 0 && Math.abs(pt.timestamp - lastOnlinePingTime) < 30 * 1000) {
           sentIds.push(pt.id)
           continue
         }
+        candidatePoints.push(pt)
+      }
 
-        const speedToSend = typeof pt.speed === 'number' && pt.speed < 2 ? 0 : (pt.speed ?? 0)
-
-        // Taxa de retry por ponto: no máximo 1 tentativa por ponto por minuto (60s)
-        const lastAttemptTime = this.pointLastRetryAttemptMap.get(pt.id) || 0
-        const nowMs = Date.now()
-        if (nowMs - lastAttemptTime < 60 * 1000) {
-          // Ponto já tentado há menos de 1 minuto; aguarda próxima janela sem descartar
-          remainingPoints.push(pt)
-          continue
-        }
-        this.pointLastRetryAttemptMap.set(pt.id, nowMs)
-
-        // Converter timestamp original em formato legível ISO para o log de auditoria
-        const originalTimeIso = new Date(pt.timestamp).toISOString()
-
-        // PATCH 1: Usar sanitizador em TODO envio a locations (flush do buffer) com timestamp original preservado
-        let sanitizedPayload: ReturnType<typeof deliveryService.sanitizeLocationPayload>
+      if (candidatePoints.length > 0) {
         try {
-          sanitizedPayload = sanitizeLocationPayload({
-            userId: pt.userId,
-            lat: pt.lat,
-            lng: pt.lng,
-            speed: speedToSend,
-            heading: pt.heading ?? 0,
-            batteryLevel: pt.batteryLevel,
-            accuracy: pt.accuracy,
-            gpsStatus:
-              pt.reason === 'permission_denied' || pt.reason.startsWith('gps')
-                ? 'disabled'
-                : 'offline',
-            gpsReason: `${pt.reason} (coletado em ${originalTimeIso})`,
-            offlineBuffered: true,
-            locationTimestamp: originalTimeIso,
-          })
-        } catch (sanitizationErr: any) {
-          console.warn('[TELEMETRIA POCKETBASE 400/FAIL] Erro de sanitização no buffer:', {
-            error: sanitizationErr?.message,
-            point: pt,
-          })
-          // Se as coordenadas estiverem irremediavelmente corrompidas fora das faixas mundiais,
-          // mantém no buffer para inspeção sem travar o flush dos demais
-          remainingPoints.push({
-            ...pt,
-            error: sanitizationErr?.message || 'Erro de sanitização',
-          })
-          continue
-        }
-
-        try {
-          await deliveryService.updateCourierLocation(
-            sanitizedPayload.user_id!,
-            sanitizedPayload.lat!,
-            sanitizedPayload.lng!,
-            sanitizedPayload.speed,
-            sanitizedPayload.heading,
-            sanitizedPayload.battery_level,
-            {
-              gps_status: sanitizedPayload.gps_status,
-              gps_reason: sanitizedPayload.gps_reason,
+          const batchItems = candidatePoints.map((pt) => {
+            const originalTimeIso = new Date(pt.timestamp).toISOString()
+            const speedToSend = typeof pt.speed === 'number' && pt.speed < 2 ? 0 : (pt.speed ?? 0)
+            return {
+              lat: pt.lat,
+              lng: pt.lng,
+              speed: speedToSend,
+              heading: pt.heading ?? 0,
+              accuracy: pt.accuracy ?? 10,
+              battery_level: pt.batteryLevel,
+              gps_status:
+                pt.reason === 'permission_denied' || pt.reason.startsWith('gps')
+                  ? 'disabled'
+                  : 'active',
+              gps_reason: `${pt.reason} (coletado em ${originalTimeIso})`,
               offline_buffered: true,
-              accuracy: sanitizedPayload.accuracy,
-              location_timestamp: originalTimeIso,
-            },
-          )
-          sentCount++
-          sentIds.push(pt.id)
-          this.pointLastRetryAttemptMap.delete(pt.id)
-        } catch (err: any) {
-          // PATCH 2: Log de falha padronizado com status, message, fieldErrors e payload tentado
-          console.warn('[TELEMETRIA POCKETBASE 400/FAIL]', {
-            status: err?.status,
-            message: err?.message,
-            fieldErrors: err?.data?.data || err?.data,
-            payload: sanitizedPayload,
-            pointId: pt.id,
+              timestamp: originalTimeIso,
+            }
           })
 
-          // REQUISITO: Aceitar 400 descartando o payload rejeitado (evita loop infinito de rejeição do backend)
-          // Falha de rede / 5xx / timeout permanece no buffer para retry (1 tentativa por minuto)
-          if (err?.status === 400) {
-            console.warn(
-              '[TELEMETRIA] Payload rejeitado com 400 pelo backend — descartando do buffer para evitar loop:',
-              pt.id,
-            )
+          await deliveryService.sendTelemetryBatch(userId, batchItems)
+          sentCount += candidatePoints.length
+          for (const pt of candidatePoints) {
             sentIds.push(pt.id)
-            this.pointLastRetryAttemptMap.delete(pt.id)
-          } else {
-            remainingPoints.push({
-              ...pt,
-              error: err?.message || 'Falha de rede/5xx',
-            })
+          }
+        } catch (batchErr: any) {
+          console.warn(
+            '[TELEMETRIA EM LOTE] Falha no envio em lote do buffer, executando fallback individual:',
+            batchErr,
+          )
+
+          // Fallback individual caso o envio em lote falhe
+          for (let i = 0; i < candidatePoints.length; i++) {
+            const pt = candidatePoints[i]
+            const speedToSend = typeof pt.speed === 'number' && pt.speed < 2 ? 0 : (pt.speed ?? 0)
+            const originalTimeIso = new Date(pt.timestamp).toISOString()
+
+            let sanitizedPayload: ReturnType<typeof deliveryService.sanitizeLocationPayload>
+            try {
+              sanitizedPayload = sanitizeLocationPayload({
+                userId: pt.userId,
+                lat: pt.lat,
+                lng: pt.lng,
+                speed: speedToSend,
+                heading: pt.heading ?? 0,
+                batteryLevel: pt.batteryLevel,
+                accuracy: pt.accuracy,
+                gpsStatus:
+                  pt.reason === 'permission_denied' || pt.reason.startsWith('gps')
+                    ? 'disabled'
+                    : 'offline',
+                gpsReason: `${pt.reason} (coletado em ${originalTimeIso})`,
+                offlineBuffered: true,
+                locationTimestamp: originalTimeIso,
+              })
+            } catch (sanitizationErr: any) {
+              remainingPoints.push({
+                ...pt,
+                error: sanitizationErr?.message || 'Erro de sanitização',
+              })
+              continue
+            }
+
+            try {
+              await deliveryService.updateCourierLocation(
+                sanitizedPayload.user_id!,
+                sanitizedPayload.lat!,
+                sanitizedPayload.lng!,
+                sanitizedPayload.speed,
+                sanitizedPayload.heading,
+                sanitizedPayload.battery_level,
+                {
+                  gps_status: sanitizedPayload.gps_status,
+                  gps_reason: sanitizedPayload.gps_reason,
+                  offline_buffered: true,
+                  accuracy: sanitizedPayload.accuracy,
+                  location_timestamp: originalTimeIso,
+                },
+              )
+              sentCount++
+              sentIds.push(pt.id)
+            } catch (err: any) {
+              if (err?.status === 400) {
+                sentIds.push(pt.id)
+              } else {
+                remainingPoints.push({
+                  ...pt,
+                  error: err?.message || 'Falha de rede/5xx',
+                })
+              }
+            }
           }
         }
       }

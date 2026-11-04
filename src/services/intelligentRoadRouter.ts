@@ -499,12 +499,14 @@ async function sequenceStopsWithGoogleDirections(
       waypoints,
       optimizeWaypoints: true, // SOLVER OFICIAL DE ROTEAMENTO VIÁRIO DA GOOGLE
       travelMode: requestTravelMode,
+      provideRouteAlternatives: true, // ROTAS INTELIGENTES: Solicita rotas alternativas para descobrir atalhos viários
     }
 
-    // Otimização por DISTÂNCIA:
-    // Chamada pura sem drivingOptions/BEST_GUESS para evitar ganchos de trânsito
-    // que aumentam o km (ex.: 19 km rodoviário vs 13 km direto).
-    // Opcionalmente testa com trânsito e escolhe a rota de MENOR quilometragem total.
+    // Otimização por MENOR QUILOMETRAGEM VIÁRIA TOTAL:
+    // Solicita rotas alternativas (provideRouteAlternatives: true) e seleciona a rota viária
+    // que tiver a MENOR distância somada entre todas as pernas.
+    // Isso evita que o Google Maps imponha rodovias/vias arteriais mais longas
+    // em detrimento de rotas locais mais curtas (ex.: atalhos viários conhecidos pelos entregadores).
     const requestNoTraffic: any = { ...request }
 
     const routeNoTrafficPromise: Promise<any> = new Promise((resolve) => {
@@ -539,21 +541,14 @@ async function sequenceStopsWithGoogleDirections(
           })
         })
 
-        if (resultTraffic?.routes?.[0]) {
-          if (!chosenResult?.routes?.[0]) {
+        if (resultTraffic?.routes?.length) {
+          if (!chosenResult?.routes?.length) {
             chosenResult = resultTraffic
           } else {
-            // Comparar distâncias totais e priorizar a rota de MENOR quilometragem
-            const distNoTraffic = (chosenResult.routes[0].legs || []).reduce(
-              (sum: number, l: any) => sum + (l.distance?.value || 0),
-              0,
-            )
-            const distTraffic = (resultTraffic.routes[0].legs || []).reduce(
-              (sum: number, l: any) => sum + (l.distance?.value || 0),
-              0,
-            )
-            if (distTraffic < distNoTraffic) {
-              chosenResult = resultTraffic
+            // Unir rotas candidatas para varredura completa da de menor km
+            chosenResult = {
+              ...chosenResult,
+              routes: [...(chosenResult.routes || []), ...(resultTraffic.routes || [])],
             }
           }
         }
@@ -562,9 +557,26 @@ async function sequenceStopsWithGoogleDirections(
       }
     }
 
-    if (!chosenResult?.routes?.[0]) return null
+    if (!chosenResult?.routes || chosenResult.routes.length === 0) return null
 
-    const route = chosenResult.routes[0]
+    // ROTAS INTELIGENTES: Seleciona a rota com MENOR km viário total
+    // dentre todas as rotas e alternativas retornadas
+    let bestRouteIndex = 0
+    let minRouteDistanceMeters = Infinity
+
+    for (let rIdx = 0; rIdx < chosenResult.routes.length; rIdx++) {
+      const candidateRoute = chosenResult.routes[rIdx]
+      const totalCandidateMeters = (candidateRoute.legs || []).reduce(
+        (sum: number, l: any) => sum + (l.distance?.value || 0),
+        0,
+      )
+      if (totalCandidateMeters > 0 && totalCandidateMeters < minRouteDistanceMeters) {
+        minRouteDistanceMeters = totalCandidateMeters
+        bestRouteIndex = rIdx
+      }
+    }
+
+    const route = chosenResult.routes[bestRouteIndex]
     const waypointOrder: number[] = route.waypoint_order || []
     const legs = route.legs || []
 

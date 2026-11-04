@@ -115,9 +115,10 @@ async function fetchGoogleDirectionsRoute(
           origin: { lat: origin.lat, lng: origin.lng },
           destination: { lat: destination.lat, lng: destination.lng },
           travelMode: win.google.maps.TravelMode?.DRIVING || 'DRIVING',
+          provideRouteAlternatives: true, // ROTAS INTELIGENTES: Solicita alternativas e escolhe o menor trajeto viário
         },
         (response: any, status: string) => {
-          if (status === 'OK' && response?.routes?.[0]) {
+          if (status === 'OK' && response?.routes?.length) {
             resolve(response)
           } else {
             reject(new Error(`Directions status: ${status}`))
@@ -126,7 +127,20 @@ async function fetchGoogleDirectionsRoute(
       )
     })
 
-    const route = result.routes[0]
+    // Seleciona a rota de MENOR quilometragem viária
+    let bestRoute = result.routes[0]
+    let minDistance = bestRoute.legs?.[0]?.distance?.value ?? Infinity
+
+    for (let i = 1; i < result.routes.length; i++) {
+      const cand = result.routes[i]
+      const dist = cand.legs?.[0]?.distance?.value ?? Infinity
+      if (dist < minDistance) {
+        minDistance = dist
+        bestRoute = cand
+      }
+    }
+
+    const route = bestRoute
     const leg = route.legs?.[0]
     const overviewPath = route.overview_path || []
 
