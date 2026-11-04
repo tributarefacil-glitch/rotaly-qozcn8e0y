@@ -85,6 +85,11 @@ const BatchReconciliationSection = lazy(() =>
     default: m.BatchReconciliationSection,
   })),
 )
+const RouteIntelligenceSection = lazy(() =>
+  import('@/components/RouteIntelligenceSection').then((m) => ({
+    default: m.RouteIntelligenceSection,
+  })),
+)
 
 function SectionSkeleton() {
   return (
@@ -167,6 +172,7 @@ interface AdminDashboardProps {
     | 'reports'
     | 'fuel'
     | 'km-audit'
+    | 'route-intelligence'
     | 'batch-reconciliation'
     | 'deviations'
     | 'audit-trail'
@@ -220,6 +226,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'reports'
     | 'fuel'
     | 'km-audit'
+    | 'route-intelligence'
     | 'batch-reconciliation'
     | 'deviations'
     | 'audit-trail'
@@ -236,6 +243,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     | 'reports'
     | 'fuel'
     | 'km-audit'
+    | 'route-intelligence'
     | 'batch-reconciliation'
     | 'deviations'
     | 'audit-trail'
@@ -256,6 +264,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         'reports',
         'fuel',
         'km-audit',
+        'route-intelligence',
         'batch-reconciliation',
         'deviations',
         'audit-trail',
@@ -1674,6 +1683,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     | 'reports'
                     | 'fuel'
                     | 'km-audit'
+                    | 'route-intelligence'
                     | 'batch-reconciliation'
                     | 'deviations'
                     | 'audit-trail'
@@ -1721,6 +1731,13 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                 >
                   <Route className="h-3.5 w-3.5 mr-1.5 text-[#0052CC]" />
                   Auditoria de KM
+                </TabsTrigger>
+                <TabsTrigger
+                  value="route-intelligence"
+                  className="text-xs font-semibold text-slate-700 data-[state=active]:bg-white data-[state=active]:text-[#002855] data-[state=active]:shadow-xs rounded-lg"
+                >
+                  <Compass className="h-3.5 w-3.5 mr-1.5 text-indigo-600" />
+                  Inteligência de Rotas
                 </TabsTrigger>
                 <TabsTrigger
                   value="batch-reconciliation"
@@ -2451,6 +2468,16 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                     settings={settings}
                     currentCompanyId={resolvedCompany?.id || currentCompany?.id}
                     onDataChange={loadData}
+                  />
+                </Suspense>
+              </TabsContent>
+
+              {/* TAB: INTELIGÊNCIA DE ROTAS (PLANEJADO X REALIZADO POR PERNA, ESTILO IFOOD) */}
+              <TabsContent value="route-intelligence" className="space-y-6">
+                <Suspense fallback={<SectionSkeleton />}>
+                  <RouteIntelligenceSection
+                    couriers={couriers}
+                    empresaId={resolvedCompany?.id || currentCompany?.id}
                   />
                 </Suspense>
               </TabsContent>

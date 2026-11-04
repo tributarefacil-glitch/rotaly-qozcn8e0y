@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-04T13:59:32.508Z",
+  "generatedAt": "2026-11-04T14:26:47.522Z",
   "collections": [
     {
       "name": "users",
@@ -3030,6 +3030,174 @@
         }
       ],
       "indexes": []
+    },
+    {
+      "name": "route_leg_analysis",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "route_batch_key",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "courier_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "empresa_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "empresas"
+        },
+        {
+          "name": "leg_index",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "leg_type",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["base_to_stop", "stop_to_stop", "return_to_base"]
+        },
+        {
+          "name": "from_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "to_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "order_id",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "tracking_code",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "km_planned",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "km_realized",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "km_diff",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "diff_pct",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "pings_count",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_better_route",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_excess_deviation",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_insufficient_data",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "analysis_status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": [
+            "candidate_better",
+            "excess_deviation",
+            "equivalent",
+            "insufficient_data"
+          ]
+        },
+        {
+          "name": "started_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "finished_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "metadata",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_route_leg_unique ON route_leg_analysis (route_batch_key, leg_index)",
+        "CREATE INDEX idx_route_leg_courier ON route_leg_analysis (courier_id, created DESC)",
+        "CREATE INDEX idx_route_leg_status ON route_leg_analysis (analysis_status)",
+        "CREATE INDEX idx_route_leg_better ON route_leg_analysis (is_better_route)"
+      ]
     }
   ]
 }

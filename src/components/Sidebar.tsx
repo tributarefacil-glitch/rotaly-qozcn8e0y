@@ -17,6 +17,7 @@ import {
   AlertTriangle,
   Route,
   ShieldAlert,
+  Compass,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCompany } from '@/contexts/CompanyContext'
@@ -83,7 +84,13 @@ const navItems: NavItem[] = [
     href: '/admin?tab=km-audit',
     icon: Route,
     roles: ['admin'],
-    badge: 'Novo',
+  },
+  {
+    title: 'Inteligência de Rotas',
+    href: '/admin?tab=route-intelligence',
+    icon: Compass,
+    roles: ['admin'],
+    badge: 'iFood',
   },
   {
     title: 'Desvios & Paradas',
