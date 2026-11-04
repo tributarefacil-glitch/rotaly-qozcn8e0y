@@ -14,6 +14,7 @@ import {
   normalizeWhatsAppPhone,
   buildTrackingWhatsAppText,
   buildTrackingWhatsAppUrl,
+  formatEtaFromRealDuration,
 } from '@/lib/whatsappTracking'
 import { deliveryService } from '@/services/deliveryService'
 import { toast } from '@/hooks/use-toast'
@@ -25,6 +26,8 @@ export interface WhatsAppTrackingPromptModalProps {
     id: string
     tracking_code: string
     estimated_arrival?: string | null
+    estimated_duration_minutes?: number | null
+    route_released?: boolean
     tracking_link_sent_at?: string | null
   }
   customerName?: string
@@ -47,19 +50,29 @@ export const WhatsAppTrackingPromptModal: React.FC<WhatsAppTrackingPromptModalPr
   const hasValidPhone = Boolean(normalizedPhone)
 
   const trackingUrl = `https://www.rotaly.com.br/track/${order.tracking_code}`
-  const waUrl = buildTrackingWhatsAppUrl(customerPhone, {
-    customerName,
-    trackingCode: order.tracking_code,
-    estimatedArrival: order.estimated_arrival,
-    includeEta: Boolean(order.estimated_arrival),
-  })
 
-  const previewText = buildTrackingWhatsAppText({
+  // REGRA DE ETA: horário na mensagem SOMENTE com duração REAL de trânsito
+  // (estimated_duration_minutes gravada pelo resequenciador do Google em rota liberada).
+  // estimated_arrival (placeholder 20+i*15) NUNCA gera horário citado ao cliente.
+  const realTransitMinutes =
+    typeof order.estimated_duration_minutes === 'number' &&
+    order.estimated_duration_minutes > 0 &&
+    order.route_released
+      ? order.estimated_duration_minutes
+      : null
+  const etaPreviewLabel = formatEtaFromRealDuration(realTransitMinutes)
+    ? `Previsão de entrega: por volta das ${formatEtaFromRealDuration(realTransitMinutes)}`
+    : 'A previsão de chegada atualizada acompanha o link (tempo real)'
+
+  const messageOptions = {
     customerName,
     trackingCode: order.tracking_code,
-    estimatedArrival: order.estimated_arrival,
-    includeEta: Boolean(order.estimated_arrival),
-  })
+    realTransitDurationMinutes: realTransitMinutes,
+    estimatedArrival: order.estimated_arrival, // legado: ignorado pela mensagem
+  }
+
+  const waUrl = buildTrackingWhatsAppUrl(customerPhone, messageOptions)
+  const previewText = buildTrackingWhatsAppText(messageOptions)
 
   const handleOpenWhatsApp = () => {
     if (!waUrl) return
@@ -171,6 +184,10 @@ export const WhatsAppTrackingPromptModal: React.FC<WhatsAppTrackingPromptModalPr
           {/* Prévia da mensagem */}
           {hasValidPhone && (
             <div className="space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                <Clock className="h-3 w-3 shrink-0" />
+                <span>{etaPreviewLabel}</span>
+              </div>
               <label className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider block">
                 Mensagem pronta (WhatsApp pessoal):
               </label>

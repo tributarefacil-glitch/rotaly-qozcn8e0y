@@ -5,7 +5,11 @@ import {
   normalizeWhatsAppPhone,
   buildTrackingWhatsAppText,
   buildTrackingWhatsAppUrl,
+  formatEtaFromRealDuration,
 } from './whatsappTracking'
+
+// Referência fixa: 04/11/2026 14:00 no horário de Brasília (17:00 UTC)
+const FIXED_FROM = new Date('2026-11-04T17:00:00.000Z')
 
 describe('whatsappTracking', () => {
   describe('DEFAULT_DDD', () => {
@@ -89,8 +93,33 @@ describe('whatsappTracking', () => {
     })
   })
 
-  describe('buildTrackingWhatsAppText', () => {
-    it('deve gerar texto com saudação, primeiro nome e link público', () => {
+  describe('formatEtaFromRealDuration', () => {
+    it('deve retornar null quando não há duração real (ausente, 0, negativa ou inválida)', () => {
+      expect(formatEtaFromRealDuration(undefined, FIXED_FROM)).toBeNull()
+      expect(formatEtaFromRealDuration(null, FIXED_FROM)).toBeNull()
+      expect(formatEtaFromRealDuration(0, FIXED_FROM)).toBeNull()
+      expect(formatEtaFromRealDuration(-10, FIXED_FROM)).toBeNull()
+      expect(formatEtaFromRealDuration(Number.NaN, FIXED_FROM)).toBeNull()
+    })
+
+    it('deve calcular "por volta das" somando a duração REAL ao momento do envio', () => {
+      // 14:00 em Brasília + 30 min = 14:30
+      expect(formatEtaFromRealDuration(30, FIXED_FROM)).toBe('14:30')
+      // 14:00 + 90 min = 15:30
+      expect(formatEtaFromRealDuration(90, FIXED_FROM)).toBe('15:30')
+      // 14:00 + 8 min = 14:08
+      expect(formatEtaFromRealDuration(8, FIXED_FROM)).toBe('14:08')
+    })
+
+    it('deve atravessar a virada do dia corretamente', () => {
+      // 23:50 em Brasília (02:50 UTC do dia 05) + 20 min = 00:10 do dia seguinte
+      const lateEvening = new Date('2026-11-05T02:50:00.000Z')
+      expect(formatEtaFromRealDuration(20, lateEvening)).toBe('00:10')
+    })
+  })
+
+  describe('buildTrackingWhatsAppText — regra de ETA (fonte da verdade é a página de rastreamento)', () => {
+    it('NUNCA cita horário quando não há duração real de trânsito (pedido recém-criado, sem rota)', () => {
       const text = buildTrackingWhatsAppText({
         customerName: 'Gaby Silva',
         trackingCode: 'TRK-2026-04619274',
@@ -99,8 +128,51 @@ describe('whatsappTracking', () => {
       expect(text).toContain('Olá, Gaby!')
       expect(text).toContain('TRK-2026-04619274')
       expect(text).toContain('https://www.rotaly.com.br/track/TRK-2026-04619274')
-      expect(text).toContain('tempo de chegada')
+      expect(text).toContain('previsão de chegada atualizada e o mapa ao vivo')
       expect(text).toContain('avaliar seu vendedor e seu entregador')
+
+      // Nenhuma frase de horário fechado
+      expect(text).not.toContain('Previsão estimada de entrega')
+      expect(text).not.toContain('por volta das')
+    })
+
+    it('deve ignorar o estimated_arrival legado do placeholder (20+i*15) — nunca vira horário na mensagem', () => {
+      // Simula exatamente o cenário do bug: estimated_arrival salvo pelo placeholder
+      const text = buildTrackingWhatsAppText({
+        customerName: 'Gaby Silva',
+        trackingCode: 'TRK-2026-04619274',
+        estimatedArrival: '2026-11-04T20:30:00.000Z', // 17:30 em Brasília
+        includeEta: true,
+      })
+
+      expect(text).not.toContain('17:30')
+      expect(text).not.toContain('Previsão estimada de entrega')
+      expect(text).not.toContain('por volta das')
+    })
+
+    it('cita "por volta das X" SOMENTE quando há duração real de trânsito (rota liberada, Google)', () => {
+      const text = buildTrackingWhatsAppText({
+        customerName: 'Gaby Silva',
+        trackingCode: 'TRK-2026-04619274',
+        realTransitDurationMinutes: 45,
+        estimatedArrival: '2026-11-04T20:30:00.000Z', // legado presente: ainda assim ignorado
+      })
+
+      // 14:00 + 45 min = 14:40? não: 14:45
+      expect(text).toContain('Previsão de entrega: por volta das *14:45*.')
+      expect(text).not.toContain('Previsão estimada de entrega')
+      expect(text).not.toContain('17:30')
+    })
+
+    it('usa texto genérico (sem horário) quando a duração real é inválida mesmo com includeEta legado', () => {
+      const text = buildTrackingWhatsAppText({
+        customerName: 'Gaby',
+        trackingCode: 'TRK-2026-04619274',
+        realTransitDurationMinutes: 0,
+        includeEta: true,
+      })
+      expect(text).not.toContain('por volta das')
+      expect(text).toContain('previsão de chegada atualizada e o mapa ao vivo')
     })
 
     it('deve usar fallback "Cliente" quando não houver nome', () => {
@@ -120,6 +192,27 @@ describe('whatsappTracking', () => {
       expect(url).not.toBeNull()
       expect(url).toContain('https://wa.me/5521971344477?text=')
       expect(url).toContain(encodeURIComponent('https://www.rotaly.com.br/track/TRK-2026-04619274'))
+    })
+
+    it('não inclui horário na URL quando não há duração real', () => {
+      const url = buildTrackingWhatsAppUrl('971344477', {
+        customerName: 'Gaby',
+        trackingCode: 'TRK-2026-04619274',
+        estimatedArrival: '2026-11-04T20:30:00.000Z',
+        includeEta: true,
+      })
+      expect(url).not.toBeNull()
+      expect(url!).not.toContain(encodeURIComponent('por volta das'))
+    })
+
+    it('inclui "por volta das" na URL quando há duração real de trânsito', () => {
+      const url = buildTrackingWhatsAppUrl('971344477', {
+        customerName: 'Gaby',
+        trackingCode: 'TRK-2026-04619274',
+        realTransitDurationMinutes: 30,
+      })
+      expect(url).not.toBeNull()
+      expect(url!).toContain(encodeURIComponent('por volta das *14:30*'))
     })
 
     it('deve retornar null se telefone for vazio', () => {

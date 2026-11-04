@@ -1,6 +1,14 @@
 /**
  * Helper para formatação de deep link do WhatsApp (wa.me)
  * e geração de mensagem pronta de rastreamento com link do Rotaly.
+ *
+ * REGRA DE ETA (decisão do usuário, 04/11):
+ * A página pública de rastreamento é a fonte da verdade da previsão de chegada
+ * (ETA ao vivo calculada da posição real do entregador + distância viária Google).
+ * O texto do WhatsApp NUNCA deve cravar um horário calculado por placeholder
+ * (ex.: 20 min + 15 min por posição na fila). Só cita "por volta das X" quando
+ * existe duração REAL de trânsito do Google (por perna da rota liberada).
+ * Sem duração real, o texto diz que a previsão atualizada está no link.
  */
 
 /**
@@ -13,8 +21,20 @@ export const DEFAULT_DDD = '21'
 export interface TrackingWhatsAppMessageOptions {
   customerName?: string
   trackingCode: string
-  estimatedArrival?: string | null
+  /**
+   * Duração REAL de trânsito (Google, por perna da rota já liberada) em minutos.
+   * Só fornecer quando houver duração viária real apurada (route_released +
+   * estimated_duration_minutes do resequenciador). NUNCA passar valor derivado
+   * do placeholder 20+i*15 da aplicação de rota.
+   */
+  realTransitDurationMinutes?: number | null
   sellerName?: string
+  /**
+   * @deprecated Legado: era o estimated_arrival do placeholder. IGNORADO —
+   * a mensagem nunca mais cita horário derivado dele.
+   */
+  estimatedArrival?: string | null
+  /** @deprecated Legado: ignorado. */
   includeEta?: boolean
 }
 
@@ -94,35 +114,54 @@ export function normalizeWhatsAppPhone(phone?: string | null): string | null {
 }
 
 /**
+ * Formata a ETA "por volta das X" a partir de uma duração REAL de trânsito em minutos.
+ * Retorna null quando não há duração válida (> 0) — nesse caso a mensagem NÃO cita horário.
+ * `from` é injetável para testes determinísticos.
+ */
+export function formatEtaFromRealDuration(
+  realTransitDurationMinutes?: number | null,
+  from: Date = new Date(),
+): string | null {
+  if (
+    typeof realTransitDurationMinutes !== 'number' ||
+    !isFinite(realTransitDurationMinutes) ||
+    realTransitDurationMinutes <= 0
+  ) {
+    return null
+  }
+  try {
+    const etaDate = new Date(from.getTime() + Math.round(realTransitDurationMinutes) * 60 * 1000)
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(etaDate)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Monta o texto da mensagem do WhatsApp conforme o tom decidido:
- * Próximo, profissional, em português, contendo:
  * - Saudação com nome do cliente
  * - Confirmação do pedido registrado com sucesso
+ * - ETA "por volta das X" SOMENTE quando há duração real de trânsito (rota liberada);
+ *   caso contrário, NENHUM horário fechado é citado — a previsão ao vivo fica no link
  * - Link público https://www.rotaly.com.br/track/<tracking_code>
- * - Aviso de que ali ele acompanha o status E o tempo de entrega em tempo real
  * - Convite para ao final avaliar vendedor e entregador na mesma página
  */
 export function buildTrackingWhatsAppText(options: TrackingWhatsAppMessageOptions): string {
   const firstName = options.customerName ? options.customerName.trim().split(' ')[0] : 'Cliente'
   const trackingUrl = `https://www.rotaly.com.br/track/${options.trackingCode}`
 
-  let etaNotice = ''
-  if (options.includeEta && options.estimatedArrival) {
-    try {
-      const etaFormatted = new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(new Date(options.estimatedArrival))
-      etaNotice = `\nPrevisão estimada de entrega para hoje: por volta das *${etaFormatted}*.`
-    } catch {
-      // ignora erro de parsing
-    }
-  }
+  // estimatedArrival/includeEta (legado) são deliberadamente IGNORADOS:
+  // horário do placeholder 20+i*15 nunca mais vai para o cliente.
+  const etaFormatted = formatEtaFromRealDuration(options.realTransitDurationMinutes)
+  const etaNotice = etaFormatted ? `\nPrevisão de entrega: por volta das *${etaFormatted}*.` : ''
 
   return (
     `Olá, ${firstName}! Seu pedido foi registrado com sucesso.${etaNotice}\n\n` +
-    `Acompanhe sua entrega em tempo real, incluindo o tempo de chegada e o mapa ao vivo, por este link:\n` +
+    `Acompanhe sua entrega em tempo real, incluindo a previsão de chegada atualizada e o mapa ao vivo, por este link:\n` +
     `${trackingUrl}\n\n` +
     `Ao final, você também pode avaliar seu vendedor e seu entregador diretamente por ali.\n\n` +
     `Obrigado pela preferência!`

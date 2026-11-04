@@ -12,8 +12,14 @@ import pb from '@/lib/pocketbase/client'
  * Generic over the record type: pass your collection's interface as
  * `useRealtime<MyRecord>(...)` to get a typed subscription payload
  * instead of `unknown`.
+ *
+ * `enabled` accepts:
+ * - boolean (classic, backward compatible)
+ * - { enabled, debounceMs } — options object. When debounceMs > 0, rapid
+ *   successive events (e.g. telemetry bursts) are coalesced: the callback
+ *   fires once per quiet window instead of once per event.
  */
-export interface UseRealtimeOptions {
+export type UseRealtimeOptions = {
   enabled?: boolean
   debounceMs?: number
 }
@@ -21,40 +27,39 @@ export interface UseRealtimeOptions {
 export function useRealtime<TRecord extends RecordModel = RecordModel>(
   collectionName: string,
   callback: (data: RecordSubscription<TRecord>) => void,
-  optionsOrEnabled: boolean | UseRealtimeOptions = true,
+  options: boolean | UseRealtimeOptions = true,
 ) {
-  const isEnabled =
-    typeof optionsOrEnabled === 'boolean' ? optionsOrEnabled : (optionsOrEnabled?.enabled ?? true)
-
-  const debounceMs =
-    typeof optionsOrEnabled === 'object' && typeof optionsOrEnabled?.debounceMs === 'number'
-      ? optionsOrEnabled.debounceMs
-      : 0
-
   const callbackRef = useRef(callback)
   callbackRef.current = callback
 
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const normalized: UseRealtimeOptions =
+    typeof options === 'boolean' ? { enabled: options } : options
+
+  const enabled = normalized.enabled ?? true
+  const debounceMs = normalized.debounceMs ?? 0
+
+  // Keep latest options in refs so they do not retrigger the subscription effect
+  const debounceRef = useRef(debounceMs)
+  debounceRef.current = debounceMs
 
   useEffect(() => {
-    if (!isEnabled) return
+    if (!enabled) return
 
     let unsubscribeFn: (() => Promise<void>) | undefined
     let cancelled = false
-
-    const handleEvent = (e: RecordSubscription<TRecord>) => {
-      if (debounceMs > 0) {
-        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
-        debounceTimerRef.current = setTimeout(() => {
-          callbackRef.current(e)
-        }, debounceMs)
-      } else {
-        callbackRef.current(e)
-      }
-    }
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
     pb.collection<TRecord>(collectionName)
-      .subscribe('*', handleEvent)
+      .subscribe('*', (e) => {
+        if (debounceRef.current > 0) {
+          if (debounceTimer) clearTimeout(debounceTimer)
+          debounceTimer = setTimeout(() => {
+            callbackRef.current(e)
+          }, debounceRef.current)
+        } else {
+          callbackRef.current(e)
+        }
+      })
       .then((fn) => {
         if (cancelled) {
           fn().catch(() => {})
@@ -66,14 +71,14 @@ export function useRealtime<TRecord extends RecordModel = RecordModel>(
 
     return () => {
       cancelled = true
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current)
-      }
+      if (debounceTimer) clearTimeout(debounceTimer)
       if (unsubscribeFn) {
         unsubscribeFn().catch(() => {})
       }
     }
-  }, [collectionName, isEnabled, debounceMs])
+  }, [collectionName, enabled])
+
+  return
 }
 
 export default useRealtime

@@ -104,11 +104,20 @@ export const PendingTrackingOrdersSection: React.FC<PendingTrackingOrdersSection
     const customerName = cust?.name || order.end_address_name || 'Cliente'
     const customerPhone = cust?.phone || cust?.phone2 || null
 
+    // REGRA DE ETA: horário citado SOMENTE quando há duração REAL de trânsito
+    // (rota liberada + estimated_duration_minutes do Google). estimated_arrival
+    // (placeholder 20+i*15) NUNCA vira horário na mensagem.
+    const realTransitMinutes =
+      order.route_released &&
+      typeof order.estimated_duration_minutes === 'number' &&
+      order.estimated_duration_minutes > 0
+        ? order.estimated_duration_minutes
+        : null
+
     const waUrl = buildTrackingWhatsAppUrl(customerPhone, {
       customerName,
       trackingCode: order.tracking_code,
-      estimatedArrival: order.estimated_arrival,
-      includeEta: Boolean(order.estimated_arrival),
+      realTransitDurationMinutes: realTransitMinutes,
     })
 
     if (waUrl) {
@@ -299,6 +308,8 @@ export const PendingTrackingOrdersSection: React.FC<PendingTrackingOrdersSection
             id: selectedOrderForWa.order.id,
             tracking_code: selectedOrderForWa.order.tracking_code,
             estimated_arrival: selectedOrderForWa.order.estimated_arrival,
+            estimated_duration_minutes: selectedOrderForWa.order.estimated_duration_minutes,
+            route_released: selectedOrderForWa.order.route_released,
             tracking_link_sent_at: selectedOrderForWa.order.tracking_link_sent_at,
           }}
           customerName={selectedOrderForWa.customerName}

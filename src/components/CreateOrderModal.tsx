@@ -175,6 +175,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     id: string
     tracking_code: string
     estimated_arrival?: string | null
+    estimated_duration_minutes?: number | null
+    route_released?: boolean
     customerName: string
     customerPhone: string | null
   } | null>(null)
@@ -1526,11 +1528,23 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         newCustPhone2.trim() ||
         null
 
+      // REGRA DE ETA: pedido recém-criado NUNCA tem rota liberada com duração real
+      // (estimated_duration_minutes só é gravada pelo resequenciador do Google).
+      // A mensagem não cita horário — a previsão atualizada fica na página de rastreamento.
+      const realTransitMinutesForNewOrder =
+        createdOrder.route_released &&
+        typeof createdOrder.estimated_duration_minutes === 'number' &&
+        createdOrder.estimated_duration_minutes > 0
+          ? createdOrder.estimated_duration_minutes
+          : null
+
       // Preparar modal de envio de rastreamento do WhatsApp (Momento 1)
       setCreatedOrderForWa({
         id: createdOrder.id,
         tracking_code: usedTrackingCode,
         estimated_arrival: createdOrder.estimated_arrival,
+        estimated_duration_minutes: createdOrder.estimated_duration_minutes,
+        route_released: createdOrder.route_released,
         customerName: targetCustomerName,
         customerPhone: resolvedCustomerPhone,
       })
@@ -1540,8 +1554,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         const directWaUrl = buildTrackingWhatsAppUrl(resolvedCustomerPhone, {
           customerName: targetCustomerName,
           trackingCode: usedTrackingCode,
-          estimatedArrival: createdOrder.estimated_arrival,
-          includeEta: Boolean(createdOrder.estimated_arrival),
+          realTransitDurationMinutes: realTransitMinutesForNewOrder,
         })
         if (directWaUrl) {
           try {
@@ -2610,6 +2623,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             id: createdOrderForWa.id,
             tracking_code: createdOrderForWa.tracking_code,
             estimated_arrival: createdOrderForWa.estimated_arrival,
+            estimated_duration_minutes: createdOrderForWa.estimated_duration_minutes,
+            route_released: createdOrderForWa.route_released,
           }}
           customerName={createdOrderForWa.customerName}
           customerPhone={createdOrderForWa.customerPhone}
