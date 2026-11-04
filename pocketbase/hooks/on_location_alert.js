@@ -226,6 +226,8 @@ onRecordAfterCreateSuccess((e) => {
   }
 
   const currentLocTime = new Date(loc.getString('created')).getTime()
+  const nowMs = Date.now()
+  const isGpsSignalFresh = nowMs - currentLocTime <= MAX_GPS_SIGNAL_AGE_MS
 
   // 1. CHECAGEM E DEDUPLICAÇÃO DE PARADAS FORA DA ROTA (A & C)
   // Regra:
@@ -371,8 +373,6 @@ onRecordAfterCreateSuccess((e) => {
   // (d) 1 evento = 1 episódio, dedupe por courier enquanto o episódio estiver aberto (< 5 minutos).
   //     Em vez de criar dezenas de registros repetidos no mesmo minuto, atualiza o episódio aberto
   //     (mantendo a maior distância de desvio, atualizando updated e coordenadas finais).
-  const nowMs = Date.now()
-  const isGpsSignalFresh = nowMs - currentLocTime <= MAX_GPS_SIGNAL_AGE_MS
 
   // Pings repetidos de coordenada congelada ou buffer offline não criam eventos de desvio
   const isFrozenCoordWithPrev =
