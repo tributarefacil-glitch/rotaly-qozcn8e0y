@@ -736,11 +736,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     const activePolylineKeys = new Set<string>()
 
     visibleRouteLines.forEach((r, idx) => {
-      const rawCoords = (r.streetCoordinates || [r.origin, r.destination])
+      // REQUISITO ESTRITO DA TORRE: traçado de rota azul deve sempre refletir polyline viária real
+      // (Google Directions / OSRM com curva contínua). NUNCA degradar em linha reta entre paradas.
+      const rawCoords = (
+        r.streetCoordinates && r.streetCoordinates.length >= 2 ? r.streetCoordinates : []
+      )
         .map((c: any) => MapDataService.cleanCoords(c?.lat, c?.lng))
         .filter(Boolean) as { lat: number; lng: number }[]
-      // Polyline limitada aos últimos 100 pontos por entregador
-      const coords = rawCoords && rawCoords.length > 100 ? rawCoords.slice(-100) : rawCoords
+      const coords = rawCoords
       if (coords.length < 2) return
 
       const pathArray = coords
@@ -1269,9 +1272,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({
               </filter>
             </defs>
 
-            {/* Rotas viárias reais passadas via props */}
+            {/* Rotas viárias reais passadas via props (sempre polyline viária real) */}
             {visibleRouteLines.map((r, i) => {
-              const coords = r.streetCoordinates || [r.origin, r.destination]
+              const coords =
+                r.streetCoordinates && r.streetCoordinates.length >= 2 ? r.streetCoordinates : []
               if (coords.length < 2) return null
 
               const pathStr = coords

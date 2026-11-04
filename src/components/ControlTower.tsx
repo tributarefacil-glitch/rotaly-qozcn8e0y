@@ -3868,17 +3868,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     }
 
     // Desenhar a rota indicada pelo sistema na cor fixa do entregador
-    // Se temos a geometria de ruas do OSRM, usamos a sequência completa de ruas; caso contrário os pontos chave
+    // REQUISITO ESTRITO: Apenas desenhar quando streetRoute real estiver disponível com geometria de ruas.
+    // NUNCA desenhar segmentos retos entre paradas como se fosse rota.
     const blueLinePoints =
       streetRoute && streetRoute.coordinates.length >= 2
         ? (streetRoute.coordinates.map((c) => toLatLngSegura(c.lat, c.lng)).filter(Boolean) as {
             lat: number
             lng: number
           }[])
-        : (pathCoordinates.map((p) => toLatLngSegura(p.lat, p.lng)).filter(Boolean) as {
-            lat: number
-            lng: number
-          }[])
+        : []
 
     if (blueLinePoints.length >= 2) {
       try {
@@ -3910,8 +3908,6 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         returnPath = activeRouteInfo.returnPoints
           .map((p: any) => MapDataService.cleanCoords(p?.lat, p?.lng))
           .filter(Boolean) as { lat: number; lng: number }[]
-      } else if (safeClientPos && officialBase) {
-        returnPath = [safeClientPos, officialBase]
       }
 
       if (returnPath.length >= 2) {

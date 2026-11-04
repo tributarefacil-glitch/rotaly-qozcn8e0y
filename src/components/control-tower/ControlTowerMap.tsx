@@ -999,71 +999,9 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                             return lines
                           })
 
-                        // Fallback quando não há geometria OSRM: desenhar pernas de ida e volta diretamente
-                        if (directLines.length === 0 && activeRouteCouriers.length > 0) {
-                          const fallbackLines: any[] = []
-                          activeRouteCouriers.forEach((courierItem) => {
-                            try {
-                              const courierOrders = courierItem.allAssignedOrders || []
-                              const sortedOrders = [...courierOrders]
-                                .filter(
-                                  (o) =>
-                                    o.status !== 'cancelled' &&
-                                    o.route_started === true &&
-                                    o.route_finished !== true,
-                                )
-                                .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
-                              if (sortedOrders.length === 0) return
-
-                              const points: { lat: number; lng: number }[] = []
-                              const firstOrder = sortedOrders[0]
-                              const startBase =
-                                MapDataService.cleanCoords(
-                                  firstOrder.start_base_lat,
-                                  firstOrder.start_base_lng,
-                                ) || MapDataService.getOfficialBaseCoords()
-                              if (startBase) points.push(startBase)
-
-                              sortedOrders.forEach((o) => {
-                                const dest = MapDataService.getOrderDestination(o)
-                                if (dest) points.push(dest)
-                              })
-
-                              if (points.length >= 2) {
-                                fallbackLines.push({
-                                  origin: points[0],
-                                  destination: points[points.length - 1],
-                                  courierPosition: { lat: courierItem.lat, lng: courierItem.lng },
-                                  streetCoordinates: points,
-                                  isDeviated: false,
-                                  isReturnLeg: false,
-                                })
-                              }
-
-                              const lastStop = points[points.length - 1]
-                              const officialBase = MapDataService.getOfficialBaseCoords()
-                              if (
-                                lastStop &&
-                                officialBase &&
-                                (lastStop.lat !== officialBase.lat ||
-                                  lastStop.lng !== officialBase.lng)
-                              ) {
-                                fallbackLines.push({
-                                  origin: lastStop,
-                                  destination: officialBase,
-                                  courierPosition: { lat: courierItem.lat, lng: courierItem.lng },
-                                  streetCoordinates: [lastStop, officialBase],
-                                  isDeviated: false,
-                                  isReturnLeg: true,
-                                })
-                              }
-                            } catch (e) {
-                              console.warn('[ControlTowerMap] Fallback routeLines error:', e)
-                            }
-                          })
-                          return fallbackLines
-                        }
-
+                        // REQUISITO ESTRITO: se o polyline viário real ainda não chegou para renderizar,
+                        // mostrar somente os pontos e desenhar o traçado quando a polyline viária chegar.
+                        // NUNCA desenhar linha reta entre paradas como se fosse rota.
                         return directLines
                       })()
                 }
