@@ -23,6 +23,7 @@ import {
 import { LiveMap, type MapMarkerItem, type RouteGeometryItem } from '@/components/LiveMap'
 import { getCourierRouteColor } from '@/lib/courierRouteColors'
 import { deliveryService } from '@/services/deliveryService'
+import pb from '@/lib/pocketbase/client'
 import { useRealtime } from '@/hooks/use-realtime'
 import { fetchStreetRoute, distanceMeters, type LatLngPoint } from '@/services/osrmRoutingService'
 import { haversineDistanceMeters } from '@/lib/geo'
@@ -58,13 +59,9 @@ export default function PublicTrackingPage() {
     return ''
   }, [rawTrackingCode])
 
-  const [order, setOrder] = useState<OrderRecord | null>(null)
-  const [courierLocation, setCourierLocation] = useState<LocationRecord | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  type ErrorType = 'not_found' | 'network_error' | 'overload' | null
 
-  // Rota pública otimizada e cálculo de ETA viária sequencial (+3 min por parada)
-  const [publicRouteData, setPublicRouteData] = useState<{
+  type PublicTrackingRouteData = {
     order_id: string
     tracking_code: string
     status: string
@@ -89,7 +86,19 @@ export default function PublicTrackingPage() {
     completed_stops_before: number
     queue_position: number
     total_deliveries_in_batch: number
-  } | null>(null)
+  }
+
+  const [order, setOrder] = useState<OrderRecord | null>(null)
+  const [courierLocation, setCourierLocation] = useState<LocationRecord | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [errorType, setErrorType] = useState<ErrorType>(null)
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null)
+  const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const retryAttemptsRef = useRef<number>(0)
+
+  // Rota pública otimizada e cálculo de ETA viária sequencial (+3 min por parada)
+  const [publicRouteData, setPublicRouteData] = useState<PublicTrackingRouteData | null>(null)
 
   const [realEtaMinutes, setRealEtaMinutes] = useState<number | null>(null)
   const [realDistanceKm, setRealDistanceKm] = useState<number | null>(null)
@@ -141,14 +150,29 @@ export default function PublicTrackingPage() {
       let failureStatusCode = 0
 
       try {
-        const resp = await fetch(
-          `/backend/v1/public-track/${encodeURIComponent(resolvedTrackingCode.toUpperCase())}`,
-          {
+        const endpoint = `/backend/v1/public-track/${encodeURIComponent(resolvedTrackingCode.toUpperCase())}`
+        let resp: Response
+        const pbBaseUrl = (import.meta.env.VITE_POCKETBASE_URL || '').replace(/\/$/, '')
+        if (pbBaseUrl) {
+          resp = await fetch(`${pbBaseUrl}${endpoint}`, {
             headers: { Accept: 'application/json' },
-          },
-        )
+          })
+        } else {
+          // Fallback seguro usando pb.send
+          try {
+            const data = await pb.send<PublicTrackingRouteData>(endpoint, { method: 'GET' })
+            routeInfo = data
+            resp = new Response(JSON.stringify(data), { status: 200 })
+          } catch (pbSendErr: any) {
+            const st = pbSendErr?.status || pbSendErr?.statusCode || 0
+            resp = new Response(null, { status: st })
+          }
+        }
+
         if (resp.status === 200) {
-          routeInfo = (await resp.json()) as PublicTrackingRouteData
+          if (!routeInfo) {
+            routeInfo = (await resp.json()) as PublicTrackingRouteData
+          }
         } else if (resp.status === 404) {
           routeInfo = null
         } else {
