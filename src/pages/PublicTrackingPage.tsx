@@ -119,16 +119,81 @@ export default function PublicTrackingPage() {
   const loadOrder = async () => {
     if (!resolvedTrackingCode) {
       setIsLoading(false)
+      setErrorType('not_found')
       setErrorMsg('Código de rastreamento não informado na URL. Verifique o link fornecido.')
       return
     }
+
+    if (retryTimerRef.current) {
+      clearInterval(retryTimerRef.current)
+      retryTimerRef.current = null
+    }
+    setRetryCountdown(null)
+
     setIsLoading(true)
     setErrorMsg(null)
+    setErrorType(null)
+
     try {
-      // Executa as consultas com tolerância a falhas individuais
-      // BUG 1: O endpoint /backend/v1/public-track/:code é fonte única para anônimos
-      // Executa via backend com privilégio de sistema e devolve DTO sanitizado mínimo.
-      const routeInfo = await deliveryService.getPublicTrackingRoute(resolvedTrackingCode)
+      // Consulta direta via endpoint público /backend/v1/public-track/:code
+      let routeInfo: PublicTrackingRouteData | null = null
+      let fetchFailedDueToNetworkOrOverload = false
+      let failureStatusCode = 0
+
+      try {
+        const resp = await fetch(
+          `/backend/v1/public-track/${encodeURIComponent(resolvedTrackingCode.toUpperCase())}`,
+          {
+            headers: { Accept: 'application/json' },
+          },
+        )
+        if (resp.status === 200) {
+          routeInfo = (await resp.json()) as PublicTrackingRouteData
+        } else if (resp.status === 404) {
+          routeInfo = null
+        } else {
+          fetchFailedDueToNetworkOrOverload = true
+          failureStatusCode = resp.status
+        }
+      } catch (fetchErr) {
+        console.warn('[PublicTrackingPage] Falha de rede ao consultar public-track:', fetchErr)
+        fetchFailedDueToNetworkOrOverload = true
+      }
+
+      // Se falhou por sobrecarga/rede/429/500/timeout, NÃO dizemos que o código não existe!
+      if (fetchFailedDueToNetworkOrOverload) {
+        const isOverload = failureStatusCode === 429 || failureStatusCode >= 500
+        setErrorType(isOverload ? 'overload' : 'network_error')
+        setErrorMsg(
+          isOverload
+            ? 'Nosso servidor está sob alta demanda no momento. Tentaremos reconectar automaticamente em instantes.'
+            : 'Instabilidade momentânea de conexão ao consultar o rastreamento. Tentaremos reconectar em instantes.',
+        )
+
+        // Retry automático com backoff curto (3s, depois 5s, teto 10s)
+        const attempt = retryAttemptsRef.current + 1
+        retryAttemptsRef.current = attempt
+        let delaySec = Math.min(10, attempt * 3)
+        setRetryCountdown(delaySec)
+
+        retryTimerRef.current = setInterval(() => {
+          delaySec -= 1
+          if (delaySec <= 0) {
+            if (retryTimerRef.current) {
+              clearInterval(retryTimerRef.current)
+              retryTimerRef.current = null
+            }
+            setRetryCountdown(null)
+            loadOrder()
+          } else {
+            setRetryCountdown(delaySec)
+          }
+        }, 1000)
+
+        setIsLoading(false)
+        return
+      }
+
       let orderData: OrderRecord | null = null
 
       if (routeInfo && (routeInfo.order_id || routeInfo.tracking_code)) {
@@ -174,19 +239,28 @@ export default function PublicTrackingPage() {
           },
         } as unknown as OrderRecord
       } else {
-        // Fallback secundário caso o usuário já esteja autenticado internamente
+        // Fallback secundário para usuários logados ou caso o hook público tenha retornado 404
         try {
           orderData = await deliveryService.getOrderByTrackingCode(resolvedTrackingCode)
-        } catch (fbErr) {
-          console.warn('Fallback getOrderByTrackingCode falhou:', fbErr)
+        } catch (fbErr: any) {
+          // Se o fallback falhar com 404 é não encontrado real; se falhar com erro de rede/abort, não é 404
+          const status = fbErr?.status || fbErr?.statusCode || 0
+          if (status !== 404 && status !== 0) {
+            console.warn('Fallback getOrderByTrackingCode erro:', fbErr)
+          }
         }
       }
 
       if (!orderData) {
+        retryAttemptsRef.current = 0
+        setErrorType('not_found')
         setErrorMsg(
           `Código de rastreio "${resolvedTrackingCode}" não foi localizado em nossa base de dados. Verifique se digitou corretamente ou solicite um novo link ao remetente.`,
         )
       } else {
+        // Sucesso: reseta tentativas de retry
+        retryAttemptsRef.current = 0
+        setErrorType(null)
         setOrder(orderData)
         if (routeInfo) {
           setPublicRouteData(routeInfo)
@@ -244,11 +318,23 @@ export default function PublicTrackingPage() {
       }
     } catch (err) {
       console.error('Tracking fetch error:', err)
-      setErrorMsg('Não foi possível carregar as informações deste rastreamento.')
+      setErrorType('network_error')
+      setErrorMsg(
+        'Não foi possível conectar ao servidor para carregar o rastreamento. Tente novamente em instantes.',
+      )
     } finally {
       setIsLoading(false)
     }
   }
+
+  // Limpa timer de retry ao desmontar
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) {
+        clearInterval(retryTimerRef.current)
+      }
+    }
+  }, [])
 
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -793,18 +879,33 @@ export default function PublicTrackingPage() {
             <p className="text-sm font-medium text-slate-500">Localizando entrega...</p>
           </div>
         ) : errorMsg || !order ? (
-          /* Card de erro/não encontrado mantendo fallback limpo */
+          /* Card de erro: diferencia 'Rastreamento Não Encontrado' (404) de falha de conexão/sobrecarga */
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-5">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-50 border border-amber-200 text-amber-600">
+            <div
+              className={`flex h-16 w-16 items-center justify-center rounded-2xl border ${
+                errorType === 'network_error' || errorType === 'overload'
+                  ? 'bg-sky-50 border-sky-200 text-sky-600'
+                  : 'bg-amber-50 border-amber-200 text-amber-600'
+              }`}
+            >
               <AlertCircle className="h-8 w-8" />
             </div>
             <div className="space-y-2">
               <h2 className="text-xl font-bold font-heading text-slate-900">
-                Rastreamento Não Encontrado
+                {errorType === 'network_error'
+                  ? 'Instabilidade Temporária de Conexão'
+                  : errorType === 'overload'
+                    ? 'Servidor Sob Alta Demanda'
+                    : 'Rastreamento Não Encontrado'}
               </h2>
               <p className="text-xs text-slate-600 leading-relaxed max-w-xs mx-auto">
                 {errorMsg || 'Não foi possível encontrar as informações deste pedido.'}
               </p>
+              {retryCountdown !== null && retryCountdown > 0 && (
+                <div className="text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 rounded-lg py-1.5 px-3 max-w-xs mx-auto animate-pulse">
+                  Reconectando automaticamente em {retryCountdown}s...
+                </div>
+              )}
               {resolvedTrackingCode && (
                 <div className="inline-block mt-2 px-3 py-1 rounded-md bg-slate-100 border border-slate-200 font-mono text-xs text-slate-700">
                   Código: {resolvedTrackingCode}
@@ -813,11 +914,14 @@ export default function PublicTrackingPage() {
             </div>
             <div className="flex flex-col w-full max-w-xs gap-2 pt-2">
               <Button
-                onClick={loadOrder}
+                onClick={() => {
+                  retryAttemptsRef.current = 0
+                  loadOrder()
+                }}
                 className="w-full bg-[#0052CC] hover:bg-blue-600 text-white text-xs font-bold h-10 rounded-xl flex items-center justify-center gap-1.5 shadow-sm"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
-                Tentar novamente
+                Tentar novamente agora
               </Button>
               <Link to="/">
                 <Button

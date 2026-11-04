@@ -75,8 +75,20 @@ export interface FetchRouteIntelligenceOptions {
   persistArchive?: boolean // se true, salva/atualiza registros na coleção route_leg_analysis
 }
 
-// Limiar mínimo de pings com accuracy < 100m para considerar telemetria válida em uma perna
-export const MIN_PINGS_PER_LEG = 3
+// Limiar mínimo de pings base.
+// REGRA RECALIBRADA: densidade proporcional ao tamanho da perna.
+// Pernas muito curtas (< 1km) exigem ao menos 5 pings.
+// Pernas maiores exigem ~3 pings por km planejado (mínimo 5 pings),
+// impedindo que lotes furados com 2-3 pings gerem falsos "candidato a rota melhor" (ex: -97% de desvio).
+export const MIN_PINGS_PER_LEG = 5
+
+export function getRequiredPingsForLeg(kmPlanned: number): number {
+  const safeKm = Math.max(0, Number(kmPlanned) || 0)
+  if (safeKm <= 0.5) return 4
+  if (safeKm <= 1.0) return 5
+  // Para pernas maiores: 3 pings por km planejado, com piso de 5 e teto de 30
+  return Math.min(30, Math.max(5, Math.ceil(safeKm * 3)))
+}
 
 // Tolerância para classificar como "rota melhor": pelo menos 0.15 km menor ou 5% menor
 export const BETTER_ROUTE_KM_MARGIN = 0.15
@@ -102,8 +114,10 @@ export function classifyRouteLeg(
   isInsufficient: boolean
 } {
   const safePlanned = Number((Number(kmPlanned) || 0).toFixed(2))
+  const requiredPings = getRequiredPingsForLeg(safePlanned)
 
-  if (pingsCount < MIN_PINGS_PER_LEG || kmRealized === null || kmRealized === undefined) {
+  // Se a perna não possui pings suficientes para a extensão do trajeto, fica como dados insuficientes
+  if (pingsCount < requiredPings || kmRealized === null || kmRealized === undefined) {
     return {
       status: 'insufficient_data',
       kmDiff: null,
@@ -117,6 +131,19 @@ export function classifyRouteLeg(
   const safeRealized = Number((Number(kmRealized) || 0).toFixed(2))
   const diff = Number((safeRealized - safePlanned).toFixed(2))
   const pct = safePlanned > 0 ? Number(((diff / safePlanned) * 100).toFixed(1)) : 0
+
+  // Se a diferença percentual for absurda (ex: -80% ou menos), é evidente que a telemetria não registrou
+  // o trajeto completo (buraco de GPS). Não pode jamais nascer como "candidate_better".
+  if (pct <= -70 && safePlanned >= 0.5) {
+    return {
+      status: 'insufficient_data',
+      kmDiff: diff,
+      diffPct: pct,
+      isBetter: false,
+      isExcess: false,
+      isInsufficient: true,
+    }
+  }
 
   // Candidata a rota melhor: realizado MENOR que o planejado respeitando margem mínima
   const isBetter =

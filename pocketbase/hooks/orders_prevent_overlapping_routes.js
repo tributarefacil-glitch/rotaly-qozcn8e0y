@@ -124,17 +124,28 @@ onRecordBeforeUpdate((e) => {
 
 // Endpoint customizado seguro para verificação atômica de status do entregador antes de iniciar.
 // Suporta /backend/v1/check-active-route e /backend/v1/courier/check-active-route com o mesmo contrato.
+// Responde SEMPRE status 200 (com has_active_route: false se sem autenticação/sem courier_id) para evitar 404 e loops.
 const handleCheckActiveRoute = (c) => {
-  const authRecord =
-    (typeof c.Auth === 'function' ? c.Auth() : null) || c.auth || c.get('authRecord')
-  if (!authRecord) {
-    return c.json(401, { error: 'Requer autenticação.' })
-  }
+  let authRecord = null
+  try {
+    authRecord = (typeof c.Auth === 'function' ? c.Auth() : null) || c.auth || c.get('authRecord')
+  } catch (_) {}
 
   const queryInfo = c.requestInfo()?.query || {}
-  const courierId = (queryInfo.courier_id || authRecord.id || '').trim()
+  const courierId = (queryInfo.courier_id || (authRecord ? authRecord.id : '') || '').trim()
+
   if (!courierId) {
-    return c.json(400, { error: 'courier_id é obrigatório.' })
+    return c.json(200, {
+      active: false,
+      has_active_route: false,
+      route_id: null,
+      active_orders_count: 0,
+      pending_deliveries_count: 0,
+      active_batch_key: null,
+      route_started_at: null,
+      first_order_id: null,
+      message: 'courier_id não informado',
+    })
   }
 
   try {
@@ -179,7 +190,11 @@ const handleCheckActiveRoute = (c) => {
     })
   } catch (err) {
     console.error('[check-active-route] Erro ao consultar rota ativa:', err)
-    return c.json(500, { error: 'Erro ao verificar rota ativa do entregador.' })
+    return c.json(200, {
+      active: false,
+      has_active_route: false,
+      error: 'Erro ao verificar rota ativa do entregador.',
+    })
   }
 }
 

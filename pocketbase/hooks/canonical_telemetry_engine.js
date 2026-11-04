@@ -749,13 +749,28 @@ onRecordAfterUpdateSuccess((e) => {
       // REGRA DO USUÁRIO (20/10): Pagamento SEMPRE por KM VIÁRIO.
       // O km GPS telemetria é apenas para comparação/auditoria (Coluna B), NUNCA base de pagamento.
       let kmOficial = kmViarioTotal > 0 ? kmViarioTotal : kmGpsTotal
+      // RECALIBRAÇÃO yellow_flag:
+      // O yellow_flag mede INTEGRIDADE da telemetria (lacunas em movimento, pings insuficientes),
+      // NUNCA a mera diferença GPS x viário (o km pago já é viário por decisão do usuário).
+      // Flag acionada somente se:
+      // 1. Houve flag de retorno à base (retorno interrompido / fora da base), OU
+      // 2. Lacunas graves de telemetria (>3 lacunas ou tempo total de apagão >180s), OU
+      // 3. Pings manifestamente insuficientes (<5 pings com rota >1km).
       let status = 'processed'
       let diffPct = 0
       if (kmGpsTotal > 0 && kmViarioTotal > 0) {
         diffPct = Math.round((Math.abs(kmGpsTotal - kmViarioTotal) / kmViarioTotal) * 100)
-        if (diffPct > 20 || returnFlagAmarela) status = 'yellow_flag'
+      }
+      const hasSevereGaps = gapsCount >= 3 || gapsTotalSeconds >= 180
+      const hasInsufficientPings = pingsCount < 5 && kmViarioTotal > 1.0
+      if (returnFlagAmarela || hasSevereGaps || hasInsufficientPings) {
+        status = 'yellow_flag'
       }
 
+      // UPSERT IDEMPOTENTE com tratamento de corrida:
+      // Se já existe registro para o mesmo route_batch_key, ATUALIZA em vez de inserir.
+      // Se não existe, cria novo. Se ocorrer colisão de chave única (UniqueConstraint),
+      // captura o erro, busca novamente o registro existente e atualiza sem falhar.
       const telemetryCol = $app.findCollectionByNameOrId('route_batch_telemetry')
       let telemetryRecord = null
       try {
@@ -797,7 +812,34 @@ onRecordAfterUpdateSuccess((e) => {
           stops_count: stops.length,
           orders_count: orders.length,
         })
-        $app.save(telemetryRecord)
+        try {
+          $app.save(telemetryRecord)
+        } catch (saveErr) {
+          // Guarda anti-colisão: se outro processo concorrente criou o registro no mesmo instante
+          console.warn(
+            `[canonical_telemetry_engine] Concorrência ao salvar route_batch_telemetry (${batchKey}). Tentando recuperar e atualizar:`,
+            saveErr && saveErr.message ? saveErr.message : saveErr,
+          )
+          try {
+            telemetryRecord = $app.findFirstRecordByData(
+              'route_batch_telemetry',
+              'route_batch_key',
+              batchKey,
+            )
+            if (telemetryRecord) {
+              telemetryRecord.set('km_gps_total', kmGpsTotal)
+              telemetryRecord.set('km_viario_total', kmViarioTotal)
+              telemetryRecord.set('km_oficial', kmOficial)
+              telemetryRecord.set('status', status)
+              $app.save(telemetryRecord)
+            }
+          } catch (retryErr) {
+            console.error(
+              `[canonical_telemetry_engine] Falha irrecuperável no upsert do lote ${batchKey}:`,
+              retryErr,
+            )
+          }
+        }
       }
 
       const batchTelemetryId = telemetryRecord ? telemetryRecord.id : ''
@@ -901,6 +943,22 @@ onRecordAfterUpdateSuccess((e) => {
       }
 
       if (batchKey) {
+        // Guarda anti-tempestade: se o lote já foi consolidado nos últimos 3 minutos, não reprocessar
+        try {
+          const existingBatch = $app.findFirstRecordByData(
+            'route_batch_telemetry',
+            'route_batch_key',
+            batchKey,
+          )
+          if (existingBatch) {
+            const meta = existingBatch.get('metadata') || {}
+            const procAt = meta.processed_at ? new Date(meta.processed_at).getTime() : 0
+            if (Date.now() - procAt < 180 * 1000) {
+              return
+            }
+          }
+        } catch (_) {}
+
         console.log(
           `[canonical_telemetry_engine] Evento de fechamento detectado para pedido ${order.id}. Lote: ${batchKey}`,
         )
@@ -940,39 +998,48 @@ onRecordAfterUpdateSuccess((e) => {
             }
           } catch (_) {}
         }
-        // Correção 3: Guarda de sanidade no motor - Fechamento detectado e nenhum registro gravado = log de erro visível + entrada em audit_trail
+        // Guarda de sanidade: somente alerta se realmente não há registro e orders não estavam vazias
         if (!procResult) {
-          console.error(
-            `[canonical_telemetry_engine:SANITY_GUARD] Fechamento detectado para o lote ${batchKey} do entregador ${courierId}, mas nenhum registro foi processado/gravado em route_batch_telemetry!`,
-          )
+          let hasExistingRecord = false
           try {
-            const auditCol = $app.findCollectionByNameOrId('audit_trail')
-            if (auditCol) {
-              const auditRec = new Record(auditCol)
-              auditRec.set('user_id', '') // Ator Sistema (user_id vazio)
-              auditRec.set('collection', 'route_batch_telemetry')
-              auditRec.set('record_id', batchKey)
-              if (courierId) auditRec.set('courier_id', courierId)
-              auditRec.set('action', 'falha_sanidade_fechamento_lote_telemetria')
-              auditRec.set('field', 'route_batch_telemetry')
-              auditRec.set('old_value', `lote=${batchKey}`)
-              auditRec.set('new_value', 'nenhum_registro_gravado')
-              auditRec.set('timestamp', new Date().toISOString())
-              auditRec.set('metadata', {
-                system_trigger: true,
-                actor_name: 'Sistema',
-                route_batch_key: batchKey,
-                courier_id: courierId,
-                order_id: order.id,
-                alerta: 'FALHA_SANIDADE_FECHAMENTO_SEM_TELEMETRIA',
-              })
-              $app.save(auditRec)
-            }
-          } catch (eAudit) {
-            console.error(
-              '[canonical_telemetry_engine] Erro ao gravar audit_trail da guarda:',
-              eAudit,
+            hasExistingRecord = Boolean(
+              $app.findFirstRecordByData('route_batch_telemetry', 'route_batch_key', batchKey),
             )
+          } catch (_) {}
+
+          if (!hasExistingRecord) {
+            console.error(
+              `[canonical_telemetry_engine:SANITY_GUARD] Fechamento detectado para o lote ${batchKey} do entregador ${courierId}, mas nenhum registro foi processado/gravado em route_batch_telemetry!`,
+            )
+            try {
+              const auditCol = $app.findCollectionByNameOrId('audit_trail')
+              if (auditCol) {
+                const auditRec = new Record(auditCol)
+                auditRec.set('user_id', '') // Ator Sistema (user_id vazio)
+                auditRec.set('collection', 'route_batch_telemetry')
+                auditRec.set('record_id', batchKey)
+                if (courierId) auditRec.set('courier_id', courierId)
+                auditRec.set('action', 'falha_sanidade_fechamento_lote_telemetria')
+                auditRec.set('field', 'route_batch_telemetry')
+                auditRec.set('old_value', `lote=${batchKey}`)
+                auditRec.set('new_value', 'nenhum_registro_gravado')
+                auditRec.set('timestamp', new Date().toISOString())
+                auditRec.set('metadata', {
+                  system_trigger: true,
+                  actor_name: 'Sistema',
+                  route_batch_key: batchKey,
+                  courier_id: courierId,
+                  order_id: order.id,
+                  alerta: 'FALHA_SANIDADE_FECHAMENTO_SEM_TELEMETRIA',
+                })
+                $app.save(auditRec)
+              }
+            } catch (eAudit) {
+              console.error(
+                '[canonical_telemetry_engine] Erro ao gravar audit_trail da guarda:',
+                eAudit,
+              )
+            }
           }
         }
       }
@@ -1570,7 +1637,11 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
     let diffPct = 0
     if (kmGpsTotal > 0 && kmViarioTotal > 0) {
       diffPct = Math.round((Math.abs(kmGpsTotal - kmViarioTotal) / kmViarioTotal) * 100)
-      if (diffPct > 20 || returnFlagAmarela) status = 'yellow_flag'
+    }
+    const hasSevereGapsHttp = gapsCount >= 3 || gapsTotalSeconds >= 180
+    const hasInsufficientPingsHttp = pingsCount < 5 && kmViarioTotal > 1.0
+    if (returnFlagAmarela || hasSevereGapsHttp || hasInsufficientPingsHttp) {
+      status = 'yellow_flag'
     }
 
     const telemetryCol = $app.findCollectionByNameOrId('route_batch_telemetry')
@@ -1614,7 +1685,28 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
         stops_count: stops.length,
         orders_count: orders.length,
       })
-      $app.save(telemetryRecord)
+      try {
+        $app.save(telemetryRecord)
+      } catch (saveErr) {
+        console.warn(
+          `[canonical_telemetry_engine] Concorrência ao salvar manual_http_trigger (${batchKey}):`,
+          saveErr,
+        )
+        try {
+          telemetryRecord = $app.findFirstRecordByData(
+            'route_batch_telemetry',
+            'route_batch_key',
+            batchKey,
+          )
+          if (telemetryRecord) {
+            telemetryRecord.set('km_gps_total', kmGpsTotal)
+            telemetryRecord.set('km_viario_total', kmViarioTotal)
+            telemetryRecord.set('km_oficial', kmOficial)
+            telemetryRecord.set('status', status)
+            $app.save(telemetryRecord)
+          }
+        } catch (_) {}
+      }
     }
 
     const batchTelemetryId = telemetryRecord ? telemetryRecord.id : ''
