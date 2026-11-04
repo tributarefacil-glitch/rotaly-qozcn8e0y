@@ -257,5 +257,77 @@ describe('deliveryService - km viário e validação de liberação de rota', ()
         getFullListLocationsSpy.mockRestore()
       })
     })
+
+    describe('getOrdersInBatches - busca paralela preservando ordem', () => {
+      it('executa busca paginada em paralelo para páginas 2..totalPages e concatena na ordem correta', async () => {
+        const pbModule = await import('@/lib/pocketbase/client')
+        const pb = pbModule.default
+
+        const pageCalls: number[] = []
+        const getListSpy = vi
+          .spyOn(pb.collection('orders'), 'getList')
+          .mockImplementation(async (page: number, perPage: number) => {
+            pageCalls.push(page)
+            return {
+              page,
+              perPage,
+              totalItems: 5,
+              totalPages: 3,
+              items: [
+                { id: `order_p${page}_1`, sequence: 1 } as any,
+                { id: `order_p${page}_2`, sequence: 2 } as any,
+              ],
+            }
+          })
+
+        const result = await deliveryService.getOrdersInBatches(
+          'status = "delivered"',
+          '-created',
+          'customer_id',
+          2,
+        )
+
+        expect(pageCalls[0]).toBe(1)
+        expect(pageCalls).toContain(2)
+        expect(pageCalls).toContain(3)
+        expect(result.length).toBe(6)
+        expect(result.map((o) => o.id)).toEqual([
+          'order_p1_1',
+          'order_p1_2',
+          'order_p2_1',
+          'order_p2_2',
+          'order_p3_1',
+          'order_p3_2',
+        ])
+
+        getListSpy.mockRestore()
+      })
+
+      it('rejeita imediatamente se uma das páginas em paralelo falhar', async () => {
+        const pbModule = await import('@/lib/pocketbase/client')
+        const pb = pbModule.default
+
+        const getListSpy = vi
+          .spyOn(pb.collection('orders'), 'getList')
+          .mockImplementation(async (page: number, perPage: number) => {
+            if (page === 1) {
+              return {
+                page: 1,
+                perPage,
+                totalItems: 10,
+                totalPages: 2,
+                items: [{ id: 'order_1' } as any],
+              }
+            }
+            throw new Error('Falha de rede na página 2')
+          })
+
+        await expect(deliveryService.getOrdersInBatches('', '-created')).rejects.toThrow(
+          'Falha de rede na página 2',
+        )
+
+        getListSpy.mockRestore()
+      })
+    })
   })
 })

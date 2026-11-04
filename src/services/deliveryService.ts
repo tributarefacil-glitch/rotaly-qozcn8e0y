@@ -772,21 +772,41 @@ export const deliveryService = {
       }
     }
 
-    const allOrders: OrderRecord[] = []
-    let page = 1
-    let totalPages = 1
+    const firstPageRes = await pb.collection<OrderRecord>('orders').getList(1, batchSize, {
+      filter: sanitizedFilter,
+      sort,
+      expand,
+      requestKey: null,
+    })
 
-    do {
-      const res = await pb.collection<OrderRecord>('orders').getList(page, batchSize, {
-        filter: sanitizedFilter,
-        sort,
-        expand,
-        requestKey: null,
-      })
-      allOrders.push(...res.items)
-      totalPages = res.totalPages
-      page++
-    } while (page <= totalPages)
+    const allOrders: OrderRecord[] = [...firstPageRes.items]
+    const totalPages = firstPageRes.totalPages
+
+    if (totalPages > 1) {
+      const remainingPages: number[] = []
+      for (let p = 2; p <= totalPages; p++) {
+        remainingPages.push(p)
+      }
+
+      const CONCURRENCY_LIMIT = 6
+      for (let i = 0; i < remainingPages.length; i += CONCURRENCY_LIMIT) {
+        const chunk = remainingPages.slice(i, i + CONCURRENCY_LIMIT)
+        const chunkResults = await Promise.all(
+          chunk.map((p) =>
+            pb.collection<OrderRecord>('orders').getList(p, batchSize, {
+              filter: sanitizedFilter,
+              sort,
+              expand,
+              requestKey: null,
+            }),
+          ),
+        )
+
+        for (const res of chunkResults) {
+          allOrders.push(...res.items)
+        }
+      }
+    }
 
     return allOrders
   },
