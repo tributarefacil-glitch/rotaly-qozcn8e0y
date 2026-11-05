@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T00:02:22.479Z",
+  "generatedAt": "2026-11-05T00:32:43.941Z",
   "collections": [
     {
       "name": "users",
@@ -2863,6 +2863,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "deviation_reasons",
+          "type": "json",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -3203,6 +3209,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "deviation_reason",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
