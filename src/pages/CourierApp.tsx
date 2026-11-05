@@ -3490,8 +3490,8 @@ export default function CourierApp() {
         lat={navigationTarget?.lat}
         lng={navigationTarget?.lng}
         origin={
-          currentPosition
-            ? { lat: currentPosition.coords.latitude, lng: currentPosition.coords.longitude }
+          currentCourierLocation
+            ? { lat: currentCourierLocation.lat, lng: currentCourierLocation.lng }
             : undefined
         }
         remainingWaypoints={navigationTarget?.waypoints}
@@ -3501,13 +3501,19 @@ export default function CourierApp() {
           if (currentActiveDelivery?.id) {
             deliveryService
               .logAuditTrail({
-                order_id: currentActiveDelivery.id,
                 action: 'navigation_started',
-                notes: `Navegação GPS externa iniciada para ${navigationTarget?.name || 'cliente'}${
-                  navigationTarget?.waypoints && navigationTarget.waypoints.length > 0
-                    ? ` com ${Math.min(navigationTarget.waypoints.length, 9)} paradas seguintes da rota otimizada`
-                    : ''
-                }`,
+                collection: 'orders',
+                record_id: currentActiveDelivery.id,
+                user_id: user?.id,
+                courier_id: user?.id,
+                empresa_id: currentActiveDelivery.empresa_id,
+                metadata: {
+                  notes: `Navegação GPS externa iniciada para ${navigationTarget?.name || 'cliente'}${
+                    navigationTarget?.waypoints && navigationTarget.waypoints.length > 0
+                      ? ` com ${Math.min(navigationTarget.waypoints.length, 9)} paradas seguintes da rota otimizada`
+                      : ''
+                  }`,
+                },
               })
               .catch(() => {})
           }
