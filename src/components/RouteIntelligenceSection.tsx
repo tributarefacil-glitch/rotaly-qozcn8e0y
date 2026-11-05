@@ -643,45 +643,56 @@ export function RouteIntelligenceSection({
 
                         {/* Diagnóstico / Status */}
                         <TableCell className="text-center py-2.5">
-                          {isCandidate && (
-                            <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold gap-1">
-                              <Sparkles className="h-2.5 w-2.5" />
-                              Rota Melhor Candidata
-                            </Badge>
-                          )}
-                          {isExcess && (
-                            <Badge
-                              variant="destructive"
-                              className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-semibold gap-1"
-                            >
-                              <TrendingUp className="h-2.5 w-2.5" />
-                              Desvio Excessivo
-                            </Badge>
-                          )}
-                          {isSuspectPins && (
-                            <Badge
-                              variant="outline"
-                              className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] font-semibold"
-                            >
-                              Pins Suspeitos (&lt; 0,15 km)
-                            </Badge>
-                          )}
-                          {isInsufficient && (
-                            <Badge
-                              variant="outline"
-                              className="bg-slate-100 text-slate-500 border-slate-300 text-[10px] font-medium"
-                            >
-                              Dados Insuficientes
-                            </Badge>
-                          )}
-                          {!isCandidate && !isExcess && !isInsufficient && !isSuspectPins && (
-                            <Badge
-                              variant="secondary"
-                              className="bg-slate-100 text-slate-700 text-[10px] font-normal"
-                            >
-                              Equivalente
-                            </Badge>
-                          )}
+                          <div className="flex flex-col items-center gap-1">
+                            {isCandidate && (
+                              <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold gap-1">
+                                <Sparkles className="h-2.5 w-2.5" />
+                                Rota Melhor Candidata
+                              </Badge>
+                            )}
+                            {isExcess && (
+                              <Badge
+                                variant="destructive"
+                                className="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-semibold gap-1"
+                              >
+                                <TrendingUp className="h-2.5 w-2.5" />
+                                Desvio Excessivo
+                              </Badge>
+                            )}
+                            {isSuspectPins && (
+                              <Badge
+                                variant="outline"
+                                className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] font-semibold"
+                              >
+                                Pins Suspeitos (&lt; 0,15 km)
+                              </Badge>
+                            )}
+                            {isInsufficient && (
+                              <Badge
+                                variant="outline"
+                                className="bg-slate-100 text-slate-500 border-slate-300 text-[10px] font-medium"
+                              >
+                                Dados Insuficientes
+                              </Badge>
+                            )}
+                            {!isCandidate && !isExcess && !isInsufficient && !isSuspectPins && (
+                              <Badge
+                                variant="secondary"
+                                className="bg-slate-100 text-slate-700 text-[10px] font-normal"
+                              >
+                                Equivalente
+                              </Badge>
+                            )}
+                            {leg.deviation_reason && (
+                              <Badge
+                                variant="outline"
+                                className="bg-slate-100 text-slate-700 border-slate-300 text-[9px] font-normal max-w-[140px] truncate"
+                                title={leg.deviation_reason}
+                              >
+                                Motivo: {leg.deviation_reason}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     )

@@ -13,16 +13,24 @@ import pb from '@/lib/pocketbase/client'
  * `useRealtime<MyRecord>(...)` to get a typed subscription payload
  * instead of `unknown`.
  */
+export interface UseRealtimeOptions {
+  enabled?: boolean
+  debounceMs?: number
+}
+
 export function useRealtime<TRecord extends RecordModel = RecordModel>(
   collectionName: string,
   callback: (data: RecordSubscription<TRecord>) => void,
-  enabled: boolean = true,
+  optionsOrEnabled: boolean | UseRealtimeOptions = true,
 ) {
   const callbackRef = useRef(callback)
   callbackRef.current = callback
 
+  const isEnabled =
+    typeof optionsOrEnabled === 'boolean' ? optionsOrEnabled : (optionsOrEnabled?.enabled ?? true)
+
   useEffect(() => {
-    if (!enabled) return
+    if (!isEnabled) return
 
     let unsubscribeFn: (() => Promise<void>) | undefined
     let cancelled = false
@@ -46,7 +54,7 @@ export function useRealtime<TRecord extends RecordModel = RecordModel>(
         unsubscribeFn().catch(() => {})
       }
     }
-  }, [collectionName, enabled])
+  }, [collectionName, isEnabled])
 }
 
 export default useRealtime
