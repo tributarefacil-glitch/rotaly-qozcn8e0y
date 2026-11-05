@@ -283,13 +283,83 @@ onRecordAfterUpdateSuccess((e) => {
 
     function processBatch(batchKey, triggerOrigin) {
       if (!batchKey) return null
+
+      // ITEM 3(a): LOCK & BACKOFF PRE-FLIGHT
+      // Se processing_started_at existe e é < 10 min atrás, ABORTAR sem reprocessar.
+      // Se retry_count >= 1 após falha prévia, não reprocessar e alertar audit_trail.
+      let preRecord = null
+      try {
+        preRecord = $app.findFirstRecordByData('route_batch_telemetry', 'route_batch_key', batchKey)
+      } catch (_) {
+        preRecord = null
+      }
+
+      const nowMs = Date.now()
+      if (preRecord) {
+        const procStartedStr = preRecord.getString('processing_started_at')
+        if (procStartedStr) {
+          const procStartedMs = new Date(procStartedStr).getTime()
+          if (!isNaN(procStartedMs) && nowMs - procStartedMs < 10 * 60 * 1000) {
+            console.warn(
+              `[canonical_telemetry_engine:LOCK] Lote ${batchKey} já está em processamento (iniciado há ${Math.round((nowMs - procStartedMs) / 1000)}s). Abortando para evitar concorrência.`,
+            )
+            return null
+          }
+        }
+
+        const preRetries = preRecord.getInt('processing_retries') || 0
+        if (preRetries >= 1 && preRecord.getString('status') !== 'processed') {
+          console.error(
+            `[canonical_telemetry_engine:BACKOFF_CAP] Lote ${batchKey} atingiu limite de retentativas (retries=${preRetries}). Bloqueando reprocessamento.`,
+          )
+          try {
+            const auditCol = $app.findCollectionByNameOrId('audit_trail')
+            if (auditCol) {
+              const auditRec = new Record(auditCol)
+              auditRec.set('user_id', '')
+              auditRec.set('collection', 'route_batch_telemetry')
+              auditRec.set('record_id', preRecord.id || batchKey)
+              const cIdPre = preRecord.getString('courier_id')
+              if (cIdPre) auditRec.set('courier_id', cIdPre)
+              auditRec.set('action', 'limite_retentativas_lote_atingido')
+              auditRec.set('field', 'processing_retries')
+              auditRec.set('old_value', String(preRetries))
+              auditRec.set('new_value', 'abortado_max_retries')
+              auditRec.set('timestamp', new Date().toISOString())
+              auditRec.set('metadata', {
+                system_trigger: true,
+                actor_name: 'Sistema',
+                route_batch_key: batchKey,
+                processing_retries: preRetries,
+                trigger_origin: triggerOrigin,
+              })
+              $app.save(auditRec)
+            }
+          } catch (_) {}
+          return null
+        }
+
+        // Marca lock de processamento imediatamente
+        try {
+          preRecord.set('processing_started_at', new Date(nowMs).toISOString())
+          $app.save(preRecord)
+        } catch (lockSaveErr) {
+          console.warn(
+            `[canonical_telemetry_engine] Aviso ao setar lock em ${batchKey}:`,
+            lockSaveErr,
+          )
+        }
+      }
+
       let orders = []
+      let ordersCapped = false
+      let ordersCappedCount = 0
       try {
         orders = $app.findRecordsByFilter(
           'orders',
           `route_batch_key = '${batchKey}' && status != 'cancelled'`,
           'sequence,created',
-          200,
+          201,
           0,
         )
       } catch (_) {}
@@ -308,12 +378,22 @@ onRecordAfterUpdateSuccess((e) => {
                 'orders',
                 `courier_id = '${cId}' && route_started_at >= '${minIso}' && route_started_at <= '${maxIso}' && status != 'cancelled'`,
                 'sequence,created',
-                200,
+                201,
                 0,
               )
             } catch (_) {}
           }
         }
+      }
+
+      // CAP EXPLÍCITO DE PEDIDOS: se > 200 pedidos
+      if (orders && orders.length > 200) {
+        ordersCapped = true
+        ordersCappedCount = orders.length - 200
+        console.warn(
+          `[canonical_telemetry_engine:CAP_ORDERS] Lote ${batchKey} excedeu o limite máximo de 200 pedidos (total encontrado: ${orders.length}). Truncando os ${ordersCappedCount} pedidos excedentes.`,
+        )
+        orders = orders.slice(0, 200)
       }
 
       if (!orders || orders.length === 0) return null
@@ -382,15 +462,27 @@ onRecordAfterUpdateSuccess((e) => {
       const queryFinishStr = formatPbDateStr(new Date(finishMs + 10 * 60000))
 
       let pings = []
+      let pingsCapped = false
+      let pingsCappedCount = 0
       try {
         pings = $app.findRecordsByFilter(
           'locations',
           `user_id = '${courierId}' && created >= '${queryStartStr}' && created <= '${queryFinishStr}'`,
           '+created',
-          5000,
+          5001,
           0,
         )
       } catch (_) {}
+
+      // CAP EXPLÍCITO DE PINGS: se > 5000 pings
+      if (pings && pings.length > 5000) {
+        pingsCapped = true
+        pingsCappedCount = pings.length - 5000
+        console.warn(
+          `[canonical_telemetry_engine:CAP_PINGS] Lote ${batchKey} excedeu o limite de 5000 pings (total: ${pings.length}). Truncando os ${pingsCappedCount} pings excedentes.`,
+        )
+        pings = pings.slice(0, 5000)
+      }
 
       // DEDUPLICAÇÃO DE FLUXO PARA CONTAGEM E COMPARAÇÃO
       const dedupedPings = deduplicatePingList(pings, haversineDistMeters)
@@ -831,6 +923,24 @@ onRecordAfterUpdateSuccess((e) => {
         telemetryRecord.set('route_started_at', startIso)
         telemetryRecord.set('route_finished_at', finishIso)
         telemetryRecord.set('status', status)
+        telemetryRecord.set('total_deliveries', orders.length)
+
+        // ITEM 3(a): Sucesso -> limpar marcador de lock (processing_started_at = '') e zerar retentativas (processing_retries = 0)
+        telemetryRecord.set('processing_started_at', '')
+        telemetryRecord.set('processing_retries', 0)
+
+        // ITEM 3(c): CAPS EXPLÍCITOS
+        const isCapped = pingsCapped || ordersCapped
+        telemetryRecord.set('telemetry_capped', isCapped)
+        if (isCapped) {
+          const capReasons = []
+          if (pingsCapped) capReasons.push(`Pings truncados: +${pingsCappedCount} (cap 5000)`)
+          if (ordersCapped) capReasons.push(`Pedidos truncados: +${ordersCappedCount} (cap 200)`)
+          telemetryRecord.set('capped_reason', capReasons.join(' | '))
+        } else {
+          telemetryRecord.set('capped_reason', '')
+        }
+
         telemetryRecord.set('metadata', {
           is_bicycle: isBicycle,
           diff_pct: diffPct,
@@ -838,6 +948,10 @@ onRecordAfterUpdateSuccess((e) => {
           processed_at: new Date().toISOString(),
           stops_count: stops.length,
           orders_count: orders.length,
+          has_truncated_pings: pingsCapped,
+          truncated_pings_count: pingsCappedCount,
+          has_truncated_orders: ordersCapped,
+          truncated_orders_count: ordersCappedCount,
         })
         try {
           $app.save(telemetryRecord)
@@ -858,6 +972,10 @@ onRecordAfterUpdateSuccess((e) => {
               telemetryRecord.set('km_viario_total', kmViarioTotal)
               telemetryRecord.set('km_oficial', kmOficial)
               telemetryRecord.set('status', status)
+              telemetryRecord.set('total_deliveries', orders.length)
+              telemetryRecord.set('processing_started_at', '')
+              telemetryRecord.set('processing_retries', 0)
+              telemetryRecord.set('telemetry_capped', isCapped)
               $app.save(telemetryRecord)
             }
           } catch (retryErr) {
@@ -997,6 +1115,26 @@ onRecordAfterUpdateSuccess((e) => {
             `[canonical_telemetry_engine:HOOK_PROCESS_ERROR] Erro ao executar processBatch para lote ${batchKey}:`,
             procErr,
           )
+
+          // ITEM 3(b): Em falha: atualizar processing_retries e se >= 1 bloquear novas retentativas + log error + audit_trail
+          let currentRetries = 0
+          try {
+            const failBatch = $app.findFirstRecordByData(
+              'route_batch_telemetry',
+              'route_batch_key',
+              batchKey,
+            )
+            if (failBatch) {
+              currentRetries = (failBatch.getInt('processing_retries') || 0) + 1
+              failBatch.set('processing_retries', currentRetries)
+              // Limpa o lock para permitir retry único se retries < 1 ou desimpedir inspeção
+              failBatch.set('processing_started_at', '')
+              $app.save(failBatch)
+            }
+          } catch (rErr) {
+            console.warn('[canonical_telemetry_engine] Erro ao atualizar retries em falha:', rErr)
+          }
+
           try {
             const auditCol = $app.findCollectionByNameOrId('audit_trail')
             if (auditCol) {
@@ -1010,7 +1148,7 @@ onRecordAfterUpdateSuccess((e) => {
               auditRec.set('old_value', `lote=${batchKey}`)
               auditRec.set(
                 'new_value',
-                String(procErr && procErr.message ? procErr.message : procErr),
+                `retries=${currentRetries}, erro=${String(procErr && procErr.message ? procErr.message : procErr)}`,
               )
               auditRec.set('timestamp', new Date().toISOString())
               auditRec.set('metadata', {
@@ -1019,6 +1157,7 @@ onRecordAfterUpdateSuccess((e) => {
                 route_batch_key: batchKey,
                 courier_id: courierId,
                 order_id: order.id,
+                processing_retries: currentRetries,
                 error_stack: String(procErr && procErr.stack ? procErr.stack : procErr),
               })
               $app.save(auditRec)
@@ -1205,12 +1344,14 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
 
   try {
     let orders = []
+    let endpointOrdersCapped = false
+    let endpointOrdersCappedCount = 0
     try {
       orders = $app.findRecordsByFilter(
         'orders',
         `route_batch_key = '${batchKey}' && status != 'cancelled'`,
         'sequence,created',
-        200,
+        201,
         0,
       )
     } catch (_) {}
@@ -1229,7 +1370,7 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
               'orders',
               `courier_id = '${cId}' && route_started_at >= '${minIso}' && route_started_at <= '${maxIso}' && status != 'cancelled'`,
               'sequence,created',
-              200,
+              201,
               0,
             )
           } catch (_) {}
@@ -1239,6 +1380,15 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
 
     if (!orders || orders.length === 0) {
       return c.json(404, { error: `Nenhuma ordem encontrada para o lote ${batchKey}` })
+    }
+
+    if (orders.length > 200) {
+      endpointOrdersCapped = true
+      endpointOrdersCappedCount = orders.length - 200
+      console.warn(
+        `[canonical_telemetry_engine:HTTP_CAP_ORDERS] Lote ${batchKey} excedeu 200 pedidos (total: ${orders.length}). Truncando os ${endpointOrdersCappedCount} excedentes.`,
+      )
+      orders = orders.slice(0, 200)
     }
 
     orders.sort((a, b) => {
@@ -1301,12 +1451,14 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
     const queryFinishStr = formatPbDateStrEndpoint(new Date(finishMs + 10 * 60000))
 
     let pings = []
+    let endpointPingsCapped = false
+    let endpointPingsCappedCount = 0
     try {
       pings = $app.findRecordsByFilter(
         'locations',
         `user_id = '${courierId}' && created >= '${queryStartStr}' && created <= '${queryFinishStr}'`,
         '+created',
-        5000,
+        5001,
         0,
       )
     } catch (findErr) {
@@ -1314,6 +1466,15 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
         '[canonical_telemetry_engine] Erro ao buscar pings em locations por user_id:',
         findErr,
       )
+    }
+
+    if (pings.length > 5000) {
+      endpointPingsCapped = true
+      endpointPingsCappedCount = pings.length - 5000
+      console.warn(
+        `[canonical_telemetry_engine:HTTP_CAP_PINGS] Lote ${batchKey} excedeu 5000 pings (total: ${pings.length}). Truncando os ${endpointPingsCappedCount} excedentes.`,
+      )
+      pings = pings.slice(0, 5000)
     }
 
     const pingsCount = pings.length
@@ -1704,6 +1865,23 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
       telemetryRecord.set('route_started_at', startIso)
       telemetryRecord.set('route_finished_at', finishIso)
       telemetryRecord.set('status', status)
+      telemetryRecord.set('total_deliveries', orders.length)
+      telemetryRecord.set('processing_started_at', '')
+      telemetryRecord.set('processing_retries', 0)
+
+      const isCappedEndpoint = endpointPingsCapped || endpointOrdersCapped
+      telemetryRecord.set('telemetry_capped', isCappedEndpoint)
+      if (isCappedEndpoint) {
+        const cReasons = []
+        if (endpointPingsCapped)
+          cReasons.push(`Pings truncados: +${endpointPingsCappedCount} (cap 5000)`)
+        if (endpointOrdersCapped)
+          cReasons.push(`Pedidos truncados: +${endpointOrdersCappedCount} (cap 200)`)
+        telemetryRecord.set('capped_reason', cReasons.join(' | '))
+      } else {
+        telemetryRecord.set('capped_reason', '')
+      }
+
       telemetryRecord.set('metadata', {
         is_bicycle: isBicycle,
         diff_pct: diffPct,
@@ -1711,6 +1889,10 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
         processed_at: new Date().toISOString(),
         stops_count: stops.length,
         orders_count: orders.length,
+        has_truncated_pings: endpointPingsCapped,
+        truncated_pings_count: endpointPingsCappedCount,
+        has_truncated_orders: endpointOrdersCapped,
+        truncated_orders_count: endpointOrdersCappedCount,
       })
       try {
         $app.save(telemetryRecord)
@@ -1730,6 +1912,10 @@ routerAdd('POST', '/backend/v1/telemetria-lote/processar', (c) => {
             telemetryRecord.set('km_viario_total', kmViarioTotal)
             telemetryRecord.set('km_oficial', kmOficial)
             telemetryRecord.set('status', status)
+            telemetryRecord.set('total_deliveries', orders.length)
+            telemetryRecord.set('processing_started_at', '')
+            telemetryRecord.set('processing_retries', 0)
+            telemetryRecord.set('telemetry_capped', isCappedEndpoint)
             $app.save(telemetryRecord)
           }
         } catch (_) {}

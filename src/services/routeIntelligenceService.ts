@@ -544,57 +544,130 @@ export async function fetchRouteIntelligenceAnalysis(
 
 /**
  * Persiste pernas analisadas na coleção `route_leg_analysis` de forma idempotente
- * para acervo de aprendizado do otimizador.
+ * usando o endpoint custom atômico `/backend/v1/route-leg-analysis/upsert`.
+ * Execução 100% sequencial com fila de pernas e suporte a Retry-After / backoff exponencial em 429.
  */
-async function persistLegsAnalysisArchive(legs: RouteLegItem[]): Promise<void> {
-  const collectionName = 'route_leg_analysis'
+async function upsertSingleLegWithBackoff(leg: RouteLegItem): Promise<void> {
+  const payload = {
+    route_batch_key: leg.route_batch_key,
+    courier_id: leg.courier_id,
+    empresa_id: leg.empresa_id || undefined,
+    leg_index: leg.leg_index,
+    leg_type: leg.leg_type,
+    from_name: leg.from_name,
+    to_name: leg.to_name,
+    order_id: leg.order_id || '',
+    tracking_code: leg.tracking_code || '',
+    km_planned: leg.km_planned,
+    km_realized: leg.km_realized ?? 0,
+    km_diff: leg.km_diff ?? 0,
+    diff_pct: leg.diff_pct ?? 0,
+    pings_count: leg.pings_count,
+    is_better_route: leg.is_better_route,
+    is_excess_deviation: leg.is_excess_deviation,
+    is_insufficient_data: leg.is_insufficient_data,
+    analysis_status: leg.analysis_status,
+    started_at: leg.started_at || undefined,
+    finished_at: leg.finished_at || undefined,
+    deviation_reason: leg.deviation_reason || undefined,
+    courier_reported_shortcut: Boolean(leg.courier_reported_shortcut),
+    metadata: leg.metadata || {},
+  }
 
-  for (const leg of legs) {
-    const payload = {
-      route_batch_key: leg.route_batch_key,
-      courier_id: leg.courier_id,
-      empresa_id: leg.empresa_id || undefined,
-      leg_index: leg.leg_index,
-      leg_type: leg.leg_type,
-      from_name: leg.from_name,
-      to_name: leg.to_name,
-      order_id: leg.order_id || '',
-      tracking_code: leg.tracking_code || '',
-      km_planned: leg.km_planned,
-      km_realized: leg.km_realized ?? 0,
-      km_diff: leg.km_diff ?? 0,
-      diff_pct: leg.diff_pct ?? 0,
-      pings_count: leg.pings_count,
-      is_better_route: leg.is_better_route,
-      is_excess_deviation: leg.is_excess_deviation,
-      is_insufficient_data: leg.is_insufficient_data,
-      analysis_status: leg.analysis_status,
-      started_at: leg.started_at || undefined,
-      finished_at: leg.finished_at || undefined,
-      deviation_reason: leg.deviation_reason || undefined,
-      courier_reported_shortcut: Boolean(leg.courier_reported_shortcut),
-      metadata: leg.metadata || {},
-    }
+  const endpointUrl = `${pb.baseUrl}/backend/v1/route-leg-analysis/upsert`
+  const maxAttempts = 3
+  const backoffDelaysMs = [1000, 2000, 4000]
 
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      // Verificar se já existe pelo par (route_batch_key, leg_index)
-      const existing = await pb
-        .collection(collectionName)
-        .getFirstListItem(
-          `route_batch_key = '${leg.route_batch_key}' && leg_index = ${leg.leg_index}`,
-          { requestKey: null },
-        )
-      if (existing) {
-        await pb.collection(collectionName).update(existing.id, payload, { requestKey: null })
+      const token = pb.authStore.token
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
       }
-    } catch {
-      // Se não existir, cria novo registro
-      try {
-        await pb.collection(collectionName).create(payload, { requestKey: null })
-      } catch (errCreate) {
-        // Ignora duplicidade caso já gravado
-        console.debug('[routeIntelligenceService] Info ao criar acervo de perna:', errCreate)
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
+
+      const res = await fetch(endpointUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      })
+
+      if (res.ok) {
+        return
+      }
+
+      // Trata rate limit (429)
+      if (res.status === 429) {
+        const retryAfterHeader = res.headers.get('Retry-After')
+        let waitMs = backoffDelaysMs[attempt] || 4000
+        if (retryAfterHeader) {
+          const parsedSeconds = parseInt(retryAfterHeader, 10)
+          if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
+            waitMs = parsedSeconds * 1000
+          }
+        }
+        console.warn(
+          `[routeIntelligenceService:429] Rate limit ao persistir perna ${leg.route_batch_key}#${leg.leg_index}. Aguardando ${waitMs}ms (tentativa ${attempt + 1}/${maxAttempts})...`,
+        )
+        if (attempt < maxAttempts - 1) {
+          await new Promise((r) => setTimeout(r, waitMs))
+          continue
+        }
+      }
+
+      // Fallback em caso de endpoint indisponível (ex: offline temporário): tenta via SDK
+      if (res.status === 404 || res.status >= 500) {
+        throw new Error(`Endpoint HTTP ${res.status}: ${res.statusText}`)
+      }
+
+      const errText = await res.text()
+      console.error(
+        `[routeIntelligenceService] Erro ${res.status} ao fazer upsert da perna ${leg.route_batch_key}#${leg.leg_index}:`,
+        errText,
+      )
+      return
+    } catch (err) {
+      if (attempt < maxAttempts - 1) {
+        const waitMs = backoffDelaysMs[attempt] || 2000
+        console.warn(
+          `[routeIntelligenceService] Falha de rede ao persistir perna ${leg.route_batch_key}#${leg.leg_index} (tentativa ${attempt + 1}/${maxAttempts}). Aguardando ${waitMs}ms...`,
+          err,
+        )
+        await new Promise((r) => setTimeout(r, waitMs))
+      } else {
+        // Fallback SDK seguro se o endpoint custom falhou repetidamente
+        try {
+          const existing = await pb
+            .collection('route_leg_analysis')
+            .getFirstListItem(
+              `route_batch_key = '${leg.route_batch_key}' && leg_index = ${leg.leg_index}`,
+              { requestKey: null },
+            )
+          if (existing) {
+            await pb
+              .collection('route_leg_analysis')
+              .update(existing.id, payload, { requestKey: null })
+          } else {
+            await pb.collection('route_leg_analysis').create(payload, { requestKey: null })
+          }
+        } catch (sdkFallbackErr) {
+          console.error(
+            `[routeIntelligenceService] Falha final ao persistir perna ${leg.route_batch_key}#${leg.leg_index}:`,
+            sdkFallbackErr,
+          )
+        }
       }
     }
+  }
+}
+
+async function persistLegsAnalysisArchive(legs: RouteLegItem[]): Promise<void> {
+  if (!legs || legs.length === 0) return
+
+  // Serializar rigorosamente com fila sequencial (uma perna por vez, sem rajadas paralelas)
+  for (const leg of legs) {
+    await upsertSingleLegWithBackoff(leg)
   }
 }
