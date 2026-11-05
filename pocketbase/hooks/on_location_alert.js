@@ -45,7 +45,7 @@ onRecordAfterCreateSuccess((e) => {
   try {
     pendingOrders = $app.findRecordsByFilter(
       'orders',
-      `courier_id = '${courierId}' && route_started = true && status = 'in_transit'`,
+      `courier_id = '${courierId}' && route_started = true && status = 'in_transit' && route_finished != true`,
       'sequence,created',
       20,
       0,
