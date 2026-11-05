@@ -178,7 +178,7 @@ export const RedirectDeliveryModal: React.FC<RedirectDeliveryModalProps> = ({
       onRedirectionStarted(updatedOrder)
 
       if (openNavigation) {
-        // Abrir navegação para o novo endereço usando a ponte nativa (ou Maps/Waze no web)
+        // Abrir navegação para o novo endereço usando a ponte nativa (ou Google Maps no web)
         nativeGpsBridge.openNavigation({
           address: addressTrimmed,
           label: `Novo endereço (${customerName})`,
@@ -268,7 +268,7 @@ export const RedirectDeliveryModal: React.FC<RedirectDeliveryModalProps> = ({
               className="bg-[#0A1128] border-[#1E2B58] text-white placeholder:text-slate-500 text-xs h-10 rounded-xl"
             />
             <p className="text-[10px] text-slate-400">
-              💡 Você poderá abrir a navegação (Google Maps / Waze) diretamente para este local.
+              💡 Você poderá abrir a navegação do Google Maps diretamente para este local.
             </p>
           </div>
 

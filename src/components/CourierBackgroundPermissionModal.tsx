@@ -57,7 +57,7 @@ export const CourierBackgroundPermissionModal: React.FC<CourierBackgroundPermiss
           </DialogTitle>
           <DialogDescription className="text-xs text-center text-slate-400">
             Para iniciar sua rota e garantir que seus quilômetros e entregas sejam computados com a
-            tela apagada ou usando o Waze/Google Maps, selecione &quot;Permitir o tempo todo&quot;.
+            tela apagada ou usando o Google Maps, selecione &quot;Permitir o tempo todo&quot;.
           </DialogDescription>
         </DialogHeader>
 

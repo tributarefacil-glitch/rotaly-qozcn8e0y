@@ -173,7 +173,7 @@ export const CourierRedirectionTutorialModal: React.FC<CourierRedirectionTutoria
             {/* Linha pontilhada animada com distância */}
             <div className="flex-1 mx-3 flex flex-col items-center">
               <span className="text-[9px] font-mono font-bold text-[#60A5FA] mb-1">
-                + Trajeto Waze / Maps
+                + Trajeto Google Maps
               </span>
               <div className="relative w-full h-1.5 bg-[#121E46] rounded-full overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-r from-amber-500 via-[#00A3FF] to-emerald-400 animate-pulse" />
@@ -195,7 +195,7 @@ export const CourierRedirectionTutorialModal: React.FC<CourierRedirectionTutoria
           <div className="z-10 pt-1">
             <div className="h-9 w-full rounded-xl bg-gradient-to-r from-[#0052CC] to-[#0066FF] flex items-center justify-center gap-2 text-white text-xs font-bold shadow-md border border-blue-400/30">
               <Navigation className="h-4 w-4 text-[#60A5FA]" />
-              <span>[ Botão ] Ir para o novo endereço (Abre Maps/Waze)</span>
+              <span>[ Botão ] Ir para o novo endereço (Abre Google Maps)</span>
             </div>
           </div>
         </div>
@@ -212,7 +212,7 @@ export const CourierRedirectionTutorialModal: React.FC<CourierRedirectionTutoria
               <CheckCircle2 className="h-4 w-4 text-[#60A5FA] shrink-0 mt-0.5" />
               <span className="text-[11px] text-slate-200">
                 <strong>Abertura direta do navegador:</strong> Abre seu aplicativo de navegação
-                favorito (Google Maps ou Waze) já com a rota traçada até o cliente.
+                Google Maps já com a rota otimizada traçada até o cliente.
               </span>
             </div>
             <div className="flex items-start gap-2">

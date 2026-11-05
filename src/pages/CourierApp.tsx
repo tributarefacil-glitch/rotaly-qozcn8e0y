@@ -118,6 +118,8 @@ export default function CourierApp() {
       address?: string | null
       label?: string | null
     }>
+    totalRemainingStops?: number
+    currentWindowStopCount?: number
   } | null>(null)
   // Estado de envio das macros de ocorrência de 1 clique (Item O)
   const [isSubmittingMacro, setIsSubmittingMacro] = useState<string | null>(null)
@@ -1729,25 +1731,35 @@ export default function CourierApp() {
     handleConfirmStartRoute()
   }
 
-  // Monta as próximas paradas da rota ativa como waypoints intermediários para navegação Google Maps
-  const buildRemainingWaypointsForOrder = (
+  // JANELA DESLIZANTE DE NAVEGAÇÃO INTELIGENTE (Google Maps com rota 100% otimizada):
+  // A URL do Google Maps suporta até 9 waypoints intermediários entre origem e destino final.
+  // total de paradas na janela = 1 destino + até 9 waypoints intermediários (até 10 paradas por trecho).
+  // A cada entrega confirmada pelo entregador, a janela desliza automaticamente consumindo as paradas
+  // restantes na sequência EXATA da rota otimizada do servidor (sem reordenação local).
+  const buildSlidingWindowWaypointsForOrder = (
     activeOrder?: OrderRecord | null,
-  ): Array<{
-    lat?: number | string | null
-    lng?: number | string | null
-    address?: string | null
-    label?: string | null
-  }> => {
-    if (!activeOrder || currentRouteOrders.length <= 1) return []
+  ): {
+    waypoints: Array<{
+      lat?: number | string | null
+      lng?: number | string | null
+      address?: string | null
+      label?: string | null
+    }>
+    totalPendingCount: number
+    windowStopCount: number
+  } => {
+    if (!activeOrder || currentRouteOrders.length <= 1) {
+      return { waypoints: [], totalPendingCount: 1, windowStopCount: 1 }
+    }
 
-    // Encontrar índice da entrega atual dentro da sequência planejada
+    // Identificar a posição da entrega atual na sequência planejada da rota do servidor
     const currentIndex = currentRouteOrders.findIndex((o) => o.id === activeOrder.id)
     const subsequentOrders =
       currentIndex >= 0
         ? currentRouteOrders.slice(currentIndex + 1)
         : currentRouteOrders.filter((o) => o.id !== activeOrder.id)
 
-    // Filtrar apenas paradas ainda pendentes (não entregues e não canceladas)
+    // Filtrar estritamente as paradas subsequentes que ainda estão pendentes
     const pendingSubsequent = subsequentOrders.filter(
       (o) =>
         o.status !== 'delivered' &&
@@ -1756,8 +1768,8 @@ export default function CourierApp() {
         o.status !== 'address_error',
     )
 
-    // Limitar às próximas 9 paradas (limite Google Maps waypoints)
-    return pendingSubsequent.slice(0, 9).map((o) => {
+    // Janela deslizante: até 9 waypoints intermediários na ordem canônica da rota
+    const waypointsSlice = pendingSubsequent.slice(0, 9).map((o) => {
       const cust = o.expand?.customer_id
       const targetLat =
         cust?.lat !== undefined && cust?.lat !== null && !isNaN(Number(cust.lat))
@@ -1779,9 +1791,15 @@ export default function CourierApp() {
         label: cust?.name || o.end_address_name || 'Próxima Parada',
       }
     })
+
+    return {
+      waypoints: waypointsSlice,
+      totalPendingCount: 1 + pendingSubsequent.length,
+      windowStopCount: 1 + waypointsSlice.length,
+    }
   }
 
-  // Navegação externa (Google Maps / Waze) com escolha do entregador
+  // Navegação externa oficial (Google Maps com rota otimizada e paradas seguintes em janela deslizante)
   const openExternalNavigation = (
     address: string,
     lat?: number | string | null,
@@ -1798,7 +1816,7 @@ export default function CourierApp() {
         ? Number(lng)
         : undefined
 
-    const remainingWps = buildRemainingWaypointsForOrder(
+    const windowInfo = buildSlidingWindowWaypointsForOrder(
       activeOrderForWaypoints || currentActiveDelivery || null,
     )
 
@@ -1807,24 +1825,11 @@ export default function CourierApp() {
       address,
       lat: parsedLat,
       lng: parsedLng,
-      waypoints: remainingWps,
+      waypoints: windowInfo.waypoints,
+      totalRemainingStops: windowInfo.totalPendingCount,
+      currentWindowStopCount: windowInfo.windowStopCount,
     })
     setIsNavigationChoiceOpen(true)
-  }
-
-  const openWazeNavigation = (
-    lat?: number | string | null,
-    lng?: number | string | null,
-    address?: string,
-    label?: string,
-  ) => {
-    nativeGpsBridge.openNavigation({
-      lat,
-      lng,
-      address,
-      label,
-      app: 'waze',
-    })
   }
 
   // Ação: "Marcar endereço correto no local (GPS)"
@@ -2120,7 +2125,7 @@ export default function CourierApp() {
         await loadCourierOrders()
       }
       toast.success(`Navegação iniciada para ${cust?.name || 'o cliente'}!`)
-      // Abrir modal de escolha de navegação (Waze ou Google Maps)
+      // Abrir navegação inteligente (Google Maps com rota otimizada e paradas seguintes)
       // Prioriza coordenadas do pin cadastrado no cliente; fallback para coordenadas do pedido
       const targetLat =
         cust?.lat !== undefined && cust?.lat !== null && !isNaN(Number(cust.lat))
@@ -2147,7 +2152,7 @@ export default function CourierApp() {
     }
   }
 
-  // Ação: Retornar à Base (abre navegação para a base com escolha Waze/Maps)
+  // Ação: Retornar à Base (abre navegação para a base com Google Maps)
   const handleNavigateToBase = () => {
     toast.info(`Navegando de volta para a base: ${baseCoordinates.name}`)
     openExternalNavigation(
@@ -2533,8 +2538,8 @@ export default function CourierApp() {
                   </p>
                   <p className="text-[11px] text-amber-200/90 mt-0.5 leading-relaxed">
                     Você pode consultar clientes, endereços, telefones e abrir navegação no Google
-                    Maps/Waze normalmente. Posições de GPS e ações serão sincronizadas
-                    automaticamente assim que o sinal voltar.
+                    Maps normalmente. Posições de GPS e ações serão sincronizadas automaticamente
+                    assim que o sinal voltar.
                   </p>
                   {offlineCacheSavedAt && (
                     <p className="text-[10px] text-amber-300/70 mt-1 font-mono">
@@ -2815,7 +2820,7 @@ export default function CourierApp() {
                 className="w-full h-12 bg-gradient-to-r from-[#0052CC] to-[#0066FF] hover:from-[#0047B3] hover:to-[#0052CC] text-white font-bold text-xs rounded-xl border border-blue-400/30 flex items-center justify-center gap-2 shadow-lg"
               >
                 <Navigation className="h-4 w-4 text-[#60A5FA]" />
-                <span>Voltar para base (GPS / Waze)</span>
+                <span>Voltar para base (Google Maps)</span>
               </Button>
 
               <Button
@@ -3481,7 +3486,7 @@ export default function CourierApp() {
         }
       />
 
-      {/* Modal de Escolha de Navegação Externa (Waze ou Google Maps) */}
+      {/* Modal de Navegação Externa (Google Maps com rota otimizada) */}
       <NavigationAppChoiceModal
         open={isNavigationChoiceOpen}
         onOpenChange={setIsNavigationChoiceOpen}
@@ -3495,6 +3500,8 @@ export default function CourierApp() {
             : undefined
         }
         remainingWaypoints={navigationTarget?.waypoints}
+        totalRemainingStops={navigationTarget?.totalRemainingStops}
+        currentWindowStopCount={navigationTarget?.currentWindowStopCount}
         onNavigateStarted={() => {
           // Quando o entregador inicia a navegação externa para uma entrega,
           // registramos o evento para telemetria/auditoria
@@ -3508,7 +3515,7 @@ export default function CourierApp() {
                 courier_id: user?.id,
                 empresa_id: currentActiveDelivery.empresa_id,
                 metadata: {
-                  notes: `Navegação GPS externa iniciada para ${navigationTarget?.name || 'cliente'}${
+                  notes: `Navegação GPS Google Maps iniciada para ${navigationTarget?.name || 'cliente'}${
                     navigationTarget?.waypoints && navigationTarget.waypoints.length > 0
                       ? ` com ${Math.min(navigationTarget.waypoints.length, 9)} paradas seguintes da rota otimizada`
                       : ''

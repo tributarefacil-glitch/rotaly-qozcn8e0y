@@ -78,8 +78,7 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                if (url.startsWith("waze://") || url.startsWith("https://waze.com") ||
-                    url.startsWith("geo:") || url.startsWith("https://www.google.com/maps")) {
+                if (url.startsWith("geo:") || url.startsWith("https://www.google.com/maps")) {
                     try {
                         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                         startActivity(intent);
@@ -389,71 +388,41 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         (Math.abs(lat) > 0.000001 || Math.abs(lng) > 0.000001);
                 String destinationText = (label != null && !label.trim().isEmpty()) ? label.trim() : "";
 
-                if ("waze".equalsIgnoreCase(appName)) {
-                    // Waze NÃO suporta waypoints — destino único
-                    String wazeUrl;
-                    if (hasCoords) {
-                        wazeUrl = "https://waze.com/ul?ll=" + lat + "," + lng + "&navigate=yes";
-                    } else if (!destinationText.isEmpty()) {
-                        wazeUrl = "https://waze.com/ul?q=" + Uri.encode(destinationText) + "&navigate=yes";
-                    } else {
-                        wazeUrl = "https://waze.com/ul";
-                    }
+                // Google Maps oficial único: rota otimizada com origem + destino + waypoints
+                boolean hasOrigin = !Double.isNaN(originLat) && !Double.isNaN(originLng) &&
+                        (Math.abs(originLat) > 0.000001 || Math.abs(originLng) > 0.000001);
+                boolean hasWaypoints = waypointsStr != null && !waypointsStr.trim().isEmpty();
 
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(wazeUrl));
-                    intent.setPackage("com.waze");
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                StringBuilder mapsDir = new StringBuilder("https://www.google.com/maps/dir/?api=1");
+                if (hasOrigin) {
+                    mapsDir.append("&origin=").append(originLat).append(",").append(originLng);
+                }
+                if (hasCoords) {
+                    mapsDir.append("&destination=").append(lat).append(",").append(lng);
+                } else if (!destinationText.isEmpty()) {
+                    mapsDir.append("&destination=").append(Uri.encode(destinationText));
+                }
+                if (hasWaypoints) {
+                    mapsDir.append("&waypoints=").append(waypointsStr.trim());
+                }
+                mapsDir.append("&travelmode=driving");
+                String mapsWeb = mapsDir.toString();
+
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(mapsWeb));
+                intent.setPackage("com.google.android.apps.maps");
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    startActivity(intent);
+                    return true;
+                } catch (Exception fallback) {
                     try {
-                        startActivity(intent);
+                        Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(mapsWeb));
+                        browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(browserIntent);
                         return true;
-                    } catch (Exception fallback) {
-                        try {
-                            Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(wazeUrl));
-                            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                            startActivity(browserIntent);
-                            return true;
-                        } catch (Exception ex) {
-                            Log.e(TAG, "Falha ao abrir Waze via navegador externo:", ex);
-                            return false;
-                        }
-                    }
-                } else {
-                    // Google Maps com suporte a waypoints da rota otimizada
-                    boolean hasOrigin = !Double.isNaN(originLat) && !Double.isNaN(originLng) &&
-                            (Math.abs(originLat) > 0.000001 || Math.abs(originLng) > 0.000001);
-                    boolean hasWaypoints = waypointsStr != null && !waypointsStr.trim().isEmpty();
-
-                    StringBuilder mapsDir = new StringBuilder("https://www.google.com/maps/dir/?api=1");
-                    if (hasOrigin) {
-                        mapsDir.append("&origin=").append(originLat).append(",").append(originLng);
-                    }
-                    if (hasCoords) {
-                        mapsDir.append("&destination=").append(lat).append(",").append(lng);
-                    } else if (!destinationText.isEmpty()) {
-                        mapsDir.append("&destination=").append(Uri.encode(destinationText));
-                    }
-                    if (hasWaypoints) {
-                        mapsDir.append("&waypoints=").append(waypointsStr.trim());
-                    }
-                    mapsDir.append("&travelmode=driving");
-                    String mapsWeb = mapsDir.toString();
-
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(mapsWeb));
-                    intent.setPackage("com.google.android.apps.maps");
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    try {
-                        startActivity(intent);
-                        return true;
-                    } catch (Exception fallback) {
-                        try {
-                            Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(mapsWeb));
-                            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                            startActivity(browserIntent);
-                            return true;
-                        } catch (Exception ex) {
-                            Log.e(TAG, "Falha ao abrir Google Maps via navegador externo:", ex);
-                            return false;
-                        }
+                    } catch (Exception ex) {
+                        Log.e(TAG, "Falha ao abrir Google Maps via navegador externo:", ex);
+                        return false;
                     }
                 }
             } catch (Exception e) {

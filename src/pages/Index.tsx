@@ -966,7 +966,7 @@ export default function Index() {
                         </li>
                         <li className="flex items-start gap-2.5">
                           <CheckCircle2 className="h-4 w-4 text-[#00A3FF] shrink-0 mt-0.5" />
-                          <span>Navegação com Waze / Google Maps</span>
+                          <span>Navegação com Google Maps inteligente</span>
                         </li>
                       </ul>
                     </div>

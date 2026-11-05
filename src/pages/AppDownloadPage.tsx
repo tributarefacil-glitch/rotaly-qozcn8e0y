@@ -60,7 +60,7 @@ export const AppDownloadPage: React.FC = () => {
     {
       num: '3',
       title: 'Permitir Localização "O Tempo Todo"',
-      desc: 'MUITO IMPORTANTE: Quando o app abrir e pedir localização, escolha a opção "PERMITIR O TEMPO TODO" (e não apenas "Durante o uso do app"). Isso garante que sua rota continue rastreando com o Waze aberto ou tela apagada.',
+      desc: 'MUITO IMPORTANTE: Quando o app abrir e pedir localização, escolha a opção "PERMITIR O TEMPO TODO" (e não apenas "Durante o uso do app"). Isso garante que sua rota continue rastreando com o Google Maps aberto ou tela apagada.',
       icon: <MapPin className="h-5 w-5 text-amber-400" />,
       tag: 'GPS em Segundo Plano',
     },
@@ -114,7 +114,7 @@ export const AppDownloadPage: React.FC = () => {
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-md mx-auto">
               Novo aplicativo Android com GPS contínuo em segundo plano. Não perde seus km mesmo com
-              Waze aberto ou tela apagada.
+              Google Maps aberto ou tela apagada.
             </p>
           </div>
 
@@ -197,9 +197,9 @@ export const AppDownloadPage: React.FC = () => {
               Vantagem exclusiva do App Nativo vs Navegador:
             </p>
             <p className="text-[11px] text-cyan-200/90 leading-relaxed">
-              O navegador bloqueia o GPS quando você troca pro Waze ou desliga a tela. O App Nativo
-              Rotaly mantém uma notificação fixa (&quot;Rotaly está rastreando&quot;) que nunca
-              interrompe a gravação da sua rota e do seu combustível.
+              O navegador bloqueia o GPS quando você troca pro Google Maps ou desliga a tela. O App
+              Nativo Rotaly mantém uma notificação fixa (&quot;Rotaly está rastreando&quot;) que
+              nunca interrompe a gravação da sua rota e do seu combustível.
             </p>
           </div>
         </div>

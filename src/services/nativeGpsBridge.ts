@@ -6,7 +6,7 @@
  *   Android (`window.RotalyNativeGps` ou plugin Capacitor) para iniciar/parar
  *   o Foreground Service com notificação contínua ("Rotaly está rastreando"),
  *   solicitar permissões ACCESS_BACKGROUND_LOCATION / FOREGROUND_SERVICE_LOCATION,
- *   e escutar eventos contínuos de coordenadas mesmo com a tela apagada ou Waze em cima.
+ *   e escutar eventos contínuos de coordenadas mesmo com a tela apagada ou Google Maps em cima.
  * - Em ambiente Web (navegador/PWA): fallback transparente e resiliente para
  *   navigator.geolocation.watchPosition / getCurrentPosition com WakeLock mantido.
  */
@@ -54,7 +54,7 @@ declare global {
       openNavigationApp: (
         lat: number,
         lng: number,
-        appName: 'waze' | 'google_maps',
+        appName?: 'google_maps',
         label?: string,
         originLat?: number,
         originLng?: number,
@@ -458,9 +458,9 @@ class NativeGpsBridgeService {
       address?: string | null
       label?: string | null
     }>
-    app: 'waze' | 'google_maps'
+    app?: 'google_maps'
   }) {
-    const { address, label, origin, waypoints, app } = params
+    const { address, label, origin, waypoints } = params
 
     // Sanitização e validação das coordenadas de destino
     const numLat =
@@ -550,7 +550,7 @@ class NativeGpsBridgeService {
           const handled = window.RotalyNativeGps.openNavigationApp(
             finalLat,
             finalLng,
-            app,
+            'google_maps',
             destinationQuery,
             hasValidOrigin ? originLatNum : 0,
             hasValidOrigin ? originLngNum : 0,
@@ -563,22 +563,13 @@ class NativeGpsBridgeService {
       }
 
       // Em ambiente nativo, se a ponte direta falhar ou window.open for ineficaz:
-      // Waze NÃO suporta waypoints — mantém destino único (waze://?ll=...)
       // Google Maps com waypoints: utiliza a URL completa do Google Maps que o WebViewClient
       // intercepta via shouldOverrideUrlLoading (starts with https://www.google.com/maps)
       // e abre direto na Activity do Google Maps com todos os waypoints na rota.
       try {
-        if (app === 'waze') {
-          const nativeUrl = hasValidCoords
-            ? `waze://?ll=${finalLat},${finalLng}&navigate=yes`
-            : `waze://?q=${encodeURIComponent(destinationQuery)}&navigate=yes`
-          window.location.href = nativeUrl
-          return
-        } else {
-          const mapsDirUrl = buildGoogleMapsDirUrl()
-          window.location.href = mapsDirUrl
-          return
-        }
+        const mapsDirUrl = buildGoogleMapsDirUrl()
+        window.location.href = mapsDirUrl
+        return
       } catch (redirErr) {
         console.warn('[NativeGpsBridge] Falha ao despachar scheme nativo:', redirErr)
       }
@@ -586,17 +577,9 @@ class NativeGpsBridgeService {
     }
 
     // 2. Ambiente Web (navegador/PWA sem ponte nativa)
-    if (app === 'waze') {
-      // Waze mantém destino único SEM waypoints
-      const wazeUrl = hasValidCoords
-        ? `https://waze.com/ul?ll=${finalLat},${finalLng}&navigate=yes`
-        : `https://waze.com/ul?q=${encodeURIComponent(destinationQuery)}`
-      window.open(wazeUrl, '_blank')
-    } else {
-      // Google Maps com api=1, origin, destination, waypoints e travelmode=driving
-      const mapsUrl = buildGoogleMapsDirUrl()
-      window.open(mapsUrl, '_blank')
-    }
+    // Google Maps com api=1, origin, destination, waypoints e travelmode=driving
+    const mapsUrl = buildGoogleMapsDirUrl()
+    window.open(mapsUrl, '_blank')
   }
 }
 

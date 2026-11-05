@@ -218,7 +218,7 @@ export default function CourierRedirectionPdfGuidePage() {
                     <div className="h-0.5 flex-1 border-t-2 border-dashed border-blue-400" />
                   </div>
                   <span className="text-[10px] font-semibold text-slate-500 mt-1">
-                    Desvio pelo Waze ou Google Maps
+                    Desvio pelo Google Maps
                   </span>
                   <span className="text-[9px] text-emerald-700 font-bold">
                     ≤ 3 km = aprovação automática
@@ -323,7 +323,7 @@ export default function CourierRedirectionPdfGuidePage() {
                     <span className="text-blue-600 font-bold">•</span>
                     <span>
                       Toque em <strong>&quot;Ir para o novo endereço&quot;</strong>: o Rotaly abre
-                      direto o Google Maps ou o Waze já com o caminho traçado.
+                      direto o Google Maps já com a rota otimizada traçada.
                     </span>
                   </li>
                   <li className="flex items-start gap-1.5">
