@@ -166,6 +166,7 @@ export function renderVehicleIcon(type?: string): React.ReactNode {
 export function getOrderKanbanCategory(
   order: OrderRecord,
   opWindow?: OperationalWindow,
+  deadBatchKeys?: Set<string>,
 ): KanbanColumnKey | null {
   const isIssue =
     order.status === 'address_error' ||
@@ -185,6 +186,14 @@ export function getOrderKanbanCategory(
 
   if (order.status === 'delivered') {
     return 'delivered'
+  }
+
+  // Se o pedido teve rota finalizada ou seu lote está encerrado, não entra em 'in_transit'
+  if (
+    order.route_finished === true ||
+    (order.route_batch_key && deadBatchKeys && deadBatchKeys.has(order.route_batch_key))
+  ) {
+    return null
   }
 
   if (

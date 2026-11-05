@@ -1125,19 +1125,27 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // um lote encerrado ("Voltar para base" gravou route_finished=true) NUNCA mais contribui para
   // "Em Rota", rota ativa ou trânsito — mesmo que pedidos pendentes tenham ficado presos nele.
   // Composição mista (pedidos antigos de lote morto + ativos) é o furo real de produção.
+  // Varre orders geral + globalInTransitOrders para não perder histórico de lote do dia anterior.
   const deadRouteBatchKeys = useMemo(() => {
     const keys = new Set<string>()
     const collect = (o: OrderRecord) => {
       if (o.route_finished === true && o.route_batch_key) keys.add(o.route_batch_key)
     }
+    orders.forEach(collect)
     todayOrders.forEach(collect)
     globalInTransitOrders.forEach(collect)
     return keys
-  }, [todayOrders, globalInTransitOrders])
+  }, [orders, todayOrders, globalInTransitOrders])
 
-  // Pedido visível para operação corrente: fora de lote morto (ou sem route_batch_key)
-  const isOrderInLiveBatch = (o: OrderRecord): boolean =>
-    !o.route_batch_key || !deadRouteBatchKeys.has(o.route_batch_key)
+  // Avalia se o pedido pertence a um lote morto ou já teve route_finished = true
+  const isDeadOrderOrBatch = (o: OrderRecord): boolean => {
+    if (o.route_finished === true) return true
+    if (o.route_batch_key && deadRouteBatchKeys.has(o.route_batch_key)) return true
+    return false
+  }
+
+  // Pedido visível para operação corrente: fora de lote morto e sem route_finished
+  const isOrderInLiveBatch = (o: OrderRecord): boolean => !isDeadOrderOrBatch(o)
 
   // Helpers to categorize orders into kanban columns
   // A coluna "Exceções & Problemas" mostra EXCLUSIVAMENTE ocorrências do dia atual no fuso de Brasília
@@ -1160,6 +1168,13 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
     if (order.status === 'delivered') {
       return 'delivered'
+    }
+
+    // Pedido com rota finalizada (route_finished === true) ou pertencente a lote morto
+    // NUNCA pode aparecer na coluna "Em Trânsito" nem inflar contadores de trânsito ativo
+    const isDead = isDeadOrderOrBatch(order)
+    if (isDead) {
+      return null
     }
 
     if (
@@ -1246,7 +1261,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       )
 
       const allTransitOrders = [
-        ...globalCourierTransit,
+        ...globalCourierTransit.filter((o) => isOrderInLiveBatch(o)),
         ...courierLocalOrders.filter(
           (o) => o.status === 'in_transit' && o.route_started === true && isOrderInLiveBatch(o),
         ),
@@ -1274,9 +1289,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       const inTransitOrders = activeInTransitOrders
       const pendingOrders = courierLocalOrders.filter(
         (o) =>
-          o.status === 'pending' ||
-          o.status === 'assigned' ||
-          (o.status === 'in_transit' && !o.route_started),
+          isOrderInLiveBatch(o) &&
+          (o.status === 'pending' ||
+            o.status === 'assigned' ||
+            (o.status === 'in_transit' && !o.route_started)),
       )
       const problemOrders = courierLocalOrders.filter(
         (o) =>
@@ -4271,13 +4287,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       {(() => {
         const newOrdersAwaitingCount = orders.filter(
           (o) =>
-            o.status === 'assigned' ||
-            (o.route_released &&
-              (!o.route_started || o.status === 'in_transit') &&
-              (!o.sequence || o.sequence > 1)),
+            isOrderInLiveBatch(o) &&
+            (o.status === 'assigned' ||
+              (o.route_released &&
+                (!o.route_started || o.status === 'in_transit') &&
+                (!o.sequence || o.sequence > 1))),
         ).length
         const hasUnassignedOrAwaiting = orders.some(
-          (o) => o.status === 'assigned' || (o.route_released && !o.route_started),
+          (o) =>
+            isOrderInLiveBatch(o) &&
+            (o.status === 'assigned' || (o.route_released && !o.route_started)),
         )
         if (hasUnassignedOrAwaiting) {
           return (
