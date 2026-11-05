@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -84,6 +84,40 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const [addressCorrectionDone, setAddressCorrectionDone] = useState(false)
   // Motivo de desvio do entregador (toque único, opcional, exibido quando fora do corredor >150m)
   const [deviationReason, setDeviationReason] = useState<string>('')
+
+  // Opções canônicas de motivo de desvio para o entregador (decisão 11/11)
+  const DEVIATION_REASON_OPTIONS: Array<{ value: string; label: string }> = [
+    { value: 'rua_bloqueada', label: 'RUA BLOQUEADA' },
+    { value: 'area_de_risco', label: 'ÁREA DE RISCO' },
+    { value: 'alagamento', label: 'ALAGAMENTO' },
+    { value: 'retorno_mais_rapido', label: 'RETORNO MAIS RÁPIDO' },
+  ]
+
+  // Distância estimada em tempo real ao pin cadastrado do pedido (para exibir botões de desvio se > 150m)
+  const estimatedDistanceToPinM = useMemo(() => {
+    if (!capturedGps || !order) return 0
+    const targetLat =
+      typeof order.end_address_lat === 'number' && order.end_address_lat !== 0
+        ? order.end_address_lat
+        : order.expand?.customer_id?.lat
+    const targetLng =
+      typeof order.end_address_lng === 'number' && order.end_address_lng !== 0
+        ? order.end_address_lng
+        : order.expand?.customer_id?.lng
+    if (
+      typeof targetLat !== 'number' ||
+      typeof targetLng !== 'number' ||
+      targetLat === 0 ||
+      targetLng === 0
+    ) {
+      return 0
+    }
+    return Math.round(
+      haversineDistanceMeters(capturedGps.lat, capturedGps.lng, targetLat, targetLng),
+    )
+  }, [capturedGps, order])
+
+  const showDeviationButtons = proposeAddressCorrection || estimatedDistanceToPinM > 150
 
   // Campos específicos de Entrega Redirecionada
   const isRedirectionFlow = Boolean(
@@ -1579,6 +1613,34 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               rows={2}
             />
           </div>
+
+          {/* MOTIVO DE DESVIO: condicionado a distanceToPinM > 150 ou proposeAddressCorrection */}
+          {showDeviationButtons && (
+            <div className="p-3 rounded-card border border-amber-300 bg-amber-50/70 text-slate-800 space-y-2">
+              <Label className="text-xs font-bold text-amber-950 block">
+                Por que você saiu da rota? (opcional)
+              </Label>
+              <div className="grid grid-cols-2 gap-2">
+                {DEVIATION_REASON_OPTIONS.map((opt) => {
+                  const isSelected = deviationReason === opt.value
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setDeviationReason(isSelected ? '' : opt.value)}
+                      className={`text-[11px] font-bold py-2 px-2.5 rounded-md border transition-all text-center leading-tight ${
+                        isSelected
+                          ? 'bg-amber-600 border-amber-700 text-white shadow-sm ring-2 ring-amber-400/50'
+                          : 'bg-white border-amber-200 text-amber-900 hover:bg-amber-100/70 hover:border-amber-300'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">

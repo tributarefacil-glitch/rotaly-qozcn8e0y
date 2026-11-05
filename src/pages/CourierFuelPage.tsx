@@ -281,7 +281,7 @@ export default function CourierFuelPage() {
         loadFinancialData()
       }
     },
-    { debounceMs: 3000 },
+    true,
   )
 
   useRealtime<OrderRecord>(
@@ -291,7 +291,7 @@ export default function CourierFuelPage() {
         loadFinancialData()
       }
     },
-    { debounceMs: 3000 },
+    true,
   )
 
   useRealtime<OffRouteEventRecord>(
@@ -301,7 +301,7 @@ export default function CourierFuelPage() {
         loadFinancialData()
       }
     },
-    { debounceMs: 3000 },
+    true,
   )
 
   // Hook Compartilhado: mesmo motor de telemetria e regras de consumo do Admin

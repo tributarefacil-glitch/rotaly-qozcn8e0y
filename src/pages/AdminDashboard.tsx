@@ -694,7 +694,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
     }
   })
 
-  // Assinar realtime da coleção fuel_advances para refletir adiantamentos/cancelamentos/ajustes instantaneamente com debounce de ~3s
+  // Assinar realtime da coleção fuel_advances para refletir adiantamentos/cancelamentos/ajustes instantaneamente
   useRealtime<FuelAdvanceRecord>(
     'fuel_advances',
     () => {
@@ -703,7 +703,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         fetchFuelHistoryOrders(true)
       }
     },
-    { debounceMs: 3000 },
+    true,
   )
 
   // Save Admin Settings (all categories in batch)

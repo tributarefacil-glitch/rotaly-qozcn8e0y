@@ -608,7 +608,7 @@ export default function CourierApp() {
         loadFuelAndAccountData()
       }
     },
-    { debounceMs: 3000 },
+    true,
   )
 
   // Realtime para desvios de rota (CORREÇÃO 3: recarga restrita ao entregador) com debounce de ~3s
@@ -619,7 +619,7 @@ export default function CourierApp() {
         loadFuelAndAccountData()
       }
     },
-    { debounceMs: 3000 },
+    true,
   )
 
   // Realtime para notificações / avisos de desvio e chegada à base
