@@ -112,6 +112,8 @@ export default function CourierApp() {
     address?: string
     lat?: number
     lng?: number
+    currentStopName?: string
+    currentStopAddress?: string
     waypoints?: Array<{
       lat?: number | string | null
       lng?: number | string | null
@@ -1732,13 +1734,30 @@ export default function CourierApp() {
   }
 
   // JANELA DESLIZANTE DE NAVEGAÇÃO INTELIGENTE (Google Maps com rota 100% otimizada):
-  // A URL do Google Maps suporta até 9 waypoints intermediários entre origem e destino final.
-  // total de paradas na janela = 1 destino + até 9 waypoints intermediários (até 10 paradas por trecho).
+  // Regra fundamental do Google Maps (dir/?api=1): o Maps visita ORIGIN -> WAYPOINTS (na ordem) -> DESTINATION.
+  // Portanto, para o Maps guiar o entregador a começar pela PARADA ATUAL e avançar pelas seguintes:
+  // - Se houver apenas a parada atual: waypoints = [], destination = parada atual.
+  // - Se houver paradas seguintes: a janela tem até 10 paradas (1 destination + até 9 waypoints).
+  //   A ÚLTIMA parada dessa janela deve ser o `destination` do Maps.
+  //   As paradas anteriores (começando OBRIGATORIAMENTE pela parada ATUAL, seguida pelas próximas na ordem canônica)
+  //   são passadas como `waypoints` (máximo 9 intermediários).
   // A cada entrega confirmada pelo entregador, a janela desliza automaticamente consumindo as paradas
   // restantes na sequência EXATA da rota otimizada do servidor (sem reordenação local).
-  const buildSlidingWindowWaypointsForOrder = (
+  const buildSlidingWindowNavigationForOrder = (
     activeOrder?: OrderRecord | null,
   ): {
+    finalDestination: {
+      name: string
+      address: string
+      lat?: number
+      lng?: number
+    }
+    firstStop: {
+      name: string
+      address: string
+      lat?: number
+      lng?: number
+    }
     waypoints: Array<{
       lat?: number | string | null
       lng?: number | string | null
@@ -1747,9 +1766,54 @@ export default function CourierApp() {
     }>
     totalPendingCount: number
     windowStopCount: number
-  } => {
-    if (!activeOrder || currentRouteOrders.length <= 1) {
-      return { waypoints: [], totalPendingCount: 1, windowStopCount: 1 }
+  } | null => {
+    if (!activeOrder) return null
+
+    // Função auxiliar para extrair dados canônicos de uma parada
+    const extractStopData = (o: OrderRecord) => {
+      const cust = o.expand?.customer_id
+      const targetLat =
+        cust?.lat !== undefined && cust?.lat !== null && !isNaN(Number(cust.lat))
+          ? Number(cust.lat)
+          : o.end_address_lat !== undefined &&
+              o.end_address_lat !== null &&
+              !isNaN(Number(o.end_address_lat))
+            ? Number(o.end_address_lat)
+            : undefined
+      const targetLng =
+        cust?.lng !== undefined && cust?.lng !== null && !isNaN(Number(cust.lng))
+          ? Number(cust.lng)
+          : o.end_address_lng !== undefined &&
+              o.end_address_lng !== null &&
+              !isNaN(Number(o.end_address_lng))
+            ? Number(o.end_address_lng)
+            : undefined
+      const targetAddress =
+        cust?.address ||
+        (cust?.street
+          ? `${cust.street}${cust.complement ? `, ${cust.complement}` : ''} - ${cust.neighborhood || cust.city || ''}`
+          : o.end_address_text || '')
+      const targetName = cust?.name || o.end_address_name || 'Cliente'
+
+      return {
+        name: targetName,
+        address: targetAddress,
+        lat: targetLat,
+        lng: targetLng,
+      }
+    }
+
+    const currentStop = extractStopData(activeOrder)
+
+    // Se a rota tem só 1 pedido ou não temos lista de pedidos, destino é a própria entrega
+    if (currentRouteOrders.length <= 1) {
+      return {
+        finalDestination: currentStop,
+        firstStop: currentStop,
+        waypoints: [],
+        totalPendingCount: 1,
+        windowStopCount: 1,
+      }
     }
 
     // Identificar a posição da entrega atual na sequência planejada da rota do servidor
@@ -1768,34 +1832,47 @@ export default function CourierApp() {
         o.status !== 'address_error',
     )
 
-    // Janela deslizante: até 9 waypoints intermediários na ordem canônica da rota
-    const waypointsSlice = pendingSubsequent.slice(0, 9).map((o) => {
-      const cust = o.expand?.customer_id
-      const targetLat =
-        cust?.lat !== undefined && cust?.lat !== null && !isNaN(Number(cust.lat))
-          ? cust.lat
-          : o.end_address_lat
-      const targetLng =
-        cust?.lng !== undefined && cust?.lng !== null && !isNaN(Number(cust.lng))
-          ? cust.lng
-          : o.end_address_lng
-      const targetAddress =
-        cust?.address ||
-        (cust?.street
-          ? `${cust.street}${cust.complement ? `, ${cust.complement}` : ''} - ${cust.neighborhood || cust.city || ''}`
-          : o.end_address_text || '')
+    // Se não há paradas subsequentes pendentes, o trajeto é apenas a parada atual
+    if (pendingSubsequent.length === 0) {
       return {
-        lat: targetLat,
-        lng: targetLng,
-        address: targetAddress,
-        label: cust?.name || o.end_address_name || 'Próxima Parada',
+        finalDestination: currentStop,
+        firstStop: currentStop,
+        waypoints: [],
+        totalPendingCount: 1,
+        windowStopCount: 1,
+      }
+    }
+
+    // Montar a lista completa de paradas pendentes da janela:
+    // [0]: Parada atual
+    // [1..N]: Paradas subsequentes
+    // Limite máximo do Google Maps: 1 destino final + até 9 waypoints = até 10 paradas por trecho
+    const allPendingStops = [activeOrder, ...pendingSubsequent]
+    const windowSlice = allPendingStops.slice(0, 10)
+
+    // O destino final do trecho no Maps é a ÚLTIMA parada da janela
+    const lastOrderInWindow = windowSlice[windowSlice.length - 1]
+    const finalDestination = extractStopData(lastOrderInWindow)
+
+    // Os waypoints intermediários do Maps são todas as paradas da janela ANTES da última,
+    // começando OBRIGATORIAMENTE pela parada ATUAL (índice 0), seguida pelas próximas na ordem canônica.
+    const intermediateOrders = windowSlice.slice(0, windowSlice.length - 1)
+    const waypoints = intermediateOrders.map((o) => {
+      const stop = extractStopData(o)
+      return {
+        lat: stop.lat,
+        lng: stop.lng,
+        address: stop.address,
+        label: stop.name,
       }
     })
 
     return {
-      waypoints: waypointsSlice,
-      totalPendingCount: 1 + pendingSubsequent.length,
-      windowStopCount: 1 + waypointsSlice.length,
+      finalDestination,
+      firstStop: currentStop,
+      waypoints,
+      totalPendingCount: allPendingStops.length,
+      windowStopCount: windowSlice.length,
     }
   }
 
@@ -1816,19 +1893,41 @@ export default function CourierApp() {
         ? Number(lng)
         : undefined
 
-    const windowInfo = buildSlidingWindowWaypointsForOrder(
+    // Se temos um pedido ativo de entrega, constrói a janela deslizante multi-parada
+    // onde o destination é a última parada pendente da janela e a parada atual é o 1º waypoint
+    const navWindow = buildSlidingWindowNavigationForOrder(
       activeOrderForWaypoints || currentActiveDelivery || null,
     )
 
-    setNavigationTarget({
-      name: label,
-      address,
-      lat: parsedLat,
-      lng: parsedLng,
-      waypoints: windowInfo.waypoints,
-      totalRemainingStops: windowInfo.totalPendingCount,
-      currentWindowStopCount: windowInfo.windowStopCount,
-    })
+    if (navWindow && navWindow.waypoints.length > 0) {
+      // Caso multi-parada: o destination é a última parada do trecho, e a parada atual
+      // é a primeira da lista de waypoints do Google Maps
+      setNavigationTarget({
+        name: navWindow.finalDestination.name,
+        address: navWindow.finalDestination.address,
+        lat: navWindow.finalDestination.lat,
+        lng: navWindow.finalDestination.lng,
+        currentStopName: navWindow.firstStop.name,
+        currentStopAddress: navWindow.firstStop.address,
+        waypoints: navWindow.waypoints,
+        totalRemainingStops: navWindow.totalPendingCount,
+        currentWindowStopCount: navWindow.windowStopCount,
+      })
+    } else {
+      // Caso de destino único (retorno à base, redirecionamento ou última entrega da rota)
+      setNavigationTarget({
+        name: label,
+        address,
+        lat: parsedLat,
+        lng: parsedLng,
+        currentStopName: label,
+        currentStopAddress: address,
+        waypoints: [],
+        totalRemainingStops: navWindow?.totalPendingCount || 1,
+        currentWindowStopCount: 1,
+      })
+    }
+
     setIsNavigationChoiceOpen(true)
   }
 
@@ -2152,15 +2251,21 @@ export default function CourierApp() {
     }
   }
 
-  // Ação: Retornar à Base (abre navegação para a base com Google Maps)
+  // Ação: Retornar à Base (abre navegação para a base com Google Maps - destino único)
   const handleNavigateToBase = () => {
     toast.info(`Navegando de volta para a base: ${baseCoordinates.name}`)
-    openExternalNavigation(
-      baseCoordinates.address,
-      baseCoordinates.lat,
-      baseCoordinates.lng,
-      baseCoordinates.name,
-    )
+    setNavigationTarget({
+      name: baseCoordinates.name,
+      address: baseCoordinates.address,
+      lat: baseCoordinates.lat,
+      lng: baseCoordinates.lng,
+      currentStopName: baseCoordinates.name,
+      currentStopAddress: baseCoordinates.address,
+      waypoints: [],
+      totalRemainingStops: 1,
+      currentWindowStopCount: 1,
+    })
+    setIsNavigationChoiceOpen(true)
   }
 
   // Ação: Finalizar Rota Inteira na Chegada à Base (manual ou automático por geofence)
@@ -3092,13 +3197,21 @@ export default function CourierApp() {
                           type="button"
                           size="sm"
                           onClick={() => {
-                            openExternalNavigation(
-                              currentActiveDelivery.redirection_new_address!,
-                              undefined,
-                              undefined,
-                              `Novo endereço (${currentActiveDelivery.expand?.customer_id?.name || 'Cliente'})`,
-                              currentActiveDelivery,
-                            )
+                            // Redirecionamento é navegação com destino único para o novo endereço
+                            const destName = `Novo endereço (${currentActiveDelivery.expand?.customer_id?.name || 'Cliente'})`
+                            const destAddr = currentActiveDelivery.redirection_new_address!
+                            setNavigationTarget({
+                              name: destName,
+                              address: destAddr,
+                              lat: undefined,
+                              lng: undefined,
+                              currentStopName: destName,
+                              currentStopAddress: destAddr,
+                              waypoints: [],
+                              totalRemainingStops: 1,
+                              currentWindowStopCount: 1,
+                            })
+                            setIsNavigationChoiceOpen(true)
                           }}
                           className="h-8 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[11px] rounded-lg flex items-center gap-1.5"
                         >
@@ -3492,6 +3605,8 @@ export default function CourierApp() {
         onOpenChange={setIsNavigationChoiceOpen}
         destinationName={navigationTarget?.name}
         destinationAddress={navigationTarget?.address}
+        firstStopName={navigationTarget?.currentStopName}
+        firstStopAddress={navigationTarget?.currentStopAddress}
         lat={navigationTarget?.lat}
         lng={navigationTarget?.lng}
         origin={
@@ -3515,9 +3630,9 @@ export default function CourierApp() {
                 courier_id: user?.id,
                 empresa_id: currentActiveDelivery.empresa_id,
                 metadata: {
-                  notes: `Navegação GPS Google Maps iniciada para ${navigationTarget?.name || 'cliente'}${
+                  notes: `Navegação GPS Google Maps iniciada. Primeira parada: ${navigationTarget?.currentStopName || 'cliente'}. Destino final do trecho: ${navigationTarget?.name || 'cliente'}${
                     navigationTarget?.waypoints && navigationTarget.waypoints.length > 0
-                      ? ` com ${Math.min(navigationTarget.waypoints.length, 9)} paradas seguintes da rota otimizada`
+                      ? ` com ${navigationTarget.waypoints.length} waypoints intermediários na sequência exata da rota otimizada`
                       : ''
                   }`,
                 },
