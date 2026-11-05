@@ -50,6 +50,7 @@ import type {
   OrderRecord,
 } from '@/types/delivery'
 import { useAuth } from '@/contexts/AuthContext'
+import pb from '@/lib/pocketbase/client'
 import { getErrorMessage } from '@/lib/pocketbase/errors'
 import { generateTrackingCode } from '@/lib/trackingCode'
 import { toast } from 'sonner'
