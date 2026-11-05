@@ -32,6 +32,11 @@ import { encodePlusCode } from '@/lib/plusCode'
 import { normalizeCustomerPhone, normalizeWhatsAppPhone } from '@/lib/whatsappTracking'
 import { haversineDistanceMeters } from '@/lib/geo'
 import {
+  checkNearbyCustomerPinConflict,
+  auditConfirmedNearbyPin,
+  type NearbyPinConflict,
+} from '@/services/suspectPinsService'
+import {
   BaseAddressAutocomplete,
   type BaseAddressResult,
 } from '@/components/BaseAddressAutocomplete'
@@ -95,6 +100,10 @@ export function CreateCustomerModal({
   const [hasPrecisionWarning, setHasPrecisionWarning] = useState(false)
   const [precisionWarningDismissed, setPrecisionWarningDismissed] = useState(false)
   const [precisionWarningText, setPrecisionWarningText] = useState('')
+  const [nearbyPinConflict, setNearbyPinConflict] = useState<NearbyPinConflict | null>(null)
+  const [isCheckingNearbyPin, setIsCheckingNearbyPin] = useState(false)
+  const [nearbyPinWarningDismissed, setNearbyPinWarningDismissed] = useState(false)
+  const nearbyPinDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [addressSearchQuery, setAddressSearchQuery] = useState('')
   const [isLoadingViaCep, setIsLoadingViaCep] = useState(false)
   // Gerenciamento de até 3 endereços por cliente
@@ -131,6 +140,48 @@ export function CreateCustomerModal({
   const [isPinManuallyAdjusted, setIsPinManuallyAdjusted] = useState(false)
 
   const isEditMode = Boolean(customerToEdit)
+
+  // Efeito para verificar conflito de pin próximo (< 100m) sempre que lat/lng mudarem
+  useEffect(() => {
+    if (!open) {
+      setNearbyPinConflict(null)
+      setNearbyPinWarningDismissed(false)
+      return
+    }
+
+    if (!lat || !lng || (lat === 0 && lng === 0)) {
+      setNearbyPinConflict(null)
+      return
+    }
+
+    if (nearbyPinDebounceRef.current) {
+      clearTimeout(nearbyPinDebounceRef.current)
+    }
+
+    nearbyPinDebounceRef.current = setTimeout(async () => {
+      setIsCheckingNearbyPin(true)
+      try {
+        const conflict = await checkNearbyCustomerPinConflict({
+          lat,
+          lng,
+          empresaId: customerToEdit?.empresa_id,
+          excludeCustomerId: customerToEdit?.id,
+          thresholdMeters: 100, // Limiar de 100 metros
+        })
+        setNearbyPinConflict(conflict)
+      } catch (err) {
+        console.warn('Erro ao verificar proximidade de pin:', err)
+      } finally {
+        setIsCheckingNearbyPin(false)
+      }
+    }, 400)
+
+    return () => {
+      if (nearbyPinDebounceRef.current) {
+        clearTimeout(nearbyPinDebounceRef.current)
+      }
+    }
+  }, [open, lat, lng, customerToEdit?.id, customerToEdit?.empresa_id])
 
   // Preenche o formulário quando o modal abre em modo de edição
   useEffect(() => {
@@ -234,6 +285,8 @@ export function CreateCustomerModal({
     setHasPrecisionWarning(false)
     setPrecisionWarningDismissed(false)
     setPrecisionWarningText('')
+    setNearbyPinConflict(null)
+    setNearbyPinWarningDismissed(false)
     setGoogleNormalizedAddress('')
     setGeocodeLocationType('')
     setIsPinManuallyAdjusted(false)
@@ -1374,12 +1427,43 @@ export function CreateCustomerModal({
       if (targetCustomer) {
         const updated = await deliveryService.updateCustomer(targetCustomer.id, payload)
         toast.success(`Cadastro do cliente "${trimmedName}" atualizado com sucesso!`)
+
+        // Se havia conflito de pin próximo (< 100m), auditar a confirmação consciente
+        if (nearbyPinConflict && finalLat && finalLng) {
+          auditConfirmedNearbyPin({
+            customerId: targetCustomer.id,
+            customerName: trimmedName,
+            nearbyCustomerId: nearbyPinConflict.existingCustomer.id,
+            nearbyCustomerName: nearbyPinConflict.existingCustomer.name,
+            distanceMeters: nearbyPinConflict.distanceMeters,
+            lat: finalLat,
+            lng: finalLng,
+            context: 'customer_modal',
+            empresaId: targetCustomer.empresa_id,
+          }).catch(() => {})
+        }
+
         resetForm()
         onCustomerCreated(updated)
         onOpenChange(false)
       } else {
         const created = await deliveryService.createCustomer(payload)
         toast.success(`Cliente "${created.name}" cadastrado com sucesso!`)
+
+        // Se havia conflito de pin próximo (< 100m), auditar a confirmação consciente
+        if (nearbyPinConflict && finalLat && finalLng) {
+          auditConfirmedNearbyPin({
+            customerId: created.id,
+            customerName: trimmedName,
+            nearbyCustomerId: nearbyPinConflict.existingCustomer.id,
+            nearbyCustomerName: nearbyPinConflict.existingCustomer.name,
+            distanceMeters: nearbyPinConflict.distanceMeters,
+            lat: finalLat,
+            lng: finalLng,
+            context: 'customer_modal',
+            empresaId: created.empresa_id,
+          }).catch(() => {})
+        }
 
         // Se cliente foi cadastrado sem coordenadas ou sem endereço, oferecer botão WhatsApp imediato
         const isIncomplete = !created.lat || !created.lng || !created.street?.trim()
@@ -1459,6 +1543,52 @@ export function CreateCustomerModal({
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+            {/* Aviso Amarelo NÃO-BLOQUEANTE: Pin Próximo a Outro Cliente (< 100m) */}
+            {nearbyPinConflict && (
+              <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/50 text-amber-200 text-xs flex items-start gap-2.5 shadow-sm">
+                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-amber-300 flex items-center gap-1.5">
+                      Pin muito próximo de outro cliente ({nearbyPinConflict.distanceMeters}m)
+                    </p>
+                    <Badge
+                      variant="outline"
+                      className="bg-amber-500/20 text-amber-300 border-amber-400/40 text-[10px] font-mono shrink-0"
+                    >
+                      {nearbyPinConflict.distanceMeters}m
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                    A coordenada selecionada está a menos de 100 metros do cliente cadastrado{' '}
+                    <strong className="text-white font-semibold">
+                      {nearbyPinConflict.existingCustomer.name}
+                    </strong>
+                    {nearbyPinConflict.existingCustomer.address
+                      ? ` (${nearbyPinConflict.existingCustomer.address})`
+                      : ''}
+                    . Pode ser um mesmo imóvel, vizinho ou duplicata.
+                  </p>
+                  <p className="text-[10px] text-amber-300/80 italic">
+                    Aviso não-bloqueante: você pode salvar normalmente mesmo assim.
+                  </p>
+                  <div className="pt-1 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setNearbyPinWarningDismissed(true)}
+                      className="h-6 text-[11px] bg-amber-500/20 border-amber-400/50 text-amber-200 hover:bg-amber-500/30 hover:text-white"
+                    >
+                      {nearbyPinWarningDismissed
+                        ? '✓ Ciente do pin próximo'
+                        : 'Ciente, salvar mesmo assim'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Banner de Proteção contra Coordenada Default/Fallback Impreciso */}
             {hasPrecisionWarning && (
               <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-500/60 text-amber-200 text-xs flex items-start gap-2.5">

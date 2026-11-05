@@ -1,4 +1,4 @@
-import { pb } from '@/lib/pocketbase/client'
+import pb from '@/lib/pocketbase/client'
 import { haversineDistanceMeters } from '@/lib/geo'
 import type { CustomerRecord } from '@/types/delivery'
 
