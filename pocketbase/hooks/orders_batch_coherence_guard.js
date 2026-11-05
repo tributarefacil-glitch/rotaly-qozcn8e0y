@@ -97,6 +97,21 @@ onRecordUpdate((e) => {
     const courierChanged = courierId && courierId !== origCourierId
     const isNowStarted = order.getBool('route_started')
     const isNowFinished = order.getBool('route_finished')
+    const currentStatus = order.getString('status')
+
+    // GUARDA DE EXCLUSÃO/PENDÊNCIA:
+    // Se o pedido não tem courier ou foi desvinculado (status='pending' e courier_id vazio),
+    // NUNCA manter nem recalcular chave de lote — limpar route_batch_key e sequence completamente.
+    if (!courierId || (currentStatus === 'pending' && !courierId)) {
+      if (order.getString('route_batch_key') !== '') {
+        order.set('route_batch_key', '')
+      }
+      if (order.getString('route_started_at') !== '') {
+        order.set('route_started_at', '')
+      }
+      e.next()
+      return
+    }
 
     if (courierId && isNowStarted && !currentKey) {
       try {

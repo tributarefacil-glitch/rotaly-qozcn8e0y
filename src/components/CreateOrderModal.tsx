@@ -1448,24 +1448,30 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             ? selectedCoords.lng
             : selectedCustomerRecord?.lng
 
-      // Retry silencioso de criação de pedido: até 3 tentativas gerando novo tracking_code
-      // com backoff curto (~200ms) para neutralizar eventuais colisões de concorrência.
-      const MAX_ORDER_ATTEMPTS = 3
+      // REGRA DE REAPROVEITAMENTO IDEMPOTENTE:
+      // Se já existir pedido pendente da mesma cliente aguardando na central (ex.: excluída de rota),
+      // reutiliza o pedido pendente existente sem duplicar nem gerar pedido fantasma.
       let createdOrder: OrderRecord | null = null
       let usedTrackingCode = ''
       let lastCreateError: unknown = null
 
-      for (let attempt = 1; attempt <= MAX_ORDER_ATTEMPTS; attempt++) {
-        usedTrackingCode = generateTrackingCode()
-        try {
-          createdOrder = await deliveryService.createOrder({
-            tracking_code: usedTrackingCode,
+      try {
+        const pendingExisting = await pb.collection<OrderRecord>('orders').getFullList({
+          filter: `customer_id='${finalCustomerId}' && status='pending' && (courier_id='' || courier_id=null)`,
+          sort: '-created',
+          requestKey: null,
+        })
+
+        if (pendingExisting.length > 0) {
+          const targetPending = pendingExisting[0]
+          usedTrackingCode = targetPending.tracking_code
+          createdOrder = await deliveryService.updateOrder(targetPending.id, {
             seller_id: user?.id,
-            customer_id: finalCustomerId,
             customer_address_id: selectedCustomerAddressId || undefined,
-            courier_id: assignedCourier,
+            courier_id: assignedCourier || '',
             status: 'pending',
-            sequence: null as any,
+            sequence: undefined,
+            route_batch_key: '',
             route_released: false,
             route_released_at: undefined,
             route_started: false,
@@ -1485,15 +1491,62 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             distance_km: routeSuggestion?.distance_km || undefined,
             estimated_arrival: undefined,
           })
-          break
-        } catch (orderErr) {
-          lastCreateError = orderErr
-          console.warn(
-            `Tentativa ${attempt}/${MAX_ORDER_ATTEMPTS} de criação do pedido ${usedTrackingCode} falhou:`,
-            orderErr,
+          console.log(
+            `[CreateOrderModal] Pedido pendente existente ${usedTrackingCode} reaproveitado com sucesso para cliente ${targetCustomerName}`,
           )
-          if (attempt < MAX_ORDER_ATTEMPTS) {
-            await new Promise((resolve) => setTimeout(resolve, 200))
+        }
+      } catch (checkPendingErr) {
+        console.warn(
+          '[CreateOrderModal] Falha ao consultar pedido pendente existente:',
+          checkPendingErr,
+        )
+      }
+
+      if (!createdOrder) {
+        // Retry silencioso de criação de pedido: até 3 tentativas gerando novo tracking_code
+        // com backoff curto (~200ms) para neutralizar eventuais colisões de concorrência.
+        const MAX_ORDER_ATTEMPTS = 3
+        for (let attempt = 1; attempt <= MAX_ORDER_ATTEMPTS; attempt++) {
+          usedTrackingCode = generateTrackingCode()
+          try {
+            createdOrder = await deliveryService.createOrder({
+              tracking_code: usedTrackingCode,
+              seller_id: user?.id,
+              customer_id: finalCustomerId,
+              customer_address_id: selectedCustomerAddressId || undefined,
+              courier_id: assignedCourier,
+              status: 'pending',
+              sequence: null as any,
+              route_batch_key: '',
+              route_released: false,
+              route_released_at: undefined,
+              route_started: false,
+              route_started_at: undefined,
+              ...baseDataForOrder,
+              end_address_name: targetCustomerName,
+              end_address_text: targetAddressText,
+              end_address_lat: targetLat,
+              end_address_lng: targetLng,
+              priority,
+              items: validItems,
+              total_price: totalPrice,
+              notes,
+              assignment_type: assignmentType,
+              route_suggestion_status: suggestionStatus,
+              route_suggestion_details: routeSuggestion || undefined,
+              distance_km: routeSuggestion?.distance_km || undefined,
+              estimated_arrival: undefined,
+            })
+            break
+          } catch (orderErr) {
+            lastCreateError = orderErr
+            console.warn(
+              `Tentativa ${attempt}/${MAX_ORDER_ATTEMPTS} de criação do pedido ${usedTrackingCode} falhou:`,
+              orderErr,
+            )
+            if (attempt < MAX_ORDER_ATTEMPTS) {
+              await new Promise((resolve) => setTimeout(resolve, 200))
+            }
           }
         }
       }

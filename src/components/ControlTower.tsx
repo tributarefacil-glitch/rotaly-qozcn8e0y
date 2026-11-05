@@ -442,54 +442,15 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   const handleConfirmRemoveOrderFromRoute = async () => {
     if (!orderToRemoveFromRoute) return
     const orderId = orderToRemoveFromRoute.id
-    const courierId = orderToRemoveFromRoute.courier_id
     const customerName = orderToRemoveFromRoute.expand?.customer_id?.name || 'Cliente'
 
     setIsRemovingOrderFromRoute(true)
     try {
-      // 1. Atualizar o pedido para status "pending", desvinculando da rota ativa
-      await deliveryService.updateOrder(orderId, {
-        status: 'pending',
-        courier_id: '',
-        sequence: undefined,
-        route_released: false,
-        route_started: false,
-        route_started_at: undefined,
+      await deliveryService.removeOrderFromActiveRoute({
+        orderId,
+        settings: appSettings,
+        reason: `Exclusão de ${customerName} da rota pela Torre de Controle`,
       })
-
-      // 2. Se houver entregador vinculado, reordenar a sequência das paradas restantes dele
-      if (courierId) {
-        try {
-          const remainingOrders = orders
-            .filter(
-              (o) =>
-                o.courier_id === courierId &&
-                o.id !== orderId &&
-                o.status !== 'delivered' &&
-                o.status !== 'cancelled',
-            )
-            .sort((a, b) => (a.sequence ?? 9999) - (b.sequence ?? 9999))
-
-          // Resequenciar a rota restante viariamente pelo menor trajeto
-          await deliveryService.resequenceActiveRouteForCourier(
-            courierId,
-            appSettings,
-            false,
-            'manual_command',
-          )
-
-          // Notificar o entregador via push/notificação em tempo real
-          await deliveryService.createNotification({
-            user_id: courierId,
-            title: '⚠️ Rota Atualizada: Parada Removida',
-            message: `A entrega para ${customerName} foi removida da sua rota pela central.`,
-            type: 'order',
-            read: false,
-          })
-        } catch (reorderErr) {
-          console.warn('Erro ao reordenar sequência do entregador:', reorderErr)
-        }
-      }
 
       toast({
         title: '✓ Cliente removido da rota',

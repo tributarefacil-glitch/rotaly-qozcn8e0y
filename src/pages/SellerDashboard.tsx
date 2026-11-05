@@ -790,37 +790,13 @@ export default function SellerDashboard({ defaultTab = 'overview' }: SellerDashb
     if (!window.confirm(confirmMsg)) return
 
     try {
-      const courierId = order?.courier_id
-      await deliveryService.updateOrder(orderId, {
-        status: 'pending',
-        courier_id: '',
-        sequence: undefined,
-        route_released: false,
-        route_started: false,
-        route_started_at: undefined,
+      await deliveryService.removeOrderFromActiveRoute({
+        orderId,
+        settings,
+        reason: isStarted
+          ? `Exclusão de ${custName} da rota ativa na tela do vendedor`
+          : `Desfazer rota de ${custName} na tela do vendedor`,
       })
-
-      // Se havia entregador, reordenar as sequências restantes viariamente pelo menor trajeto e notificar
-      if (courierId) {
-        try {
-          await deliveryService.resequenceActiveRouteForCourier(
-            courierId,
-            settings,
-            false,
-            'manual_command',
-          )
-
-          await deliveryService.createNotification({
-            user_id: courierId,
-            title: '⚠️ Rota Atualizada: Parada Removida',
-            message: `A entrega para ${custName} foi removida da sua rota pela central e o km viário foi recalculado.`,
-            type: 'order',
-            read: false,
-          })
-        } catch (reorderErr) {
-          console.warn('Erro ao reordenar entregas restantes:', reorderErr)
-        }
-      }
 
       toast.info(`Cliente ${custName} removido da rota e km recalculado imediatamente.`)
       loadData()

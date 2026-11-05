@@ -3951,6 +3951,120 @@ export const deliveryService = {
    * - Recalcula os totais da rota (km, combustível, tempo) mantendo a regra linha = cabeçalho
    * - Dispara notificação push/realtime ao entregador
    */
+  /**
+   * Remove completamente um pedido de uma rota ativa/em andamento:
+   * 1. Zera route_batch_key, sequence, courier_id, flags de rota
+   * 2. Retorna para status 'pending' (visível apenas em clientes aguardando)
+   * 3. Resequencia imediatamente a rota restante do entregador
+   * 4. Registra auditoria com actor Sistema (metadata.system_trigger=true)
+   */
+  async removeOrderFromActiveRoute(params: {
+    orderId: string
+    settings?: Partial<AppSettingsRecord> | null
+    reason?: string
+  }): Promise<{ success: boolean; order: OrderRecord; remainingCount: number }> {
+    const { orderId, settings, reason } = params
+
+    // Verificação defensiva de papel: entregadores nunca alteram rotas
+    const currentAuthRecord = pb.authStore.record as any
+    const currentRole = currentAuthRecord?.role || currentAuthRecord?.papel
+    if (currentRole === 'courier' || currentRole === 'entregador') {
+      const errMsg = `Usuário com papel '${currentRole}' não tem permissão para remover pedidos da rota.`
+      console.warn(`[deliveryService] removeOrderFromActiveRoute bloqueado:`, errMsg)
+      throw new Error(errMsg)
+    }
+
+    try {
+      const existing = await pb.collection<OrderRecord>('orders').getOne(orderId, {
+        expand: 'customer_id,courier_id',
+      })
+      const previousCourierId = existing.courier_id || (existing.expand?.courier_id as any)?.id
+      const customerName =
+        (existing.expand?.customer_id as any)?.name || existing.end_address_name || 'Cliente'
+      const oldBatchKey = existing.route_batch_key || ''
+
+      // 1. Desvincular COMPLETAMENTE o pedido da rota
+      const updatedOrder = await pb.collection<OrderRecord>('orders').update(orderId, {
+        status: 'pending',
+        courier_id: null as any,
+        sequence: null as any,
+        route_batch_key: '',
+        route_released: false,
+        route_released_at: null as any,
+        route_started: false,
+        route_started_at: null as any,
+        route_finished: false,
+        route_finished_at: null as any,
+      })
+
+      // 2. Registrar auditoria automática como Sistema
+      try {
+        await pb.collection('audit_trail').create({
+          user_id: '',
+          actor_name: 'Sistema',
+          collection: 'orders',
+          record_id: orderId,
+          courier_id: previousCourierId || '',
+          action: 'remove_order_from_active_route',
+          field: 'courier_id',
+          old_value: previousCourierId || 'nenhum',
+          new_value: 'removido_para_pendente',
+          timestamp: new Date().toISOString(),
+          metadata: {
+            system_trigger: true,
+            actor_name: 'Sistema',
+            reason: reason || 'Exclusão de cliente da rota ativa pelo operador/vendedor',
+            tracking_code: existing.tracking_code,
+            previous_route_batch_key: oldBatchKey,
+            customer_name: customerName,
+          },
+        })
+      } catch (auditErr) {
+        console.warn('[deliveryService] Erro ao registrar audit_trail na remoção:', auditErr)
+      }
+
+      // 3. Se havia entregador, resequenciar a rota restante imediatamente
+      let remainingCount = 0
+      if (previousCourierId) {
+        try {
+          const reseqRes = await this.resequenceActiveRouteForCourier(
+            previousCourierId,
+            settings,
+            false,
+            'manual_command',
+          )
+          remainingCount = reseqRes.sequencedCount
+
+          // Notificar entregador em tempo real
+          await this.createNotification({
+            user_id: previousCourierId,
+            title: '⚠️ Rota Atualizada: Parada Removida',
+            message: `A entrega para ${customerName} foi removida da sua rota pela central. Sua nova rota tem ${remainingCount} parada(s).`,
+            type: 'order',
+            read: false,
+          })
+        } catch (reseqErr) {
+          console.warn(
+            '[deliveryService] Erro ao resequenciar rota restante do entregador:',
+            reseqErr,
+          )
+        }
+      }
+
+      return { success: true, order: updatedOrder, remainingCount }
+    } catch (err) {
+      console.error('Error removing order from active route:', err)
+      throw err
+    }
+  },
+
+  /**
+   * Adiciona ou Reinclui pedido em rota ativa do entregador:
+   * - Herda a rota e a chave canônica ativa do dia do entregador (nunca lote antigo/morto)
+   * - DISPARA RE-OTIMIZAÇÃO AUTOMÁTICA NO MESMO MOMENTO (resequenceActiveRouteForCourier)
+   * - Atualiza sequências 1..N no PocketBase em tempo real
+   * - Registra auditoria com actor Sistema (metadata.system_trigger=true)
+   */
   async addOrderToActiveRoute(params: {
     orderId: string
     courierId: string
@@ -3985,6 +4099,12 @@ export const deliveryService = {
       const defaultBase = bases.find((b) => b.is_default) || bases[0]
       const now = new Date()
 
+      // Identificar a chave de lote ativa canônica (do pedido em andamento de hoje)
+      const activeBatchKey =
+        courierOrders.find((o) => o.route_started && o.route_batch_key)?.route_batch_key ||
+        lastOrder?.route_batch_key ||
+        ''
+
       // Atribui sequence provisória estritamente superior ao maior sequence atual para NUNCA colidir
       const maxExistingSeq = courierOrders.reduce(
         (max, o) => Math.max(max, Number(o.sequence) || 0),
@@ -3996,6 +4116,7 @@ export const deliveryService = {
       const initialUpdateData: Partial<OrderRecord> = {
         courier_id: courierId,
         sequence: provisionalSequence,
+        route_batch_key: activeBatchKey,
         route_released: true,
         route_released_at: now.toISOString(),
         start_base_name: lastOrder?.start_base_name || defaultBase?.name || 'Mais Saudavel',
@@ -4014,22 +4135,65 @@ export const deliveryService = {
 
       await pb.collection<OrderRecord>('orders').update(orderId, initialUpdateData)
 
-      // 4. REGRA ROTA IMUTÁVEL SEM COMANDO:
-      // O pedido novo fica com provisionalSequence = maxExistingSeq + 1 (fim da fila pendente, paradas anteriores intocadas).
-      // NÃO disparar auto-resequenciamento viário automático aqui — rota só muda por comando explícito de vendedor/admin.
+      // 4. RE-OTIMIZAÇÃO IMEDIATA DA ROTA NO MESMO MOMENTO:
+      // O entregador recebe a nova ordem e sequência de navegação viária instantaneamente
+      let finalSequence = provisionalSequence
+      try {
+        const reseqRes = await this.resequenceActiveRouteForCourier(
+          courierId,
+          settings,
+          false,
+          'manual_command',
+        )
+        if (reseqRes.success) {
+          console.log(
+            `[deliveryService] Rota de ${courier.name} reotimizada automaticamente ao adicionar pedido ${orderId}`,
+          )
+        }
+      } catch (reseqErr) {
+        console.warn('[deliveryService] Erro ao reotimizar viariamente após inclusão:', reseqErr)
+      }
 
-      // 5. Obter pedido atualizado com sua sequência provisória final
+      // 5. Obter pedido atualizado com sua sequência final após otimização
       const finalOrder = await pb.collection<OrderRecord>('orders').getOne(orderId, {
         expand: 'customer_id',
       })
+      finalSequence = Number(finalOrder.sequence) || provisionalSequence
       const customer = finalOrder.expand?.customer_id as CustomerRecord | undefined
 
-      // Criar notificação realtime ao entregador informando a nova parada aguardando otimização
+      // 6. Registrar auditoria automática como Sistema
+      try {
+        await pb.collection('audit_trail').create({
+          user_id: '',
+          actor_name: 'Sistema',
+          collection: 'orders',
+          record_id: orderId,
+          courier_id: courierId,
+          action: 'add_order_to_active_route_auto_optimized',
+          field: 'sequence',
+          old_value: 'pendente',
+          new_value: String(finalSequence),
+          timestamp: new Date().toISOString(),
+          metadata: {
+            system_trigger: true,
+            actor_name: 'Sistema',
+            reason: 'Inclusão de cliente na rota ativa com re-otimização automática imediata',
+            tracking_code: finalOrder.tracking_code,
+            route_batch_key: finalOrder.route_batch_key,
+            courier_name: courier.name,
+            final_sequence: finalSequence,
+          },
+        })
+      } catch (auditErr) {
+        console.warn('[deliveryService] Erro ao registrar audit_trail na inclusão:', auditErr)
+      }
+
+      // 7. Notificar entregador em tempo real
       try {
         await this.createNotification({
           user_id: courierId,
-          title: '📦 Nova Entrega Adicionada à Rota',
-          message: `O pedido ${finalOrder.tracking_code || ''} para ${customer?.name || 'Cliente'} foi adicionado ao fim da sua rota (Parada #${finalOrder.sequence || provisionalSequence}).`,
+          title: '🔄 Rota Otimizada com Nova Entrega',
+          message: `O pedido ${finalOrder.tracking_code || ''} para ${customer?.name || 'Cliente'} foi incluído na sua rota (Parada #${finalSequence}). Sua sequência já foi atualizada pelo menor trajeto viário.`,
           type: 'order',
           read: false,
           order_id: orderId,
@@ -4181,123 +4345,6 @@ export const deliveryService = {
       }
     } catch (err) {
       console.error('Error cancelling active route:', err)
-      throw err
-    }
-  },
-
-  /**
-   * Excluir um pedido da rota ativa do entregador
-   * - Retorna o pedido para o pool de pendentes:
-   *     courier_id = null
-   *     status = 'pending'
-   *     sequence = null
-   *     route_released = false
-   *     route_released_at = null
-   *     route_started = false
-   *     route_started_at = null
-   *     route_finished = false
-   *     route_finished_at = null
-   * - NUNCA permite excluir pedidos já concluídos ('delivered')
-   * - Se autoResequence = true, reexecuta o motor viário e salva a nova sequência dos pedidos restantes
-   */
-  async removeOrderFromActiveRoute(params: {
-    orderId: string
-    courierId: string
-    settings?: Partial<AppSettingsRecord> | null
-    autoResequence?: boolean
-    origin?: string
-  }): Promise<{ success: boolean; remainingCount: number }> {
-    const { orderId, courierId, settings, autoResequence = false, origin } = params
-    try {
-      const order = await pb.collection<OrderRecord>('orders').getOne(orderId)
-      if (order.status === 'delivered') {
-        throw new Error('Entregas já concluídas não podem ser removidas da rota.')
-      }
-
-      const hadVisit = Boolean(order.delivery_time || order.delivery_lat || order.delivery_lng)
-      const orderDistanceKm = Number(order.distance_km) || 0
-
-      await pb.collection('orders').update(orderId, {
-        courier_id: null,
-        status: 'pending',
-        sequence: null,
-        route_released: false,
-        route_released_at: null,
-        route_started: false,
-        route_started_at: null,
-        route_finished: false,
-        route_finished_at: null,
-      })
-
-      // (4) CANCELAMENTO AUTOMÁTICO DE KM:
-      // Pedido não visitado (status !== 'delivered', sem visita registrada) →
-      // recalcular total_route_with_return_km do lote sem a perna dele + audit_trail
-      if (!hadVisit) {
-        try {
-          await this.createAuditTrailEntry({
-            order_id: orderId,
-            user_id: '',
-            actor_name: 'Sistema',
-            action: 'km_canceled_unvisited',
-            old_value: String(orderDistanceKm),
-            new_value: '0',
-            metadata: {
-              system_trigger: true,
-              courier_id: courierId,
-              tracking_code: order.tracking_code,
-              canceled_distance_km: orderDistanceKm,
-              reason: 'removeOrderFromActiveRoute - pedido não visitado',
-            },
-          })
-        } catch (auditErr) {
-          console.warn(
-            '[removeOrderFromActiveRoute] Falha ao registrar audit_trail km_canceled_unvisited:',
-            auditErr,
-          )
-        }
-      }
-
-      // Buscar pedidos restantes ativos da rota desse entregador
-      const remainingOrders = await pb.collection<OrderRecord>('orders').getFullList({
-        filter: `courier_id='${courierId}' && status!='cancelled' && route_finished!=true`,
-        requestKey: null,
-      })
-
-      // Recalcular total_route_with_return_km do lote abatendo a perna do pedido cancelado não visitado
-      if (!hadVisit && remainingOrders.length > 0 && orderDistanceKm > 0) {
-        for (const rem of remainingOrders) {
-          const currentTotal = Number(rem.total_route_with_return_km) || 0
-          const newTotal = Math.max(0, Number((currentTotal - orderDistanceKm).toFixed(2)))
-          try {
-            await pb.collection('orders').update(rem.id, {
-              total_route_with_return_km: newTotal,
-            })
-          } catch (upErr) {
-            console.warn(
-              '[removeOrderFromActiveRoute] Erro ao abater km do pedido restante:',
-              upErr,
-            )
-          }
-        }
-      }
-
-      let remainingCount = 0
-      if (autoResequence && origin === 'manual_command') {
-        const reseqRes = await this.resequenceActiveRouteForCourier(
-          courierId,
-          settings,
-          false,
-          origin,
-        )
-        remainingCount = reseqRes.sequencedCount
-      } else {
-        const pendingRemaining = remainingOrders.filter((o) => o.status !== 'delivered')
-        remainingCount = pendingRemaining.length
-      }
-
-      return { success: true, remainingCount }
-    } catch (err) {
-      console.error('Error removing order from active route:', err)
       throw err
     }
   },
