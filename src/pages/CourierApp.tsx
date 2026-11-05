@@ -116,9 +116,9 @@ export default function CourierApp() {
   // Estado de envio das macros de ocorrência de 1 clique (Item O)
   const [isSubmittingMacro, setIsSubmittingMacro] = useState<string | null>(null)
 
-  // Disparo de macro de ocorrência de 1 clique
+  // Disparo de macro de ocorrência de 1 clique (sem emojis, 4 motivos canônicos)
   const handleSendMacroOccurrence = async (
-    type: 'blitz_transito' | 'rua_bloqueada' | 'beco_a_pe',
+    type: 'rua_bloqueada' | 'area_de_risco' | 'alagamento' | 'retorno_mais_rapido',
     label: string,
   ) => {
     if (!user?.id) {
@@ -145,26 +145,85 @@ export default function CourierApp() {
       }
 
       const nowIso = new Date().toISOString()
-      const firstOrderId = currentRouteOrders[0]?.id || orders[0]?.id || ''
+      const firstOrderId = currentRouteOrders[0]?.id || orders[0]?.id || null
 
       // Gravar na coleção off_route_events vinculando ao route_batch_key
-      await pb.collection('off_route_events').create({
+      // Schema off_route_events: courier_id, order_id (opcional relation), event_type (select),
+      // lat (number obrigatório), lng (number obrigatório), address, notes, deviation_reason
+      const offRoutePayload: Record<string, any> = {
         courier_id: user.id,
-        order_id: firstOrderId,
         event_type: type,
-        deviation_distance_meters: 0,
+        lat,
+        lng,
+        deviation_reason: type,
         address: `Macro 1 clique: ${label} [lote: ${currentBatchKey}]`,
         notes: `Sinalização do entregador: ${label} vinculada ao lote ${currentBatchKey}`,
-        location_lat: lat,
-        location_lng: lng,
-      })
+      }
+      if (firstOrderId) {
+        offRoutePayload.order_id = firstOrderId
+      }
+
+      await pb.collection('off_route_events').create(offRoutePayload)
+
+      // Se o motivo for "RETORNO MAIS RÁPIDO", propagar deviation_reason para o pedido/lote
+      // e marcar courier_reported_shortcut na route_leg_analysis e route_batch_telemetry
+      if (type === 'retorno_mais_rapido') {
+        try {
+          if (firstOrderId) {
+            await pb.collection('orders').update(firstOrderId, {
+              deviation_reason: 'retorno_mais_rapido',
+            })
+          }
+        } catch (errOrderDev) {
+          console.warn('[CourierApp] Aviso ao atualizar deviation_reason do pedido:', errOrderDev)
+        }
+
+        try {
+          if (currentBatchKey) {
+            const telemetryRecords = await pb.collection('route_batch_telemetry').getList(1, 1, {
+              filter: `route_batch_key = '${currentBatchKey}'`,
+            })
+            if (telemetryRecords.items.length > 0) {
+              const bRec = telemetryRecords.items[0]
+              const currentReasons = (bRec as any).deviation_reasons || {}
+              if (firstOrderId) {
+                currentReasons[firstOrderId] = 'retorno_mais_rapido'
+              }
+              currentReasons.macro_shortcut = true
+              await pb.collection('route_batch_telemetry').update(bRec.id, {
+                deviation_reasons: currentReasons,
+              })
+            }
+          }
+        } catch (errBatchDev) {
+          console.warn('[CourierApp] Aviso ao atualizar batch_telemetry:', errBatchDev)
+        }
+
+        try {
+          if (currentBatchKey) {
+            const legRecords = await pb.collection('route_leg_analysis').getList(1, 20, {
+              filter: `route_batch_key = '${currentBatchKey}'`,
+            })
+            for (const leg of legRecords.items) {
+              await pb.collection('route_leg_analysis').update(leg.id, {
+                deviation_reason: 'retorno_mais_rapido',
+                courier_reported_shortcut: true,
+                is_better_route: true,
+                analysis_status: 'candidate_better',
+              })
+            }
+          }
+        } catch (errLegDev) {
+          console.warn('[CourierApp] Aviso ao promover route_leg_analysis:', errLegDev)
+        }
+      }
 
       // Gravar no audit_trail para trilha transparente
       try {
         await pb.collection('audit_trail').create({
           user_id: user.id,
           collection: 'off_route_events',
-          record_id: firstOrderId,
+          record_id: firstOrderId || user.id,
           courier_id: user.id,
           action: 'ocorrencia_macro_entregador',
           field: 'event_type',
@@ -176,6 +235,8 @@ export default function CourierApp() {
             actor_name: user.name || user.email || 'Entregador',
             route_batch_key: currentBatchKey,
             macro_type: type,
+            deviation_reason: type,
+            courier_reported_shortcut: type === 'retorno_mais_rapido',
             lat,
             lng,
           },
@@ -184,8 +245,8 @@ export default function CourierApp() {
         /* intentionally ignored */
       }
 
-      toast.success(`✅ Ocorrência "${label}" registrada!`, {
-        description: 'Sua sinalização foi gravada para a triagem e fechamento das 21h30.',
+      toast.success(`Ocorrência "${label}" registrada com sucesso.`, {
+        description: 'Sua sinalização foi gravada para a triagem e auditoria do trajeto.',
         duration: 5000,
       })
     } catch (err: any) {
@@ -2297,41 +2358,48 @@ export default function CourierApp() {
         </div>
 
         {/* MACROS DE OCORRÊNCIA DE 1 CLIQUE (Item O) */}
-        {/* Barra com 3 botões rápidos: 🚦 Blitz/Trânsito, ❌ Rua Bloqueada, 🏃 Beco a Pé */}
+        {/* Barra com 4 botões de motivo de ocorrência (1 Clique) — SEM EMOJIS, TEXTO EM MAIÚSCULAS */}
         <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-md">
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
             <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-              <span>⚡</span> Sinalizar Ocorrência (1 Clique)
+              SINALIZAR OCORRÊNCIA (1 CLIQUE)
             </span>
             <span className="text-[10px] text-slate-400 font-medium">Geolocalizado no lote</span>
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <button
               type="button"
               disabled={isSubmittingMacro !== null}
-              onClick={() => handleSendMacroOccurrence('blitz_transito', 'Blitz/Trânsito')}
-              className="flex flex-col items-center justify-center p-2 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center"
+              onClick={() => handleSendMacroOccurrence('rua_bloqueada', 'RUA BLOQUEADA')}
+              className="flex flex-col items-center justify-center p-2.5 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center min-h-[52px]"
             >
-              <span className="text-lg">🚦</span>
-              <span className="text-[11px] font-bold mt-0.5 leading-tight">Blitz/Trânsito</span>
+              <span className="text-[11px] font-bold leading-tight">RUA BLOQUEADA</span>
             </button>
             <button
               type="button"
               disabled={isSubmittingMacro !== null}
-              onClick={() => handleSendMacroOccurrence('rua_bloqueada', 'Rua Bloqueada')}
-              className="flex flex-col items-center justify-center p-2 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center"
+              onClick={() => handleSendMacroOccurrence('area_de_risco', 'ÁREA DE RISCO')}
+              className="flex flex-col items-center justify-center p-2.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center min-h-[52px]"
             >
-              <span className="text-lg">❌</span>
-              <span className="text-[11px] font-bold mt-0.5 leading-tight">Rua Bloqueada</span>
+              <span className="text-[11px] font-bold leading-tight">ÁREA DE RISCO</span>
             </button>
             <button
               type="button"
               disabled={isSubmittingMacro !== null}
-              onClick={() => handleSendMacroOccurrence('beco_a_pe', 'Beco a Pé')}
-              className="flex flex-col items-center justify-center p-2 rounded-xl border border-blue-300 bg-blue-50 hover:bg-blue-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center"
+              onClick={() => handleSendMacroOccurrence('alagamento', 'ALAGAMENTO')}
+              className="flex flex-col items-center justify-center p-2.5 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center min-h-[52px]"
             >
-              <span className="text-lg">🏃</span>
-              <span className="text-[11px] font-bold mt-0.5 leading-tight">Beco a Pé</span>
+              <span className="text-[11px] font-bold leading-tight">ALAGAMENTO</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSubmittingMacro !== null}
+              onClick={() =>
+                handleSendMacroOccurrence('retorno_mais_rapido', 'RETORNO MAIS RÁPIDO')
+              }
+              className="flex flex-col items-center justify-center p-2.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 active:scale-95 transition text-slate-800 disabled:opacity-50 text-center min-h-[52px]"
+            >
+              <span className="text-[11px] font-bold leading-tight">RETORNO MAIS RÁPIDO</span>
             </button>
           </div>
         </div>

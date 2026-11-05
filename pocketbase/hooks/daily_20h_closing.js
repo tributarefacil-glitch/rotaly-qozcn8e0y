@@ -516,13 +516,19 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
         const macroType = latestMacro.getString('event_type') || 'desvio'
         const macroNote = latestMacro.getString('notes') || latestMacro.getString('address') || ''
         const macroDesc =
-          macroType === 'blitz_transito'
-            ? '🚦 Blitz/Trânsito'
-            : macroType === 'rua_bloqueada'
-              ? '❌ Rua Bloqueada'
-              : macroType === 'beco_a_pe'
-                ? '🏃 Beco a Pé'
-                : `Ocorrência (${macroNote || macroType})`
+          macroType === 'rua_bloqueada'
+            ? 'RUA BLOQUEADA'
+            : macroType === 'area_de_risco'
+              ? 'ÁREA DE RISCO'
+              : macroType === 'alagamento'
+                ? 'ALAGAMENTO'
+                : macroType === 'retorno_mais_rapido'
+                  ? 'RETORNO MAIS RÁPIDO'
+                  : macroType === 'blitz_transito'
+                    ? 'Blitz/Trânsito'
+                    : macroType === 'beco_a_pe'
+                      ? 'Beco a Pé'
+                      : `Ocorrência (${macroNote || macroType})`
 
         const prefilledJustification = `Entregador sinalizou ${macroDesc} às ${macroTimeStr}`
         const recipient = resolveAdminEmail(companyId)
@@ -580,7 +586,7 @@ cronAdd('daily_21h30_closing_check', '30 0 * * *', () => {
           const htmlMsg = `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 2px solid #ef4444; background: #fff; border-radius: 8px;">
               <div style="background: #ef4444; color: white; padding: 8px 12px; border-radius: 4px; font-weight: bold; margin-bottom: 12px;">
-                🚨 TRIAGEM PRIORITÁRIA — Desvio &gt;20% com Macro do Entregador
+                TRIAGEM PRIORITÁRIA — Desvio &gt;20% com Macro do Entregador
               </div>
               <h3 style="color: #0f172a; margin-top: 0;">Lote: <code>${bKey}</code> · Entregador: <strong>${courierName}</strong></h3>
               <p style="background: #f1f5f9; padding: 10px; border-left: 4px solid #0052cc; font-size: 14px;">
