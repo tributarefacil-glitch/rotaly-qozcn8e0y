@@ -1885,10 +1885,35 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         }
       }
 
+      // Execução e renderização progressiva por entregador:
+      // À medida que cada entregador calcula sua rota OSRM, a polilinha aparece no mapa imediatamente,
+      // sem esperar que todos os entregadores terminem.
+      const handleCourierRouteCalculated = (routeResult: any) => {
+        if (!isCurrent || !routeResult) return
+        setActiveRoutesData((prev) => {
+          const idx = prev.findIndex((r) => r.courierId === routeResult.courierId)
+          if (idx >= 0) {
+            const next = [...prev]
+            next[idx] = routeResult
+            return next
+          }
+          return [...prev, routeResult]
+        })
+      }
+
+      const computeAndPublishCourierRoute = async (item: (typeof activeRouteCouriers)[0]) => {
+        const res = await computeCourierRoute(item)
+        if (res && isCurrent) {
+          handleCourierRouteCalculated(res)
+        }
+        return res
+      }
+
       // Concorrência limitada a 4 em voo via asyncPool existente
-      const rawResults = await asyncPool(4, activeRouteCouriers, computeCourierRoute)
+      const rawResults = await asyncPool(4, activeRouteCouriers, computeAndPublishCourierRoute)
       const results = rawResults.filter(Boolean) as any[]
       if (isCurrent) {
+        // Garante sincronia final de ordem/composição exata
         setActiveRoutesData(results)
 
         // 3. Alerta sonoro de exceção na Torre com deduplicação por Set:
@@ -4236,7 +4261,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     if (norm === 'bicicleta' || norm === 'bicycle' || norm === 'bike') {
       return <span className="text-sm select-none leading-none">🚲</span>
     }
-    return <span className="text-sm select-none leading-none">🛵</span>
+    return <span className="text-sm select-none leading-none">🏍️</span>
   }
 
   // Calculate ETA display consolidado com duplo ETA quando em rota ativa

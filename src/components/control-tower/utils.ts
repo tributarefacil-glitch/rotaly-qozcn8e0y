@@ -160,7 +160,7 @@ export function renderVehicleIcon(type?: string): React.ReactNode {
   if (norm === 'bicicleta' || norm === 'bicycle' || norm === 'bike') {
     return React.createElement('span', { className: 'text-sm select-none leading-none' }, '🚲')
   }
-  return React.createElement('span', { className: 'text-sm select-none leading-none' }, '🛵')
+  return React.createElement('span', { className: 'text-sm select-none leading-none' }, '🏍️')
 }
 
 export function getOrderKanbanCategory(

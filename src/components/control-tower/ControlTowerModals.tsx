@@ -265,7 +265,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                       </Badge>
                     ) : selectedOrder.status === 'in_transit' || selectedOrder.route_started ? (
                       <Badge className="bg-blue-600 text-white font-bold text-xs animate-pulse">
-                        🛵 Em Trânsito
+                        🏍️ Em Trânsito
                       </Badge>
                     ) : selectedOrder.status === 'address_error' ||
                       selectedOrder.status === 'client_absent' ? (
@@ -999,7 +999,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                                 </span>
                               </div>
 
-                              {/* 2. Entregador 🛵 (Com indicador de desvio em vermelho se aplicável) */}
+                              {/* 2. Entregador 🏍️ (Com indicador de desvio em vermelho se aplicável) */}
                               {orderCourierInfo && (
                                 <div
                                   style={{ left: `${courierPos.x}%`, top: `${courierPos.y}%` }}
@@ -1113,7 +1113,7 @@ export const ControlTowerModals: React.FC<ControlTowerModalsProps> = ({
                       <span className="text-rose-400 font-bold">Linha de Desvio</span> (&gt;600m)
                     </span>
                     <span className="flex items-center gap-1 text-slate-300">
-                      <span>🛵 🚗 🚛 🚲</span>
+                      <span>🏍️ 🚗 🚛 🚲</span>
                       <span>Entregador</span>
                     </span>
                     <span className="flex items-center gap-1 text-slate-300">

@@ -67,7 +67,7 @@ export function getVehicleEmoji(type?: string): string {
   if (norm === 'carro' || norm === 'car' || norm === 'van') return '🚗'
   if (norm === 'caminhao' || norm === 'caminhão' || norm === 'truck') return '🚛'
   if (norm === 'bicicleta' || norm === 'bicycle' || norm === 'bike') return '🚲'
-  return '🛵' // moto default
+  return '🏍️' // moto default
 }
 
 export function getVehicleLabel(type?: string): string {

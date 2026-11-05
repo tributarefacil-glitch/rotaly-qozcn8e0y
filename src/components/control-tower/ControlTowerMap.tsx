@@ -136,7 +136,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                         : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
                     }`}
                   >
-                    <span>🛵 Em Rota ({activeRouteCouriers.length})</span>
+                    <span>🏍️ Em Rota ({activeRouteCouriers.length})</span>
                   </button>
                   <button
                     type="button"
@@ -516,7 +516,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                         </span>
                       </span>
                       <span className="border-l border-slate-700/80 pl-2 text-slate-300 flex items-center gap-1">
-                        <span>🛵/🚗</span>
+                        <span>🏍️/🚗</span>
                         <span>Entregador</span>
                       </span>
                     </div>
@@ -579,7 +579,7 @@ export const ControlTowerMap: React.FC<ControlTowerMapProps> = ({
                         : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
                     }`}
                   >
-                    <span>🛵 Em Rota ({activeRouteCouriers.length})</span>
+                    <span>🏍️ Em Rota ({activeRouteCouriers.length})</span>
                   </button>
                   <button
                     type="button"
