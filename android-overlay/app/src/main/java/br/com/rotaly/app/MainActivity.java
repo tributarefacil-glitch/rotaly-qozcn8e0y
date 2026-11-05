@@ -379,12 +379,18 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public boolean openNavigationApp(double lat, double lng, String appName, String label) {
+            return openNavigationApp(lat, lng, appName, label, 0, 0, null);
+        }
+
+        @JavascriptInterface
+        public boolean openNavigationApp(double lat, double lng, String appName, String label, double originLat, double originLng, String waypointsStr) {
             try {
                 boolean hasCoords = !Double.isNaN(lat) && !Double.isNaN(lng) &&
                         (Math.abs(lat) > 0.000001 || Math.abs(lng) > 0.000001);
                 String destinationText = (label != null && !label.trim().isEmpty()) ? label.trim() : "";
 
                 if ("waze".equalsIgnoreCase(appName)) {
+                    // Waze NÃO suporta waypoints — destino único
                     String wazeUrl;
                     if (hasCoords) {
                         wazeUrl = "https://waze.com/ul?ll=" + lat + "," + lng + "&navigate=yes";
@@ -401,7 +407,6 @@ public class MainActivity extends AppCompatActivity {
                         startActivity(intent);
                         return true;
                     } catch (Exception fallback) {
-                        // Se app Waze não estiver instalado ou falhar, abre via Intent genérica com fallback no navegador externo
                         try {
                             Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(wazeUrl));
                             browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -413,30 +418,33 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 } else {
-                    // Google Maps / Navegação
-                    Intent intent;
-                    String mapsWeb;
-                    if (hasCoords) {
-                        String uriStr = "google.navigation:q=" + lat + "," + lng;
-                        intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriStr));
-                        mapsWeb = "https://www.google.com/maps/dir/?api=1&destination=" + lat + "," + lng;
-                    } else if (!destinationText.isEmpty()) {
-                        String uriStr = "geo:0,0?q=" + Uri.encode(destinationText);
-                        intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriStr));
-                        mapsWeb = "https://www.google.com/maps/search/?api=1&query=" + Uri.encode(destinationText);
-                    } else {
-                        String uriStr = "geo:0,0";
-                        intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriStr));
-                        mapsWeb = "https://www.google.com/maps";
-                    }
+                    // Google Maps com suporte a waypoints da rota otimizada
+                    boolean hasOrigin = !Double.isNaN(originLat) && !Double.isNaN(originLng) &&
+                            (Math.abs(originLat) > 0.000001 || Math.abs(originLng) > 0.000001);
+                    boolean hasWaypoints = waypointsStr != null && !waypointsStr.trim().isEmpty();
 
+                    StringBuilder mapsDir = new StringBuilder("https://www.google.com/maps/dir/?api=1");
+                    if (hasOrigin) {
+                        mapsDir.append("&origin=").append(originLat).append(",").append(originLng);
+                    }
+                    if (hasCoords) {
+                        mapsDir.append("&destination=").append(lat).append(",").append(lng);
+                    } else if (!destinationText.isEmpty()) {
+                        mapsDir.append("&destination=").append(Uri.encode(destinationText));
+                    }
+                    if (hasWaypoints) {
+                        mapsDir.append("&waypoints=").append(waypointsStr.trim());
+                    }
+                    mapsDir.append("&travelmode=driving");
+                    String mapsWeb = mapsDir.toString();
+
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(mapsWeb));
                     intent.setPackage("com.google.android.apps.maps");
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     try {
                         startActivity(intent);
                         return true;
                     } catch (Exception fallback) {
-                        // Se app Google Maps nativo não estiver disponível, abre via navegador do sistema
                         try {
                             Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(mapsWeb));
                             browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

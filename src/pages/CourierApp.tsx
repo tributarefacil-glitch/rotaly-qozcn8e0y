@@ -49,6 +49,7 @@ import { getUserGeolocation } from '@/components/BaseAddressAutocomplete'
 import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
+import { syncAndValidateRouteCache } from '@/lib/activeRouteHelper'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -107,12 +108,17 @@ export default function CourierApp() {
   const [isFinishRouteModalOpen, setIsFinishRouteModalOpen] = useState(false)
   const [isNavigationChoiceOpen, setIsNavigationChoiceOpen] = useState(false)
   const [navigationTarget, setNavigationTarget] = useState<{
-    name: string
+    name?: string
     address?: string
     lat?: number
     lng?: number
+    waypoints?: Array<{
+      lat?: number | string | null
+      lng?: number | string | null
+      address?: string | null
+      label?: string | null
+    }>
   } | null>(null)
-
   // Estado de envio das macros de ocorrência de 1 clique (Item O)
   const [isSubmittingMacro, setIsSubmittingMacro] = useState<string | null>(null)
 
@@ -464,11 +470,9 @@ export default function CourierApp() {
       setOrders(allOrders)
       setIsServingFromOfflineCache(false)
 
-      // Salva no IndexedDB para persistência offline da rota do dia
-      if (allOrders.length > 0) {
-        await offlineRouteStorage.saveRouteOrders(user.id, allOrders)
-        setOfflineCacheSavedAt(Date.now())
-      }
+      // Sincroniza e valida cache com o servidor (invalida se route_batch_key mudou)
+      await syncAndValidateRouteCache(user.id, allOrders)
+      setOfflineCacheSavedAt(Date.now())
     } catch (err) {
       console.warn('Falha na rede ao carregar pedidos, recorrendo ao cache offline IndexedDB:', err)
       // Fallback gracioso: ler do IndexedDB
@@ -1725,12 +1729,65 @@ export default function CourierApp() {
     handleConfirmStartRoute()
   }
 
+  // Monta as próximas paradas da rota ativa como waypoints intermediários para navegação Google Maps
+  const buildRemainingWaypointsForOrder = (
+    activeOrder?: OrderRecord | null,
+  ): Array<{
+    lat?: number | string | null
+    lng?: number | string | null
+    address?: string | null
+    label?: string | null
+  }> => {
+    if (!activeOrder || currentRouteOrders.length <= 1) return []
+
+    // Encontrar índice da entrega atual dentro da sequência planejada
+    const currentIndex = currentRouteOrders.findIndex((o) => o.id === activeOrder.id)
+    const subsequentOrders =
+      currentIndex >= 0
+        ? currentRouteOrders.slice(currentIndex + 1)
+        : currentRouteOrders.filter((o) => o.id !== activeOrder.id)
+
+    // Filtrar apenas paradas ainda pendentes (não entregues e não canceladas)
+    const pendingSubsequent = subsequentOrders.filter(
+      (o) =>
+        o.status !== 'delivered' &&
+        o.status !== 'cancelled' &&
+        o.status !== 'client_absent' &&
+        o.status !== 'address_error',
+    )
+
+    // Limitar às próximas 9 paradas (limite Google Maps waypoints)
+    return pendingSubsequent.slice(0, 9).map((o) => {
+      const cust = o.expand?.customer_id
+      const targetLat =
+        cust?.lat !== undefined && cust?.lat !== null && !isNaN(Number(cust.lat))
+          ? cust.lat
+          : o.end_address_lat
+      const targetLng =
+        cust?.lng !== undefined && cust?.lng !== null && !isNaN(Number(cust.lng))
+          ? cust.lng
+          : o.end_address_lng
+      const targetAddress =
+        cust?.address ||
+        (cust?.street
+          ? `${cust.street}${cust.complement ? `, ${cust.complement}` : ''} - ${cust.neighborhood || cust.city || ''}`
+          : o.end_address_text || '')
+      return {
+        lat: targetLat,
+        lng: targetLng,
+        address: targetAddress,
+        label: cust?.name || o.end_address_name || 'Próxima Parada',
+      }
+    })
+  }
+
   // Navegação externa (Google Maps / Waze) com escolha do entregador
   const openExternalNavigation = (
     address: string,
     lat?: number | string | null,
     lng?: number | string | null,
     label = 'Destino',
+    activeOrderForWaypoints?: OrderRecord | null,
   ) => {
     const parsedLat =
       lat !== undefined && lat !== null && lat !== '' && !isNaN(Number(lat))
@@ -1741,11 +1798,16 @@ export default function CourierApp() {
         ? Number(lng)
         : undefined
 
+    const remainingWps = buildRemainingWaypointsForOrder(
+      activeOrderForWaypoints || currentActiveDelivery || null,
+    )
+
     setNavigationTarget({
       name: label,
       address,
       lat: parsedLat,
       lng: parsedLng,
+      waypoints: remainingWps,
     })
     setIsNavigationChoiceOpen(true)
   }
@@ -3030,6 +3092,7 @@ export default function CourierApp() {
                               undefined,
                               undefined,
                               `Novo endereço (${currentActiveDelivery.expand?.customer_id?.name || 'Cliente'})`,
+                              currentActiveDelivery,
                             )
                           }}
                           className="h-8 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[11px] rounded-lg flex items-center gap-1.5"
@@ -3426,6 +3489,29 @@ export default function CourierApp() {
         destinationAddress={navigationTarget?.address}
         lat={navigationTarget?.lat}
         lng={navigationTarget?.lng}
+        origin={
+          currentPosition
+            ? { lat: currentPosition.coords.latitude, lng: currentPosition.coords.longitude }
+            : undefined
+        }
+        remainingWaypoints={navigationTarget?.waypoints}
+        onNavigateStarted={() => {
+          // Quando o entregador inicia a navegação externa para uma entrega,
+          // registramos o evento para telemetria/auditoria
+          if (currentActiveDelivery?.id) {
+            deliveryService
+              .logAuditTrail({
+                order_id: currentActiveDelivery.id,
+                action: 'navigation_started',
+                notes: `Navegação GPS externa iniciada para ${navigationTarget?.name || 'cliente'}${
+                  navigationTarget?.waypoints && navigationTarget.waypoints.length > 0
+                    ? ` com ${Math.min(navigationTarget.waypoints.length, 9)} paradas seguintes da rota otimizada`
+                    : ''
+                }`,
+              })
+              .catch(() => {})
+          }
+        }}
       />
     </div>
   )

@@ -1,5 +1,6 @@
 import type { OrderRecord } from '@/types/delivery'
 import { getOperationalWindow, isTodayOrder, type OperationalWindow } from '@/lib/operationalWindow'
+import { offlineRouteStorage } from '@/services/offlineRouteStorage'
 
 /**
  * Critério centralizado e unificado de verificação de rota ativa de entregador.
@@ -120,4 +121,62 @@ export function isCourierRecentlyFinished(
   }
 
   return false
+}
+
+/**
+ * Valida o lote ativo do servidor contra o cache local do entregador.
+ * Invalida e limpa o cache local caso:
+ * - A chave do lote (route_batch_key) tenha mudado entre servidor e cache
+ * - O servidor não tenha mais rota ativa para o entregador
+ * - Haja lote mais recente no servidor
+ * Garante que o entregador nunca veja um lote antigo em cache quando o vendedor/Torre
+ * tiver liberado um novo lote ou atualizado a sequência.
+ */
+export async function syncAndValidateRouteCache(
+  courierId: string,
+  serverOrders: OrderRecord[],
+): Promise<void> {
+  if (!courierId) return
+
+  try {
+    const serverActiveOrders = getActiveRouteOrdersForCourier(courierId, serverOrders)
+    const serverBatchKey =
+      serverActiveOrders.find((o) => Boolean(o.route_batch_key))?.route_batch_key || null
+
+    const cached = await offlineRouteStorage.getCachedRouteOrders(courierId)
+    if (!cached || !Array.isArray(cached.orders) || cached.orders.length === 0) {
+      if (serverActiveOrders.length > 0) {
+        await offlineRouteStorage.saveRouteOrders(courierId, serverActiveOrders)
+      }
+      return
+    }
+
+    const cachedBatchKey =
+      cached.orders.find((o) => Boolean(o.route_batch_key))?.route_batch_key || null
+
+    // Se o lote mudou (novo batch no servidor), descarta imediatamente o cache antigo
+    if (serverBatchKey && cachedBatchKey && serverBatchKey !== cachedBatchKey) {
+      await offlineRouteStorage.clearRouteCache(courierId)
+      if (serverActiveOrders.length > 0) {
+        await offlineRouteStorage.saveRouteOrders(courierId, serverActiveOrders)
+      }
+      return
+    }
+
+    // Se no servidor a rota já terminou, limpa o cache local para não manter paradas zumbis
+    if (serverActiveOrders.length === 0 && cached.orders.length > 0) {
+      const anyStillActiveInCache = cached.orders.some((o) => isOrderInActiveRoute(o))
+      if (!anyStillActiveInCache) {
+        await offlineRouteStorage.clearRouteCache(courierId)
+      }
+      return
+    }
+
+    // Atualiza cache local com a versão canônica e atualizada do servidor
+    if (serverActiveOrders.length > 0) {
+      await offlineRouteStorage.saveRouteOrders(courierId, serverActiveOrders)
+    }
+  } catch (err) {
+    console.warn('[activeRouteHelper] syncAndValidateRouteCache falhou:', err)
+  }
 }

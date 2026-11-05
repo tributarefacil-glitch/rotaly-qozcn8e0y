@@ -175,6 +175,34 @@ class OfflineRouteStorageService {
   }
 
   /**
+   * Remove o cache local de rota para o entregador especificado (IndexedDB e localStorage).
+   */
+  async clearRouteCache(courierId: string): Promise<void> {
+    if (!courierId) return
+
+    try {
+      localStorage.removeItem(`rotaly_cache_route_${courierId}`)
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      const db = await this.getDB()
+      if (db) {
+        await new Promise<void>((resolve) => {
+          const tx = db.transaction(STORE_ROUTE_CACHE, 'readwrite')
+          const store = tx.objectStore(STORE_ROUTE_CACHE)
+          const delReq = store.delete(courierId)
+          delReq.onsuccess = () => resolve()
+          delReq.onerror = () => resolve()
+        })
+      }
+    } catch (err) {
+      console.warn('[OfflineStorage] Falha ao limpar cache de rota no IndexedDB:', err)
+    }
+  }
+
+  /**
    * Obtém a última rota salva em cache local para o entregador.
    */
   async getCachedRouteOrders(courierId: string): Promise<CachedRoutePayload | null> {

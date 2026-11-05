@@ -10,6 +10,13 @@ import { Button } from '@/components/ui/button'
 import { Navigation, MapPin } from 'lucide-react'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 
+export interface NavigationWaypoint {
+  lat?: number | string | null
+  lng?: number | string | null
+  address?: string | null
+  label?: string | null
+}
+
 interface NavigationAppChoiceModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -17,6 +24,8 @@ interface NavigationAppChoiceModalProps {
   destinationAddress?: string
   lat?: number | string | null
   lng?: number | string | null
+  origin?: { lat?: number | string | null; lng?: number | string | null }
+  remainingWaypoints?: NavigationWaypoint[]
   onNavigateStarted?: () => void
 }
 
@@ -27,6 +36,8 @@ export const NavigationAppChoiceModal: React.FC<NavigationAppChoiceModalProps> =
   destinationAddress,
   lat,
   lng,
+  origin,
+  remainingWaypoints,
   onNavigateStarted,
 }) => {
   const handleChoose = (app: 'waze' | 'google_maps') => {
@@ -35,6 +46,8 @@ export const NavigationAppChoiceModal: React.FC<NavigationAppChoiceModalProps> =
       lng,
       address: destinationAddress,
       label: destinationName,
+      origin,
+      waypoints: remainingWaypoints,
       app,
     })
     onNavigateStarted?.()
@@ -65,6 +78,12 @@ export const NavigationAppChoiceModal: React.FC<NavigationAppChoiceModalProps> =
             </div>
             {destinationAddress && (
               <p className="text-[11px] text-slate-400 truncate pl-6">{destinationAddress}</p>
+            )}
+            {remainingWaypoints && remainingWaypoints.length > 0 && (
+              <p className="text-[10px] text-cyan-300 pl-6 pt-0.5">
+                + {Math.min(remainingWaypoints.length, 9)} paradas seguintes da rota inclusas no
+                trajeto
+              </p>
             )}
           </div>
         )}

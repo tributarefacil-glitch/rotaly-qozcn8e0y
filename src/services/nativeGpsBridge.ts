@@ -56,6 +56,9 @@ declare global {
         lng: number,
         appName: 'waze' | 'google_maps',
         label?: string,
+        originLat?: number,
+        originLng?: number,
+        waypointsStr?: string,
       ) => boolean
     }
     // Callback invocado pelo Android nativo a cada ponto de GPS coletado em segundo plano
@@ -448,11 +451,18 @@ class NativeGpsBridgeService {
     lng?: number | string | null
     address?: string | null
     label?: string | null
+    origin?: { lat?: number | string | null; lng?: number | string | null }
+    waypoints?: Array<{
+      lat?: number | string | null
+      lng?: number | string | null
+      address?: string | null
+      label?: string | null
+    }>
     app: 'waze' | 'google_maps'
   }) {
-    const { address, label, app } = params
+    const { address, label, origin, waypoints, app } = params
 
-    // Sanitização e validação das coordenadas
+    // Sanitização e validação das coordenadas de destino
     const numLat =
       params.lat !== undefined && params.lat !== null && params.lat !== ''
         ? Number(params.lat)
@@ -470,10 +480,68 @@ class NativeGpsBridgeService {
     const finalLat = hasValidCoords ? numLat : 0
     const finalLng = hasValidCoords ? numLng : 0
 
+    // Sanitização de origem opcional (posição atual do entregador)
+    const originLatNum =
+      origin?.lat !== undefined && origin?.lat !== null && origin?.lat !== ''
+        ? Number(origin.lat)
+        : NaN
+    const originLngNum =
+      origin?.lng !== undefined && origin?.lng !== null && origin?.lng !== ''
+        ? Number(origin.lng)
+        : NaN
+    const hasValidOrigin =
+      !isNaN(originLatNum) &&
+      !isNaN(originLngNum) &&
+      (Math.abs(originLatNum) > 0.000001 || Math.abs(originLngNum) > 0.000001)
+
     // Destino textual prioritário: address se houver, senão label
     const trimmedAddress = (address || '').trim()
     const trimmedLabel = (label || '').trim()
     const destinationQuery = trimmedAddress || trimmedLabel || ''
+
+    // Montagem dos waypoints para o Google Maps (máximo 9 intermediários)
+    // Cada parada pode ser lat,lng ou texto codificado
+    const cleanedWaypoints: string[] = []
+    if (Array.isArray(waypoints) && waypoints.length > 0) {
+      for (const wp of waypoints.slice(0, 9)) {
+        const wpLat =
+          wp.lat !== undefined && wp.lat !== null && wp.lat !== '' ? Number(wp.lat) : NaN
+        const wpLng =
+          wp.lng !== undefined && wp.lng !== null && wp.lng !== '' ? Number(wp.lng) : NaN
+        if (
+          !isNaN(wpLat) &&
+          !isNaN(wpLng) &&
+          (Math.abs(wpLat) > 0.000001 || Math.abs(wpLng) > 0.000001)
+        ) {
+          cleanedWaypoints.push(`${wpLat},${wpLng}`)
+        } else {
+          const wpText = (wp.address || wp.label || '').trim()
+          if (wpText) {
+            cleanedWaypoints.push(encodeURIComponent(wpText))
+          }
+        }
+      }
+    }
+    const waypointsParam = cleanedWaypoints.length > 0 ? cleanedWaypoints.join('|') : ''
+
+    // Helper para montar a URL canônica do Google Maps com waypoints
+    const buildGoogleMapsDirUrl = (): string => {
+      const destination = hasValidCoords
+        ? `${finalLat},${finalLng}`
+        : encodeURIComponent(destinationQuery)
+
+      const queryParts: string[] = ['api=1']
+      if (hasValidOrigin) {
+        queryParts.push(`origin=${originLatNum},${originLngNum}`)
+      }
+      queryParts.push(`destination=${destination}`)
+      if (waypointsParam) {
+        // waypoints separados por | (mantendo as vírgulas de coordenadas e barras literais conforme spec Google)
+        queryParts.push(`waypoints=${waypointsParam}`)
+      }
+      queryParts.push('travelmode=driving')
+      return `https://www.google.com/maps/dir/?${queryParts.join('&')}`
+    }
 
     // 1. Em ambiente nativo Android: SEMPRE usar a ponte nativa RotalyNativeGps se presente
     if (this.isNativeEnvironment()) {
@@ -484,6 +552,9 @@ class NativeGpsBridgeService {
             finalLng,
             app,
             destinationQuery,
+            hasValidOrigin ? originLatNum : 0,
+            hasValidOrigin ? originLngNum : 0,
+            waypointsParam,
           )
           if (handled) return
         } catch (err) {
@@ -491,9 +562,11 @@ class NativeGpsBridgeService {
         }
       }
 
-      // Em ambiente nativo, NUNCA usar window.open (WebView bloqueia links externos).
-      // Se a ponte direta falhar ou window.open for ineficaz, tentar redirecionar por location.href
-      // com os esquemas diretos de intent/app como proteção adicional dentro do WebView:
+      // Em ambiente nativo, se a ponte direta falhar ou window.open for ineficaz:
+      // Waze NÃO suporta waypoints — mantém destino único (waze://?ll=...)
+      // Google Maps com waypoints: utiliza a URL completa do Google Maps que o WebViewClient
+      // intercepta via shouldOverrideUrlLoading (starts with https://www.google.com/maps)
+      // e abre direto na Activity do Google Maps com todos os waypoints na rota.
       try {
         if (app === 'waze') {
           const nativeUrl = hasValidCoords
@@ -502,10 +575,8 @@ class NativeGpsBridgeService {
           window.location.href = nativeUrl
           return
         } else {
-          const nativeUrl = hasValidCoords
-            ? `google.navigation:q=${finalLat},${finalLng}`
-            : `geo:0,0?q=${encodeURIComponent(destinationQuery)}`
-          window.location.href = nativeUrl
+          const mapsDirUrl = buildGoogleMapsDirUrl()
+          window.location.href = mapsDirUrl
           return
         }
       } catch (redirErr) {
@@ -514,17 +585,16 @@ class NativeGpsBridgeService {
       return
     }
 
-    // 2. Ambiente Web (navegador/PWA sem ponte nativa): mantém comportamento com window.open
+    // 2. Ambiente Web (navegador/PWA sem ponte nativa)
     if (app === 'waze') {
+      // Waze mantém destino único SEM waypoints
       const wazeUrl = hasValidCoords
         ? `https://waze.com/ul?ll=${finalLat},${finalLng}&navigate=yes`
         : `https://waze.com/ul?q=${encodeURIComponent(destinationQuery)}`
       window.open(wazeUrl, '_blank')
     } else {
-      const destination = hasValidCoords
-        ? `${finalLat},${finalLng}`
-        : encodeURIComponent(destinationQuery)
-      const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${destination}`
+      // Google Maps com api=1, origin, destination, waypoints e travelmode=driving
+      const mapsUrl = buildGoogleMapsDirUrl()
       window.open(mapsUrl, '_blank')
     }
   }
