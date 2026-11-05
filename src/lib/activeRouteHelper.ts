@@ -7,8 +7,26 @@ import { offlineRouteStorage } from '@/services/offlineRouteStorage'
  * Um pedido está em rota ativa se e somente se:
  * - route_started === true
  * - route_finished !== true (ou seja, false, null ou undefined)
+ * - NÃO pertencer a um LOTE MORTO (ver abaixo)
  * - status não for cancelado nem entregue (para fins de trânsito em curso)
+ *
+ * LOTE MORTO: qualquer route_batch_key em que UM pedido qualquer tenha route_finished = true.
+ * O "Voltar para base" grava route_finished=true no lote; pedidos pendentes remanescentes desse
+ * lote (composição mista: entregues/encerrados + pendentes) NUNCA mais contam como rota ativa,
+ * mesmo que ainda tragam route_started=true com route_finished=false no próprio registro.
  */
+export function buildDeadRouteBatchKeys(orders: OrderRecord[]): Set<string> {
+  const keys = new Set<string>()
+  for (const o of orders) {
+    if (o.route_finished === true && o.route_batch_key) keys.add(o.route_batch_key)
+  }
+  return keys
+}
+
+export function isOrderInDeadBatch(order: OrderRecord, deadBatchKeys: Set<string>): boolean {
+  return Boolean(order.route_batch_key) && deadBatchKeys.has(order.route_batch_key)
+}
+
 export function isOrderInActiveRoute(order: OrderRecord): boolean {
   if (order.status === 'cancelled' || order.status === 'delivered') return false
   const isStarted = order.route_started === true
@@ -24,6 +42,9 @@ export function isOrderInActiveRoute(order: OrderRecord): boolean {
 /**
  * Retorna todos os pedidos da rota ativa em andamento de um entregador.
  * Se operationalWindow ou filterToday for fornecido, restringe aos pedidos da janela do dia operacional.
+ * EXCLUI pedidos de lotes mortos (algum pedido do route_batch_key com route_finished=true) — a
+ * exclusão por lote é computada varrendo TODOS os pedidos disponíveis (allOrders), não apenas os
+ * do entregador, para cobrir composição mista.
  */
 export function getActiveRouteOrdersForCourier(
   courierId: string,
@@ -38,9 +59,12 @@ export function getActiveRouteOrdersForCourier(
   const opWindow =
     options?.operationalWindow || (options?.filterToday ? getOperationalWindow() : undefined)
 
+  const deadBatchKeys = buildDeadRouteBatchKeys(allOrders)
+
   return allOrders.filter((o) => {
     if (o.courier_id !== courierId) return false
     if (!isOrderInActiveRoute(o)) return false
+    if (isOrderInDeadBatch(o, deadBatchKeys)) return false
     if (opWindow && !isTodayOrder(o, opWindow)) return false
     return true
   })
@@ -108,7 +132,8 @@ export function isCourierRecentlyFinished(
   if (deliveredOrders.length > 0) {
     let latestDeliveryTs = 0
     for (const d of deliveredOrders) {
-      const raw = (d as any).delivery_timestamp || d.actual_arrival || d.updated || d.created
+      const raw =
+        (d as any).delivery_timestamp || (d as any).actual_arrival || d.updated || d.created
       const ts = raw ? new Date(raw).getTime() : 0
       if (!isNaN(ts) && ts > latestDeliveryTs) {
         latestDeliveryTs = ts

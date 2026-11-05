@@ -1121,6 +1121,24 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     return orders.filter((o) => !isNeutralizedSystemError(o) && isTodayOrder(o, operationalWindow))
   }, [orders, operationalWindow])
 
+  // LOTES MORTOS (route_finished = true em QUALQUER pedido do route_batch_key):
+  // um lote encerrado ("Voltar para base" gravou route_finished=true) NUNCA mais contribui para
+  // "Em Rota", rota ativa ou trânsito — mesmo que pedidos pendentes tenham ficado presos nele.
+  // Composição mista (pedidos antigos de lote morto + ativos) é o furo real de produção.
+  const deadRouteBatchKeys = useMemo(() => {
+    const keys = new Set<string>()
+    const collect = (o: OrderRecord) => {
+      if (o.route_finished === true && o.route_batch_key) keys.add(o.route_batch_key)
+    }
+    todayOrders.forEach(collect)
+    globalInTransitOrders.forEach(collect)
+    return keys
+  }, [todayOrders, globalInTransitOrders])
+
+  // Pedido visível para operação corrente: fora de lote morto (ou sem route_batch_key)
+  const isOrderInLiveBatch = (o: OrderRecord): boolean =>
+    !o.route_batch_key || !deadRouteBatchKeys.has(o.route_batch_key)
+
   // Helpers to categorize orders into kanban columns
   // A coluna "Exceções & Problemas" mostra EXCLUSIVAMENTE ocorrências do dia atual no fuso de Brasília
   const getOrderKanbanCategory = (order: OrderRecord): KanbanColumnKey | null => {
@@ -1180,8 +1198,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // 2. hasRouteStarted / activeInTransitOrders verificados contra a lista GLOBAL de pedidos em trânsito filtrada para o dia corrente
   const allCourierData = useMemo(() => {
     // Filtrar globalInTransitOrders estritamente pelo dia corrente (isTodayOrder) para impedir vazamento de pedidos antigos
-    const todayGlobalTransitOrders = globalInTransitOrders.filter((o) =>
-      isTodayOrder(o, operationalWindow),
+    const todayGlobalTransitOrders = globalInTransitOrders.filter(
+      (o) => isTodayOrder(o, operationalWindow) && isOrderInLiveBatch(o),
     )
 
     return couriers.map((courier) => {
@@ -1209,10 +1227,18 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       // incluindo 'pending', 'in_transit' e 'delivered' para exibir todos os pins do lote
       const activeBatchOrders = [
         ...globalCourierTransit.filter(
-          (o) => o.route_started === true && o.route_finished !== true && o.status !== 'cancelled',
+          (o) =>
+            o.route_started === true &&
+            o.route_finished !== true &&
+            o.status !== 'cancelled' &&
+            isOrderInLiveBatch(o),
         ),
         ...courierLocalOrders.filter(
-          (o) => o.route_started === true && o.route_finished !== true && o.status !== 'cancelled',
+          (o) =>
+            o.route_started === true &&
+            o.route_finished !== true &&
+            o.status !== 'cancelled' &&
+            isOrderInLiveBatch(o),
         ),
       ]
       const uniqueActiveBatchOrders = Array.from(
@@ -1221,7 +1247,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
 
       const allTransitOrders = [
         ...globalCourierTransit,
-        ...courierLocalOrders.filter((o) => o.status === 'in_transit' && o.route_started === true),
+        ...courierLocalOrders.filter(
+          (o) => o.status === 'in_transit' && o.route_started === true && isOrderInLiveBatch(o),
+        ),
       ]
       const uniqueActiveTransitOrders = Array.from(
         new Map(allTransitOrders.map((o) => [o.id, o])).values(),
@@ -1264,10 +1292,18 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       // Inclui pedidos delivered para saber se a rota inteira foi concluída e o entregador está retornando à base
       const routeOrdersRaw = [
         ...globalCourierTransit.filter(
-          (o) => o.route_started === true && o.route_finished !== true && o.status !== 'cancelled',
+          (o) =>
+            o.route_started === true &&
+            o.route_finished !== true &&
+            o.status !== 'cancelled' &&
+            isOrderInLiveBatch(o),
         ),
         ...courierLocalOrders.filter(
-          (o) => o.route_started === true && o.route_finished !== true && o.status !== 'cancelled',
+          (o) =>
+            o.route_started === true &&
+            o.route_finished !== true &&
+            o.status !== 'cancelled' &&
+            isOrderInLiveBatch(o),
         ),
       ]
       const uniqueCourierRouteOrders = Array.from(
@@ -1402,13 +1438,16 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   //   NUNCA é expulso por falta de ping/oscilação de GPS.
   const activeRouteCouriers = useMemo(() => {
     // Conjunto de courier_ids com pedidos em rota ativa (global do dia ou local)
+    // EXCLUI pedidos de lotes mortos: route_finished=true em QUALQUER pedido do route_batch_key
+    // elimina o lote inteiro (lotes de composição mista eram o furo real)
     const activeRouteCourierIdSet = new Set<string>()
     todayOrders.forEach((o) => {
       if (
         o.courier_id &&
         o.route_started === true &&
         o.route_finished !== true &&
-        o.status !== 'cancelled'
+        o.status !== 'cancelled' &&
+        isOrderInLiveBatch(o)
       ) {
         activeRouteCourierIdSet.add(o.courier_id)
       }
@@ -1419,7 +1458,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         o.route_started === true &&
         o.route_finished !== true &&
         o.status !== 'cancelled' &&
-        isTodayOrder(o, operationalWindow)
+        isTodayOrder(o, operationalWindow) &&
+        isOrderInLiveBatch(o)
       ) {
         activeRouteCourierIdSet.add(o.courier_id)
       }
@@ -2103,6 +2143,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           if (order.status === 'delivered') return
           if (order.route_finished === true) return
           if (!isOrderInActiveRoute(order)) return
+          if (!isOrderInLiveBatch(order)) return
 
           const cId = order.courier_id || courierItem?.courier?.id
           if (!cId || !activeRouteCourierIdSet.has(cId)) return
@@ -3234,7 +3275,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
             o.status !== 'cancelled' &&
             o.status !== 'delivered' &&
             o.route_finished !== true &&
-            isOrderInActiveRoute(o)
+            isOrderInActiveRoute(o) &&
+            isOrderInLiveBatch(o)
           ) {
             if (courierFilter === 'all' || o.courier_id === courierFilter) {
               ordersToMap.set(o.id, o)

@@ -3753,13 +3753,27 @@ export const deliveryService = {
       }
 
       // (3) PROIBIDO ROTA COM PREJUÍZO:
-      // Se proposedTotalDistanceKm > currentRouteTotalDistanceKm (km viário real), abortar e MANTER a sequência atual
-      const currentRouteTotalDistanceKm = courierOrders.reduce((max, o) => {
+      // A guarda só se aplica quando a COMPOSIÇÃO de pedidos é idêntica à da última otimização gravada.
+      // Detecção de composição: se TODAS as paradas atuais já carregam total_route_with_return_km > 0,
+      // o lote é o mesmo da última otimização (guarda vale). Se alguma parada não tem km gravado,
+      // houve INCLUSÃO (a nova parada entra sem total_route_with_return_km) — a re-otimização é permitida
+      // e o bloco de persistência abaixo REGRAVA total_route_with_return_km em TODAS as paradas do lote
+      // já na inclusão (não só no fechamento). REMOÇÃO encolhe o conjunto: km proposto sai menor que o
+      // atual e a guarda passa naturalmente, mantendo o recálculo por exclusão como hoje.
+      // NÃO altera km pago, telemetria, janela do Maps, navegação nem geofence.
+      const ordersWithStoredKm = courierOrders.filter(
+        (o) => Number(o.total_route_with_return_km) > 0,
+      )
+      const compositionUnchanged =
+        courierOrders.length > 0 && ordersWithStoredKm.length === courierOrders.length
+
+      const currentRouteTotalDistanceKm = ordersWithStoredKm.reduce((max, o) => {
         const val = Number(o.total_route_with_return_km) || 0
         return Math.max(max, val)
       }, 0)
 
       if (
+        compositionUnchanged &&
         currentRouteTotalDistanceKm > 0 &&
         roadResult.total_distance_km > currentRouteTotalDistanceKm
       ) {
@@ -3949,6 +3963,9 @@ export const deliveryService = {
    * - Dispara RESEQUENCIAMENTO AUTOMÁTICO da rota inteira com motor viário inteligente (Google Directions + mesma rua + 2-Opt)
    * - Garante sequência sempre 1..N no menor trajeto viário possível (NUNCA sequence = 0)
    * - Recalcula os totais da rota (km, combustível, tempo) mantendo a regra linha = cabeçalho
+   * - REGRAVA total_route_with_return_km do lote INTEIRO já na inclusão (não só no fechamento):
+   *   a inclusão entra SEM total_route_with_return_km, o que libera a guarda anti-prejuízo
+   *   (só válida para composição idêntica) e o bloco de persistência grava o novo km em todas as paradas
    * - Dispara notificação push/realtime ao entregador
    */
   /**
@@ -4086,11 +4103,20 @@ export const deliveryService = {
       const courier = await pb.collection<UserRecord>('users').getOne(courierId)
 
       // 2. Obter pedidos atuais atribuídos a esse entregador
-      const courierOrders = await pb.collection<OrderRecord>('orders').getFullList({
+      // EXCLUI pedidos de lotes mortos (qualquer pedido do route_batch_key com route_finished=true):
+      // evita herdar km/sequência de lote encerrado na re-otimização.
+      const rawCourierOrders = await pb.collection<OrderRecord>('orders').getFullList({
         filter: `courier_id='${courierId}' && status!='delivered' && status!='cancelled'`,
         sort: 'sequence',
         requestKey: null,
       })
+      const deadBatchKeys = new Set<string>()
+      rawCourierOrders.forEach((o) => {
+        if (o.route_finished === true && o.route_batch_key) deadBatchKeys.add(o.route_batch_key)
+      })
+      const courierOrders = rawCourierOrders.filter(
+        (o) => !o.route_batch_key || !deadBatchKeys.has(o.route_batch_key),
+      )
 
       // Verificar se a rota já está iniciada pelo entregador
       const isRouteStarted = courierOrders.some((o) => o.route_started === true)
@@ -4188,7 +4214,29 @@ export const deliveryService = {
         console.warn('[deliveryService] Erro ao registrar audit_trail na inclusão:', auditErr)
       }
 
-      // 7. Notificar entregador em tempo real
+      // 7. REGRAVA total_route_with_return_km do LOTE INTEIRO já na inclusão (não só no fechamento):
+      // garante que o lote atualizado carregue o km viário oficial recalculado (base->clientes->base)
+      // e que a próxima guarda anti-prejuízo compare contra a composição ATUAL (com a nova parada).
+      try {
+        const activeBatchKey =
+          finalOrder.route_batch_key ||
+          courierOrders.find((o) => Boolean(o.route_batch_key))?.route_batch_key ||
+          ''
+        if (activeBatchKey) {
+          const { recalcularLote } = await import('@/services/recalcularLoteHelper')
+          const loteRes = await recalcularLote(activeBatchKey)
+          console.log(
+            `[deliveryService] total_route_with_return_km regravado na inclusão: lote ${activeBatchKey} -> ${loteRes.total_route_with_return_km} km (${loteRes.total_orders} paradas)`,
+          )
+        }
+      } catch (loteErr) {
+        console.warn(
+          '[deliveryService] Falha ao regravar km do lote na inclusão (não bloqueia inclusão):',
+          loteErr,
+        )
+      }
+
+      // 8. Notificar entregador em tempo real
       try {
         await this.createNotification({
           user_id: courierId,
