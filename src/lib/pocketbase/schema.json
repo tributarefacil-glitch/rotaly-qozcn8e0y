@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T03:15:25.133Z",
+  "generatedAt": "2026-11-05T03:50:31.848Z",
   "collections": [
     {
       "name": "users",
@@ -1295,6 +1295,12 @@
         },
         {
           "name": "deviation_reason",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "macro_reason",
           "type": "text",
           "required": false,
           "system": false
@@ -2884,6 +2890,36 @@
           "type": "json",
           "required": false,
           "system": false
+        },
+        {
+          "name": "total_deliveries",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "processing_started_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "processing_retries",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "telemetry_capped",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "capped_reason",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -3046,6 +3082,12 @@
           "required": false,
           "system": false,
           "selectValues": ["processed", "yellow_flag", "blocked_admin_decision"]
+        },
+        {
+          "name": "total_deliveries",
+          "type": "json",
+          "required": false,
+          "system": false
         },
         {
           "name": "created",
