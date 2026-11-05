@@ -686,10 +686,25 @@ export function RouteIntelligenceSection({
                             {leg.deviation_reason && (
                               <Badge
                                 variant="outline"
-                                className="bg-slate-100 text-slate-700 border-slate-300 text-[9px] font-normal max-w-[140px] truncate"
+                                className={`text-[9px] font-normal max-w-[150px] truncate ${
+                                  leg.courier_reported_shortcut ||
+                                  leg.deviation_reason === 'Retorno mais rápido' ||
+                                  leg.deviation_reason === 'retorno_mais_rapido'
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold'
+                                    : 'bg-slate-100 text-slate-700 border-slate-300'
+                                }`}
                                 title={leg.deviation_reason}
                               >
                                 Motivo: {leg.deviation_reason}
+                              </Badge>
+                            )}
+                            {leg.courier_reported_shortcut && (
+                              <Badge
+                                variant="outline"
+                                className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[9px] font-semibold"
+                                title="Entregador informou atalho / retorno mais rápido"
+                              >
+                                Atalho Entregador
                               </Badge>
                             )}
                           </div>

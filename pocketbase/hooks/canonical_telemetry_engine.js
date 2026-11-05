@@ -576,10 +576,34 @@ onRecordAfterUpdateSuccess((e) => {
 
           leg.km_gps = Number((legPingsMeters / 1000).toFixed(2))
           accumulatedLegGpsMeters += legPingsMeters
+
+          // Propagar deviation_reason do pedido para a perna correspondente
+          try {
+            const ordReason = stop.getString
+              ? stop.getString('deviation_reason')
+              : stop.deviation_reason
+            if (ordReason) {
+              leg.deviation_reason = ordReason
+            }
+          } catch (_) {}
         } else if (leg.is_return) {
           const returnGpsMeters = Math.max(0, kmGpsTotalMeters - accumulatedLegGpsMeters)
           leg.km_gps = Number((returnGpsMeters / 1000).toFixed(2))
         }
+      }
+
+      // Consolidar mapa de deviation_reasons do lote a partir dos pedidos
+      const batchDeviationReasons = {}
+      for (let oIdx = 0; oIdx < orders.length; oIdx++) {
+        const oRec = orders[oIdx]
+        try {
+          const oReason = oRec.getString
+            ? oRec.getString('deviation_reason')
+            : oRec.deviation_reason
+          if (oReason) {
+            batchDeviationReasons[oRec.id] = oReason
+          }
+        } catch (_) {}
       }
 
       const DEVIATION_THRESHOLD_METERS = 150
@@ -798,6 +822,9 @@ onRecordAfterUpdateSuccess((e) => {
         telemetryRecord.set('gaps_total_seconds', gapsTotalSeconds)
         telemetryRecord.set('deviation_classification', deviationSections)
         telemetryRecord.set('return_to_base_data', returnToBaseData)
+        if (Object.keys(batchDeviationReasons).length > 0) {
+          telemetryRecord.set('deviation_reasons', batchDeviationReasons)
+        }
         telemetryRecord.set('pings_count', pingsCount)
         if (firstPingAt) telemetryRecord.set('first_ping_at', firstPingAt)
         if (lastPingAt) telemetryRecord.set('last_ping_at', lastPingAt)

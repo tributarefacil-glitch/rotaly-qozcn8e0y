@@ -36,6 +36,7 @@ export interface RouteLegItem {
   finished_at?: string | null
   batch_finished_at?: string | null
   deviation_reason?: string | null
+  courier_reported_shortcut?: boolean
   metadata?: Record<string, unknown>
 }
 
@@ -371,6 +372,20 @@ export async function fetchRouteIntelligenceAnalysis(
         (batch.deviation_reasons && leg.order_id ? batch.deviation_reasons[leg.order_id] : null) ||
         null
 
+      // REGRAS DO RETORNO MAIS RÁPIDO / ATALHO INFORMADO PELO ENTREGADOR:
+      // Se o entregador sinalizou "Retorno mais rápido", a perna é promovida a candidato
+      // a rota melhor no acervo mesmo que a densidade de pings fosse insuficiente ou equivalente.
+      const isCourierShortcut =
+        Boolean(leg.courier_reported_shortcut) ||
+        legDeviationReason === 'Retorno mais rápido' ||
+        legDeviationReason === 'retorno_mais_rapido' ||
+        legDeviationReason === 'RETORNO MAIS RÁPIDO'
+
+      const isBetterRoute = isCourierShortcut ? true : classification.isBetter
+      const analysisStatus: RouteLegAnalysisStatus = isCourierShortcut
+        ? 'candidate_better'
+        : classification.status
+
       const legItem: RouteLegItem = {
         route_batch_key: batch.route_batch_key,
         courier_id: batch.courier_id,
@@ -387,17 +402,19 @@ export async function fetchRouteIntelligenceAnalysis(
         km_diff: classification.kmDiff,
         diff_pct: classification.diffPct,
         pings_count: legPings,
-        is_better_route: classification.isBetter,
-        is_excess_deviation: classification.isExcess,
-        is_insufficient_data: classification.isInsufficient,
-        analysis_status: classification.status,
+        is_better_route: isBetterRoute,
+        is_excess_deviation: isCourierShortcut ? false : classification.isExcess,
+        is_insufficient_data: isCourierShortcut ? false : classification.isInsufficient,
+        analysis_status: analysisStatus,
         started_at: batch.route_started_at || null,
         finished_at: batch.route_finished_at || null,
         batch_finished_at: batch.route_finished_at || batch.created || null,
         deviation_reason: legDeviationReason,
+        courier_reported_shortcut: isCourierShortcut,
         metadata: {
           batch_status: batch.status,
           batch_total_pings: totalBatchPings,
+          courier_reported_shortcut: isCourierShortcut,
         },
       }
 
@@ -555,6 +572,7 @@ async function persistLegsAnalysisArchive(legs: RouteLegItem[]): Promise<void> {
       started_at: leg.started_at || undefined,
       finished_at: leg.finished_at || undefined,
       deviation_reason: leg.deviation_reason || undefined,
+      courier_reported_shortcut: Boolean(leg.courier_reported_shortcut),
       metadata: leg.metadata || {},
     }
 

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T00:32:43.941Z",
+  "generatedAt": "2026-11-05T00:57:43.559Z",
   "collections": [
     {
       "name": "users",
@@ -720,6 +720,12 @@
         {
           "name": "tracking_link_sent_at",
           "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "deviation_reason",
+          "type": "text",
           "required": false,
           "system": false
         }
@@ -3213,6 +3219,12 @@
         {
           "name": "deviation_reason",
           "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "courier_reported_shortcut",
+          "type": "bool",
           "required": false,
           "system": false
         }

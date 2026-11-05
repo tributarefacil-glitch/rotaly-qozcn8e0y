@@ -82,6 +82,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
   const [proposeAddressCorrection, setProposeAddressCorrection] = useState(false)
   const [addressCorrectionConfirmed, setAddressCorrectionConfirmed] = useState(false)
   const [addressCorrectionDone, setAddressCorrectionDone] = useState(false)
+  // Motivo de desvio do entregador (toque único, opcional, exibido quando fora do corredor >150m)
+  const [deviationReason, setDeviationReason] = useState<string>('')
 
   // Campos específicos de Entrega Redirecionada
   const isRedirectionFlow = Boolean(
@@ -165,6 +167,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
       setProposeAddressCorrection(false)
       setAddressCorrectionConfirmed(false)
       setAddressCorrectionDone(false)
+      setDeviationReason('')
 
       // Capturar GPS preliminar ao abrir o modal para adiantar precisão
       if (nativeGpsBridge.isNativeEnvironment()) {
@@ -985,6 +988,9 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
           if (kmRealPerna !== undefined && kmRealPerna > 0) {
             formData.append('km_real_perna', String(kmRealPerna))
           }
+          if (deviationReason) {
+            formData.append('deviation_reason', deviationReason)
+          }
         }
 
         await deliveryService.updateOrder(order.id, formData)
@@ -1005,6 +1011,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
                 ...(kmRealPerna !== undefined && kmRealPerna > 0
                   ? { km_real_perna: kmRealPerna }
                   : {}),
+                ...(deviationReason ? { deviation_reason: deviationReason } : {}),
               }
             : {}),
         }
@@ -1031,7 +1038,8 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               tracking_code: order.tracking_code,
               distance_m: distanceToPinM,
               courier_gps: currentLoc,
-              reason: `Entrega confirmada a ${distanceToPinM}m do pin cadastrado (>500m). Encaminhado para aprovação da central.`,
+              deviation_reason: deviationReason || undefined,
+              reason: `Entrega confirmada a ${distanceToPinM}m do pin cadastrado (>500m). Encaminhado para aprovação da central.${deviationReason ? ` Motivo informado pelo entregador: ${deviationReason}.` : ''}`,
             },
           })
         } catch (auditErr) {
@@ -1128,6 +1136,7 @@ export const DeliveryConfirmationModal: React.FC<DeliveryConfirmationModalProps>
               address: oldAddress,
               real_gps: currentLoc,
               customer_address_id: order.customer_address_id,
+              deviation_reason: deviationReason || undefined,
               system_trigger: true,
             },
           })
