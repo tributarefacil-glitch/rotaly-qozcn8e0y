@@ -1,10 +1,30 @@
-import { OrderRecord, UserRecord, LocationRecord, OffRouteEventRecord, AppSettingsRecord, RouteKmApprovalRecord, RouteBatchTelemetryRecord } from '@/types/delivery'
+import {
+  OrderRecord,
+  UserRecord,
+  LocationRecord,
+  OffRouteEventRecord,
+  AppSettingsRecord,
+  RouteKmApprovalRecord,
+  RouteBatchTelemetryRecord,
+} from '@/types/delivery'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
-import { groupOrdersByRouteBatch, getRouteBatchDisplay, deriveRouteBatchKey } from '@/lib/routeBatchHelper'
+import {
+  groupOrdersByRouteBatch,
+  getRouteBatchDisplay,
+  deriveRouteBatchKey,
+} from '@/lib/routeBatchHelper'
 import { isPostFuelPaymentCutoff } from '@/services/canonicalCourierTotalsService'
 import { MapDataService } from '@/lib/mapDataService'
 import { haversineDistanceMeters } from '@/lib/geo'
-import { getOperationalWindow, getOperationalMonthStart, getOperationalPreviousMonthRange, getCustomOperationalWindow, getYearMonthInTz, isOrderInPeriod, parseSafeTimestamp } from '@/lib/operationalWindow'
+import {
+  getOperationalWindow,
+  getOperationalMonthStart,
+  getOperationalPreviousMonthRange,
+  getCustomOperationalWindow,
+  getYearMonthInTz,
+  isOrderInPeriod,
+  parseSafeTimestamp,
+} from '@/lib/operationalWindow'
 import { deliveryService } from '@/services/deliveryService'
 
 export const FUEL_DISCOUNT_EVENT = 'rotaly:fuel_discount_changed'
@@ -95,7 +115,10 @@ export function getReferenceMonthKey(
 /**
  * Lê o percentual de desconto manual para o mês de referência de settings e localStorage (0, 5, 10, 15 - padrão 15)
  */
-export function getManualFuelDiscountPct(monthKey: string, settings?: AppSettingsRecord | null): number {
+export function getManualFuelDiscountPct(
+  monthKey: string,
+  settings?: AppSettingsRecord | null,
+): number {
   const extraRecord = settings?.extra as Record<string, unknown> | undefined
   const monthlyMap = extraRecord?.fuel_discount_monthly as Record<string, number> | undefined
   const fromSettings = monthlyMap?.[monthKey]
@@ -322,12 +345,7 @@ export function buildKmAuditRows(params: BuildKmAuditRowsParams): KmAuditRow[] {
             unexpectedStopsCount++
             const cleanDest = MapDataService.getOrderDestination(order)
             if (cleanDest && ev.lat && ev.lng) {
-              const stopDist = haversineDistanceMeters(
-                ev.lat,
-                ev.lng,
-                cleanDest.lat,
-                cleanDest.lng,
-              )
+              const stopDist = haversineDistanceMeters(ev.lat, ev.lng, cleanDest.lat, cleanDest.lng)
               if (stopDist > maxStopDistMeters) maxStopDistMeters = Math.round(stopDist)
             }
           }
@@ -389,8 +407,7 @@ export function buildKmAuditRows(params: BuildKmAuditRowsParams): KmAuditRow[] {
         !isRedirected &&
         (!approval || approval.status === 'approved')
 
-      const isPendingDecision =
-        !isAutoApproved && (!approval || approval.status === 'pending')
+      const isPendingDecision = !isAutoApproved && (!approval || approval.status === 'pending')
 
       let statusBadge = 'Aprovado'
       if (approval?.status === 'approved') {
@@ -462,7 +479,9 @@ export interface CalculateKmAuditSummaryParams {
  * MOTOR CANÔNICO ÚNICO DE AUDITORIA E CÁLCULO DE KM E COMBUSTÍVEL
  * Extraído estritamente de scopeSummary em KmAuditReport.tsx.
  */
-export function calculateKmAuditSummary(params: CalculateKmAuditSummaryParams): KmAuditSummaryResult {
+export function calculateKmAuditSummary(
+  params: CalculateKmAuditSummaryParams,
+): KmAuditSummaryResult {
   const {
     auditRows,
     selectedCourierId = 'all',
@@ -546,8 +565,7 @@ export function calculateKmAuditSummary(params: CalculateKmAuditSummaryParams): 
 
   const scopeBatches = new Map<string, KmAuditRow[]>()
   inScopeRows.forEach((r) => {
-    const bKey =
-      r.batchKey || deriveRouteBatchKey(r.order, scopeBatches.keys(), r.order.courier_id)
+    const bKey = r.batchKey || deriveRouteBatchKey(r.order, scopeBatches.keys(), r.order.courier_id)
     const list = scopeBatches.get(bKey) || []
     list.push(r)
     scopeBatches.set(bKey, list)
