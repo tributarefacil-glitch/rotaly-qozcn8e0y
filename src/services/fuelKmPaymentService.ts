@@ -41,7 +41,7 @@ export interface CalculateFuelKmPaymentParams {
     consumption_kml?: number
     fuel_price?: number
   } | null
-  periodFilter?: 'today' | 'week' | 'month' | 'previous_month' | 'all' | 'custom'
+  periodFilter?: 'today' | 'week' | 'month' | 'previous_month' | 'all' | 'custom' | string
   customStartDate?: string
   customEndDate?: string
   referenceDate?: Date
@@ -96,7 +96,7 @@ export function calculateFuelKmPayment(params: CalculateFuelKmPaymentParams): Fu
   const {
     orders,
     batchInputs: explicitBatchInputs,
-    courier,
+    courier: rawCourier,
     periodFilter = 'month',
     customStartDate,
     customEndDate,
@@ -104,6 +104,17 @@ export function calculateFuelKmPayment(params: CalculateFuelKmPaymentParams): Fu
     manualDiscountPct,
     settings,
   } = params
+
+  const courier = rawCourier as
+    | {
+        id?: string
+        name?: string
+        vehicle_type?: string
+        consumption_kml?: number
+        fuel_price?: number
+      }
+    | null
+    | undefined
 
   const isBicycle = courier?.vehicle_type === 'bicicleta' || courier?.vehicle_type === 'bicycle'
 

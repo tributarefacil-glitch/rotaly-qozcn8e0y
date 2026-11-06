@@ -90,7 +90,7 @@ export interface KmAuditSummaryResult {
  * Obtém a chave canônica do mês de referência (ex.: "2026-11")
  */
 export function getReferenceMonthKey(
-  periodFilter: 'all' | 'today' | 'week' | 'month' | 'previous_month' | 'custom',
+  periodFilter?: 'all' | 'today' | 'week' | 'month' | 'previous_month' | 'custom' | string,
   customStartDate?: string,
 ): string {
   if (periodFilter === 'previous_month') {
