@@ -73,6 +73,7 @@ import {
   getOperationalMonthStart,
   getOperationalPreviousMonthRange,
   getOperationalWindow,
+  getYearMonthInTz,
   isCurrentMonthInTz,
   isOrderInPeriod,
   isPreviousMonthInTz,
@@ -157,6 +158,85 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     divergenceKm?: number
     divergencePct?: number
   } | null>(null)
+
+  // Determina a chave do mês de referência (ex: "2026-11") para persistência do desconto manual
+  const referenceMonthKey = useMemo(() => {
+    if (selectedDateFilter === 'previous_month') {
+      try {
+        return getOperationalPreviousMonthRange(new Date()).dateStr
+      } catch {
+        /* fallback */
+      }
+    }
+    if (selectedDateFilter === 'custom' && customStartDate) {
+      try {
+        const ym = getYearMonthInTz(customStartDate)
+        return `${ym.year}-${String(ym.month).padStart(2, '0')}`
+      } catch {
+        /* fallback */
+      }
+    }
+    const ym = getYearMonthInTz(new Date())
+    return `${ym.year}-${String(ym.month).padStart(2, '0')}`
+  }, [selectedDateFilter, customStartDate])
+
+  // Percentual manual de desconto do card (opções: 0, 5, 10, 15 - padrão 15)
+  const [manualDiscountPct, setManualDiscountPct] = useState<number>(15)
+
+  // Sincroniza o percentual ao mudar o mês de referência ou settings
+  useEffect(() => {
+    const extraRecord = settings?.extra as Record<string, unknown> | undefined
+    const monthlyMap = extraRecord?.fuel_discount_monthly as Record<string, number> | undefined
+    const fromSettings = monthlyMap?.[referenceMonthKey]
+    if (typeof fromSettings === 'number' && [0, 5, 10, 15].includes(fromSettings)) {
+      setManualDiscountPct(fromSettings)
+      return
+    }
+    try {
+      const stored = localStorage.getItem(`rotaly_fuel_discount_${referenceMonthKey}`)
+      if (stored !== null) {
+        const parsed = Number(stored)
+        if ([0, 5, 10, 15].includes(parsed)) {
+          setManualDiscountPct(parsed)
+          return
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    // Padrão canônico 15% (comportamento pós 26/10)
+    setManualDiscountPct(15)
+  }, [referenceMonthKey, settings?.extra])
+
+  // Manipulador de troca manual do percentual
+  const handleSelectDiscount = async (pct: number) => {
+    setManualDiscountPct(pct)
+    try {
+      localStorage.setItem(`rotaly_fuel_discount_${referenceMonthKey}`, String(pct))
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      const existingExtra = (
+        settings?.extra && typeof settings.extra === 'object' ? settings.extra : {}
+      ) as Record<string, unknown>
+      const existingMonthly = (existingExtra.fuel_discount_monthly as Record<string, number>) || {}
+      const updatedExtra = {
+        ...existingExtra,
+        fuel_discount_monthly: {
+          ...existingMonthly,
+          [referenceMonthKey]: pct,
+        },
+      }
+      await deliveryService.updateSettings({
+        extra: updatedExtra,
+      })
+      onDataChange?.()
+    } catch (err) {
+      console.warn('Erro ao persistir desconto de combustível em app_settings:', err)
+    }
+  }
 
   // Carregar pedidos sob demanda quando o filtro for multi-dia (week, month, custom, all)
   const fetchPeriodOrders = useCallback(async () => {
@@ -840,13 +920,15 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
         : bRoad
 
-      // REGRA 26/10: Desconto de 15% no km para pagamento de combustível a partir de 26/10
+      // REGRA 26/10: Desconto no km para pagamento de combustível a partir de 26/10
+      // Fator parametrizável manualmente pelo card (0%, 5%, 10% ou 15% - padrão 15%)
       const earliestCreatedTs = batchRows.reduce((min, r) => {
         const t = r.dateRaw ? new Date(r.dateRaw).getTime() : 0
         return t > 0 && t < min ? t : min
       }, Number.MAX_SAFE_INTEGER)
       const isDiscountPostCutoff = isPostFuelPaymentCutoff(earliestCreatedTs)
-      const bKmPagamento = isDiscountPostCutoff ? bRoad * FUEL_PAYMENT_FACTOR : bRoad
+      const discountFactor = 1 - manualDiscountPct / 100
+      const bKmPagamento = isDiscountPostCutoff ? bRoad * discountFactor : bRoad
 
       // KM GPS SANEADO/AUDITADO DO LOTE 1x (Coluna B, estritamente para comparação/auditoria):
       let bGps = batchRows.reduce((max, r) => {
@@ -935,6 +1017,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     selectedBatchKey,
     searchQuery,
     eligibleCouriers,
+    manualDiscountPct,
   ])
 
   // Filtragem dos registros da tabela
@@ -1305,31 +1388,74 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         </div>
       )}
 
-      {/* CARD DESTAQUE EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL (-15% APÓS 26/10) */}
+      {/* CARD DESTAQUE EXCLUSIVO ADMIN: KM PAGAMENTO DE COMBUSTÍVEL */}
       <Card className="border-emerald-300 border-l-4 border-l-emerald-500 bg-gradient-to-r from-emerald-50/70 via-white to-emerald-50/40 shadow-sm">
         <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 border border-emerald-300 shrink-0">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 border border-emerald-300 shrink-0 mt-0.5 sm:mt-0">
                 <Fuel className="h-5 w-5" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
                     KM Pagamento de Combustível
                   </span>
                   <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[9px] px-1.5 py-0 font-bold uppercase">
-                    Admin • -15% após 26/10
+                    {manualDiscountPct === 0
+                      ? 'Admin • Sem desconto (0%)'
+                      : `Admin • -${manualDiscountPct}% após 26/10`}
                   </Badge>
                 </div>
-                <p className="text-[11px] text-slate-600 mt-0.5">
-                  Base canônica para reembolso de combustível. Pedidos criados a partir de 26/10
-                  aplicam desconto de 15% sobre o KM viário.
+                <p className="text-[11px] text-slate-600">
+                  {manualDiscountPct === 0
+                    ? 'Base canônica para reembolso de combustível. Sem desconto aplicado (100% do KM viário).'
+                    : `Base canônica para reembolso de combustível. Pedidos criados a partir de 26/10 aplicam desconto de ${manualDiscountPct}% sobre o KM viário.`}
                 </p>
+
+                {/* Seletor manual de desconto: 0%, 5%, 10%, 15% */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-900">
+                    Desconto manual ({referenceMonthKey}):
+                  </span>
+                  <div className="inline-flex items-center rounded-lg border border-emerald-300 bg-white/80 p-0.5 shadow-2xs">
+                    {[0, 5, 10, 15].map((pct) => {
+                      const isSelected = manualDiscountPct === pct
+                      return (
+                        <button
+                          key={pct}
+                          type="button"
+                          onClick={() => handleSelectDiscount(pct)}
+                          className={`px-2.5 py-0.5 text-[11px] font-bold rounded-md transition-all ${
+                            isSelected
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'text-emerald-800 hover:bg-emerald-50'
+                          }`}
+                          title={
+                            pct === 0
+                              ? 'Sem desconto (vale o KM viário integral)'
+                              : `Aplicar desconto de ${pct}% sobre o KM viário`
+                          }
+                        >
+                          {pct}%
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {manualDiscountPct !== 15 && (
+                    <button
+                      type="button"
+                      onClick={() => handleSelectDiscount(15)}
+                      className="text-[10px] text-emerald-700 underline hover:text-emerald-900 ml-1 font-medium"
+                    >
+                      Restaurar padrão (15%)
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-4 sm:gap-6 bg-white p-2.5 px-4 rounded-xl border border-emerald-200 shadow-xs self-start sm:self-center">
+            <div className="flex flex-wrap items-center gap-4 sm:gap-6 bg-white p-2.5 px-4 rounded-xl border border-emerald-200 shadow-xs self-start lg:self-center">
               <div>
                 <span className="text-[10px] text-slate-400 block uppercase font-semibold">
                   KM Pagamento
