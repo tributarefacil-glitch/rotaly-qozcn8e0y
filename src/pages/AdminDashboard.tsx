@@ -124,6 +124,11 @@ import {
 import { calculateRealKmForOrder } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { getCanonicalCourierBalance } from '@/services/canonicalCourierTotalsService'
+import {
+  calculateKmAuditSummaryFromOrders,
+  getReferenceMonthKey,
+} from '@/services/kmAuditEngineService'
+import { useReactiveFuelDiscount } from '@/hooks/useReactiveFuelDiscount'
 import type {
   OrderRecord,
   UserRecord,
@@ -459,6 +464,29 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   const [fuelPeriodFilter, setFuelPeriodFilter] = useState<'all' | 'month' | 'week' | 'today'>(
     'week',
   )
+  const adminReferenceMonthKey = useMemo(() => getReferenceMonthKey(), [])
+  const { manualDiscountPct: adminManualDiscountPct, setManualDiscountPct: setAdminManualDiscountPct } =
+    useReactiveFuelDiscount({
+      referenceMonthKey: adminReferenceMonthKey,
+      settings,
+      onSaveSettings: async (newPct) => {
+        try {
+          const currentExtra = (settings?.extra as Record<string, unknown>) || {}
+          const currentMonthly = (currentExtra.fuel_discount_monthly as Record<string, number>) || {}
+          await deliveryService.saveSettings({
+            extra: {
+              ...currentExtra,
+              fuel_discount_monthly: {
+                ...currentMonthly,
+                [adminReferenceMonthKey]: newPct,
+              },
+            },
+          })
+        } catch (err) {
+          console.warn('[AdminDashboard] Falha ao persistir desconto de combustível:', err)
+        }
+      },
+    })
   const [isNewFuelAdvanceModalOpen, setIsNewFuelAdvanceModalOpen] = useState(false)
   const [advanceCourierId, setAdvanceCourierId] = useState('')
 

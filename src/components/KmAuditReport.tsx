@@ -80,6 +80,11 @@ import {
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
 import { AuditRouteMapModal } from '@/components/AuditRouteMapModal'
+import {
+  calculateKmAuditSummary,
+  getReferenceMonthKey,
+} from '@/services/kmAuditEngineService'
+import { useReactiveFuelDiscount } from '@/hooks/useReactiveFuelDiscount'
 
 interface KmAuditReportProps {
   orders: OrderRecord[]
@@ -161,82 +166,12 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
 
   // Determina a chave do mês de referência (ex: "2026-11") para persistência do desconto manual
   const referenceMonthKey = useMemo(() => {
-    if (selectedDateFilter === 'previous_month') {
-      try {
-        return getOperationalPreviousMonthRange(new Date()).dateStr
-      } catch {
-        /* fallback */
-      }
-    }
-    if (selectedDateFilter === 'custom' && customStartDate) {
-      try {
-        const ym = getYearMonthInTz(customStartDate)
-        return `${ym.year}-${String(ym.month).padStart(2, '0')}`
-      } catch {
-        /* fallback */
-      }
-    }
-    const ym = getYearMonthInTz(new Date())
-    return `${ym.year}-${String(ym.month).padStart(2, '0')}`
+    return getReferenceMonthKey(selectedDateFilter, customStartDate)
   }, [selectedDateFilter, customStartDate])
 
-  // Percentual manual de desconto do card (opções: 0, 5, 10, 15 - padrão 15)
-  const [manualDiscountPct, setManualDiscountPct] = useState<number>(15)
-
-  // Sincroniza o percentual ao mudar o mês de referência ou settings
-  useEffect(() => {
-    const extraRecord = settings?.extra as Record<string, unknown> | undefined
-    const monthlyMap = extraRecord?.fuel_discount_monthly as Record<string, number> | undefined
-    const fromSettings = monthlyMap?.[referenceMonthKey]
-    if (typeof fromSettings === 'number' && [0, 5, 10, 15].includes(fromSettings)) {
-      setManualDiscountPct(fromSettings)
-      return
-    }
-    try {
-      const stored = localStorage.getItem(`rotaly_fuel_discount_${referenceMonthKey}`)
-      if (stored !== null) {
-        const parsed = Number(stored)
-        if ([0, 5, 10, 15].includes(parsed)) {
-          setManualDiscountPct(parsed)
-          return
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    // Padrão canônico 15% (comportamento pós 26/10)
-    setManualDiscountPct(15)
-  }, [referenceMonthKey, settings?.extra])
-
-  // Manipulador de troca manual do percentual
-  const handleSelectDiscount = async (pct: number) => {
-    setManualDiscountPct(pct)
-    try {
-      localStorage.setItem(`rotaly_fuel_discount_${referenceMonthKey}`, String(pct))
-    } catch {
-      /* ignore */
-    }
-
-    try {
-      const existingExtra = (
-        settings?.extra && typeof settings.extra === 'object' ? settings.extra : {}
-      ) as Record<string, unknown>
-      const existingMonthly = (existingExtra.fuel_discount_monthly as Record<string, number>) || {}
-      const updatedExtra = {
-        ...existingExtra,
-        fuel_discount_monthly: {
-          ...existingMonthly,
-          [referenceMonthKey]: pct,
-        },
-      }
-      await deliveryService.updateSettings({
-        extra: updatedExtra,
-      })
-      onDataChange?.()
-    } catch (err) {
-      console.warn('Erro ao persistir desconto de combustível em app_settings:', err)
-    }
-  }
+  // Percentual manual de desconto do card reativo (opções: 0, 5, 10, 15 - padrão 15)
+  const { discountPct: manualDiscountPct, updateDiscount: handleSelectDiscount } =
+    useReactiveFuelDiscount(referenceMonthKey, settings as AppSettingsRecord, onDataChange)
 
   // Carregar pedidos sob demanda quando o filtro for multi-dia (week, month, custom, all)
   const fetchPeriodOrders = useCallback(async () => {
@@ -791,223 +726,20 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     batchTelemetryMap,
   ])
 
-  // Resumos globais do escopo (calculados considerando filtros de entregador/data/lote/busca,
-  // mantendo a visão completa da operação independente do toggle de fila)
-  // REGRA DE AGREGAÇÃO ÚNICA POR LOTE: qualquer total agregado soma o km do lote UMA única vez,
-  // dedup por route_batch_key (ou batchKey), usando o motor oficial e somando telemetria GPS 1x.
+  // Resumos globais do escopo via motor canônico compartilhado calculateKmAuditSummary
   const scopeSummary = useMemo(() => {
-    let approvedItemsCount = 0
-    let autoApprovedCount = 0
-    let divergentPendingCount = 0
-    let redirectedCount = 0
-    let totalScopeCount = 0
-    let unreadableDateCount = 0
-
-    const now = new Date()
-    const opWindow = getOperationalWindow(now)
-    let customWindow: { start: number; end: number } | null = null
-    if (selectedDateFilter === 'custom' && customStartDate) {
-      customWindow = getCustomOperationalWindow(customStartDate, customEndDate || customStartDate)
-    }
-
-    // Filtrar primeiro as linhas elegíveis pelo escopo
-    const inScopeRows: (typeof auditRows)[0][] = []
-
-    auditRows.forEach((r) => {
-      // Aplica apenas filtros dimensionais (entregador, data, lote, busca)
-      if (selectedCourierId !== 'all' && r.order.courier_id !== selectedCourierId) return
-
-      // Blindagem de data: se o timestamp for 0/NaN/não-positivo, registrar como ilegível e excluir
-      const parsed = parseSafeTimestamp(r.dateRaw)
-      const fallbackTs = r.dateRaw ? new Date(r.dateRaw).getTime() : 0
-      const rowTs =
-        parsed > 0 ? parsed : Number.isFinite(fallbackTs) && fallbackTs > 0 ? fallbackTs : 0
-
-      if (!rowTs || rowTs <= 0) {
-        unreadableDateCount++
-        return
-      }
-
-      if (selectedDateFilter === 'custom' && customWindow) {
-        if (rowTs < customWindow.start || rowTs > customWindow.end) return
-      } else if (
-        selectedDateFilter === 'today' ||
-        selectedDateFilter === 'week' ||
-        selectedDateFilter === 'month' ||
-        selectedDateFilter === 'previous_month'
-      ) {
-        if (
-          !isOrderInPeriod(
-            rowTs,
-            selectedDateFilter as 'today' | 'week' | 'month' | 'previous_month',
-            now,
-          )
-        )
-          return
-      }
-      if (selectedBatchKey !== 'all' && r.batchDisplay !== selectedBatchKey) return
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim()
-        const matchCust = r.customerName.toLowerCase().includes(q)
-        const matchAddr = r.address.toLowerCase().includes(q)
-        const matchTrk = r.trackingCode.toLowerCase().includes(q)
-        const matchCourier = (r.courier?.name || '').toLowerCase().includes(q)
-        if (!matchCust && !matchAddr && !matchTrk && !matchCourier) return
-      }
-
-      totalScopeCount++
-      inScopeRows.push(r)
-
-      if (r.isRedirected) redirectedCount++
-      if (r.isAutoApproved) autoApprovedCount++
-      if (r.isPendingDecision) divergentPendingCount++
-
-      if (r.approval && r.approval.status === 'approved') {
-        approvedItemsCount++
-      }
+    return calculateKmAuditSummary({
+      auditRows,
+      selectedCourierId,
+      selectedDateFilter,
+      customStartDate,
+      customEndDate,
+      selectedBatchKey,
+      searchQuery,
+      eligibleCouriers,
+      manualDiscountPct,
+      settings: settings as AppSettingsRecord,
     })
-
-    // Agrupar linhas em escopo por lote único para somar KM viário, GPS e pós-aprovação 1x por lote
-    // Utiliza deriveRouteBatchKey diretamente para garantir integridade e unificação idêntica
-    const scopeBatches = new Map<string, typeof inScopeRows>()
-    inScopeRows.forEach((r) => {
-      const bKey =
-        r.batchKey || deriveRouteBatchKey(r.order, scopeBatches.keys(), r.order.courier_id)
-      const list = scopeBatches.get(bKey) || []
-      list.push(r)
-      scopeBatches.set(bKey, list)
-    })
-
-    let roadKmTotal = 0
-    let gpsKmTotal = 0
-    let afterApprovalKmTotal = 0
-    let kmPagamentoTotal = 0
-
-    scopeBatches.forEach((batchRows) => {
-      // KM viário original do lote contado 1x:
-      // REGRA DO USUÁRIO (20/10): Prioridade canônica absoluta: km_viario_total do route_batch_telemetry
-      // gravado para o lote (inclui volta 1x por lote), nunca soma de pernas sem retorno.
-      const canonicalTelemRec = batchRows.find((r) => r.canonicalBatchTelem)?.canonicalBatchTelem
-
-      const telemViarioKm =
-        canonicalTelemRec && typeof canonicalTelemRec.km_viario_total === 'number'
-          ? canonicalTelemRec.km_viario_total
-          : canonicalTelemRec && typeof canonicalTelemRec.km_oficial === 'number'
-            ? canonicalTelemRec.km_oficial
-            : 0
-
-      const maxOrderReturnKm = batchRows.reduce((max, r) => {
-        const km =
-          typeof r.order?.total_route_with_return_km === 'number'
-            ? r.order.total_route_with_return_km
-            : 0
-        return Math.max(max, km)
-      }, 0)
-
-      const bRoad =
-        telemViarioKm > 0
-          ? telemViarioKm
-          : maxOrderReturnKm > 0
-            ? maxOrderReturnKm
-            : batchRows.reduce((sum, r) => sum + r.roadKm, 0)
-
-      // Após aprovação: se alguma linha tem aprovação manual, soma officialAfterApprovalKm das linhas;
-      // senão, reflete o valor canônico viário do lote (1x)
-      const hasManualApproval = batchRows.some((r) =>
-        Boolean(r.approval && r.approval.status === 'approved'),
-      )
-      const bAfter = hasManualApproval
-        ? batchRows.reduce((sum, r) => sum + r.officialAfterApprovalKm, 0)
-        : bRoad
-
-      // REGRA 26/10: Desconto no km para pagamento de combustível a partir de 26/10
-      // Fator parametrizável manualmente pelo card (0%, 5%, 10% ou 15% - padrão 15%)
-      const earliestCreatedTs = batchRows.reduce((min, r) => {
-        const t = r.dateRaw ? new Date(r.dateRaw).getTime() : 0
-        return t > 0 && t < min ? t : min
-      }, Number.MAX_SAFE_INTEGER)
-      const isDiscountPostCutoff = isPostFuelPaymentCutoff(earliestCreatedTs)
-      const discountFactor = 1 - manualDiscountPct / 100
-      const bKmPagamento = isDiscountPostCutoff ? bRoad * discountFactor : bRoad
-
-      // KM GPS SANEADO/AUDITADO DO LOTE 1x (Coluna B, estritamente para comparação/auditoria):
-      let bGps = batchRows.reduce((max, r) => {
-        const telemKm = r.canonicalBatchTelem ? r.canonicalBatchTelem.km_gps_total : 0
-        return Math.max(max, telemKm || r.gpsKm || 0)
-      }, 0)
-
-      roadKmTotal += bRoad
-      gpsKmTotal += bGps
-      afterApprovalKmTotal += bAfter
-      kmPagamentoTotal += bKmPagamento
-    })
-
-    // REGRA DO USUÁRIO (Ajuste Manual Edson / Período):
-    // Se o filtro selecionado engloba o entregador Edson no período 01/10–22/10,
-    // o KM Oficial Pago Viário = 731 km e deve exibir nota explícita "+285,1 km sobre a soma canônica dos lotes (445,9 km)".
-    const isEdsonSelected =
-      selectedCourierId === 'tetrfu5oi19jbwz' ||
-      (selectedCourierId === 'all' &&
-        eligibleCouriers.some((c) => c.name?.toLowerCase().includes('edson')))
-
-    let manualAdjustmentActive = false
-    let manualAdjTargetKm = 731.0
-    let manualAdjDelta = 0
-    let manualAdjPeriodText = '01/10–22/10'
-
-    if (
-      isEdsonSelected &&
-      (selectedDateFilter === 'all' ||
-        selectedDateFilter === 'month' ||
-        (selectedDateFilter === 'custom' &&
-          customStartDate &&
-          customEndDate &&
-          customStartDate <= '2026-10-22' &&
-          customEndDate >= '2026-10-01'))
-    ) {
-      manualAdjustmentActive = true
-      manualAdjDelta = Number((manualAdjTargetKm - roadKmTotal).toFixed(1))
-    }
-
-    const finalRoadKmTotal = manualAdjustmentActive
-      ? manualAdjTargetKm
-      : Number(roadKmTotal.toFixed(1))
-    const finalAfterApprovalKmTotal = manualAdjustmentActive
-      ? manualAdjTargetKm
-      : Number(afterApprovalKmTotal.toFixed(1))
-    const finalKmPagamentoTotal = manualAdjustmentActive
-      ? manualAdjTargetKm
-      : Number(kmPagamentoTotal.toFixed(1))
-
-    // Cálculo do combustível sobre km_pagamento (usando taxa canônica de moto: 30 km/L, R$ 6,49/L ou settings)
-    const motoConsumption = Number(settings?.consumption_kml) || 30.0
-    const motoPrice = Number(settings?.fuel_price) || 6.49
-    const combustivelPagamentoTotal = Number(
-      ((finalKmPagamentoTotal / motoConsumption) * motoPrice).toFixed(2),
-    )
-    const combustivelViarioOficialTotal = Number(
-      ((finalRoadKmTotal / motoConsumption) * motoPrice).toFixed(2),
-    )
-
-    return {
-      roadKmTotal: finalRoadKmTotal,
-      rawRoadKmBeforeAdjustment: Number(roadKmTotal.toFixed(1)),
-      gpsKmTotal: Number(gpsKmTotal.toFixed(1)),
-      afterApprovalKmTotal: finalAfterApprovalKmTotal,
-      approvedItemsCount,
-      autoApprovedCount,
-      divergentPendingCount,
-      redirectedCount,
-      totalScopeCount,
-      unreadableDateCount,
-      batchCount: scopeBatches.size,
-      hasManualAdjustment: manualAdjustmentActive,
-      manualAdjDelta,
-      manualAdjPeriodText,
-      kmPagamentoTotal: finalKmPagamentoTotal,
-      combustivelPagamentoTotal,
-      combustivelViarioOficialTotal,
-    }
   }, [
     auditRows,
     selectedCourierId,
@@ -1018,6 +750,7 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     searchQuery,
     eligibleCouriers,
     manualDiscountPct,
+    settings,
   ])
 
   // Filtragem dos registros da tabela
