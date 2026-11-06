@@ -465,7 +465,7 @@ export function buildKmAuditRows(params: BuildKmAuditRowsParams): KmAuditRow[] {
 export interface CalculateKmAuditSummaryParams {
   auditRows: KmAuditRow[]
   selectedCourierId?: string
-  selectedDateFilter?: 'all' | 'today' | 'week' | 'month' | 'previous_month' | 'custom'
+  selectedDateFilter?: 'all' | 'today' | 'week' | 'month' | 'previous_month' | 'custom' | string
   customStartDate?: string
   customEndDate?: string
   selectedBatchKey?: string

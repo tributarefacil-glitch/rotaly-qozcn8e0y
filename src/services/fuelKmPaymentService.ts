@@ -266,3 +266,8 @@ export function calculateFuelKmPayment(params: CalculateFuelKmPaymentParams): Fu
     batchesCount: batchMap.size,
   }
 }
+
+/**
+ * Alias canônico oficial para unificação em todas as telas (KmAuditReport, AdminDashboard, CourierDeliveryHistoryModal)
+ */
+export const calculateCanonicalFuelKmPayment = calculateFuelKmPayment

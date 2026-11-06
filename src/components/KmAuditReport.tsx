@@ -286,37 +286,39 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
         }
       }
 
-      const data = await deliveryService.getRouteKmApprovals(currentCompanyId, options)
-      setApprovals(data)
-      await fetchPeriodOrders()
+      // Otimização: Paralelizar buscas de aprovações, pedidos do período, ajustes e telemetria
+      const [data, , adjResult, telemResult] = await Promise.all([
+        deliveryService.getRouteKmApprovals(currentCompanyId, options),
+        fetchPeriodOrders(),
+        pb
+          .collection('courier_period_manual_adjustments')
+          .getFullList({
+            filter: "status != 'inactive'",
+            sort: '-created',
+          })
+          .catch((errAdj) => {
+            console.warn('Aviso ao carregar courier_period_manual_adjustments:', errAdj)
+            return []
+          }),
+        deliveryService.listRouteBatchTelemetry().catch((errTelem) => {
+          console.warn('Erro ao carregar route_batch_telemetry:', errTelem)
+          return []
+        }),
+      ])
 
-      // Carregar ajustes manuais vigentes
-      try {
-        const adjRecords = await pb.collection('courier_period_manual_adjustments').getFullList({
-          filter: "status != 'inactive'",
-          sort: '-created',
-        })
-        setManualAdjustments(adjRecords || [])
-      } catch (errAdj) {
-        console.warn('Aviso ao carregar courier_period_manual_adjustments:', errAdj)
-      }
+      setApprovals(data || [])
+      setManualAdjustments(adjResult || [])
 
-      // Buscar registros canônicos de telemetria da tabela route_batch_telemetry
-      try {
-        const canonicalTelemList = await deliveryService.listRouteBatchTelemetry()
-        const telemMap = new Map<string, RouteBatchTelemetryRecord>()
-        canonicalTelemList.forEach((rec) => {
-          if (rec.route_batch_key) {
-            telemMap.set(rec.route_batch_key, rec)
-          }
-          if (rec.id) {
-            telemMap.set(rec.id, rec)
-          }
-        })
-        setBatchTelemetryMap(telemMap)
-      } catch (errTelem) {
-        console.warn('Erro ao carregar route_batch_telemetry:', errTelem)
-      }
+      const telemMap = new Map<string, RouteBatchTelemetryRecord>()
+      ;(telemResult || []).forEach((rec) => {
+        if (rec.route_batch_key) {
+          telemMap.set(rec.route_batch_key, rec)
+        }
+        if (rec.id) {
+          telemMap.set(rec.id, rec)
+        }
+      })
+      setBatchTelemetryMap(telemMap)
     } catch (err) {
       console.warn('Erro ao carregar aprovações de KM:', err)
     } finally {
