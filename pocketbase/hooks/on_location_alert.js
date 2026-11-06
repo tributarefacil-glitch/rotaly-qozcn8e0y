@@ -237,12 +237,15 @@ onRecordAfterCreateSuccess((e) => {
       }
     }
 
-    // TOLERÂNCIA DE VIA PARALELA:
-    // Medir a distância perpendicular da posição do entregador ao segmento reto direto
-    // entre a última parada concluída (ou base) e a próxima parada pendente (ou base de retorno).
-    // Se o entregador estiver a menos de PARALLEL_ROAD_TOLERANCE_METERS (~400m) desse segmento direto,
-    // trata-se de deslocamento em via paralela sensata rumo ao destino certo (ex: vias lindeiras em Caxias/Pilar/São Lourenço).
-    const PARALLEL_ROAD_TOLERANCE_METERS = 400
+    // TOLERÂNCIA DE VIA PARALELA E CORREDOR ENTRE PARADAS CONSECUTIVAS:
+    // 1. Segmento direto da perna ativa: entre a última parada concluída (ou base) e a próxima pendente (ou base de retorno).
+    // 2. Tolerância dinâmica quando em velocidade rápida (via expressa / rodovia / reta rápida como Washington Luís / Rio-Magé):
+    //    Em velocidade (>= 40 km/h) numa via reta/longa ou via paralela expressa, a tolerância de via paralela expande
+    //    de 400m para 700m (para compensar traçado viário afastado em linha reta).
+    // 3. Além disso, se o entregador está em movimento rápido e seu deslocamento está diminuindo a distância até
+    //    o destino pendente (aproximação real do próximo ponto), ele NÃO está em desvio.
+    const isFastMoving = speedKmh >= 40
+    const PARALLEL_ROAD_TOLERANCE_METERS = isFastMoving ? 700 : 400
     let distToCurrentLegSegment = Infinity
     if (lastCompletedStopCoords && nextPendingStopCoords) {
       distToCurrentLegSegment = calcPointToSegmentMeters(
@@ -257,24 +260,45 @@ onRecordAfterCreateSuccess((e) => {
 
     const isWithinParallelLegTolerance = distToCurrentLegSegment < PARALLEL_ROAD_TOLERANCE_METERS
 
-    const routeWaypoints = []
+    // Construção dos waypoints e segmentos da rota do lote:
+    // Inclui a sequência completa da rota ativa [Base -> Parada 1 -> Parada 2 ... -> Base Final]
+    // para que a projeção viária contemple o corredor de qualquer segmento do lote, e não apenas
+    // os pontos restantes quando o entregador se desloca entre a parada anterior e a próxima.
 
     if (isReturningToBaseOnly) {
-      // Retorno exclusivo à base: trecho de referência é apenas do entregador até a base de retorno
-      routeWaypoints.push({ lat: lat, lng: lng, label: 'courier_pos' })
+      // Retorno exclusivo à base: trecho de referência da última parada até a base de retorno
+      if (lastCompletedStopCoords) {
+        routeWaypoints.push({
+          lat: lastCompletedStopCoords.lat,
+          lng: lastCompletedStopCoords.lng,
+          label: 'last_stop',
+        })
+      } else {
+        routeWaypoints.push({ lat: lat, lng: lng, label: 'courier_pos' })
+      }
       if (endBaseLat !== null && endBaseLng !== null) {
         routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
       } else if (baseLat !== null && baseLng !== null) {
         routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
       }
     } else {
-      // Há entregas pendentes: base de partida -> clientes pendentes -> base de retorno
-      if (baseLat !== null && baseLng !== null) {
+      // Há entregas pendentes:
+      // Incluir SEMPRE a última parada concluída (ou base de partida) como origem da perna ativa,
+      // seguida de todos os clientes pendentes e da base de retorno.
+      // Isso garante que o segmento [última parada -> próxima parada pendente] faça parte da rota de waypoints!
+      if (lastCompletedStopCoords) {
+        routeWaypoints.push({
+          lat: lastCompletedStopCoords.lat,
+          lng: lastCompletedStopCoords.lng,
+          label: 'last_completed_or_base',
+        })
+      } else if (baseLat !== null && baseLng !== null) {
         routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
       }
 
       for (let i = 0; i < strictlyPendingOrders.length; i++) {
         const o = strictlyPendingOrders[i]
+        let stopCoordsFound = false
         const cId = o.getString('customer_id')
         if (cId) {
           try {
@@ -284,14 +308,25 @@ onRecordAfterCreateSuccess((e) => {
               const cLng = cust.getFloat('lng')
               if (cLat && cLng) {
                 routeWaypoints.push({ lat: cLat, lng: cLng, label: 'customer', orderId: o.id })
+                stopCoordsFound = true
               }
             }
           } catch (_) {}
+        }
+        if (!stopCoordsFound && o.getFloat('end_address_lat') && o.getFloat('end_address_lng')) {
+          routeWaypoints.push({
+            lat: o.getFloat('end_address_lat'),
+            lng: o.getFloat('end_address_lng'),
+            label: 'order_dest',
+            orderId: o.id,
+          })
         }
       }
 
       if (endBaseLat !== null && endBaseLng !== null) {
         routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
+      } else if (baseLat !== null && baseLng !== null) {
+        routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
       }
     }
 
@@ -357,11 +392,37 @@ onRecordAfterCreateSuccess((e) => {
     const nowMs = Date.now()
     const isGpsSignalFresh = nowMs - currentLocTime <= MAX_GPS_SIGNAL_AGE_MS
 
+    // APROXIMAÇÃO REAL DO PRÓXIMO DESTINO (ANTI-FALSO POSITIVO EM VELOCIDADE/VIA RETA):
+    // Se o entregador está em velocidade e se aproximando do próximo ponto de entrega (ou da base),
+    // a distância ao próximo destino está diminuindo em relação aos pings anteriores.
+    let isApproachingNextStop = false
+    if (nextPendingStopCoords && prevLat !== null && prevLng !== null) {
+      const currentDistToNext = calcHaversineMeters(
+        lat,
+        lng,
+        nextPendingStopCoords.lat,
+        nextPendingStopCoords.lng,
+      )
+      const prevDistToNext = calcHaversineMeters(
+        prevLat,
+        prevLng,
+        nextPendingStopCoords.lat,
+        nextPendingStopCoords.lng,
+      )
+      // Se a distância diminuiu pelo menos 15 metros, o entregador está nitidamente se aproximando do destino
+      if (prevDistToNext - currentDistToNext >= 15) {
+        isApproachingNextStop = true
+      }
+    }
+
     // FECHAMENTO DE EPISÓDIO DE DESVIO QUANDO O ENTREGADOR RETORNA AO CORREDOR:
     // Se a posição atual do entregador está DENTRO do corredor viário (< 400m da polilinha ou da perna direta)
-    // ou com boa aproximação da rota (< DEVIATION_THRESHOLD_METERS), e havia um episódio aberto
-    // de desvio ou parada para este entregador, marca como [fechado - retornou ao corredor].
-    const isBackOnRouteCorridor = minDistanceToRouteCorridor < 400 || isWithinParallelLegTolerance
+    // ou com boa aproximação da rota (< DEVIATION_THRESHOLD_METERS) ou se aproximando ativamente do próximo destino em velocidade,
+    // e havia um episódio aberto de desvio ou parada para este entregador, marca como [fechado - retornou ao corredor].
+    const isBackOnRouteCorridor =
+      minDistanceToRouteCorridor < 400 ||
+      isWithinParallelLegTolerance ||
+      (isFastMoving && isApproachingNextStop)
 
     if (isBackOnRouteCorridor && isGpsSignalFresh) {
       try {
@@ -605,6 +666,12 @@ onRecordAfterCreateSuccess((e) => {
       return mDist
     }
 
+    // Se o entregador estiver em velocidade rápida (>= 40 km/h) numa via reta/expressa e estiver:
+    // 1. Dentro da tolerância de via paralela (~700m do segmento direto); OU
+    // 2. Se aproximando comprovadamente do próximo ponto de entrega (isApproachingNextStop);
+    // ENTÃO NÃO É DESVIO de rota — ele está trafegando na via expressa/reta rumo ao cliente.
+    const isMovingTowardsLeg = isFastMoving && isApproachingNextStop
+
     if (
       speedKmh > 10 &&
       speedKmh <= 140 &&
@@ -612,7 +679,8 @@ onRecordAfterCreateSuccess((e) => {
       prevLng &&
       isGpsSignalFresh &&
       !isFrozenCoordWithPrev &&
-      !isWithinParallelLegTolerance
+      !isWithinParallelLegTolerance &&
+      !isMovingTowardsLeg
     ) {
       if (minDistanceToRouteCorridor >= DEVIATION_THRESHOLD_METERS) {
         // Debounce robusto: checar pings anteriores válidos.
