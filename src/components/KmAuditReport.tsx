@@ -730,7 +730,13 @@ export const KmAuditReport: React.FC<KmAuditReportProps> = ({
     return calculateKmAuditSummary({
       auditRows,
       selectedCourierId,
-      selectedDateFilter,
+      selectedDateFilter: selectedDateFilter as
+        | 'all'
+        | 'today'
+        | 'week'
+        | 'month'
+        | 'previous_month'
+        | 'custom',
       customStartDate,
       customEndDate,
       selectedBatchKey,

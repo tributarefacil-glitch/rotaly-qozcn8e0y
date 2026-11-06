@@ -54,6 +54,11 @@ import {
   calculateCanonicalCourierTotals,
   getCanonicalCourierBalance,
 } from '@/services/canonicalCourierTotalsService'
+import {
+  calculateFuelKmPayment,
+  CalculateFuelKmPaymentParams,
+} from '@/services/fuelKmPaymentService'
+import { useReactiveFuelDiscount, getReferenceMonthKey } from '@/hooks/useReactiveFuelDiscount'
 import { fuelAccountService } from '@/services/fuelAccountService'
 import { DEVIATION_THRESHOLD_METERS, haversineDistanceMeters } from '@/lib/telemetryKmEngine'
 import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
@@ -131,6 +136,15 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
 }) => {
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>(
     initialPeriodFilter,
+  )
+
+  const referenceMonthKey = useMemo(() => {
+    return getReferenceMonthKey(periodFilter, customStartDate)
+  }, [periodFilter, customStartDate])
+
+  const { discountPct: courierManualDiscountPct } = useReactiveFuelDiscount(
+    referenceMonthKey,
+    officialSettings || settings,
   )
 
   // Datas padrão para o período personalizado: últimos 7 dias civis no fuso de Brasília
@@ -904,6 +918,15 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       approvalsMap,
     })
 
+    // Motor canônico fuelKmPaymentService para KM Pagamento de Combustível por lote
+    const canonicalFuelPayment = calculateFuelKmPayment({
+      orders: filteredItems.map((fi) => fi.order),
+      courier: courier || undefined,
+      periodFilter: 'all', // filteredItems já está devidamente filtrado pelo período
+      manualDiscountPct: courierManualDiscountPct,
+      settings: officialSettings || settings,
+    })
+
     return {
       totalKm: Number(totalKm.toFixed(1)),
       totalFuelCost: Number(totalFuelCost.toFixed(2)),
@@ -923,10 +946,10 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       manualAdjustmentDeltaKm: canonicalCalculation.manualAdjustmentDeltaKm,
       manualAdjustmentPeriodLabel: canonicalCalculation.manualAdjustmentPeriodLabel,
       rawOfficialKmBeforeAdjustment: canonicalCalculation.rawOfficialKmBeforeAdjustment,
-      kmPagamento: isBicycle ? 0 : canonicalCalculation.km_pagamento,
-      combustivelPagamento: isBicycle ? 0 : canonicalCalculation.combustivel_pagamento,
-      descontoKm: isBicycle ? 0 : canonicalCalculation.desconto_km,
-      descontoCombustivel: isBicycle ? 0 : canonicalCalculation.desconto_combustivel,
+      kmPagamento: isBicycle ? 0 : canonicalFuelPayment.kmPagamento,
+      combustivelPagamento: isBicycle ? 0 : canonicalFuelPayment.combustivelPagamento,
+      descontoKm: isBicycle ? 0 : canonicalFuelPayment.descontoKm,
+      descontoCombustivel: isBicycle ? 0 : canonicalFuelPayment.descontoCombustivel,
     }
   }, [
     allCourierAdvances,
@@ -941,6 +964,9 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     telemetryBatchesList,
     customStartDate,
     customEndDate,
+    courierManualDiscountPct,
+    officialSettings,
+    settings,
   ])
 
   // Exportar dados em CSV com KM Real e KM de Desvios em colunas separadas
