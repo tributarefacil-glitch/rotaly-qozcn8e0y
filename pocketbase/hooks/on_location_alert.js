@@ -2,1119 +2,1113 @@
 // PocketBase JSVM (goja): todas as variáveis, funções e constantes devem estar estritamente inline dentro do callback do hook.
 
 onRecordAfterCreateSuccess((e) => {
-  const DEVIATION_THRESHOLD_METERS = 600
-  const UNEXPECTED_STOP_THRESHOLD_METERS = 600
-  const MIN_STOP_DURATION_SECONDS = 180 // 3 minutos mínimos para caracterizar parada não programada
-  const MAX_GPS_SIGNAL_AGE_MS = 3 * 60 * 1000 // Sinais com mais de 3 minutos são defasados e não geram novos alarmes
-  const CONSECUTIVE_DEVIATION_POINTS_REQUIRED = 2 // Debounce: exigir ao menos 2 pontos consecutivos fora da rota (>600m)
-
-  const loc = e.record
-  const courierId = loc.getString('user_id')
-  const lat = loc.getFloat('lat')
-  const lng = loc.getFloat('lng')
-  const speedKmh = loc.getFloat('speed') || 0
-  const accuracy = loc.getFloat('accuracy') || 0
-  const gpsStatus = loc.getString('gps_status') || ''
-  const gpsReason = loc.getString('gps_reason') || ''
-
-  if (!courierId || !lat || !lng) {
-    e.next()
-    return
-  }
-
-  // B. Ignorar pontos inválidos na detecção:
-  // Pontos com accuracy 0/ausente ou status offline com falha de sinal não devem gerar evento nem quebrar episódios
-  const isWeakOrOfflineSignal =
-    gpsStatus === 'offline' || gpsReason === 'weak_signal' || gpsReason === 'gps_unavailable'
-  if (isWeakOrOfflineSignal && accuracy <= 0) {
-    e.next()
-    return
-  }
-  if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) {
-    e.next()
-    return
-  }
-  if (accuracy > 100) {
-    e.next()
-    return
-  }
-
-  // Encontrar pedidos da rota iniciada deste entregador (apenas pedidos de rotas abertas)
-  // 1. Pedidos pendentes de entrega (status 'in_transit' e status !== 'delivered')
-  let pendingOrders = []
   try {
-    pendingOrders = $app.findRecordsByFilter(
-      'orders',
-      `courier_id = '${courierId}' && route_started = true && status = 'in_transit' && route_finished != true`,
-      'sequence,created',
-      20,
-      0,
-    )
-  } catch (err) {
-    console.log('Error finding pending orders for location check:', err)
-  }
+    const DEVIATION_THRESHOLD_METERS = 600
+    const UNEXPECTED_STOP_THRESHOLD_METERS = 600
+    const MIN_STOP_DURATION_SECONDS = 180 // 3 minutos mínimos para caracterizar parada não programada
+    const MAX_GPS_SIGNAL_AGE_MS = 3 * 60 * 1000 // Sinais com mais de 3 minutos são defasados e não geram novos alarmes
 
-  // Filtrar estritamente qualquer pedido que já esteja com status = 'delivered'
-  const strictlyPendingOrders = pendingOrders.filter((o) => o.getString('status') !== 'delivered')
+    const loc = e.record
+    const courierId = loc.getString('user_id')
+    const lat = loc.getFloat('lat')
+    const lng = loc.getFloat('lng')
+    const speedKmh = loc.getFloat('speed') || 0
+    const accuracy = loc.getFloat('accuracy') || 0
+    const gpsStatus = loc.getString('gps_status') || ''
+    const gpsReason = loc.getString('gps_reason') || ''
 
-  // Se não houver entregas pendentes com status in_transit, verificar se há rota ativa em andamento retornando à base:
-  // Um pedido que tenha route_started = true e route_finished != true
-  let routeContextOrders = strictlyPendingOrders
-  let isReturningToBaseOnly = false
-
-  if (strictlyPendingOrders.length === 0) {
-    try {
-      const openRouteOrders = $app.findRecordsByFilter(
-        'orders',
-        `courier_id = '${courierId}' && route_started = true && (route_finished = false || route_finished = null)`,
-        '-updated',
-        1,
-        0,
-      )
-      if (openRouteOrders && openRouteOrders.length > 0) {
-        routeContextOrders = openRouteOrders
-        isReturningToBaseOnly = true
-      }
-    } catch (errRoute) {
-      console.log('Error finding open route for return-to-base check:', errRoute)
+    if (!courierId || !lat || !lng) {
+      return
     }
-  }
 
-  if (routeContextOrders.length === 0) {
-    e.next()
-    return
-  }
+    // B. Ignorar pontos inválidos na detecção:
+    // Pontos com accuracy 0/ausente ou status offline com falha de sinal não devem gerar evento nem quebrar episódios
+    const isWeakOrOfflineSignal =
+      gpsStatus === 'offline' || gpsReason === 'weak_signal' || gpsReason === 'gps_unavailable'
+    if (isWeakOrOfflineSignal && accuracy <= 0) {
+      return
+    }
+    if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) {
+      return
+    }
+    if (accuracy > 100) {
+      return
+    }
 
-  // Auxiliar Haversine
-  const R = 6371e3
-  const calcHaversineMeters = (lat1, lon1, lat2, lon2) => {
-    const φ1 = (lat1 * Math.PI) / 180
-    const φ2 = (lat2 * Math.PI) / 180
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180
-    const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    return R * c
-  }
-
-  // Distância ponto até segmento de reta
-  const calcPointToSegmentMeters = (pLat, pLng, aLat, aLng, bLat, bLng) => {
-    const dAB = calcHaversineMeters(aLat, aLng, bLat, bLng)
-    if (dAB === 0) return calcHaversineMeters(pLat, pLng, aLat, aLng)
-    const x = (bLng - aLng) * Math.cos((((aLat + bLat) / 2) * Math.PI) / 180)
-    const y = bLat - aLat
-    const px = (pLng - aLng) * Math.cos((((aLat + pLat) / 2) * Math.PI) / 180)
-    const py = pLat - aLat
-    const dot = px * x + py * y
-    const lenSq = x * x + y * y
-    const param = lenSq !== 0 ? Math.max(0, Math.min(1, dot / lenSq)) : -1
-    const projLat = aLat + param * (bLat - aLat)
-    const projLng = aLng + param * (bLng - aLng)
-    return calcHaversineMeters(pLat, pLng, projLat, projLng)
-  }
-
-  // Obter pontos de interesse da rota ativa:
-  // 1. Base de partida (start_base)
-  // 2. Destinos de entregas estritamente PENDENTES (excluindo qualquer pedido status = 'delivered')
-  // 3. Base/destino final (end_address / start_base)
-  // Quando não houver paradas pendentes (isReturningToBaseOnly === true), o trecho de referência
-  // passa a ser exclusivamente [posição atual -> base (end_address/start_base)].
-  const anchorOrder = routeContextOrders[0]
-  const sellerId = anchorOrder.getString('seller_id')
-  const trackingCode = anchorOrder.getString('tracking_code')
-  const currentRouteBatchKey = anchorOrder.getString('route_batch_key') || ''
-
-  let baseLat = anchorOrder.getFloat('start_base_lat') || null
-  let baseLng = anchorOrder.getFloat('start_base_lng') || null
-  let endBaseLat = anchorOrder.getFloat('end_address_lat') || baseLat
-  let endBaseLng = anchorOrder.getFloat('end_address_lng') || baseLng
-
-  // Helper de formatação de data SQLite/PocketBase: YYYY-MM-DD HH:MM:SS
-  const formatDbDate = (d) => {
-    const pad = (n) => String(n).padStart(2, '0')
-    return (
-      d.getUTCFullYear() +
-      '-' +
-      pad(d.getUTCMonth() + 1) +
-      '-' +
-      pad(d.getUTCDate()) +
-      ' ' +
-      pad(d.getUTCHours()) +
-      ':' +
-      pad(d.getUTCMinutes()) +
-      ':' +
-      pad(d.getUTCSeconds())
-    )
-  }
-
-  // Identificar última parada concluída (ou base de partida) e próxima parada pendente do lote
-  // para calcular tolerância de via paralela (~400m do segmento direto entre paradas consecutivas)
-  let lastCompletedStopCoords = null
-  let nextPendingStopCoords = null
-
-  if (currentRouteBatchKey) {
+    // Encontrar pedidos da rota iniciada deste entregador (apenas pedidos de rotas abertas)
+    // 1. Pedidos pendentes de entrega (status 'in_transit' e status !== 'delivered')
+    let pendingOrders = []
     try {
-      const allBatchOrders = $app.findRecordsByFilter(
+      pendingOrders = $app.findRecordsByFilter(
         'orders',
-        `route_batch_key = '${currentRouteBatchKey}'`,
+        `courier_id = '${courierId}' && route_started = true && status = 'in_transit' && route_finished != true`,
         'sequence,created',
-        50,
+        20,
         0,
       )
+    } catch (err) {
+      console.log('Error finding pending orders for location check:', err)
+    }
 
-      let lastCompletedOrder = null
-      let firstPendingOrder = null
+    // Filtrar estritamente qualquer pedido que já esteja com status = 'delivered'
+    const strictlyPendingOrders = pendingOrders.filter((o) => o.getString('status') !== 'delivered')
 
-      for (let b = 0; b < allBatchOrders.length; b++) {
-        const bOrd = allBatchOrders[b]
-        const st = bOrd.getString('status')
-        if (st === 'delivered') {
-          lastCompletedOrder = bOrd
-        } else if (!firstPendingOrder && st !== 'cancelled') {
-          firstPendingOrder = bOrd
+    // Se não houver entregas pendentes com status in_transit, verificar se há rota ativa em andamento retornando à base:
+    // Um pedido que tenha route_started = true e route_finished != true
+    let routeContextOrders = strictlyPendingOrders
+    let isReturningToBaseOnly = false
+
+    if (strictlyPendingOrders.length === 0) {
+      try {
+        const openRouteOrders = $app.findRecordsByFilter(
+          'orders',
+          `courier_id = '${courierId}' && route_started = true && (route_finished = false || route_finished = null)`,
+          '-updated',
+          1,
+          0,
+        )
+        if (openRouteOrders && openRouteOrders.length > 0) {
+          routeContextOrders = openRouteOrders
+          isReturningToBaseOnly = true
         }
+      } catch (errRoute) {
+        console.log('Error finding open route for return-to-base check:', errRoute)
       }
+    }
 
-      // Coordenadas da última parada concluída (ou da base se nenhuma foi concluída ainda)
-      if (lastCompletedOrder) {
-        const cId = lastCompletedOrder.getString('customer_id')
-        if (cId) {
-          try {
-            const cRec = $app.findRecordById('customers', cId)
-            if (cRec && cRec.getFloat('lat') && cRec.getFloat('lng')) {
-              lastCompletedStopCoords = { lat: cRec.getFloat('lat'), lng: cRec.getFloat('lng') }
-            }
-          } catch (_) {}
-        }
-        if (!lastCompletedStopCoords && lastCompletedOrder.getFloat('end_address_lat')) {
-          lastCompletedStopCoords = {
-            lat: lastCompletedOrder.getFloat('end_address_lat'),
-            lng: lastCompletedOrder.getFloat('end_address_lng'),
+    if (routeContextOrders.length === 0) {
+      return
+    }
+
+    // Auxiliar Haversine
+    const R = 6371e3
+    const calcHaversineMeters = (lat1, lon1, lat2, lon2) => {
+      const φ1 = (lat1 * Math.PI) / 180
+      const φ2 = (lat2 * Math.PI) / 180
+      const Δφ = ((lat2 - lat1) * Math.PI) / 180
+      const Δλ = ((lon2 - lon1) * Math.PI) / 180
+      const a =
+        Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+      return R * c
+    }
+
+    // Distância ponto até segmento de reta
+    const calcPointToSegmentMeters = (pLat, pLng, aLat, aLng, bLat, bLng) => {
+      const dAB = calcHaversineMeters(aLat, aLng, bLat, bLng)
+      if (dAB === 0) return calcHaversineMeters(pLat, pLng, aLat, aLng)
+      const x = (bLng - aLng) * Math.cos((((aLat + bLat) / 2) * Math.PI) / 180)
+      const y = bLat - aLat
+      const px = (pLng - aLng) * Math.cos((((aLat + pLat) / 2) * Math.PI) / 180)
+      const py = pLat - aLat
+      const dot = px * x + py * y
+      const lenSq = x * x + y * y
+      const param = lenSq !== 0 ? Math.max(0, Math.min(1, dot / lenSq)) : -1
+      const projLat = aLat + param * (bLat - aLat)
+      const projLng = aLng + param * (bLng - aLng)
+      return calcHaversineMeters(pLat, pLng, projLat, projLng)
+    }
+
+    // Obter pontos de interesse da rota ativa:
+    // 1. Base de partida (start_base)
+    // 2. Destinos de entregas estritamente PENDENTES (excluindo qualquer pedido status = 'delivered')
+    // 3. Base/destino final (end_address / start_base)
+    // Quando não houver paradas pendentes (isReturningToBaseOnly === true), o trecho de referência
+    // passa a ser exclusivamente [posição atual -> base (end_address/start_base)].
+    const anchorOrder = routeContextOrders[0]
+    const sellerId = anchorOrder.getString('seller_id')
+    const trackingCode = anchorOrder.getString('tracking_code')
+    const currentRouteBatchKey = anchorOrder.getString('route_batch_key') || ''
+
+    let baseLat = anchorOrder.getFloat('start_base_lat') || null
+    let baseLng = anchorOrder.getFloat('start_base_lng') || null
+    let endBaseLat = anchorOrder.getFloat('end_address_lat') || baseLat
+    let endBaseLng = anchorOrder.getFloat('end_address_lng') || baseLng
+
+    // Helper de formatação de data SQLite/PocketBase: YYYY-MM-DD HH:MM:SS
+    const formatDbDate = (d) => {
+      const pad = (n) => String(n).padStart(2, '0')
+      return (
+        d.getUTCFullYear() +
+        '-' +
+        pad(d.getUTCMonth() + 1) +
+        '-' +
+        pad(d.getUTCDate()) +
+        ' ' +
+        pad(d.getUTCHours()) +
+        ':' +
+        pad(d.getUTCMinutes()) +
+        ':' +
+        pad(d.getUTCSeconds())
+      )
+    }
+
+    // Identificar última parada concluída (ou base de partida) e próxima parada pendente do lote
+    // para calcular tolerância de via paralela (~400m do segmento direto entre paradas consecutivas)
+    let lastCompletedStopCoords = null
+    let nextPendingStopCoords = null
+
+    if (currentRouteBatchKey) {
+      try {
+        const allBatchOrders = $app.findRecordsByFilter(
+          'orders',
+          `route_batch_key = '${currentRouteBatchKey}'`,
+          'sequence,created',
+          50,
+          0,
+        )
+
+        let lastCompletedOrder = null
+        let firstPendingOrder = null
+
+        for (let b = 0; b < allBatchOrders.length; b++) {
+          const bOrd = allBatchOrders[b]
+          const st = bOrd.getString('status')
+          if (st === 'delivered') {
+            lastCompletedOrder = bOrd
+          } else if (!firstPendingOrder && st !== 'cancelled') {
+            firstPendingOrder = bOrd
           }
         }
-      }
 
-      // Coordenadas da próxima parada pendente (ou base de retorno se todas foram concluídas)
-      if (firstPendingOrder) {
-        const cId = firstPendingOrder.getString('customer_id')
-        if (cId) {
-          try {
-            const cRec = $app.findRecordById('customers', cId)
-            if (cRec && cRec.getFloat('lat') && cRec.getFloat('lng')) {
-              nextPendingStopCoords = { lat: cRec.getFloat('lat'), lng: cRec.getFloat('lng') }
-            }
-          } catch (_) {}
-        }
-        if (!nextPendingStopCoords && firstPendingOrder.getFloat('end_address_lat')) {
-          nextPendingStopCoords = {
-            lat: firstPendingOrder.getFloat('end_address_lat'),
-            lng: firstPendingOrder.getFloat('end_address_lng'),
+        // Coordenadas da última parada concluída (ou da base se nenhuma foi concluída ainda)
+        if (lastCompletedOrder) {
+          const cId = lastCompletedOrder.getString('customer_id')
+          if (cId) {
+            try {
+              const cRec = $app.findRecordById('customers', cId)
+              if (cRec && cRec.getFloat('lat') && cRec.getFloat('lng')) {
+                lastCompletedStopCoords = { lat: cRec.getFloat('lat'), lng: cRec.getFloat('lng') }
+              }
+            } catch (_) {}
           }
-        }
-      }
-    } catch (errBatch) {
-      console.log('[on_location_alert] Erro ao buscar pedidos do lote para via paralela:', errBatch)
-    }
-  }
-
-  // Fallbacks: se ainda não houver parada concluída, a origem do segmento é a base de partida
-  if (!lastCompletedStopCoords) {
-    if (baseLat !== null && baseLng !== null) {
-      lastCompletedStopCoords = { lat: baseLat, lng: baseLng }
-    } else {
-      lastCompletedStopCoords = { lat: -22.6977499, lng: -43.2936013 }
-    }
-  }
-
-  // Se não houver próxima parada pendente, o destino do segmento é a base final/retorno
-  if (!nextPendingStopCoords) {
-    if (endBaseLat !== null && endBaseLng !== null) {
-      nextPendingStopCoords = { lat: endBaseLat, lng: endBaseLng }
-    } else if (baseLat !== null && baseLng !== null) {
-      nextPendingStopCoords = { lat: baseLat, lng: baseLng }
-    } else {
-      nextPendingStopCoords = { lat: -22.6977499, lng: -43.2936013 }
-    }
-  }
-
-  // TOLERÂNCIA DE VIA PARALELA:
-  // Medir a distância perpendicular da posição do entregador ao segmento reto direto
-  // entre a última parada concluída (ou base) e a próxima parada pendente (ou base de retorno).
-  // Se o entregador estiver a menos de PARALLEL_ROAD_TOLERANCE_METERS (~400m) desse segmento direto,
-  // trata-se de deslocamento em via paralela sensata rumo ao destino certo (ex: vias lindeiras em Caxias/Pilar/São Lourenço).
-  const PARALLEL_ROAD_TOLERANCE_METERS = 400
-  let distToCurrentLegSegment = Infinity
-  if (lastCompletedStopCoords && nextPendingStopCoords) {
-    distToCurrentLegSegment = calcPointToSegmentMeters(
-      lat,
-      lng,
-      lastCompletedStopCoords.lat,
-      lastCompletedStopCoords.lng,
-      nextPendingStopCoords.lat,
-      nextPendingStopCoords.lng,
-    )
-  }
-
-  const isWithinParallelLegTolerance = distToCurrentLegSegment < PARALLEL_ROAD_TOLERANCE_METERS
-
-  const routeWaypoints = []
-
-  if (isReturningToBaseOnly) {
-    // Retorno exclusivo à base: trecho de referência é apenas do entregador até a base de retorno
-    routeWaypoints.push({ lat: lat, lng: lng, label: 'courier_pos' })
-    if (endBaseLat !== null && endBaseLng !== null) {
-      routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
-    } else if (baseLat !== null && baseLng !== null) {
-      routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
-    }
-  } else {
-    // Há entregas pendentes: base de partida -> clientes pendentes -> base de retorno
-    if (baseLat !== null && baseLng !== null) {
-      routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
-    }
-
-    for (let i = 0; i < strictlyPendingOrders.length; i++) {
-      const o = strictlyPendingOrders[i]
-      const cId = o.getString('customer_id')
-      if (cId) {
-        try {
-          const cust = $app.findRecordById('customers', cId)
-          if (cust) {
-            const cLat = cust.getFloat('lat')
-            const cLng = cust.getFloat('lng')
-            if (cLat && cLng) {
-              routeWaypoints.push({ lat: cLat, lng: cLng, label: 'customer', orderId: o.id })
+          if (!lastCompletedStopCoords && lastCompletedOrder.getFloat('end_address_lat')) {
+            lastCompletedStopCoords = {
+              lat: lastCompletedOrder.getFloat('end_address_lat'),
+              lng: lastCompletedOrder.getFloat('end_address_lng'),
             }
           }
-        } catch (_) {}
+        }
+
+        // Coordenadas da próxima parada pendente (ou base de retorno se todas foram concluídas)
+        if (firstPendingOrder) {
+          const cId = firstPendingOrder.getString('customer_id')
+          if (cId) {
+            try {
+              const cRec = $app.findRecordById('customers', cId)
+              if (cRec && cRec.getFloat('lat') && cRec.getFloat('lng')) {
+                nextPendingStopCoords = { lat: cRec.getFloat('lat'), lng: cRec.getFloat('lng') }
+              }
+            } catch (_) {}
+          }
+          if (!nextPendingStopCoords && firstPendingOrder.getFloat('end_address_lat')) {
+            nextPendingStopCoords = {
+              lat: firstPendingOrder.getFloat('end_address_lat'),
+              lng: firstPendingOrder.getFloat('end_address_lng'),
+            }
+          }
+        }
+      } catch (errBatch) {
+        console.log(
+          '[on_location_alert] Erro ao buscar pedidos do lote para via paralela:',
+          errBatch,
+        )
       }
     }
 
-    if (endBaseLat !== null && endBaseLng !== null) {
-      routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
+    // Fallbacks: se ainda não houver parada concluída, a origem do segmento é a base de partida
+    if (!lastCompletedStopCoords) {
+      if (baseLat !== null && baseLng !== null) {
+        lastCompletedStopCoords = { lat: baseLat, lng: baseLng }
+      } else {
+        lastCompletedStopCoords = { lat: -22.6977499, lng: -43.2936013 }
+      }
     }
-  }
 
-  // Calcular menor distância do ponto atual a qualquer parada programada ou corredor da rota planejada
-  let minDistanceToRouteWaypoints = Infinity
-  for (let w = 0; w < routeWaypoints.length; w++) {
-    const distW = calcHaversineMeters(lat, lng, routeWaypoints[w].lat, routeWaypoints[w].lng)
-    if (distW < minDistanceToRouteWaypoints) {
-      minDistanceToRouteWaypoints = distW
+    // Se não houver próxima parada pendente, o destino do segmento é a base final/retorno
+    if (!nextPendingStopCoords) {
+      if (endBaseLat !== null && endBaseLng !== null) {
+        nextPendingStopCoords = { lat: endBaseLat, lng: endBaseLng }
+      } else if (baseLat !== null && baseLng !== null) {
+        nextPendingStopCoords = { lat: baseLat, lng: baseLng }
+      } else {
+        nextPendingStopCoords = { lat: -22.6977499, lng: -43.2936013 }
+      }
     }
-  }
 
-  let minDistanceToRouteCorridor = minDistanceToRouteWaypoints
-  if (routeWaypoints.length >= 2) {
-    for (let w = 0; w < routeWaypoints.length - 1; w++) {
-      const segDist = calcPointToSegmentMeters(
+    // TOLERÂNCIA DE VIA PARALELA:
+    // Medir a distância perpendicular da posição do entregador ao segmento reto direto
+    // entre a última parada concluída (ou base) e a próxima parada pendente (ou base de retorno).
+    // Se o entregador estiver a menos de PARALLEL_ROAD_TOLERANCE_METERS (~400m) desse segmento direto,
+    // trata-se de deslocamento em via paralela sensata rumo ao destino certo (ex: vias lindeiras em Caxias/Pilar/São Lourenço).
+    const PARALLEL_ROAD_TOLERANCE_METERS = 400
+    let distToCurrentLegSegment = Infinity
+    if (lastCompletedStopCoords && nextPendingStopCoords) {
+      distToCurrentLegSegment = calcPointToSegmentMeters(
         lat,
         lng,
-        routeWaypoints[w].lat,
-        routeWaypoints[w].lng,
-        routeWaypoints[w + 1].lat,
-        routeWaypoints[w + 1].lng,
+        lastCompletedStopCoords.lat,
+        lastCompletedStopCoords.lng,
+        nextPendingStopCoords.lat,
+        nextPendingStopCoords.lng,
       )
-      if (segDist < minDistanceToRouteCorridor) {
-        minDistanceToRouteCorridor = segDist
+    }
+
+    const isWithinParallelLegTolerance = distToCurrentLegSegment < PARALLEL_ROAD_TOLERANCE_METERS
+
+    const routeWaypoints = []
+
+    if (isReturningToBaseOnly) {
+      // Retorno exclusivo à base: trecho de referência é apenas do entregador até a base de retorno
+      routeWaypoints.push({ lat: lat, lng: lng, label: 'courier_pos' })
+      if (endBaseLat !== null && endBaseLng !== null) {
+        routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
+      } else if (baseLat !== null && baseLng !== null) {
+        routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
+      }
+    } else {
+      // Há entregas pendentes: base de partida -> clientes pendentes -> base de retorno
+      if (baseLat !== null && baseLng !== null) {
+        routeWaypoints.push({ lat: baseLat, lng: baseLng, label: 'base' })
+      }
+
+      for (let i = 0; i < strictlyPendingOrders.length; i++) {
+        const o = strictlyPendingOrders[i]
+        const cId = o.getString('customer_id')
+        if (cId) {
+          try {
+            const cust = $app.findRecordById('customers', cId)
+            if (cust) {
+              const cLat = cust.getFloat('lat')
+              const cLng = cust.getFloat('lng')
+              if (cLat && cLng) {
+                routeWaypoints.push({ lat: cLat, lng: cLng, label: 'customer', orderId: o.id })
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (endBaseLat !== null && endBaseLng !== null) {
+        routeWaypoints.push({ lat: endBaseLat, lng: endBaseLng, label: 'end_base' })
       }
     }
-  }
 
-  // Nome do entregador para notificações
-  let courierName = 'Entregador'
-  try {
-    const courierUser = $app.findRecordById('users', courierId)
-    if (courierUser) {
-      courierName = courierUser.getString('name') || courierUser.getString('email') || 'Entregador'
+    // Calcular menor distância do ponto atual a qualquer parada programada ou corredor da rota planejada
+    let minDistanceToRouteWaypoints = Infinity
+    for (let w = 0; w < routeWaypoints.length; w++) {
+      const distW = calcHaversineMeters(lat, lng, routeWaypoints[w].lat, routeWaypoints[w].lng)
+      if (distW < minDistanceToRouteWaypoints) {
+        minDistanceToRouteWaypoints = distW
+      }
     }
-  } catch (_) {}
 
-  // Buscar pontos GPS recentes para detectar velocidade, deslocamento e duração de parada
-  let prevLocations = []
-  try {
-    prevLocations = $app.findRecordsByFilter(
-      'locations',
-      `user_id = '${courierId}' && id != '${loc.id}'`,
-      '-created',
-      5,
-      0,
-    )
-  } catch (_) {}
+    let minDistanceToRouteCorridor = minDistanceToRouteWaypoints
+    if (routeWaypoints.length >= 2) {
+      for (let w = 0; w < routeWaypoints.length - 1; w++) {
+        const segDist = calcPointToSegmentMeters(
+          lat,
+          lng,
+          routeWaypoints[w].lat,
+          routeWaypoints[w].lng,
+          routeWaypoints[w + 1].lat,
+          routeWaypoints[w + 1].lng,
+        )
+        if (segDist < minDistanceToRouteCorridor) {
+          minDistanceToRouteCorridor = segDist
+        }
+      }
+    }
 
-  let prevLat = null
-  let prevLng = null
-  let prevTime = null
-
-  if (prevLocations.length > 0) {
-    prevLat = prevLocations[0].getFloat('lat')
-    prevLng = prevLocations[0].getFloat('lng')
-    prevTime = new Date(prevLocations[0].getString('created')).getTime()
-  }
-
-  const currentLocTime = new Date(loc.getString('created')).getTime()
-  const nowMs = Date.now()
-  const isGpsSignalFresh = nowMs - currentLocTime <= MAX_GPS_SIGNAL_AGE_MS
-
-  // FECHAMENTO DE EPISÓDIO DE DESVIO QUANDO O ENTREGADOR RETORNA AO CORREDOR:
-  // Se a posição atual do entregador está DENTRO do corredor viário (< 400m da polilinha ou da perna direta)
-  // ou com boa aproximação da rota (< DEVIATION_THRESHOLD_METERS), e havia um episódio aberto
-  // de desvio ou parada para este entregador, marca como [fechado - retornou ao corredor].
-  const isBackOnRouteCorridor = minDistanceToRouteCorridor < 400 || isWithinParallelLegTolerance
-
-  if (isBackOnRouteCorridor && isGpsSignalFresh) {
+    // Nome do entregador para notificações
+    let courierName = 'Entregador'
     try {
-      const openHourAgoStr = formatDbDate(new Date(currentLocTime - 2 * 60 * 60 * 1000))
-      const openEpisodes = $app.findRecordsByFilter(
-        'off_route_events',
-        `courier_id = '${courierId}' && updated >= '${openHourAgoStr}'`,
-        '-updated',
+      const courierUser = $app.findRecordById('users', courierId)
+      if (courierUser) {
+        courierName =
+          courierUser.getString('name') || courierUser.getString('email') || 'Entregador'
+      }
+    } catch (_) {}
+
+    // Buscar pontos GPS recentes para detectar velocidade, deslocamento e duração de parada
+    let prevLocations = []
+    try {
+      prevLocations = $app.findRecordsByFilter(
+        'locations',
+        `user_id = '${courierId}' && id != '${loc.id}'`,
+        '-created',
         5,
         0,
       )
+    } catch (_) {}
 
-      for (let ep = 0; ep < openEpisodes.length; ep++) {
-        const episode = openEpisodes[ep]
-        const epNotes = episode.getString('notes') || ''
-        if (epNotes.includes('[fechado')) continue
+    let prevLat = null
+    let prevLng = null
+    let prevTime = null
 
-        const matchesBatch = currentRouteBatchKey && epNotes.includes(currentRouteBatchKey)
-        const isRecent =
-          currentLocTime - new Date(episode.getString('updated')).getTime() < 30 * 60 * 1000
+    if (prevLocations.length > 0) {
+      prevLat = prevLocations[0].getFloat('lat')
+      prevLng = prevLocations[0].getFloat('lng')
+      prevTime = new Date(prevLocations[0].getString('created')).getTime()
+    }
 
-        if (matchesBatch || isRecent) {
-          try {
-            const epStart = new Date(episode.getString('created')).getTime()
-            const totalDur = Math.max(1, Math.round((currentLocTime - epStart) / 1000))
-            episode.set('stop_duration_seconds', totalDur)
-            episode.set(
-              'notes',
-              `${epNotes} [fechado - retornou ao corredor às ${new Date(currentLocTime).toISOString().slice(11, 19)} UTC]`,
-            )
-            $app.save(episode)
-          } catch (errCloseEp) {
-            console.log('[on_location_alert] Erro ao fechar episódio ao voltar à rota:', errCloseEp)
+    const currentLocTime = new Date(loc.getString('created')).getTime()
+    const nowMs = Date.now()
+    const isGpsSignalFresh = nowMs - currentLocTime <= MAX_GPS_SIGNAL_AGE_MS
+
+    // FECHAMENTO DE EPISÓDIO DE DESVIO QUANDO O ENTREGADOR RETORNA AO CORREDOR:
+    // Se a posição atual do entregador está DENTRO do corredor viário (< 400m da polilinha ou da perna direta)
+    // ou com boa aproximação da rota (< DEVIATION_THRESHOLD_METERS), e havia um episódio aberto
+    // de desvio ou parada para este entregador, marca como [fechado - retornou ao corredor].
+    const isBackOnRouteCorridor = minDistanceToRouteCorridor < 400 || isWithinParallelLegTolerance
+
+    if (isBackOnRouteCorridor && isGpsSignalFresh) {
+      try {
+        const openHourAgoStr = formatDbDate(new Date(currentLocTime - 2 * 60 * 60 * 1000))
+        const openEpisodes = $app.findRecordsByFilter(
+          'off_route_events',
+          `courier_id = '${courierId}' && updated >= '${openHourAgoStr}'`,
+          '-updated',
+          5,
+          0,
+        )
+
+        for (let ep = 0; ep < openEpisodes.length; ep++) {
+          const episode = openEpisodes[ep]
+          const epNotes = episode.getString('notes') || ''
+          if (epNotes.includes('[fechado')) continue
+
+          const matchesBatch = currentRouteBatchKey && epNotes.includes(currentRouteBatchKey)
+          const isRecent =
+            currentLocTime - new Date(episode.getString('updated')).getTime() < 30 * 60 * 1000
+
+          if (matchesBatch || isRecent) {
+            try {
+              const epStart = new Date(episode.getString('created')).getTime()
+              const totalDur = Math.max(1, Math.round((currentLocTime - epStart) / 1000))
+              episode.set('stop_duration_seconds', totalDur)
+              episode.set(
+                'notes',
+                `${epNotes} [fechado - retornou ao corredor às ${new Date(currentLocTime).toISOString().slice(11, 19)} UTC]`,
+              )
+              $app.save(episode)
+            } catch (errCloseEp) {
+              console.log(
+                '[on_location_alert] Erro ao fechar episódio ao voltar à rota:',
+                errCloseEp,
+              )
+            }
           }
         }
-      }
-    } catch (_) {}
-  }
-
-  // 1. CHECAGEM E DEDUPLICAÇÃO DE PARADAS FORA DA ROTA (A & C)
-  // Regra:
-  // - Avaliar apenas sinais GPS recentes
-  // - Velocidade <= 2 km/h
-  // - Desvio real da rota planejada (pontos de parada/corredor) > 600m
-  // - Tolerância de via paralela ativa: se o ponto está a menos de 400m do segmento direto entre paradas, NÃO é desvio
-  // - Consolidação de episódio contínuo: se já houver parada aberta para o mesmo entregador no mesmo lote (ou <= 300m / janela de 30 min), ATUALIZA o mesmo registro
-  const isFarFromRoute =
-    minDistanceToRouteCorridor > UNEXPECTED_STOP_THRESHOLD_METERS && !isWithinParallelLegTolerance
-
-  if (speedKmh <= 2 && isFarFromRoute && isGpsSignalFresh) {
-    // Buscar se já existe um episódio de parada em andamento para este courier no mesmo lote ou recente
-    let existingStopEvents = []
-    try {
-      const thirtyMinAgoStr = formatDbDate(new Date(currentLocTime - 30 * 60 * 1000))
-      existingStopEvents = $app.findRecordsByFilter(
-        'off_route_events',
-        `courier_id = '${courierId}' && event_type = 'unexpected_stop' && updated >= '${thirtyMinAgoStr}'`,
-        '-updated',
-        10,
-        0,
-      )
-    } catch (errFindStop) {
-      console.log('Error finding existing stop event:', errFindStop)
+      } catch (_) {}
     }
 
-    let matchingEpisode = null
-    // Prioridade 1: mesmo lote (route_batch_key) que ainda não foi fechado
-    for (let s = 0; s < existingStopEvents.length; s++) {
-      const ev = existingStopEvents[s]
-      const notes = ev.getString('notes') || ''
-      const isClosed = notes.includes('[fechado')
-      if (isClosed) continue
+    // 1. CHECAGEM E DEDUPLICAÇÃO DE PARADAS FORA DA ROTA (A & C)
+    // Regra:
+    // - Avaliar apenas sinais GPS recentes
+    // - Velocidade <= 2 km/h
+    // - Desvio real da rota planejada (pontos de parada/corredor) > 600m
+    // - Tolerância de via paralela ativa: se o ponto está a menos de 400m do segmento direto entre paradas, NÃO é desvio
+    // - Consolidação de episódio contínuo: se já houver parada aberta para o mesmo entregador no mesmo lote (ou <= 300m / janela de 30 min), ATUALIZA o mesmo registro
+    const isFarFromRoute =
+      minDistanceToRouteCorridor > UNEXPECTED_STOP_THRESHOLD_METERS && !isWithinParallelLegTolerance
 
-      if (currentRouteBatchKey && notes.includes(currentRouteBatchKey)) {
-        matchingEpisode = ev
-        break
+    if (speedKmh <= 2 && isFarFromRoute && isGpsSignalFresh) {
+      // Buscar se já existe um episódio de parada em andamento para este courier no mesmo lote ou recente
+      let existingStopEvents = []
+      try {
+        const thirtyMinAgoStr = formatDbDate(new Date(currentLocTime - 30 * 60 * 1000))
+        existingStopEvents = $app.findRecordsByFilter(
+          'off_route_events',
+          `courier_id = '${courierId}' && event_type = 'unexpected_stop' && updated >= '${thirtyMinAgoStr}'`,
+          '-updated',
+          10,
+          0,
+        )
+      } catch (errFindStop) {
+        console.log('Error finding existing stop event:', errFindStop)
       }
-    }
 
-    // Prioridade 2: proximidade geográfica do episódio de parada (tolerância ampliada para até 300m ou 15 min de intervalo)
-    if (!matchingEpisode) {
+      let matchingEpisode = null
+      // Prioridade 1: mesmo lote (route_batch_key) que ainda não foi fechado
       for (let s = 0; s < existingStopEvents.length; s++) {
         const ev = existingStopEvents[s]
         const notes = ev.getString('notes') || ''
-        if (notes.includes('[fechado')) continue
+        const isClosed = notes.includes('[fechado')
+        if (isClosed) continue
 
-        const evLat = ev.getFloat('lat')
-        const evLng = ev.getFloat('lng')
-        const distToEpisode = calcHaversineMeters(lat, lng, evLat, evLng)
-        if (distToEpisode <= 300) {
+        if (currentRouteBatchKey && notes.includes(currentRouteBatchKey)) {
           matchingEpisode = ev
           break
         }
       }
-    }
 
-    const currentStopDevMeters = Math.round(minDistanceToRouteCorridor)
+      // Prioridade 2: proximidade geográfica do episódio de parada (tolerância ampliada para até 300m ou 15 min de intervalo)
+      if (!matchingEpisode) {
+        for (let s = 0; s < existingStopEvents.length; s++) {
+          const ev = existingStopEvents[s]
+          const notes = ev.getString('notes') || ''
+          if (notes.includes('[fechado')) continue
 
-    if (matchingEpisode) {
-      // Já existe um episódio em andamento para esta parada:
-      // Atualizar a duração final do episódio (timestamp deste ping - timestamp de criação do episódio),
-      // a maior distância de desvio atingida e a última posição
-      const episodeStartTime = new Date(matchingEpisode.getString('created')).getTime()
-      const totalDurationSec = Math.max(1, Math.round((currentLocTime - episodeStartTime) / 1000))
-      const oldMaxDev = matchingEpisode.getInt('distance_deviation_meters') || 0
-      const newMaxDev = Math.max(currentStopDevMeters, oldMaxDev)
-
-      try {
-        matchingEpisode.set('stop_duration_seconds', totalDurationSec)
-        matchingEpisode.set('distance_deviation_meters', newMaxDev)
-        matchingEpisode.set('lat', lat)
-        matchingEpisode.set('lng', lng)
-        matchingEpisode.set(
-          'notes',
-          `Parada não planejada fora da rota a ${newMaxDev}m do trajeto (>600m). Duração acumulada: ${Math.round(totalDurationSec / 60)} min (${totalDurationSec}s) [lote: ${currentRouteBatchKey}].`,
-        )
-        $app.save(matchingEpisode)
-      } catch (errUp) {
-        console.log('Error updating existing stop episode:', errUp)
+          const evLat = ev.getFloat('lat')
+          const evLng = ev.getFloat('lng')
+          const distToEpisode = calcHaversineMeters(lat, lng, evLat, evLng)
+          if (distToEpisode <= 300) {
+            matchingEpisode = ev
+            break
+          }
+        }
       }
 
-      // Se a parada acabou de atingir ou ultrapassar 180s e ainda não alertou nos últimos 15 min, enviar notificação
-      if (totalDurationSec >= MIN_STOP_DURATION_SECONDS) {
-        let recentAlerts = []
+      const currentStopDevMeters = Math.round(minDistanceToRouteCorridor)
+
+      if (matchingEpisode) {
+        // Já existe um episódio em andamento para esta parada:
+        // Atualizar a duração final do episódio (timestamp deste ping - timestamp de criação do episódio),
+        // a maior distância de desvio atingida e a última posição
+        const episodeStartTime = new Date(matchingEpisode.getString('created')).getTime()
+        const totalDurationSec = Math.max(1, Math.round((currentLocTime - episodeStartTime) / 1000))
+        const oldMaxDev = matchingEpisode.getInt('distance_deviation_meters') || 0
+        const newMaxDev = Math.max(currentStopDevMeters, oldMaxDev)
+
+        try {
+          matchingEpisode.set('stop_duration_seconds', totalDurationSec)
+          matchingEpisode.set('distance_deviation_meters', newMaxDev)
+          matchingEpisode.set('lat', lat)
+          matchingEpisode.set('lng', lng)
+          matchingEpisode.set(
+            'notes',
+            `Parada não planejada fora da rota a ${newMaxDev}m do trajeto (>600m). Duração acumulada: ${Math.round(totalDurationSec / 60)} min (${totalDurationSec}s) [lote: ${currentRouteBatchKey}].`,
+          )
+          $app.save(matchingEpisode)
+        } catch (errUp) {
+          console.log('Error updating existing stop episode:', errUp)
+        }
+
+        // Se a parada acabou de atingir ou ultrapassar 180s e ainda não alertou nos últimos 15 min, enviar notificação
+        if (totalDurationSec >= MIN_STOP_DURATION_SECONDS) {
+          let recentAlerts = []
+          try {
+            const fifteenMinAgo = new Date(currentLocTime - 15 * 60 * 1000).toISOString()
+            recentAlerts = $app.findRecordsByFilter(
+              'notifications',
+              `user_id = '${courierId}' && type = 'off_route' && created >= '${fifteenMinAgo}'`,
+              '-created',
+              1,
+              0,
+            )
+          } catch (_) {}
+
+          if (recentAlerts.length === 0) {
+            try {
+              const notifCol = $app.findCollectionByNameOrId('notifications')
+              const notif = new Record(notifCol)
+              notif.set('user_id', courierId)
+              notif.set('order_id', anchorOrder.id)
+              notif.set('type', 'warning')
+              notif.set('title', '⚠️ Alerta de Parada Fora da Rota')
+              notif.set(
+                'message',
+                `Você está parado fora da rota há ${Math.round(totalDurationSec / 60)} min a ${newMaxDev}m da rota da entrega ${trackingCode}.`,
+              )
+              notif.set('is_read', false)
+              $app.save(notif)
+            } catch (_) {}
+
+            if (sellerId) {
+              try {
+                const notifCol = $app.findCollectionByNameOrId('notifications')
+                const notif = new Record(notifCol)
+                notif.set('user_id', sellerId)
+                notif.set('order_id', anchorOrder.id)
+                notif.set('type', 'off_route')
+                notif.set('title', '⚠️ Parada Suspeita de Entregador (>600m)')
+                notif.set(
+                  'message',
+                  `O entregador ${courierName} está parado fora da rota há ${Math.round(totalDurationSec / 60)} min a ${newMaxDev}m do pedido ${trackingCode}.`,
+                )
+                notif.set('is_read', false)
+                $app.save(notif)
+              } catch (_) {}
+            }
+          }
+        }
+      } else {
+        // Início de um NOVO episódio de parada (1 episódio consolidado para o evento contínuo)
+        let initialDurationSec = 0
+        if (prevLat && prevLng && prevTime) {
+          const moveFromPrev = calcHaversineMeters(lat, lng, prevLat, prevLng)
+          if (moveFromPrev <= 50) {
+            initialDurationSec = Math.max(1, Math.round((currentLocTime - prevTime) / 1000))
+          }
+        }
+
+        try {
+          const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
+          const ev = new Record(offRouteCol)
+          ev.set('courier_id', courierId)
+          ev.set('order_id', anchorOrder.id)
+          ev.set('event_type', 'unexpected_stop')
+          ev.set('lat', lat)
+          ev.set('lng', lng)
+          ev.set('distance_deviation_meters', currentStopDevMeters)
+          ev.set('stop_duration_seconds', initialDurationSec)
+          ev.set(
+            'notes',
+            `Parada não planejada fora da rota a ${currentStopDevMeters}m do trajeto (>600m) [lote: ${currentRouteBatchKey}].`,
+          )
+          $app.save(ev)
+        } catch (errEv) {
+          console.log('Error creating initial off_route stop episode:', errEv)
+        }
+      }
+    }
+
+    // 2. CHECAGEM DE DESVIO DE ROTA EM DESLOCAMENTO (> 600 metros fora do corredor da rota)
+    // Requisitos robustos contra falso positivo:
+    // (a) Avaliar apenas sinais GPS recentes (descartar sinais com mais de 3 minutos)
+    // (b) Exigir 3 pings CONSECUTIVOS válidos (ou pelo menos 2 anteriores confirmados) fora da rota antes de disparar alarme (debounce)
+    // (c) Limiar intocável de 600 metros mantido rigorosamente
+    // (d) Velocidade plausível: speedKmh deve estar entre 10 e 140 km/h (descarte de saltos aberrantes)
+    // (e) 1 evento = 1 episódio, dedupe por courier enquanto o episódio estiver aberto (< 5 minutos).
+    //     Em vez de criar dezenas de registros repetidos no mesmo minuto, atualiza o episódio aberto
+    //     (mantendo a maior distância de desvio, atualizando updated e coordenadas finais).
+
+    // Pings repetidos de coordenada congelada ou buffer offline não criam eventos de desvio
+    const isFrozenCoordWithPrev =
+      prevLat !== null &&
+      prevLng !== null &&
+      Math.abs(prevLat - lat) < 0.0000001 &&
+      Math.abs(prevLng - lng) < 0.0000001
+
+    // Função auxiliar para medir distância de um ponto a rota
+    const calcDistToRoutePoints = (pLat, pLng) => {
+      let mDist = Infinity
+      for (let w = 0; w < routeWaypoints.length; w++) {
+        const dW = calcHaversineMeters(pLat, pLng, routeWaypoints[w].lat, routeWaypoints[w].lng)
+        if (dW < mDist) mDist = dW
+      }
+      if (routeWaypoints.length >= 2) {
+        for (let w = 0; w < routeWaypoints.length - 1; w++) {
+          const sDist = calcPointToSegmentMeters(
+            pLat,
+            pLng,
+            routeWaypoints[w].lat,
+            routeWaypoints[w].lng,
+            routeWaypoints[w + 1].lat,
+            routeWaypoints[w + 1].lng,
+          )
+          if (sDist < mDist) mDist = sDist
+        }
+      }
+      return mDist
+    }
+
+    if (
+      speedKmh > 10 &&
+      speedKmh <= 140 &&
+      prevLat &&
+      prevLng &&
+      isGpsSignalFresh &&
+      !isFrozenCoordWithPrev &&
+      !isWithinParallelLegTolerance
+    ) {
+      if (minDistanceToRouteCorridor >= DEVIATION_THRESHOLD_METERS) {
+        // Debounce robusto: checar pings anteriores válidos.
+        // Exigir pelo menos 2 pontos anteriores CONSECUTIVOS também fora da rota (total 3 pings)
+        // OU se só houver 1 anterior disponível, esse único deve ser estritamente fora e recente (<90s)
+        let consecutiveDeviatedCount = 1 // o ponto atual é o 1º
+        for (let pIdx = 0; pIdx < prevLocations.length; pIdx++) {
+          const pRec = prevLocations[pIdx]
+          const pLat = pRec.getFloat('lat')
+          const pLng = pRec.getFloat('lng')
+          const pAcc = pRec.getFloat('accuracy')
+          const pSpd = pRec.getFloat('speed')
+          const pCreatedStr = pRec.getString('created')
+          const pTime = pCreatedStr ? new Date(pCreatedStr.replace(' ', 'T') + 'Z').getTime() : 0
+          const pAgeSec = (currentLocTime - pTime) / 1000
+
+          // Ponto anterior deve ter boa acurácia e velocidade plausível
+          if (!isNaN(pAcc) && pAcc >= 100) break
+          if (!isNaN(pSpd) && pSpd > 140) break
+          if (pAgeSec > 180) break // ponto muito antigo não conta na sequência
+
+          const pDist = calcDistToRoutePoints(pLat, pLng)
+          if (pDist >= DEVIATION_THRESHOLD_METERS) {
+            consecutiveDeviatedCount++
+          } else {
+            // Interrompe contagem consecutiva se um ponto estava na rota
+            break
+          }
+        }
+
+        // Regra: exige pelo menos 2 pontos confirmados consecutivos fora da rota (preferencialmente 3 quando houver histórico)
+        const isConfirmedDeviation =
+          consecutiveDeviatedCount >= 2 &&
+          (prevLocations.length < 2 || consecutiveDeviatedCount >= 3)
+
+        // Disparar apenas se houver confirmação com pings consecutivos fora da rota
+        if (isConfirmedDeviation) {
+          // CONSOLIDAÇÃO DE EPISÓDIO CONTÍNUO:
+          // Buscar se já existe episódio aberto de route_deviation para este courier no mesmo lote ou nos últimos 30 minutos
+          // (checar por created OU updated >= thirtyMinAgoStr)
+          const thirtyMinAgoStr = formatDbDate(new Date(currentLocTime - 30 * 60 * 1000))
+          let existingDevEpisode = null
+          try {
+            const recentDevAlerts = $app.findRecordsByFilter(
+              'off_route_events',
+              `courier_id = '${courierId}' && event_type = 'route_deviation' && updated >= '${thirtyMinAgoStr}'`,
+              '-updated',
+              10,
+              0,
+            )
+
+            // Prioridade 1: mesmo lote (route_batch_key) que ainda não foi fechado
+            for (let r = 0; r < recentDevAlerts.length; r++) {
+              const ev = recentDevAlerts[r]
+              const notes = ev.getString('notes') || ''
+              if (notes.includes('[fechado')) continue
+
+              if (currentRouteBatchKey && notes.includes(currentRouteBatchKey)) {
+                existingDevEpisode = ev
+                break
+              }
+            }
+
+            // Prioridade 2: episódio aberto mais recente (< 15 min desde último ping)
+            if (!existingDevEpisode) {
+              for (let r = 0; r < recentDevAlerts.length; r++) {
+                const ev = recentDevAlerts[r]
+                const notes = ev.getString('notes') || ''
+                if (notes.includes('[fechado')) continue
+                existingDevEpisode = ev
+                break
+              }
+            }
+          } catch (errFilter) {
+            console.log('Aviso ao consultar recentDevAlerts:', errFilter)
+          }
+
+          const currentDevMeters = Math.round(minDistanceToRouteCorridor)
+
+          if (existingDevEpisode) {
+            // EPISÓDIO ABERTO JÁ EXISTE: ATUALIZAR AO INVÉS DE DUPLICAR
+            try {
+              const oldMaxDev = existingDevEpisode.getInt('distance_deviation_meters') || 0
+              const newMaxDev = Math.max(currentDevMeters, oldMaxDev)
+              existingDevEpisode.set('distance_deviation_meters', newMaxDev)
+              existingDevEpisode.set('lat', lat)
+              existingDevEpisode.set('lng', lng)
+              const episodeCreatedStr = existingDevEpisode.getString('created')
+              const episodeCreatedMs = new Date(episodeCreatedStr).getTime()
+              const elapsedSec = Math.max(1, Math.round((currentLocTime - episodeCreatedMs) / 1000))
+              existingDevEpisode.set('stop_duration_seconds', elapsedSec)
+              existingDevEpisode.set(
+                'notes',
+                `Desvio de rota superior a 600m em andamento (máx +${newMaxDev}m fora do corredor viário, duração do episódio: ${elapsedSec}s) [lote: ${currentRouteBatchKey}]. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+              )
+              $app.save(existingDevEpisode)
+            } catch (errUpDev) {
+              console.log('Error updating existing deviation episode:', errUpDev)
+            }
+          } else {
+            // INÍCIO DE UM NOVO EPISÓDIO DE DESVIO (1 evento consolidado por episódio)
+            try {
+              const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
+              const ev = new Record(offRouteCol)
+              ev.set('courier_id', courierId)
+              ev.set('order_id', anchorOrder.id)
+              ev.set('event_type', 'route_deviation')
+              ev.set('distance_deviation_meters', currentDevMeters)
+              ev.set('stop_duration_seconds', 0)
+              ev.set('lat', lat)
+              ev.set('lng', lng)
+              ev.set(
+                'notes',
+                `Desvio de rota superior a 600m detectado (+${currentDevMeters}m fora do corredor viário após pontos consecutivos) [lote: ${currentRouteBatchKey}]. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+              )
+              $app.save(ev)
+            } catch (errDev) {
+              console.log('Error saving deviation event:', errDev)
+            }
+
+            // Notificação entregador (apenas 1 vez por novo episódio de desvio)
+            try {
+              const notifCol = $app.findCollectionByNameOrId('notifications')
+              const notif = new Record(notifCol)
+              notif.set('user_id', courierId)
+              notif.set('order_id', anchorOrder.id)
+              notif.set('type', 'off_route')
+              notif.set('title', '🚨 Alerta de Desvio de Rota (>600m)')
+              notif.set(
+                'message',
+                `Você está fora do traçado previsto do pedido ${trackingCode} (+${currentDevMeters}m). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+              )
+              notif.set('is_read', false)
+              $app.save(notif)
+            } catch (_) {}
+
+            // Notificação vendedor (apenas 1 vez por novo episódio de desvio)
+            if (sellerId) {
+              try {
+                const notifCol = $app.findCollectionByNameOrId('notifications')
+                const notif = new Record(notifCol)
+                notif.set('user_id', sellerId)
+                notif.set('order_id', anchorOrder.id)
+                notif.set('type', 'off_route')
+                notif.set('title', '🚨 Desvio de Rota do Entregador (>600m)')
+                notif.set(
+                  'message',
+                  `O entregador ${courierName} desviou mais de 600m do trajeto previsto do pedido ${trackingCode}. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
+                )
+                notif.set('is_read', false)
+                $app.save(notif)
+              } catch (_) {}
+            }
+          }
+        }
+      }
+    }
+
+    // 3. CHECAGEM DE CHEGADA À BASE COM ROTA ABERTA
+    // Geofence da base Mais Saudavel (Drogaria Mais Saudável: lat -22.6977499, lng -43.2936013, raio <= 150m)
+    // Se o entregador chegou à base e ainda tem rota aberta (route_started=true e route_finished!=true),
+    // dispara notificação de tipo warning ao vendedor responsável e a todos os admins da empresa,
+    // com horário de chegada (America/Sao_Paulo) e tempo de rota aberta.
+    const MAIS_SAUDAVEL_BASE_LAT = -22.6977499
+    const MAIS_SAUDAVEL_BASE_LNG = -43.2936013
+    const BASE_GEOFENCE_RADIUS_METERS = 150
+
+    const distToBaseMeters = calcHaversineMeters(
+      lat,
+      lng,
+      MAIS_SAUDAVEL_BASE_LAT,
+      MAIS_SAUDAVEL_BASE_LNG,
+    )
+
+    if (distToBaseMeters <= BASE_GEOFENCE_RADIUS_METERS && isGpsSignalFresh) {
+      // ITEM 1: Regra do alerta "Chegou à Base com Rota Aberta"
+      // O alerta SÓ deve disparar quando:
+      // 1. O entregador TIVER FINALIZADO TODAS as paradas da rota (todos os pedidos do lote
+      //    em status final — delivered, cancelled, address_error, client_absent);
+      // 2. Estiver dentro do geofence da base (<= 150m do pin oficial);
+      // 3. A rota ainda estiver aberta (route_finished = false / null).
+      // NÃO disparar:
+      // (a) nos primeiros minutos da rota quando o entregador ainda não visitou nenhuma parada (0 entregas finalizadas);
+      // (b) em paradas intermediárias na base durante o lote quando ainda há entregas pendentes.
+      // Considerar SOMENTE pedidos do dia atual na data civil de Brasília (UTC-3, janela 05h–23h59)
+      // e EXCLUIR pedidos status='cancelled'
+      // FALHA 2: Busca robusta de pedidos do lote aberto para este entregador.
+      // NÃO exigir route_started=true estrito caso todos já estejam como delivered.
+      // Janela ampla de 36 horas para cobrir virada de turno/madrugada sem travar por fuso.
+      const thirtySixHoursAgoIso = new Date(currentLocTime - 36 * 3600000).toISOString()
+
+      let openOrdersForBaseAlert = []
+      try {
+        openOrdersForBaseAlert = $app.findRecordsByFilter(
+          'orders',
+          `courier_id = '${courierId}' && (route_finished = false || route_finished = null) && status != 'cancelled' && updated >= '${thirtySixHoursAgoIso}'`,
+          'sequence,created',
+          100,
+          0,
+        )
+      } catch (_) {}
+
+      // Identificar se TODOS os pedidos da rota ativa já foram concluídos/finalizados individualmente
+      const totalOrdersInActiveRoute = openOrdersForBaseAlert.length
+      const pendingOrdersInActiveRoute = openOrdersForBaseAlert.filter((o) => {
+        const st = o.getString('status')
+        return (
+          st !== 'delivered' &&
+          st !== 'cancelled' &&
+          st !== 'address_error' &&
+          st !== 'client_absent'
+        )
+      })
+      const completedOrdersInActiveRoute = openOrdersForBaseAlert.filter((o) => {
+        const st = o.getString('status')
+        return (
+          st === 'delivered' ||
+          st === 'cancelled' ||
+          st === 'address_error' ||
+          st === 'client_absent'
+        )
+      })
+
+      const allStopsFinished =
+        totalOrdersInActiveRoute > 0 &&
+        pendingOrdersInActiveRoute.length === 0 &&
+        completedOrdersInActiveRoute.length > 0
+
+      // GUARDA SERVIDORA: AUTO-FECHAMENTO DE SEGURANÇA
+      // Se o entregador está dentro do geofence da base (<= 150m) com sinal fresco
+      // e todas as paradas do lote foram concluídas:
+      // o encerramento do lote deve ocorrer no servidor com segurança caso a última entrega
+      // tenha ocorrido há pelo menos 3 minutos ou se já houver tentativa pendente,
+      // garantindo que o entregador nunca fique travado aguardando o aparelho.
+      if (allStopsFinished) {
+        try {
+          let lastStopDeliveredTime = 0
+          for (let sIdx = 0; sIdx < completedOrdersInActiveRoute.length; sIdx++) {
+            const cOrd = completedOrdersInActiveRoute[sIdx]
+            const arrStr =
+              cOrd.getString('actual_arrival') ||
+              cOrd.getString('updated') ||
+              cOrd.getString('created')
+            const arrTime = new Date(arrStr).getTime()
+            if (arrTime > lastStopDeliveredTime) {
+              lastStopDeliveredTime = arrTime
+            }
+          }
+
+          const minutesSinceLastStop =
+            lastStopDeliveredTime > 0 ? (currentLocTime - lastStopDeliveredTime) / 60000 : 999
+
+          // Se a última parada foi há mais de 3 minutos e o entregador está na base
+          if (minutesSinceLastStop >= 3) {
+            const nowIso = new Date().toISOString()
+            const bKey =
+              openOrdersForBaseAlert[0].getString('route_batch_key') ||
+              `rb_${courierId}_${nowIso.slice(0, 10).replace(/-/g, '')}`
+
+            for (let fIdx = 0; fIdx < openOrdersForBaseAlert.length; fIdx++) {
+              const ordToClose = openOrdersForBaseAlert[fIdx]
+              try {
+                ordToClose.set('route_finished', true)
+                ordToClose.set('route_finished_at', nowIso)
+                $app.save(ordToClose)
+              } catch (errCloseOrd) {
+                console.warn(
+                  `[on_location_alert] Erro ao auto-finalizar pedido ${ordToClose.id}:`,
+                  errCloseOrd,
+                )
+              }
+            }
+
+            // Fechar episódios de desvio abertos associados a este lote
+            try {
+              const openBatchEvs = $app.findRecordsByFilter(
+                'off_route_events',
+                `courier_id = '${courierId}' && notes ~ '${bKey}'`,
+                '-created',
+                10,
+                0,
+              )
+              for (let ob = 0; ob < openBatchEvs.length; ob++) {
+                const bev = openBatchEvs[ob]
+                const bNotes = bev.getString('notes') || ''
+                if (!bNotes.includes('[fechado')) {
+                  bev.set('notes', `${bNotes} [fechado - lote concluído na base]`)
+                  $app.save(bev)
+                }
+              }
+            } catch (errCloseBatchEvs) {
+              console.log(
+                '[on_location_alert] Erro ao fechar episódios de desvio no fechamento de lote:',
+                errCloseBatchEvs,
+              )
+            }
+
+            // Liberar status do entregador para 'active'
+            try {
+              const cUser = $app.findRecordById('users', courierId)
+              if (cUser && cUser.getString('status') !== 'active') {
+                cUser.set('status', 'active')
+                $app.save(cUser)
+              }
+            } catch (errUserActive) {
+              console.warn(
+                '[on_location_alert] Erro ao liberar entregador para active:',
+                errUserActive,
+              )
+            }
+
+            // Registrar audit_trail com padrão rigoroso do projeto:
+            // user_id vazio, actor_name='Sistema', metadata.system_trigger=true
+            try {
+              const auditCol = $app.findCollectionByNameOrId('audit_trail')
+              if (auditCol) {
+                const auditRec = new Record(auditCol)
+                auditRec.set('user_id', '')
+                auditRec.set('collection', 'orders')
+                auditRec.set('record_id', openOrdersForBaseAlert[0].id)
+                auditRec.set('courier_id', courierId)
+                auditRec.set('action', 'auto_fechamento_geofence_servidor')
+                auditRec.set('field', 'route_finished')
+                auditRec.set('old_value', 'false')
+                auditRec.set('new_value', 'true')
+                auditRec.set('timestamp', nowIso)
+                auditRec.set('metadata', {
+                  system_trigger: true,
+                  actor_name: 'Sistema',
+                  route_batch_key: bKey,
+                  orders_count: openOrdersForBaseAlert.length,
+                  distance_to_base_meters: distToBaseMeters,
+                  latitude: lat,
+                  longitude: lng,
+                  minutes_since_last_stop: Math.round(minutesSinceLastStop),
+                  note: 'Auto-encerramento executado com segurança no servidor por geofence da base (150m) com paradas concluídas',
+                })
+                $app.save(auditRec)
+              }
+            } catch (errAudit) {
+              console.warn(
+                '[on_location_alert] Erro ao salvar audit_trail do auto-fechamento:',
+                errAudit,
+              )
+            }
+
+            console.log(
+              `[on_location_alert] Rota do lote ${bKey} auto-finalizada no servidor com sucesso para entregador ${courierName} (${distToBaseMeters}m da base).`,
+            )
+          }
+        } catch (errAutoClose) {
+          console.warn(
+            '[on_location_alert] Erro inesperado na guarda de auto-fechamento por geofence:',
+            errAutoClose,
+          )
+        }
+      }
+
+      if (allStopsFinished) {
+        // Cooldown de 15 minutos para alertas de chegada à base sem encerrar rota
+        let recentBaseAlerts = []
         try {
           const fifteenMinAgo = new Date(currentLocTime - 15 * 60 * 1000).toISOString()
-          recentAlerts = $app.findRecordsByFilter(
+          recentBaseAlerts = $app.findRecordsByFilter(
             'notifications',
-            `user_id = '${courierId}' && type = 'off_route' && created >= '${fifteenMinAgo}'`,
+            `order_id = '${openOrdersForBaseAlert[0].id}' && type = 'warning' && title ~ 'Chegada à Base' && created >= '${fifteenMinAgo}'`,
             '-created',
             1,
             0,
           )
         } catch (_) {}
 
-        if (recentAlerts.length === 0) {
+        if (recentBaseAlerts.length === 0) {
+          const firstOrder = openOrdersForBaseAlert[0]
+          const routeStartedAtStr =
+            firstOrder.getString('route_started_at') || firstOrder.getString('created')
+          const routeStartedTime = new Date(routeStartedAtStr).getTime()
+          const durationMin = Math.max(1, Math.round((currentLocTime - routeStartedTime) / 60000))
+          const durationDisplay =
+            durationMin >= 60
+              ? `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`
+              : `${durationMin} min`
+
+          // Horário de chegada formatado em Brasília (UTC-3)
+          const d = new Date(currentLocTime)
+          const utcMs = d.getTime() + d.getTimezoneOffset() * 60000
+          const bsbDate = new Date(utcMs - 3 * 3600000)
+          const bsbHours = String(bsbDate.getHours()).padStart(2, '0')
+          const bsbMinutes = String(bsbDate.getMinutes()).padStart(2, '0')
+          const arrivalTimeBsb = `${bsbHours}:${bsbMinutes}`
+
+          const warningTitle = '⚠️ Chegada à Base com Rota Aberta'
+          const warningMsg = `O entregador ${courierName} concluiu todas as ${totalOrdersInActiveRoute} parada(s) da rota e chegou à base às ${arrivalTimeBsb} com a rota ainda aberta (tempo de rota: ${durationDisplay}).`
+
+          // 1. Notificação para o entregador
           try {
             const notifCol = $app.findCollectionByNameOrId('notifications')
-            const notif = new Record(notifCol)
-            notif.set('user_id', courierId)
-            notif.set('order_id', anchorOrder.id)
-            notif.set('type', 'warning')
-            notif.set('title', '⚠️ Alerta de Parada Fora da Rota')
-            notif.set(
+            const nCourier = new Record(notifCol)
+            nCourier.set('user_id', courierId)
+            nCourier.set('order_id', firstOrder.id)
+            nCourier.set('type', 'warning')
+            nCourier.set('title', warningTitle)
+            nCourier.set(
               'message',
-              `Você está parado fora da rota há ${Math.round(totalDurationSec / 60)} min a ${newMaxDev}m da rota da entrega ${trackingCode}.`,
+              `Você concluiu todas as entregas e chegou à base — finalize a rota no aplicativo para encerrar o expediente (tempo de rota: ${durationDisplay}).`,
             )
-            notif.set('is_read', false)
-            $app.save(notif)
+            nCourier.set('is_read', false)
+            $app.save(nCourier)
           } catch (_) {}
 
-          if (sellerId) {
+          // 2. Notificação para o vendedor responsável
+          const vSellerId = firstOrder.getString('seller_id')
+          if (vSellerId) {
             try {
               const notifCol = $app.findCollectionByNameOrId('notifications')
-              const notif = new Record(notifCol)
-              notif.set('user_id', sellerId)
-              notif.set('order_id', anchorOrder.id)
-              notif.set('type', 'off_route')
-              notif.set('title', '⚠️ Parada Suspeita de Entregador (>600m)')
-              notif.set(
-                'message',
-                `O entregador ${courierName} está parado fora da rota há ${Math.round(totalDurationSec / 60)} min a ${newMaxDev}m do pedido ${trackingCode}.`,
-              )
-              notif.set('is_read', false)
-              $app.save(notif)
+              const nSeller = new Record(notifCol)
+              nSeller.set('user_id', vSellerId)
+              nSeller.set('order_id', firstOrder.id)
+              nSeller.set('type', 'warning')
+              nSeller.set('title', warningTitle)
+              nSeller.set('message', warningMsg)
+              nSeller.set('is_read', false)
+              $app.save(nSeller)
             } catch (_) {}
           }
-        }
-      }
-    } else {
-      // Início de um NOVO episódio de parada (1 episódio consolidado para o evento contínuo)
-      let initialDurationSec = 0
-      if (prevLat && prevLng && prevTime) {
-        const moveFromPrev = calcHaversineMeters(lat, lng, prevLat, prevLng)
-        if (moveFromPrev <= 50) {
-          initialDurationSec = Math.max(1, Math.round((currentLocTime - prevTime) / 1000))
-        }
-      }
 
-      try {
-        const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
-        const ev = new Record(offRouteCol)
-        ev.set('courier_id', courierId)
-        ev.set('order_id', anchorOrder.id)
-        ev.set('event_type', 'unexpected_stop')
-        ev.set('lat', lat)
-        ev.set('lng', lng)
-        ev.set('distance_deviation_meters', currentStopDevMeters)
-        ev.set('stop_duration_seconds', initialDurationSec)
-        ev.set(
-          'notes',
-          `Parada não planejada fora da rota a ${currentStopDevMeters}m do trajeto (>600m) [lote: ${currentRouteBatchKey}].`,
-        )
-        $app.save(ev)
-      } catch (errEv) {
-        console.log('Error creating initial off_route stop episode:', errEv)
-      }
-    }
-  }
-
-  // 2. CHECAGEM DE DESVIO DE ROTA EM DESLOCAMENTO (> 600 metros fora do corredor da rota)
-  // Requisitos robustos contra falso positivo:
-  // (a) Avaliar apenas sinais GPS recentes (descartar sinais com mais de 3 minutos)
-  // (b) Exigir 3 pings CONSECUTIVOS válidos (ou pelo menos 2 anteriores confirmados) fora da rota antes de disparar alarme (debounce)
-  // (c) Limiar intocável de 600 metros mantido rigorosamente
-  // (d) Velocidade plausível: speedKmh deve estar entre 10 e 140 km/h (descarte de saltos aberrantes)
-  // (e) 1 evento = 1 episódio, dedupe por courier enquanto o episódio estiver aberto (< 5 minutos).
-  //     Em vez de criar dezenas de registros repetidos no mesmo minuto, atualiza o episódio aberto
-  //     (mantendo a maior distância de desvio, atualizando updated e coordenadas finais).
-
-  // Pings repetidos de coordenada congelada ou buffer offline não criam eventos de desvio
-  const isFrozenCoordWithPrev =
-    prevLat !== null &&
-    prevLng !== null &&
-    Math.abs(prevLat - lat) < 0.0000001 &&
-    Math.abs(prevLng - lng) < 0.0000001
-
-  // Função auxiliar para medir distância de um ponto a rota
-  const calcDistToRoutePoints = (pLat, pLng) => {
-    let mDist = Infinity
-    for (let w = 0; w < routeWaypoints.length; w++) {
-      const dW = calcHaversineMeters(pLat, pLng, routeWaypoints[w].lat, routeWaypoints[w].lng)
-      if (dW < mDist) mDist = dW
-    }
-    if (routeWaypoints.length >= 2) {
-      for (let w = 0; w < routeWaypoints.length - 1; w++) {
-        const sDist = calcPointToSegmentMeters(
-          pLat,
-          pLng,
-          routeWaypoints[w].lat,
-          routeWaypoints[w].lng,
-          routeWaypoints[w + 1].lat,
-          routeWaypoints[w + 1].lng,
-        )
-        if (sDist < mDist) mDist = sDist
-      }
-    }
-    return mDist
-  }
-
-  if (
-    speedKmh > 10 &&
-    speedKmh <= 140 &&
-    prevLat &&
-    prevLng &&
-    isGpsSignalFresh &&
-    !isFrozenCoordWithPrev &&
-    !isWithinParallelLegTolerance
-  ) {
-    if (minDistanceToRouteCorridor >= DEVIATION_THRESHOLD_METERS) {
-      // Debounce robusto: checar pings anteriores válidos.
-      // Exigir pelo menos 2 pontos anteriores CONSECUTIVOS também fora da rota (total 3 pings)
-      // OU se só houver 1 anterior disponível, esse único deve ser estritamente fora e recente (<90s)
-      let consecutiveDeviatedCount = 1 // o ponto atual é o 1º
-      for (let pIdx = 0; pIdx < prevLocations.length; pIdx++) {
-        const pRec = prevLocations[pIdx]
-        const pLat = pRec.getFloat('lat')
-        const pLng = pRec.getFloat('lng')
-        const pAcc = pRec.getFloat('accuracy')
-        const pSpd = pRec.getFloat('speed')
-        const pCreatedStr = pRec.getString('created')
-        const pTime = pCreatedStr ? new Date(pCreatedStr.replace(' ', 'T') + 'Z').getTime() : 0
-        const pAgeSec = (currentLocTime - pTime) / 1000
-
-        // Ponto anterior deve ter boa acurácia e velocidade plausível
-        if (!isNaN(pAcc) && pAcc >= 100) break
-        if (!isNaN(pSpd) && pSpd > 140) break
-        if (pAgeSec > 180) break // ponto muito antigo não conta na sequência
-
-        const pDist = calcDistToRoutePoints(pLat, pLng)
-        if (pDist >= DEVIATION_THRESHOLD_METERS) {
-          consecutiveDeviatedCount++
-        } else {
-          // Interrompe contagem consecutiva se um ponto estava na rota
-          break
-        }
-      }
-
-      // Regra: exige pelo menos 2 pontos confirmados consecutivos fora da rota (preferencialmente 3 quando houver histórico)
-      const isConfirmedDeviation =
-        consecutiveDeviatedCount >= 2 && (prevLocations.length < 2 || consecutiveDeviatedCount >= 3)
-
-      // Disparar apenas se houver confirmação com pings consecutivos fora da rota
-      if (isConfirmedDeviation) {
-        // Formatar timestamp no padrão SQLite/PocketBase: YYYY-MM-DD HH:MM:SS (sem 'T' nem 'Z')
-        const formatDbDate = (d) => {
-          const pad = (n) => String(n).padStart(2, '0')
-          return (
-            d.getUTCFullYear() +
-            '-' +
-            pad(d.getUTCMonth() + 1) +
-            '-' +
-            pad(d.getUTCDate()) +
-            ' ' +
-            pad(d.getUTCHours()) +
-            ':' +
-            pad(d.getUTCMinutes()) +
-            ':' +
-            pad(d.getUTCSeconds())
-          )
-        }
-
-        // CONSOLIDAÇÃO DE EPISÓDIO CONTÍNUO:
-        // Buscar se já existe episódio aberto de route_deviation para este courier no mesmo lote ou nos últimos 30 minutos
-        // (checar por created OU updated >= thirtyMinAgoStr)
-        const thirtyMinAgoStr = formatDbDate(new Date(currentLocTime - 30 * 60 * 1000))
-        let existingDevEpisode = null
-        try {
-          const recentDevAlerts = $app.findRecordsByFilter(
-            'off_route_events',
-            `courier_id = '${courierId}' && event_type = 'route_deviation' && updated >= '${thirtyMinAgoStr}'`,
-            '-updated',
-            10,
-            0,
-          )
-
-          // Prioridade 1: mesmo lote (route_batch_key) que ainda não foi fechado
-          for (let r = 0; r < recentDevAlerts.length; r++) {
-            const ev = recentDevAlerts[r]
-            const notes = ev.getString('notes') || ''
-            if (notes.includes('[fechado')) continue
-
-            if (currentRouteBatchKey && notes.includes(currentRouteBatchKey)) {
-              existingDevEpisode = ev
-              break
-            }
-          }
-
-          // Prioridade 2: episódio aberto mais recente (< 15 min desde último ping)
-          if (!existingDevEpisode) {
-            for (let r = 0; r < recentDevAlerts.length; r++) {
-              const ev = recentDevAlerts[r]
-              const notes = ev.getString('notes') || ''
-              if (notes.includes('[fechado')) continue
-              existingDevEpisode = ev
-              break
-            }
-          }
-        } catch (errFilter) {
-          console.log('Aviso ao consultar recentDevAlerts:', errFilter)
-        }
-
-        const currentDevMeters = Math.round(minDistanceToRouteCorridor)
-
-        if (existingDevEpisode) {
-          // EPISÓDIO ABERTO JÁ EXISTE: ATUALIZAR AO INVÉS DE DUPLICAR
+          // 3. Notificação para os admins
           try {
-            const oldMaxDev = existingDevEpisode.getInt('distance_deviation_meters') || 0
-            const newMaxDev = Math.max(currentDevMeters, oldMaxDev)
-            existingDevEpisode.set('distance_deviation_meters', newMaxDev)
-            existingDevEpisode.set('lat', lat)
-            existingDevEpisode.set('lng', lng)
-            const episodeCreatedStr = existingDevEpisode.getString('created')
-            const episodeCreatedMs = new Date(episodeCreatedStr).getTime()
-            const elapsedSec = Math.max(1, Math.round((currentLocTime - episodeCreatedMs) / 1000))
-            existingDevEpisode.set('stop_duration_seconds', elapsedSec)
-            existingDevEpisode.set(
-              'notes',
-              `Desvio de rota superior a 600m em andamento (máx +${newMaxDev}m fora do corredor viário, duração do episódio: ${elapsedSec}s) [lote: ${currentRouteBatchKey}]. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
-            )
-            $app.save(existingDevEpisode)
-          } catch (errUpDev) {
-            console.log('Error updating existing deviation episode:', errUpDev)
-          }
-        } else {
-          // INÍCIO DE UM NOVO EPISÓDIO DE DESVIO (1 evento consolidado por episódio)
-          try {
-            const offRouteCol = $app.findCollectionByNameOrId('off_route_events')
-            const ev = new Record(offRouteCol)
-            ev.set('courier_id', courierId)
-            ev.set('order_id', anchorOrder.id)
-            ev.set('event_type', 'route_deviation')
-            ev.set('distance_deviation_meters', currentDevMeters)
-            ev.set('stop_duration_seconds', 0)
-            ev.set('lat', lat)
-            ev.set('lng', lng)
-            ev.set(
-              'notes',
-              `Desvio de rota superior a 600m detectado (+${currentDevMeters}m fora do corredor viário após pontos consecutivos) [lote: ${currentRouteBatchKey}]. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
-            )
-            $app.save(ev)
-          } catch (errDev) {
-            console.log('Error saving deviation event:', errDev)
-          }
-
-          // Notificação entregador (apenas 1 vez por novo episódio de desvio)
-          try {
-            const notifCol = $app.findCollectionByNameOrId('notifications')
-            const notif = new Record(notifCol)
-            notif.set('user_id', courierId)
-            notif.set('order_id', anchorOrder.id)
-            notif.set('type', 'off_route')
-            notif.set('title', '🚨 Alerta de Desvio de Rota (>600m)')
-            notif.set(
-              'message',
-              `Você está fora do traçado previsto do pedido ${trackingCode} (+${currentDevMeters}m). Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
-            )
-            notif.set('is_read', false)
-            $app.save(notif)
-          } catch (_) {}
-
-          // Notificação vendedor (apenas 1 vez por novo episódio de desvio)
-          if (sellerId) {
-            try {
-              const notifCol = $app.findCollectionByNameOrId('notifications')
-              const notif = new Record(notifCol)
-              notif.set('user_id', sellerId)
-              notif.set('order_id', anchorOrder.id)
-              notif.set('type', 'off_route')
-              notif.set('title', '🚨 Desvio de Rota do Entregador (>600m)')
-              notif.set(
-                'message',
-                `O entregador ${courierName} desviou mais de 600m do trajeto previsto do pedido ${trackingCode}. Advertência de auditoria de trajeto — o km oficial da rota não é alterado.`,
-              )
-              notif.set('is_read', false)
-              $app.save(notif)
-            } catch (_) {}
-          }
-        }
-      }
-    }
-  }
-
-  // 3. CHECAGEM DE CHEGADA À BASE COM ROTA ABERTA
-  // Geofence da base Mais Saudavel (Drogaria Mais Saudável: lat -22.6977499, lng -43.2936013, raio <= 150m)
-  // Se o entregador chegou à base e ainda tem rota aberta (route_started=true e route_finished!=true),
-  // dispara notificação de tipo warning ao vendedor responsável e a todos os admins da empresa,
-  // com horário de chegada (America/Sao_Paulo) e tempo de rota aberta.
-  const MAIS_SAUDAVEL_BASE_LAT = -22.6977499
-  const MAIS_SAUDAVEL_BASE_LNG = -43.2936013
-  const BASE_GEOFENCE_RADIUS_METERS = 150
-
-  const distToBaseMeters = calcHaversineMeters(
-    lat,
-    lng,
-    MAIS_SAUDAVEL_BASE_LAT,
-    MAIS_SAUDAVEL_BASE_LNG,
-  )
-
-  if (distToBaseMeters <= BASE_GEOFENCE_RADIUS_METERS && isGpsSignalFresh) {
-    // ITEM 1: Regra do alerta "Chegou à Base com Rota Aberta"
-    // O alerta SÓ deve disparar quando:
-    // 1. O entregador TIVER FINALIZADO TODAS as paradas da rota (todos os pedidos do lote
-    //    em status final — delivered, cancelled, address_error, client_absent);
-    // 2. Estiver dentro do geofence da base (<= 150m do pin oficial);
-    // 3. A rota ainda estiver aberta (route_finished = false / null).
-    // NÃO disparar:
-    // (a) nos primeiros minutos da rota quando o entregador ainda não visitou nenhuma parada (0 entregas finalizadas);
-    // (b) em paradas intermediárias na base durante o lote quando ainda há entregas pendentes.
-    // Considerar SOMENTE pedidos do dia atual na data civil de Brasília (UTC-3, janela 05h–23h59)
-    // e EXCLUIR pedidos status='cancelled'
-    // FALHA 2: Busca robusta de pedidos do lote aberto para este entregador.
-    // NÃO exigir route_started=true estrito caso todos já estejam como delivered.
-    // Janela ampla de 36 horas para cobrir virada de turno/madrugada sem travar por fuso.
-    const thirtySixHoursAgoIso = new Date(currentLocTime - 36 * 3600000).toISOString()
-
-    let openOrdersForBaseAlert = []
-    try {
-      openOrdersForBaseAlert = $app.findRecordsByFilter(
-        'orders',
-        `courier_id = '${courierId}' && (route_finished = false || route_finished = null) && status != 'cancelled' && updated >= '${thirtySixHoursAgoIso}'`,
-        'sequence,created',
-        100,
-        0,
-      )
-    } catch (_) {}
-
-    // Identificar se TODOS os pedidos da rota ativa já foram concluídos/finalizados individualmente
-    const totalOrdersInActiveRoute = openOrdersForBaseAlert.length
-    const pendingOrdersInActiveRoute = openOrdersForBaseAlert.filter((o) => {
-      const st = o.getString('status')
-      return (
-        st !== 'delivered' && st !== 'cancelled' && st !== 'address_error' && st !== 'client_absent'
-      )
-    })
-    const completedOrdersInActiveRoute = openOrdersForBaseAlert.filter((o) => {
-      const st = o.getString('status')
-      return (
-        st === 'delivered' || st === 'cancelled' || st === 'address_error' || st === 'client_absent'
-      )
-    })
-
-    const allStopsFinished =
-      totalOrdersInActiveRoute > 0 &&
-      pendingOrdersInActiveRoute.length === 0 &&
-      completedOrdersInActiveRoute.length > 0
-
-    // GUARDA SERVIDORA: AUTO-FECHAMENTO DE SEGURANÇA
-    // Se o entregador está dentro do geofence da base (<= 150m) com sinal fresco
-    // e todas as paradas do lote foram concluídas:
-    // o encerramento do lote deve ocorrer no servidor com segurança caso a última entrega
-    // tenha ocorrido há pelo menos 3 minutos ou se já houver tentativa pendente,
-    // garantindo que o entregador nunca fique travado aguardando o aparelho.
-    if (allStopsFinished) {
-      try {
-        let lastStopDeliveredTime = 0
-        for (let sIdx = 0; sIdx < completedOrdersInActiveRoute.length; sIdx++) {
-          const cOrd = completedOrdersInActiveRoute[sIdx]
-          const arrStr =
-            cOrd.getString('actual_arrival') ||
-            cOrd.getString('updated') ||
-            cOrd.getString('created')
-          const arrTime = new Date(arrStr).getTime()
-          if (arrTime > lastStopDeliveredTime) {
-            lastStopDeliveredTime = arrTime
-          }
-        }
-
-        const minutesSinceLastStop =
-          lastStopDeliveredTime > 0 ? (currentLocTime - lastStopDeliveredTime) / 60000 : 999
-
-        // Se a última parada foi há mais de 3 minutos e o entregador está na base
-        if (minutesSinceLastStop >= 3) {
-          const nowIso = new Date().toISOString()
-          const bKey =
-            openOrdersForBaseAlert[0].getString('route_batch_key') ||
-            `rb_${courierId}_${nowIso.slice(0, 10).replace(/-/g, '')}`
-
-          for (let fIdx = 0; fIdx < openOrdersForBaseAlert.length; fIdx++) {
-            const ordToClose = openOrdersForBaseAlert[fIdx]
-            try {
-              ordToClose.set('route_finished', true)
-              ordToClose.set('route_finished_at', nowIso)
-              $app.save(ordToClose)
-            } catch (errCloseOrd) {
-              console.warn(
-                `[on_location_alert] Erro ao auto-finalizar pedido ${ordToClose.id}:`,
-                errCloseOrd,
-              )
-            }
-          }
-
-          // Fechar episódios de desvio abertos associados a este lote
-          try {
-            const openBatchEvs = $app.findRecordsByFilter(
-              'off_route_events',
-              `courier_id = '${courierId}' && notes ~ '${bKey}'`,
+            const adminUsers = $app.findRecordsByFilter(
+              'users',
+              `(role = 'admin' || role = 'master') && status = 'active'`,
               '-created',
-              10,
+              5,
               0,
             )
-            for (let ob = 0; ob < openBatchEvs.length; ob++) {
-              const bev = openBatchEvs[ob]
-              const bNotes = bev.getString('notes') || ''
-              if (!bNotes.includes('[fechado')) {
-                bev.set('notes', `${bNotes} [fechado - lote concluído na base]`)
-                $app.save(bev)
-              }
-            }
-          } catch (errCloseBatchEvs) {
-            console.log(
-              '[on_location_alert] Erro ao fechar episódios de desvio no fechamento de lote:',
-              errCloseBatchEvs,
-            )
-          }
-
-          // Liberar status do entregador para 'active'
-          try {
-            const cUser = $app.findRecordById('users', courierId)
-            if (cUser && cUser.getString('status') !== 'active') {
-              cUser.set('status', 'active')
-              $app.save(cUser)
-            }
-          } catch (errUserActive) {
-            console.warn(
-              '[on_location_alert] Erro ao liberar entregador para active:',
-              errUserActive,
-            )
-          }
-
-          // Registrar audit_trail com padrão rigoroso do projeto:
-          // user_id vazio, actor_name='Sistema', metadata.system_trigger=true
-          try {
-            const auditCol = $app.findCollectionByNameOrId('audit_trail')
-            if (auditCol) {
-              const auditRec = new Record(auditCol)
-              auditRec.set('user_id', '')
-              auditRec.set('collection', 'orders')
-              auditRec.set('record_id', openOrdersForBaseAlert[0].id)
-              auditRec.set('courier_id', courierId)
-              auditRec.set('action', 'auto_fechamento_geofence_servidor')
-              auditRec.set('field', 'route_finished')
-              auditRec.set('old_value', 'false')
-              auditRec.set('new_value', 'true')
-              auditRec.set('timestamp', nowIso)
-              auditRec.set('metadata', {
-                system_trigger: true,
-                actor_name: 'Sistema',
-                route_batch_key: bKey,
-                orders_count: openOrdersForBaseAlert.length,
-                distance_to_base_meters: distToBaseMeters,
-                latitude: lat,
-                longitude: lng,
-                minutes_since_last_stop: Math.round(minutesSinceLastStop),
-                note: 'Auto-encerramento executado com segurança no servidor por geofence da base (150m) com paradas concluídas',
-              })
-              $app.save(auditRec)
-            }
-          } catch (errAudit) {
-            console.warn(
-              '[on_location_alert] Erro ao salvar audit_trail do auto-fechamento:',
-              errAudit,
-            )
-          }
-
-          console.log(
-            `[on_location_alert] Rota do lote ${bKey} auto-finalizada no servidor com sucesso para entregador ${courierName} (${distToBaseMeters}m da base).`,
-          )
-        }
-      } catch (errAutoClose) {
-        console.warn(
-          '[on_location_alert] Erro inesperado na guarda de auto-fechamento por geofence:',
-          errAutoClose,
-        )
-      }
-    }
-
-    if (allStopsFinished) {
-      // Cooldown de 15 minutos para alertas de chegada à base sem encerrar rota
-      let recentBaseAlerts = []
-      try {
-        const fifteenMinAgo = new Date(currentLocTime - 15 * 60 * 1000).toISOString()
-        recentBaseAlerts = $app.findRecordsByFilter(
-          'notifications',
-          `order_id = '${openOrdersForBaseAlert[0].id}' && type = 'warning' && title ~ 'Chegada à Base' && created >= '${fifteenMinAgo}'`,
-          '-created',
-          1,
-          0,
-        )
-      } catch (_) {}
-
-      if (recentBaseAlerts.length === 0) {
-        const firstOrder = openOrdersForBaseAlert[0]
-        const routeStartedAtStr =
-          firstOrder.getString('route_started_at') || firstOrder.getString('created')
-        const routeStartedTime = new Date(routeStartedAtStr).getTime()
-        const durationMin = Math.max(1, Math.round((currentLocTime - routeStartedTime) / 60000))
-        const durationDisplay =
-          durationMin >= 60
-            ? `${Math.floor(durationMin / 60)}h ${durationMin % 60}m`
-            : `${durationMin} min`
-
-        // Horário de chegada formatado em Brasília (UTC-3)
-        const d = new Date(currentLocTime)
-        const utcMs = d.getTime() + d.getTimezoneOffset() * 60000
-        const bsbDate = new Date(utcMs - 3 * 3600000)
-        const bsbHours = String(bsbDate.getHours()).padStart(2, '0')
-        const bsbMinutes = String(bsbDate.getMinutes()).padStart(2, '0')
-        const arrivalTimeBsb = `${bsbHours}:${bsbMinutes}`
-
-        const warningTitle = '⚠️ Chegada à Base com Rota Aberta'
-        const warningMsg = `O entregador ${courierName} concluiu todas as ${totalOrdersInActiveRoute} parada(s) da rota e chegou à base às ${arrivalTimeBsb} com a rota ainda aberta (tempo de rota: ${durationDisplay}).`
-
-        // 1. Notificação para o entregador
-        try {
-          const notifCol = $app.findCollectionByNameOrId('notifications')
-          const nCourier = new Record(notifCol)
-          nCourier.set('user_id', courierId)
-          nCourier.set('order_id', firstOrder.id)
-          nCourier.set('type', 'warning')
-          nCourier.set('title', warningTitle)
-          nCourier.set(
-            'message',
-            `Você concluiu todas as entregas e chegou à base — finalize a rota no aplicativo para encerrar o expediente (tempo de rota: ${durationDisplay}).`,
-          )
-          nCourier.set('is_read', false)
-          $app.save(nCourier)
-        } catch (_) {}
-
-        // 2. Notificação para o vendedor responsável
-        const vSellerId = firstOrder.getString('seller_id')
-        if (vSellerId) {
-          try {
             const notifCol = $app.findCollectionByNameOrId('notifications')
-            const nSeller = new Record(notifCol)
-            nSeller.set('user_id', vSellerId)
-            nSeller.set('order_id', firstOrder.id)
-            nSeller.set('type', 'warning')
-            nSeller.set('title', warningTitle)
-            nSeller.set('message', warningMsg)
-            nSeller.set('is_read', false)
-            $app.save(nSeller)
+            for (let a = 0; a < adminUsers.length; a++) {
+              const adm = adminUsers[a]
+              if (adm.id === vSellerId) continue
+              try {
+                const nAdmin = new Record(notifCol)
+                nAdmin.set('user_id', adm.id)
+                nAdmin.set('order_id', firstOrder.id)
+                nAdmin.set('type', 'warning')
+                nAdmin.set('title', warningTitle)
+                nAdmin.set('message', warningMsg)
+                nAdmin.set('is_read', false)
+                $app.save(nAdmin)
+              } catch (_) {}
+            }
           } catch (_) {}
         }
-
-        // 3. Notificação para os admins
-        try {
-          const adminUsers = $app.findRecordsByFilter(
-            'users',
-            `(role = 'admin' || role = 'master') && status = 'active'`,
-            '-created',
-            5,
-            0,
-          )
-          const notifCol = $app.findCollectionByNameOrId('notifications')
-          for (let a = 0; a < adminUsers.length; a++) {
-            const adm = adminUsers[a]
-            if (adm.id === vSellerId) continue
-            try {
-              const nAdmin = new Record(notifCol)
-              nAdmin.set('user_id', adm.id)
-              nAdmin.set('order_id', firstOrder.id)
-              nAdmin.set('type', 'warning')
-              nAdmin.set('title', warningTitle)
-              nAdmin.set('message', warningMsg)
-              nAdmin.set('is_read', false)
-              $app.save(nAdmin)
-            } catch (_) {}
-          }
-        } catch (_) {}
       }
     }
-  }
 
-  // 4. ALERTA VERMELHO: TELEMETRIA ENCERRADA LOGO APÓS DESVIO DE ROTA
-  // Se houver desvio recente (off_route_events criado <= 2 min antes do último sinal)
-  // e o buraco de GPS atingir > 15 minutos, notifica admin + vendedor
-  try {
-    const fifteenMinAgo = new Date(nowMs - 15 * 60 * 1000).toISOString()
-    const seventeenMinAgo = new Date(nowMs - 17 * 60 * 1000).toISOString()
-    const recentOffRoutes = $app.findRecordsByFilter(
-      'off_route_events',
-      `courier_id = '${courierId}' && created >= '${seventeenMinAgo}' && created <= '${fifteenMinAgo}'`,
-      '-created',
-      1,
-      0,
-    )
-    if (recentOffRoutes.length > 0) {
-      // checar se já alertou
-      const alertDedup = $app.findRecordsByFilter(
-        'notifications',
-        `order_id = '${recentOffRoutes[0].getString('order_id')}' && title ~ 'Telemetria encerrada logo após desvio'`,
+    // 4. ALERTA VERMELHO: TELEMETRIA ENCERRADA LOGO APÓS DESVIO DE ROTA
+    // Se houver desvio recente (off_route_events criado <= 2 min antes do último sinal)
+    // e o buraco de GPS atingir > 15 minutos, notifica admin + vendedor
+    try {
+      const fifteenMinAgo = new Date(nowMs - 15 * 60 * 1000).toISOString()
+      const seventeenMinAgo = new Date(nowMs - 17 * 60 * 1000).toISOString()
+      const recentOffRoutes = $app.findRecordsByFilter(
+        'off_route_events',
+        `courier_id = '${courierId}' && created >= '${seventeenMinAgo}' && created <= '${fifteenMinAgo}'`,
         '-created',
         1,
         0,
       )
-      if (alertDedup.length === 0) {
-        const notifCol = $app.findCollectionByNameOrId('notifications')
-        const alertMsg = `Alerta Vermelho: O entregador ${courierName} teve a telemetria GPS interrompida por mais de 15 minutos logo após registrar desvio de rota.`
-        if (sellerId) {
-          const nS = new Record(notifCol)
-          nS.set('user_id', sellerId)
-          nS.set('order_id', recentOffRoutes[0].getString('order_id'))
-          nS.set('type', 'warning')
-          nS.set('title', '🚨 Telemetria encerrada logo após desvio de rota')
-          nS.set('message', alertMsg)
-          nS.set('is_read', false)
-          $app.save(nS)
+      if (recentOffRoutes.length > 0) {
+        // checar se já alertou
+        const alertDedup = $app.findRecordsByFilter(
+          'notifications',
+          `order_id = '${recentOffRoutes[0].getString('order_id')}' && title ~ 'Telemetria encerrada logo após desvio'`,
+          '-created',
+          1,
+          0,
+        )
+        if (alertDedup.length === 0) {
+          const notifCol = $app.findCollectionByNameOrId('notifications')
+          const alertMsg = `Alerta Vermelho: O entregador ${courierName} teve a telemetria GPS interrompida por mais de 15 minutos logo após registrar desvio de rota.`
+          if (sellerId) {
+            const nS = new Record(notifCol)
+            nS.set('user_id', sellerId)
+            nS.set('order_id', recentOffRoutes[0].getString('order_id'))
+            nS.set('type', 'warning')
+            nS.set('title', '🚨 Telemetria encerrada logo após desvio de rota')
+            nS.set('message', alertMsg)
+            nS.set('is_read', false)
+            $app.save(nS)
+          }
         }
       }
-    }
-  } catch (_) {}
-
-  e.next()
+    } catch (_) {}
+  } catch (globalErr) {
+    console.log('[on_location_alert] Erro global no hook:', globalErr)
+  } finally {
+    e.next()
+  }
 }, 'locations')

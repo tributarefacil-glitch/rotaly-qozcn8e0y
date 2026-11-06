@@ -387,8 +387,8 @@ export function buildKmAuditRows(params: BuildKmAuditRowsParams): KmAuditRow[] {
         order.is_redirected ||
         order.redirection_status === 'initiated' ||
         order.redirection_status === 'completed' ||
-        order.redirection_status === 'point_a_visited' ||
-        order.redirection_status === 'point_b_reached',
+        (order.redirection_status as unknown) === 'point_a_visited' ||
+        (order.redirection_status as unknown) === 'point_b_reached',
       )
       const isRedirectionPending = Boolean(order.redirection_status === 'initiated')
 

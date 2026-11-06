@@ -138,15 +138,6 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
     initialPeriodFilter,
   )
 
-  const referenceMonthKey = useMemo(() => {
-    return getReferenceMonthKey(periodFilter, customStartDate)
-  }, [periodFilter, customStartDate])
-
-  const { discountPct: courierManualDiscountPct } = useReactiveFuelDiscount(
-    referenceMonthKey,
-    officialSettings || settings,
-  )
-
   // Datas padrão para o período personalizado: últimos 7 dias civis no fuso de Brasília
   const defaultCustomDates = useMemo(() => {
     const now = new Date()
@@ -164,6 +155,16 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
   const [customStartDate, setCustomStartDate] = useState<string>('')
   const [customEndDate, setCustomEndDate] = useState<string>('')
   const [customDateError, setCustomDateError] = useState<string | null>(null)
+  const [officialSettings, setOfficialSettings] = useState<AppSettingsRecord | null>(settings)
+
+  const referenceMonthKey = useMemo(() => {
+    return getReferenceMonthKey(periodFilter, customStartDate)
+  }, [periodFilter, customStartDate])
+
+  const { discountPct: courierManualDiscountPct } = useReactiveFuelDiscount(
+    referenceMonthKey,
+    officialSettings || settings,
+  )
 
   // Janela operacional ativa derivada (seja pré-definida ou customizada)
   const activeOperationalWindow = useMemo(() => {
@@ -231,7 +232,6 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
       label: 'Todo Histórico',
     }
   }, [periodFilter, customStartDate, customEndDate, defaultCustomDates])
-  const [officialSettings, setOfficialSettings] = useState<AppSettingsRecord | null>(settings)
 
   // Assegurar que settings venha do global_settings oficial, nunca sintetizado/vazio
   React.useEffect(() => {

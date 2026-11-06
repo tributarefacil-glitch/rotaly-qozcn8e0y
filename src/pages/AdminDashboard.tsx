@@ -473,7 +473,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
       try {
         const currentExtra = (settings?.extra as Record<string, unknown>) || {}
         const currentMonthly = (currentExtra.fuel_discount_monthly as Record<string, number>) || {}
-        await deliveryService.saveSettings({
+        await deliveryService.updateSettings({
           extra: {
             ...currentExtra,
             fuel_discount_monthly: {
