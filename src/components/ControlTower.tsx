@@ -107,7 +107,11 @@ import {
   isOrderIssueToday,
   parseSafeTimestamp,
 } from '@/lib/operationalWindow'
-import { isOrderInActiveRoute, isCourierRecentlyFinished } from '@/lib/activeRouteHelper'
+import {
+  isOrderInActiveRoute,
+  isCourierRecentlyFinished,
+  buildCompletedMixedBatchKeys,
+} from '@/lib/activeRouteHelper'
 import { deriveRouteBatchKey } from '@/lib/routeBatchHelper'
 import type { AppSettingsRecord } from '@/types/delivery'
 import {
@@ -1125,6 +1129,9 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // um lote encerrado ("Voltar para base" gravou route_finished=true) NUNCA mais contribui para
   // "Em Rota", rota ativa ou trânsito — mesmo que pedidos pendentes tenham ficado presos nele.
   // Composição mista (pedidos antigos de lote morto + ativos) é o furo real de produção.
+  // LOTE MISTO CONCLUÍDO: route_batch_key com TODAS as entregas já em status final (sem nenhuma
+  // pendência genuína) também é lote morto para exibição, mesmo sem route_finished propagado —
+  // fecha a venda fantasma travada em "Em Trânsito" (kanban, contadores e mapa).
   // Varre orders geral + globalInTransitOrders para não perder histórico de lote do dia anterior.
   const deadRouteBatchKeys = useMemo(() => {
     const keys = new Set<string>()
@@ -1134,6 +1141,7 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     orders.forEach(collect)
     todayOrders.forEach(collect)
     globalInTransitOrders.forEach(collect)
+    buildCompletedMixedBatchKeys([...orders, ...globalInTransitOrders]).forEach((k) => keys.add(k))
     return keys
   }, [orders, todayOrders, globalInTransitOrders])
 

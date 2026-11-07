@@ -3,6 +3,46 @@ import { getOperationalWindow, isTodayOrder, type OperationalWindow } from '@/li
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
 
 /**
+ * Status finais canônicos de um pedido (espelha as regras de lote misto do backend).
+ */
+export const FINAL_ORDER_STATUSES: string[] = [
+  'delivered',
+  'delivered_with_exception',
+  'unsuccessful',
+  'address_error',
+  'client_absent',
+  'cancelled',
+]
+
+export function isFinalOrderStatus(status: string): boolean {
+  return FINAL_ORDER_STATUSES.indexOf(status) !== -1
+}
+
+/**
+ * Lote misto concluído: TODAS as entregas do route_batch_key já estão em status final,
+ * mas o route_finished ainda não foi propagado (ex.: fechamento automático pendente ou
+ * ordem do lote órfã presa em in_transit). É tratado como lote morto/fechado para
+ * exibição na Torre (kanban, contadores e mapa), sem tocar em lote com entrega
+ * genuinamente pendente (pending/assigned/in_transit real).
+ */
+export function buildCompletedMixedBatchKeys(orders: OrderRecord[]): Set<string> {
+  const batchMembers = new Map<string, OrderRecord[]>()
+  for (const o of orders) {
+    if (!o.route_batch_key) continue
+    const list = batchMembers.get(o.route_batch_key)
+    if (list) list.push(o)
+    else batchMembers.set(o.route_batch_key, [o])
+  }
+  const keys = new Set<string>()
+  batchMembers.forEach((members, key) => {
+    if (members.length === 0) return
+    const allFinal = members.every((m) => isFinalOrderStatus(m.status))
+    if (allFinal) keys.add(key)
+  })
+  return keys
+}
+
+/**
  * Critério centralizado e unificado de verificação de rota ativa de entregador.
  * Um pedido está em rota ativa se e somente se:
  * - route_started === true
@@ -14,12 +54,17 @@ import { offlineRouteStorage } from '@/services/offlineRouteStorage'
  * O "Voltar para base" grava route_finished=true no lote; pedidos pendentes remanescentes desse
  * lote (composição mista: entregues/encerrados + pendentes) NUNCA mais contam como rota ativa,
  * mesmo que ainda tragam route_started=true com route_finished=false no próprio registro.
+ *
+ * LOTE MISTO CONCLUÍDO: route_batch_key em que TODOS os pedidos conhecidos já estão em status
+ * final (sem nenhum pendente genuíno), mesmo sem route_finished propagado — tratado como lote
+ * morto para exibição (kanban, contadores e mapa da Torre).
  */
 export function buildDeadRouteBatchKeys(orders: OrderRecord[]): Set<string> {
   const keys = new Set<string>()
   for (const o of orders) {
     if (o.route_finished === true && o.route_batch_key) keys.add(o.route_batch_key)
   }
+  buildCompletedMixedBatchKeys(orders).forEach((k) => keys.add(k))
   return keys
 }
 
