@@ -1413,6 +1413,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
       const nextOrder = activeInTransitOrders[0] || null
       const lastDelivered = finishedOrders[finishedOrders.length - 1] || null
 
+      // REQUISITO DO USUÁRIO (card fantasma "5 em rota"):
+      // entregador sem rota ativa (lote finalizado / route_finished) NUNCA exibe
+      // contagem de entregas de lote morto — o card e o pin continuam visíveis, zerados.
+      const hasLiveRoute = uniqueCourierRouteOrders.length > 0
       return {
         courier,
         lat: lat as number,
@@ -1432,10 +1436,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
         deliveredTotalRatio,
         statusColor,
         statusLabel,
-        activeOrdersCount: inTransitOrders.length + pendingOrders.length,
-        totalToday: finishedOrders.length + inTransitOrders.length,
-        inTransitCount: inTransitOrders.length,
-        pendingCount: pendingOrders.length,
+        activeOrdersCount: hasLiveRoute ? inTransitOrders.length + pendingOrders.length : 0,
+        totalToday: finishedOrders.length + (hasLiveRoute ? inTransitOrders.length : 0),
+        inTransitCount: hasLiveRoute ? inTransitOrders.length : 0,
+        pendingCount: hasLiveRoute ? pendingOrders.length : 0,
         problemCount: problemOrders.length,
         finishedCount: finishedOrders.length,
         hasPendingReturnToBase: isReturningToBase,

@@ -110,6 +110,17 @@ export function diagnoseCourierTelemetry(
       border: 'border-rose-500/40',
       dot: 'bg-rose-500',
     }
+  } else if (minutesSinceLastPing <= 3) {
+    // REQUISITO DO USUÁRIO: sinal de GPS é calculado pela ÚLTIMA location recebida.
+    // Pings nos últimos 3 minutos = sinal OK, mesmo se gps_status vier preso em 'offline'.
+    gpsState = 'active'
+    gpsBadgeLabel = 'GPS ativo e conectado'
+    gpsBadgeColor = {
+      bg: 'bg-emerald-500/15',
+      text: 'text-emerald-400',
+      border: 'border-emerald-500/40',
+      dot: 'bg-emerald-400',
+    }
   } else if (finalGpsStatus === 'offline' || minutesSinceLastPing > 10) {
     gpsState = 'no_signal'
     const minText = minutesSinceLastPing < 999 ? `${minutesSinceLastPing} min` : '>10 min'
