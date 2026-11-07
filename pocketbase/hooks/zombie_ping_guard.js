@@ -23,7 +23,7 @@
  *   - km viário/oficial, combustível (fator 0,85), volta à base, geofence e pins não são tocados.
  */
 
-onRecordCreate('locations', (e) => {
+onRecordCreate((e) => {
   const rec = e.record
 
   const accuracy = rec.getFloat('accuracy')
@@ -146,4 +146,4 @@ onRecordCreate('locations', (e) => {
   }
 
   e.next()
-})
+}, 'locations')

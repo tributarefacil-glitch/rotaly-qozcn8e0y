@@ -264,6 +264,7 @@ onRecordAfterCreateSuccess((e) => {
     // Inclui a sequência completa da rota ativa [Base -> Parada 1 -> Parada 2 ... -> Base Final]
     // para que a projeção viária contemple o corredor de qualquer segmento do lote, e não apenas
     // os pontos restantes quando o entregador se desloca entre a parada anterior e a próxima.
+    const routeWaypoints = []
 
     if (isReturningToBaseOnly) {
       // Retorno exclusivo à base: trecho de referência da última parada até a base de retorno

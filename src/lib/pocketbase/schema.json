@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T14:14:52.439Z",
+  "generatedAt": "2026-11-07T15:06:15.435Z",
   "collections": [
     {
       "name": "users",
@@ -408,7 +408,8 @@
             "address_error",
             "client_absent",
             "other",
-            "cancelado_vendedor"
+            "cancelado_vendedor",
+            "system_auto_close"
           ]
         },
         {
