@@ -373,6 +373,34 @@ onRecordCreateRequest((e) => {
   // --- corpo do gatilho ---
   try {
     const loc = e.record
+    if (!loc) {
+      e.next()
+      return
+    }
+
+    // Descarte prévio de pings de baixa precisão (accuracy >= 100m) ou coordenadas inválidas/fora de faixa
+    const accuracy = loc.getFloat('accuracy')
+    if (accuracy >= 100) {
+      e.next()
+      return
+    }
+
+    const lat = loc.getFloat('lat')
+    const lng = loc.getFloat('lng')
+    if (
+      !isFinite(lat) ||
+      !isFinite(lng) ||
+      (lat === 0 && lng === 0) ||
+      (Math.abs(lat) < 0.0001 && Math.abs(lng) < 0.0001) ||
+      lat < -90 ||
+      lat > 90 ||
+      lng < -180 ||
+      lng > 180
+    ) {
+      e.next()
+      return
+    }
+
     const courierId = loc.getString('user_id')
     if (!courierId) {
       e.next()

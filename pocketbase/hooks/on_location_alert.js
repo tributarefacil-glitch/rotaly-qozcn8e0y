@@ -31,7 +31,7 @@ onRecordAfterCreateSuccess((e) => {
     if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) {
       return
     }
-    if (accuracy > 100) {
+    if (accuracy >= 100) {
       return
     }
 
