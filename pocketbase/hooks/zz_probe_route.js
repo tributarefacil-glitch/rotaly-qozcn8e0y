@@ -1,5 +1,6 @@
 // pocketbase/hooks/zz_probe_route.js
-// TESTE TEMPORÁRIO — remover depois. Só confirma que uma rota nova em arquivo novo registra.
-routerAdd('GET', '/backend/v1/zz-probe', (c) => {
-  return c.json(200, { ok: true, probe: 'vivo' })
-})
+//
+// STUB SEM ROTAS — apenas para o deploy conseguir remover o hook do pod.
+// A rota de teste /backend/v1/zz-probe foi usada em 10/11/2026 para diagnosticar
+// por que os endpoints de rota ativa não registravam. Não deve existir em produção.
+// Este arquivo pode ser apagado numa próxima publicação.
