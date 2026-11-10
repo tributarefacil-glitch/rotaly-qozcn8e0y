@@ -731,12 +731,15 @@ export const deliveryService = {
       }
     }
 
-    return pb.collection<OrderRecord>('orders').getFullList({
+    // ECONOMIA DE DADOS: limite de 500 pedidos por consulta (antes: getFullList ilimitado).
+    // Cobre o app do entregador (poucas dezenas) e os painéis sem re-baixar histórico gigante.
+    const res = await pb.collection<OrderRecord>('orders').getList(1, 500, {
       filter: sanitizedFilter,
       sort,
       expand,
       requestKey: null,
     })
+    return res.items
   },
 
   /**
@@ -4596,12 +4599,14 @@ export const deliveryService = {
     }
 
     try {
-      return await pb.collection<FuelAdvanceRecord>('fuel_advances').getFullList({
+      // ECONOMIA DE DADOS: máximo 100 registros (antes: getFullList ilimitado).
+      const res = await pb.collection<FuelAdvanceRecord>('fuel_advances').getList(1, 100, {
         filter: finalFilter,
         sort,
         expand,
         requestKey: null,
       })
+      return res.items
     } catch (queryErr) {
       console.warn(
         'Erro na consulta filtrada de fuel_advances; executando fallback defensivo:',
@@ -5219,12 +5224,17 @@ export const deliveryService = {
     const filterStr = filters.join(' && ')
 
     try {
-      return await pb.collection<AddressAlertRecord>('address_alerts').getFullList({
-        filter: filterStr,
-        sort: '-created',
-        expand: 'customer,company,marked_by,reviewed_by',
-        requestKey: null,
-      })
+      // ECONOMIA DE DADOS: limita a 50 itens e expand só o essencial (customer, para endereço).
+      // marked_by/reviewed_by são resolvidos sob demanda pela tela (fetch único no momento da exibição).
+      const res = await pb
+        .collection<AddressAlertRecord>('address_alerts')
+        .getList(1, options?.limit || 50, {
+          filter: filterStr,
+          sort: '-created',
+          expand: 'customer',
+          requestKey: null,
+        })
+      return res.items
     } catch (err) {
       console.error('[deliveryService] Erro ao buscar address_alerts:', err)
       return []
@@ -5232,7 +5242,7 @@ export const deliveryService = {
   },
 
   /**
-   * Obter a contagem de alertas pendentes para badges de navegação com cache compartilhado (in-flight dedupe + TTL 15s).
+   * Obter a contagem de alertas pendentes para badges de navegação com cache compartilhado (in-flight dedupe + TTL 60s).
    */
   invalidateAddressAlertsCountCache() {
     _alertsCountCache.clear()
@@ -5243,7 +5253,7 @@ export const deliveryService = {
     const key = empresaId || 'default'
     const now = Date.now()
     const cached = _alertsCountCache.get(key)
-    if (cached && now - cached.timestamp < 15000) {
+    if (cached && now - cached.timestamp < 60000) {
       return cached.count
     }
 
@@ -5253,8 +5263,25 @@ export const deliveryService = {
 
     const promise = (async () => {
       try {
-        const alerts = await this.getAddressAlerts({ empresaId, status: 'pendente' })
-        const count = alerts.length
+        // ECONOMIA DE DADOS: contagem via getList(1,1) + totalItems — NUNCA baixa os registros
+        // (antes: getFullList com expand de 4 relações re-baixado a cada 30s por cada app aberto).
+        const targetCompanyId = empresaId === 'ALL' ? undefined : empresaId
+        const authUser = pb.authStore.record as any
+        const isMaster = authUser?.role === 'master'
+        const filters: string[] = ["status = 'pendente'"]
+        if (!isMaster || (targetCompanyId && targetCompanyId !== 'ALL')) {
+          const target =
+            targetCompanyId || this.getActiveCompanyId() || (await this.getMatrizCompanyId())
+          if (target) {
+            filters.push(`company = '${target}'`)
+          }
+        }
+        const res = await pb.collection<AddressAlertRecord>('address_alerts').getList(1, 1, {
+          filter: filters.join(' && '),
+          sort: '-created',
+          requestKey: null,
+        })
+        const count = res.totalItems
         _alertsCountCache.set(key, { count, timestamp: Date.now() })
         return count
       } finally {

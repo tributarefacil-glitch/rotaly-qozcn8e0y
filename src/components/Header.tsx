@@ -68,17 +68,21 @@ export const Header: React.FC = () => {
 
   useEffect(() => {
     checkAlerts()
-    const interval = setInterval(checkAlerts, 30000)
+    // ECONOMIA DE DADOS: polling frio de 5 minutos (antes: 30s — re-baixava contagem o dia inteiro).
+    // Contagem tem cache TTL de 60s no serviço e realtime de notifications cobre urgência.
+    const interval = setInterval(checkAlerts, 5 * 60 * 1000)
 
     const handleAlertsUpdated = () => {
       deliveryService.invalidateAddressAlertsCountCache()
       checkAlerts()
     }
     window.addEventListener('rotaly:address-alerts-updated', handleAlertsUpdated)
+    document.addEventListener('visibilitychange', handleAlertsUpdated)
 
     return () => {
       clearInterval(interval)
       window.removeEventListener('rotaly:address-alerts-updated', handleAlertsUpdated)
+      document.removeEventListener('visibilitychange', handleAlertsUpdated)
     }
   }, [checkAlerts])
 
