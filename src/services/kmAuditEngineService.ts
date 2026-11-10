@@ -16,6 +16,7 @@ import {
 import { isPostFuelPaymentCutoff } from '@/services/canonicalCourierTotalsService'
 import { MapDataService } from '@/lib/mapDataService'
 import { haversineDistanceMeters } from '@/lib/geo'
+import { resolveFuelParams } from '@/lib/fuelDefaults'
 import {
   getOperationalWindow,
   getOperationalMonthStart,
@@ -662,8 +663,16 @@ export function calculateKmAuditSummary(
     ? manualAdjTargetKm
     : Number(kmPagamentoTotal.toFixed(1))
 
-  const motoConsumption = Number(settings?.consumption_kml) || 30.0
-  const motoPrice = Number(settings?.fuel_price) || 6.49
+  // BUG CORRIGIDO (2026-11-10): este arquivo lia `settings.consumption_kml` e
+  // `settings.fuel_price` — campos que NÃO existem na coleção app_settings. Os reais são
+  // moto_consumption_kml / fuel_consumption_kml e moto_fuel_price / fuel_price_per_liter.
+  // Efeito do bug: a auditoria de KM usava 30 km/L e o padrão do código, ignorando o que
+  // a empresa configurou — podia divergir do valor realmente pago ao entregador.
+  const resolvedFuelAudit = resolveFuelParams({
+    settings: (settings || null) as unknown as Record<string, unknown> | null,
+  })
+  const motoConsumption = resolvedFuelAudit.consumptionKml
+  const motoPrice = resolvedFuelAudit.pricePerLiter
   const combustivelPagamentoTotal = Number(
     ((finalKmPagamentoTotal / motoConsumption) * motoPrice).toFixed(2),
   )
