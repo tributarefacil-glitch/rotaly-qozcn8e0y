@@ -32,6 +32,9 @@ routerAdd('GET', '/backend/v1/zz-diag-lote', (c) => {
         empresa_id: o.getString('empresa_id'),
         courier_id: o.getString('courier_id'),
         customer: o.getString('customer_id'),
+        created: o.getString('created'),
+        updated: o.getString('updated'),
+        route_released_at: o.getString('route_released_at'),
       })
     }
     const empresas = {}
