@@ -212,7 +212,9 @@ export function calculateCourierFuelMetrics(params: {
   const courierVehicleTypeSafe = courier.vehicle_type || 'moto'
 
   const defaultFuelParams = deliveryService.getVehicleFuelParams(settings, courierVehicleTypeSafe)
-  // Combustível por escopo 100% app_settings: moto 30 km/L e R$ 6,49 (taxa do app_settings), bicicleta R$ 0
+  // Combustível por escopo 100% app_settings: moto 30 km/L e R$ 6,39, bicicleta R$ 0.
+  // O default do código precisa ser IGUAL ao de fuelKmPaymentService.ts (fonte canônica do
+  // pagamento), senão a tela mostra um número e o pagamento calcula outro.
   const isBicycleCourier = defaultFuelParams.category === 'bicicleta'
   const appSettingsMotoConsumption =
     typeof settings?.moto_consumption_kml === 'number' && settings.moto_consumption_kml > 0
@@ -225,7 +227,7 @@ export function calculateCourierFuelMetrics(params: {
       ? settings.moto_fuel_price
       : typeof settings?.fuel_price_per_liter === 'number' && settings.fuel_price_per_liter > 0
         ? settings.fuel_price_per_liter
-        : 6.49
+        : 6.39
 
   const courierConsumption = isBicycleCourier
     ? 0

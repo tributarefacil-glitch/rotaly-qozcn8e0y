@@ -10,13 +10,19 @@
  * 4. Desconto de combustível (padrão 15% / fator 0,85 para pós-corte 26/10),
  *    ajustável reativamente por mês (0%, 5%, 10%, 15%) via app_settings + localStorage.
  * 5. Bicicleta: isento de km e combustível (R$ 0,00).
- * 6. Moto: consumo app_settings (padrão 30 km/L) e preço app_settings (padrão R$ 6,49).
+ * 6. Moto: consumo app_settings (padrão 30 km/L) e preço app_settings (padrão R$ 6,39).
+ *
+ * NOTA (10/11/2026): os defaults numéricos não vivem mais neste arquivo — vêm de
+ * src/lib/fuelDefaults.ts, junto com a função resolveFuelParams, que centraliza a
+ * precedência (entregador > veículo > empresa > padrão). Antes, o mesmo R$ 6,49 estava
+ * escrito em 31 pontos de 9 arquivos e divergia do preço real praticado.
  */
 
 import { AppSettingsRecord, OrderRecord, UserRecord } from '@/types/delivery'
 import { isPostFuelPaymentCutoff } from '@/services/canonicalCourierTotalsService'
 import { deriveRouteBatchKey } from '@/lib/routeBatchHelper'
 import { isCurrentMonthInTz, isSameDayInTz } from '@/lib/operationalWindow'
+import { resolveFuelParams } from '@/lib/fuelDefaults'
 
 export interface FuelPaymentBatchInput {
   order: OrderRecord
@@ -233,15 +239,20 @@ export function calculateFuelKmPayment(params: CalculateFuelKmPaymentParams): Fu
   const finalRoadKm = Number(roadKmTotal.toFixed(1))
   const finalKmPagamento = Number(kmPagamentoTotal.toFixed(1))
 
-  const motoConsumption =
-    typeof courier?.consumption_kml === 'number' && courier.consumption_kml > 0
-      ? courier.consumption_kml
-      : Number(settings?.consumption_kml) || 30.0
-
-  const motoPrice =
-    typeof courier?.fuel_price === 'number' && courier.fuel_price > 0
-      ? courier.fuel_price
-      : Number(settings?.fuel_price) || 6.49
+  // BUG CORRIGIDO (2026-11-10): este arquivo lia `settings.consumption_kml` e
+  // `settings.fuel_price` — campos que NÃO existem na coleção app_settings. Os reais são
+  // fuel_consumption_kml, fuel_price_per_liter, moto_consumption_kml e moto_fuel_price.
+  // Resultado do bug: mesmo com os parâmetros preenchidos no banco, o cálculo SEMPRE caía
+  // no valor padrão do código. Agora resolve por resolveFuelParams(), com a precedência
+  // canônica compartilhada com useCourierFuelMetrics.ts (entregador > veículo > empresa > padrão).
+  const resolvedFuel = resolveFuelParams({
+    vehicleType: courier?.vehicle_type,
+    courierConsumptionKml: courier?.consumption_kml,
+    courierFuelPrice: courier?.fuel_price,
+    settings: (settings || null) as Record<string, unknown> | null,
+  })
+  const motoConsumption = resolvedFuel.consumptionKml
+  const motoPrice = resolvedFuel.pricePerLiter
 
   const combustivelPagamentoTotal = Number(
     ((finalKmPagamento / motoConsumption) * motoPrice).toFixed(2),
