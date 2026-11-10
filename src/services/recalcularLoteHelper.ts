@@ -82,7 +82,7 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
 
   // 3. Buscar app_settings para consumo e preço do combustível (100% app_settings: moto 30 km/L / R$ 6,49)
   let consumptionKml = 30.0
-  let fuelPrice = 6.49
+  let fuelPrice = 6.39
   try {
     const settingsList = await pb.collection<AppSettingsRecord>('app_settings').getList(1, 1)
     if (settingsList.items.length > 0) {
@@ -225,8 +225,14 @@ export async function recalcularLote(routeBatchKey: string): Promise<RecalcularL
 
   if (kmTelemetriaReal !== null && kmTelemetriaReal > 0 && totalViarioKm > 0) {
     diffPct = Math.round((Math.abs(kmTelemetriaReal - totalViarioKm) / totalViarioKm) * 100)
-    // O km oficial único canônico é o MENOR entre A e B (automático)
-    kmOficial = Math.min(totalViarioKm, kmTelemetriaReal)
+    // REGRA DO DONO (10/11/2026): paga-se SEMPRE a ROTA PLANEJADA.
+    // O desvio do entregador NÃO entra no pagamento — nem para mais, nem para menos.
+    // Antes usava Math.min(viário, GPS), o que fazia o entregador que rodou MAIS
+    // (por erro de endereço ou trânsito) receber MENOS que a rota planejada — injusto,
+    // e dava ao entregador motivo para cortar caminho de forma insegura.
+    // A telemetria continua registrada para auditoria e para corrigir endereços errados,
+    // mas o valor pago é o km viário da rota.
+    kmOficial = totalViarioKm
 
     if (diffPct <= 20) {
       reconciliationStatus = 'auto_approved'
