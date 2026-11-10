@@ -61,8 +61,11 @@ migrate(
         continue
       }
 
+      // completion_reason é um select fechado: usa 'client_absent', que é o desfecho
+      // canônico aceito pela guarda de route_finished. A origem administrativa fica
+      // registrada em audit_trail (autorizado_por + reason + nota).
       order.set('status', 'client_absent')
-      order.set('completion_reason', 'liberado_admin')
+      order.set('completion_reason', 'client_absent')
       order.set('route_finished', true)
       if (!order.getString('route_finished_at')) {
         order.set('route_finished_at', nowIso)
@@ -100,7 +103,7 @@ migrate(
             route_batch_key: BATCH_KEY,
             courier_id: courierId || '',
             reason: MOTIVO,
-            completion_reason: 'liberado_admin',
+            completion_reason: 'client_absent',
             nota: 'Desfecho marcado como client_absent por liberacao administrativa, nao por confirmacao do cliente.',
           })
           app.save(auditRec)
