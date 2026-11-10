@@ -3111,7 +3111,10 @@ export const deliveryService = {
     routeStartedAt: string | null
   }> {
     try {
-      // 1. Consulta rápida ao endpoint customizado no backend (/backend/v1/check-active-route ou /backend/v1/courier/check-active-route)
+      // 1. Consulta rápida ao endpoint atômico do backend.
+      // /courier-active-route é o endpoint canônico (arquivo courier_active_route.js).
+      // Os paths antigos (/check-active-route e /courier/check-active-route) falhavam com
+      // 404 em runtime e ficam como último recurso, para não quebrar app já instalado.
       try {
         const res = await pb
           .send<{
@@ -3122,23 +3125,38 @@ export const deliveryService = {
             pending_deliveries_count?: number
             active_batch_key?: string | null
             route_started_at?: string | null
-          }>('/backend/v1/check-active-route', {
+          }>('/backend/v1/courier-active-route', {
             method: 'GET',
             params: { courier_id: courierId },
           })
           .catch(() => {
-            return pb.send<{
-              active?: boolean
-              has_active_route?: boolean
-              route_id?: string | null
-              active_orders_count?: number
-              pending_deliveries_count?: number
-              active_batch_key?: string | null
-              route_started_at?: string | null
-            }>('/backend/v1/courier/check-active-route', {
-              method: 'GET',
-              params: { courier_id: courierId },
-            })
+            return pb
+              .send<{
+                active?: boolean
+                has_active_route?: boolean
+                route_id?: string | null
+                active_orders_count?: number
+                pending_deliveries_count?: number
+                active_batch_key?: string | null
+                route_started_at?: string | null
+              }>('/backend/v1/check-active-route', {
+                method: 'GET',
+                params: { courier_id: courierId },
+              })
+              .catch(() => {
+                return pb.send<{
+                  active?: boolean
+                  has_active_route?: boolean
+                  route_id?: string | null
+                  active_orders_count?: number
+                  pending_deliveries_count?: number
+                  active_batch_key?: string | null
+                  route_started_at?: string | null
+                }>('/backend/v1/courier/check-active-route', {
+                  method: 'GET',
+                  params: { courier_id: courierId },
+                })
+              })
           })
         if (res) {
           const isActive = Boolean(res.active ?? res.has_active_route)
