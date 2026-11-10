@@ -1564,12 +1564,10 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
           const cleanCourier = MapDataService.cleanCoords(item.lat, item.lng) || originClean
           const courierPos: LatLngPoint = { lat: cleanCourier.lat, lng: cleanCourier.lng }
 
-          // Base de retorno: end_address_lat/lng ou fallback start_base ou fallback oficial
+          // Base de retorno: SEMPRE start_base_* (a base de origem do lote).
+          // CORREÇÃO 2026-11-10: antes preferia end_address_*, que é o endereço do último
+          // cliente — a linha de retorno e o "voltar para base" apontavam para uma entrega.
           const cleanReturn =
-            MapDataService.cleanCoords(
-              primaryOrder.end_address_lat,
-              primaryOrder.end_address_lng,
-            ) ||
             MapDataService.cleanCoords(primaryOrder.start_base_lat, primaryOrder.start_base_lng) ||
             originClean
           const returnBasePos: LatLngPoint = { lat: cleanReturn.lat, lng: cleanReturn.lng }

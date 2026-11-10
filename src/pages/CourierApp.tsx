@@ -1622,16 +1622,24 @@ export default function CourierApp() {
         o.status === 'cancelled',
     )
 
-  // Identificar coordenadas da base para guiar o retorno (end_address_lat/lng ou start_base_lat/lng)
+  // Coordenadas da BASE DE ORIGEM, usadas para guiar o retorno e para o cálculo de distância.
+  //
+  // CORREÇÃO 2026-11-10: a versão anterior preferia `end_address_lat/lng` antes de
+  // `start_base_lat/lng`. Mas `end_address_*` é o ENDEREÇO DO ÚLTIMO CLIENTE da rota,
+  // não a base — com isso o botão "Voltar para base" mandava o Google Maps de volta
+  // para a primeira/última entrega, e a distância até a base saía errada.
+  // A base é sempre `start_base_*`. `end_address_*` nunca entra aqui.
   const baseCoordinates = useMemo(() => {
     const anchor = currentRouteOrders[0] || orders[0]
-    const effectiveLat = anchor?.end_address_lat || anchor?.start_base_lat || -22.6977499
-    const effectiveLng = anchor?.end_address_lng || anchor?.start_base_lng || -43.2936013
+    const baseLat = anchor?.start_base_lat
+    const baseLng = anchor?.start_base_lng
+    const latValida = typeof baseLat === 'number' && !isNaN(baseLat) && baseLat !== 0
+    const lngValida = typeof baseLng === 'number' && !isNaN(baseLng) && baseLng !== 0
     return {
       name: anchor?.start_base_name || 'Base Operacional',
       address: anchor?.start_base_address || 'Base de Distribuição',
-      lat: effectiveLat,
-      lng: effectiveLng,
+      lat: latValida ? (baseLat as number) : -22.6977499,
+      lng: lngValida ? (baseLng as number) : -43.2936013,
     }
   }, [currentRouteOrders, orders])
 
@@ -2254,12 +2262,31 @@ export default function CourierApp() {
 
   // Ação: Retornar à Base (abre navegação para a base com Google Maps - destino único)
   const handleNavigateToBase = () => {
+    // BLINDAGEM: o retorno à base NUNCA pode apontar para um cliente.
+    // Se a base não tiver coordenada válida, avisa em vez de mandar o entregador
+    // para o endereço de uma entrega (era o que acontecia ao herdar end_address_*).
+    const latBase = baseCoordinates.lat
+    const lngBase = baseCoordinates.lng
+    const baseValida =
+      typeof latBase === 'number' &&
+      typeof lngBase === 'number' &&
+      !isNaN(latBase) &&
+      !isNaN(lngBase) &&
+      (Math.abs(latBase) > 0.000001 || Math.abs(lngBase) > 0.000001)
+
+    if (!baseValida) {
+      toast.error('Não foi possível localizar a base nesta rota. Avise a operação.', {
+        duration: 8000,
+      })
+      return
+    }
+
     toast.info(`Navegando de volta para a base: ${baseCoordinates.name}`)
     setNavigationTarget({
       name: baseCoordinates.name,
       address: baseCoordinates.address,
-      lat: baseCoordinates.lat,
-      lng: baseCoordinates.lng,
+      lat: latBase,
+      lng: lngBase,
       currentStopName: baseCoordinates.name,
       currentStopAddress: baseCoordinates.address,
       waypoints: [],
