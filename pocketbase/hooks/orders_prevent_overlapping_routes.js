@@ -122,81 +122,9 @@ onRecordBeforeUpdate((e) => {
   e.next()
 }, 'orders')
 
-// Endpoint customizado seguro para verificação atômica de status do entregador antes de iniciar.
-// Suporta /backend/v1/check-active-route e /backend/v1/courier/check-active-route com o mesmo contrato.
-// Responde SEMPRE status 200 (com has_active_route: false se sem autenticação/sem courier_id) para evitar 404 e loops.
-const handleCheckActiveRoute = (c) => {
-  let authRecord = null
-  try {
-    authRecord = (typeof c.Auth === 'function' ? c.Auth() : null) || c.auth || c.get('authRecord')
-  } catch (_) {}
-
-  const queryInfo = c.requestInfo()?.query || {}
-  const courierId = (queryInfo.courier_id || (authRecord ? authRecord.id : '') || '').trim()
-
-  if (!courierId) {
-    return c.json(200, {
-      active: false,
-      has_active_route: false,
-      route_id: null,
-      active_orders_count: 0,
-      pending_deliveries_count: 0,
-      active_batch_key: null,
-      route_started_at: null,
-      first_order_id: null,
-      message: 'courier_id não informado',
-    })
-  }
-
-  try {
-    const activeOrders = $app.findRecordsByFilter(
-      'orders',
-      `courier_id = '${courierId}' && route_started = true && route_finished = false && status != 'cancelled'`,
-      '-route_started_at',
-      50,
-      0,
-    )
-
-    if (!activeOrders || activeOrders.length === 0) {
-      return c.json(200, {
-        active: false,
-        has_active_route: false,
-        route_id: null,
-        active_orders_count: 0,
-        pending_deliveries_count: 0,
-        active_batch_key: null,
-        route_started_at: null,
-        first_order_id: null,
-      })
-    }
-
-    const firstActive = activeOrders[0]
-    const batchKey = firstActive.getString('route_batch_key') || ''
-    const startedAt = firstActive.getString('route_started_at') || firstActive.getString('created')
-
-    const pendingDeliveries = activeOrders.filter(
-      (o) => o.getString('status') !== 'delivered' && o.getString('status') !== 'client_absent',
-    ).length
-
-    return c.json(200, {
-      active: true,
-      has_active_route: true,
-      route_id: firstActive.id,
-      active_orders_count: activeOrders.length,
-      pending_deliveries_count: pendingDeliveries,
-      active_batch_key: batchKey,
-      route_started_at: startedAt,
-      first_order_id: firstActive.id,
-    })
-  } catch (err) {
-    console.error('[check-active-route] Erro ao consultar rota ativa:', err)
-    return c.json(200, {
-      active: false,
-      has_active_route: false,
-      error: 'Erro ao verificar rota ativa do entregador.',
-    })
-  }
-}
-
-routerAdd('GET', '/backend/v1/courier/check-active-route', handleCheckActiveRoute)
-routerAdd('GET', '/backend/v1/check-active-route', handleCheckActiveRoute)
+// NOTA (2026-11-10): os endpoints de verificação de rota ativa que ficavam neste arquivo
+// foram movidos para courier_check_active_route.js e courier_check_active_route_legacy.js.
+// Motivo: o PocketBase executa handlers de routerAdd em um pool de VM separado do registro,
+// então um handler declarado no topo do arquivo e passado por referência quebra em runtime
+// (ReferenceError -> 404 "File not found"). Cada arquivo de hook agora tem exatamente um
+// routerAdd, com o handler inline e autocontido.
