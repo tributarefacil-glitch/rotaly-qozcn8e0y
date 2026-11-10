@@ -50,6 +50,7 @@ import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
 import { syncAndValidateRouteCache } from '@/lib/activeRouteHelper'
+import { normalizeWhatsAppPhone } from '@/lib/whatsappTracking'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -2387,10 +2388,31 @@ export default function CourierApp() {
       const combined = `${rawMsg} ${fieldData}`
 
       // Notificar erro real em ambos os casos (manual ou automático) para não silenciar falhas
-      if (combined.includes('paradas pendentes') || combined.includes('Conclua ou registre')) {
-        toast.error('Não é possível finalizar: ainda há paradas pendentes de entrega nesta rota.', {
-          duration: 7000,
-        })
+      const divergenciaServidor =
+        combined.includes('sem desfecho') ||
+        combined.includes('paradas pendentes') ||
+        combined.includes('Conclua ou registre') ||
+        combined.includes('Conclua o desfecho')
+
+      if (divergenciaServidor) {
+        // O app e o servidor discordam sobre o desfecho das paradas.
+        // Causa típica: entregador marcou a entrega offline e o status nunca subiu.
+        // Ação: forçar recarga do servidor (fonte da verdade), descartar o cache local
+        // e abrir a lista real de pendências — em vez de insistir num botão que falha.
+        try {
+          await offlineRouteStorage.clearRouteCache(user.id)
+        } catch (eCache) {
+          console.warn('[CourierApp] Falha ao limpar cache local de rota:', eCache)
+        }
+        try {
+          await loadCourierOrders({ force: true })
+        } catch (eReload) {
+          console.warn('[CourierApp] Falha ao recarregar pedidos do servidor:', eReload)
+        }
+        toast.error(
+          'O servidor ainda tem paradas sem desfecho nesta rota. Recarreguei a lista real: conclua ou marque como Não Atendido as que aparecerem em aberto.',
+          { duration: 12000 },
+        )
       } else if (combined.includes('geolocalização') || combined.includes('GPS')) {
         toast.error('GPS instável. Toque em "Finalizar Manualmente" para concluir a rota.', {
           duration: 7000,
@@ -3157,14 +3179,43 @@ export default function CourierApp() {
                   </div>
 
                   {currentActiveDelivery.expand?.customer_id?.phone && (
-                    <div className="flex items-center gap-2 text-slate-300 pt-0.5">
-                      <Phone className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                    <div className="flex items-center gap-2 pt-0.5">
                       <a
                         href={`tel:${currentActiveDelivery.expand.customer_id.phone}`}
-                        className="hover:underline font-mono text-xs"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0A1128] border border-[#1E2B58] text-slate-200 hover:bg-[#111F45]"
                       >
-                        {currentActiveDelivery.expand.customer_id.phone}
+                        <Phone className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                        <span className="font-mono text-xs">
+                          {currentActiveDelivery.expand.customer_id.phone}
+                        </span>
                       </a>
+
+                      {/* Abre direto na conversa do WhatsApp do cliente.
+                          Usa location.href (não window.open) porque o WebView do APK
+                          bloqueia popup: o clique era engolido e o entregador tinha
+                          que copiar o número na mão. wa.me resolve o app nativo. */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const bruto = currentActiveDelivery.expand?.customer_id?.phone || ''
+                          const destino = normalizeWhatsAppPhone(bruto)
+                          if (!destino) {
+                            toast.error('Cliente sem telefone válido para WhatsApp.')
+                            return
+                          }
+                          const nome = currentActiveDelivery.expand?.customer_id?.name || 'Cliente'
+                          const primeiroNome = nome.trim().split(' ')[0]
+                          const codigo = currentActiveDelivery.tracking_code || ''
+                          const texto = codigo
+                            ? `Olá, ${primeiroNome}! Sou o entregador do seu pedido ${codigo}. Estou a caminho.`
+                            : `Olá, ${primeiroNome}! Sou o entregador do seu pedido. Estou a caminho.`
+                          window.location.href = `https://wa.me/${destino}?text=${encodeURIComponent(texto)}`
+                        }}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/50 text-emerald-300 hover:bg-emerald-600/30 font-bold"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5 shrink-0" />
+                        <span className="text-xs">WhatsApp</span>
+                      </button>
                     </div>
                   )}
 
