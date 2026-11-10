@@ -700,11 +700,21 @@ export const deliveryService = {
   },
 
   // Orders
+  /**
+   * Busca pedidos.
+   *
+   * `opts.maxRecords` controla o teto da consulta. O padrão de 500 é uma proteção de
+   * banda para painéis, mas NÃO serve para a rota do entregador: com o histórico
+   * somando centenas de pedidos já entregues, o corte acontece no meio do lote do dia
+   * e o app mostra só parte das paradas (bug relatado em 10/11/2026: 5 de 10).
+   * Quem precisa da rota corrente passa `maxRecords: Infinity` (sem teto).
+   */
   async getOrders(
     filter = '',
     sort = '-created',
     expand = 'customer_id,courier_id,seller_id',
     empresaId?: string,
+    opts?: { maxRecords?: number },
   ) {
     // Saneamento global e preventivo de filtros PocketBase:
     let sanitizedFilter = filter
@@ -731,9 +741,22 @@ export const deliveryService = {
       }
     }
 
-    // ECONOMIA DE DADOS: limite de 500 pedidos por consulta (antes: getFullList ilimitado).
-    // Cobre o app do entregador (poucas dezenas) e os painéis sem re-baixar histórico gigante.
-    const res = await pb.collection<OrderRecord>('orders').getList(1, 500, {
+    const semTeto = opts?.maxRecords === Infinity
+
+    // ECONOMIA DE DADOS: teto padrão de 500 por consulta (antes: getFullList ilimitado).
+    // Exceção obrigatória: a rota do entregador pede maxRecords: Infinity, porque o
+    // corte de 500 cai no meio do lote do dia quando há histórico acumulado.
+    if (semTeto) {
+      return await pb.collection<OrderRecord>('orders').getFullList({
+        filter: sanitizedFilter,
+        sort,
+        expand,
+        requestKey: null,
+      })
+    }
+
+    const teto = typeof opts?.maxRecords === 'number' && opts.maxRecords > 0 ? opts.maxRecords : 500
+    const res = await pb.collection<OrderRecord>('orders').getList(1, teto, {
       filter: sanitizedFilter,
       sort,
       expand,

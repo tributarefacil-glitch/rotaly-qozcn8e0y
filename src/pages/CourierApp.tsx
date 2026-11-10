@@ -467,10 +467,18 @@ export default function CourierApp() {
       // Regra: O cliente fica disponível após o vendedor otimizar e liberar a rota (Salvar & Liberar Rota)
       // Inclui tanto route_released=true quanto status assigned/in_transit/delivered
       const courierFilter = `courier_id = '${user.id}' && (route_released = true || status = 'assigned' || status = 'in_transit' || status = 'delivered' || status = 'address_error' || status = 'client_absent')`
+      // maxRecords: Infinity — a rota do entregador NÃO pode ser truncada.
+      // Com o teto padrão de 500, o histórico de entregas já concluídas enchia a página
+      // e o lote do dia era cortado no meio (entregador via 5 de 10 paradas).
+      // Ordem: mais recentes primeiro. A ordenação por sequência da rota é aplicada
+      // em memória logo abaixo, só sobre o lote corrente — ordenar por `sequence` no
+      // servidor espalhava o lote de hoje entre centenas de pedidos antigos.
       const allOrders = await deliveryService.getOrders(
         courierFilter,
-        'sequence,-created',
+        '-created',
         'customer_id,courier_id,seller_id',
+        undefined,
+        { maxRecords: Infinity },
       )
       setOrders(allOrders)
       setIsServingFromOfflineCache(false)
