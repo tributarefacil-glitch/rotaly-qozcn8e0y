@@ -5224,14 +5224,16 @@ export const deliveryService = {
     const filterStr = filters.join(' && ')
 
     try {
-      // ECONOMIA DE DADOS: limita a 50 itens e expand só o essencial (customer, para endereço).
-      // marked_by/reviewed_by são resolvidos sob demanda pela tela (fetch único no momento da exibição).
+      // ECONOMIA DE DADOS: limita a 50 itens e expand só o essencial.
+      // `company` é obrigatório: SuspiciousAddressesBox lê alert.expand?.company para exibir o
+      // nome da empresa ao master (sem ele, a coluna some silenciosamente na tela de aprovação).
+      // marked_by/reviewed_by seguem resolvidos sob demanda pela tela, como antes.
       const res = await pb
         .collection<AddressAlertRecord>('address_alerts')
         .getList(1, options?.limit || 50, {
           filter: filterStr,
           sort: '-created',
-          expand: 'customer',
+          expand: 'customer,company',
           requestKey: null,
         })
       return res.items
