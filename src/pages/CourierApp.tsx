@@ -378,10 +378,6 @@ export default function CourierApp() {
   const lastLoadFuelTimestampRef = useRef<number>(0)
   const isFuelFetchingRef = useRef<boolean>(false)
 
-  // ECONOMIA DE DADOS: cache stale-while-revalidate em memória para dados "frios" do app.
-  // Evita re-buscar tudo a cada foco de tela: só revalida quando o cache expira (maxAgeMs).
-  const lastFuelDataRef = useRef<number>(0)
-
   // Health check de permissão de GPS e segundo plano (Item K3)
   const checkBackgroundPermissionHealth = async (): Promise<boolean> => {
     if (!nativeGpsBridge.isNativeEnvironment()) {
@@ -410,16 +406,9 @@ export default function CourierApp() {
 
   // Carregar dados de conta corrente e configurações para manter paridade com o motor de combustível
   // CORREÇÃO 1: Usa getRecentLocationsForCourier (15 min, max 50 pings) para não baixar gigabytes de telemetria do dia
-  const loadFuelAndAccountData = async (options?: { force?: boolean; maxAgeMs?: number }) => {
+  const loadFuelAndAccountData = async (options?: { force?: boolean }) => {
     if (!user?.id) return
     const now = Date.now()
-
-    // Stale-while-revalidate: se o dado em memória ainda está fresco, não re-baixa nada.
-    if (!options?.force && lastFuelDataRef.current > 0) {
-      const maxAge = options?.maxAgeMs ?? 5 * 60 * 1000
-      if (now - lastFuelDataRef.current < maxAge) return
-    }
-
     if (!options?.force && isFuelFetchingRef.current) return
     if (!options?.force && now - lastLoadFuelTimestampRef.current < 5000) return
 
@@ -437,7 +426,6 @@ export default function CourierApp() {
       setSettings(appSettings)
       setLocations(userLocations)
       setOffRouteEvents(userEvents)
-      lastFuelDataRef.current = Date.now()
     } catch (err) {
       console.warn('Erro ao carregar dados de telemetria e conta de combustível:', err)
     } finally {
@@ -447,15 +435,8 @@ export default function CourierApp() {
 
   // Carrega apenas pedidos liberados pelo vendedor ("assigned" com route_released=true ou em rota)
   // Com suporte completo offline: salva no IndexedDB a cada sucesso e lê do cache local na ausência de rede
-  const loadCourierOrders = async (options?: { force?: boolean; maxAgeMs?: number }) => {
+  const loadCourierOrders = async (options?: { force?: boolean }) => {
     const now = Date.now()
-
-    // Stale-while-revalidate: com cache em memória recente, só revalida quando expirar (maxAgeMs).
-    if (!options?.force && lastLoadOrdersTimestampRef.current > 0) {
-      const maxAge = options?.maxAgeMs ?? 2 * 60 * 1000
-      if (now - lastLoadOrdersTimestampRef.current < maxAge && orders.length > 0) return
-    }
-
     if (!options?.force && isOrdersFetchingRef.current) return
     if (!options?.force && now - lastLoadOrdersTimestampRef.current < 3000) return
 
@@ -576,33 +557,30 @@ export default function CourierApp() {
   useEffect(() => {
     if (!user?.id) return
 
-    // Checagem a cada 5s para disparar o polling no intervalo adequado
-    // ECONOMIA DE DADOS: realtime de orders já cobre mudanças (create/update/delete);
-    // o polling fica só como rede de segurança, com intervalos longos (3 min rota ativa / 5 min ocioso).
+    // Checagem a cada 5s para disparar o polling no intervalo adequado (35s rota ativa / 60s ocioso)
     const intervalTimer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return // Economiza rede e bateria quando tela apagada / app em background
       }
       const now = Date.now()
-      const threshold = hasActiveStartedRouteRef.current ? 180000 : 300000
+      const threshold = hasActiveStartedRouteRef.current ? 35000 : 60000
       if (now - lastPollingTickRef.current >= threshold) {
         lastPollingTickRef.current = now
         loadCourierOrders()
       }
     }, 5000)
 
-    // 2. Ao voltar para foco (visibilitychange / focus) — revalida com staleness:
-    // orders revalida se o cache tiver mais de 2 min; combustível/telemetria se tiver mais de 3 min.
-    // Realtime cobre o tempo real; foco só sincroniza o que já está velho (stale-while-revalidate).
+    // 2. Ao voltar para foco (visibilitychange / focus) — dispara apenas 1 recarga com throttle
     const handleVisibilityOrFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        loadCourierOrders({ maxAgeMs: 2 * 60 * 1000 })
-        loadFuelAndAccountData({ maxAgeMs: 3 * 60 * 1000 })
+        lastPollingTickRef.current = Date.now()
+        loadCourierOrders({ force: true })
+        loadFuelAndAccountData({ force: true })
         checkBackgroundPermissionHealth()
       }
     }
 
-    // 3. Ao voltar a ficar online — força sincronização única (evento raro e relevante)
+    // 3. Ao voltar a ficar online
     const handleNetworkOnline = () => {
       lastPollingTickRef.current = Date.now()
       loadCourierOrders({ force: true })
@@ -671,8 +649,7 @@ export default function CourierApp() {
         lastInTransitEchoReloadRef.current = 0
       }
       loadCourierOrders({ force: isOwnInTransitEcho ? false : true })
-      // Realtime cobre fuel/off_route — a recarga aqui usa o cache SWR (não re-baixa se fresco)
-      loadFuelAndAccountData({ maxAgeMs: 30 * 1000 })
+      loadFuelAndAccountData()
     }
   })
 
@@ -697,8 +674,7 @@ export default function CourierApp() {
             `⛽ Novo adiantamento recebido: R$ ${Number(e.record.amount || 0).toFixed(2)}`,
           )
         }
-        // Realtime é a fonte primária: recarrega somente se o cache estiver velho (> 30s)
-        loadFuelAndAccountData({ maxAgeMs: 30 * 1000 })
+        loadFuelAndAccountData()
       }
     },
     true,
@@ -709,8 +685,7 @@ export default function CourierApp() {
     'off_route_events',
     (e) => {
       if (user?.id && e.record.courier_id === user.id) {
-        // Realtime é a fonte primária: recarrega somente se o cache estiver velho (> 30s)
-        loadFuelAndAccountData({ maxAgeMs: 30 * 1000 })
+        loadFuelAndAccountData()
       }
     },
     true,
@@ -986,7 +961,7 @@ export default function CourierApp() {
             }
             if (syncedIds.length > 0) {
               await offlineRouteStorage.removeRedirectionActions(user.id, syncedIds)
-              loadCourierOrders({ force: true })
+              loadCourierOrders()
               toast.success(`Redirecionamento offline sincronizado com sucesso!`)
             }
           }
@@ -1744,7 +1719,7 @@ export default function CourierApp() {
         setIsBatteryGuideOpen(true)
       }
 
-      await loadCourierOrders({ force: true })
+      await loadCourierOrders()
     } catch (err) {
       console.error('Erro ao iniciar rota:', err)
       toast.error('Falha ao iniciar rota. Tente novamente.')
@@ -2246,7 +2221,7 @@ export default function CourierApp() {
           courier_id: user?.id,
           estimated_arrival: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         })
-        await loadCourierOrders({ force: true })
+        await loadCourierOrders()
       }
       toast.success(`Navegação iniciada para ${cust?.name || 'o cliente'}!`)
       // Abrir navegação inteligente (Google Maps com rota otimizada e paradas seguintes)
@@ -3585,7 +3560,7 @@ export default function CourierApp() {
         onOpenChange={setIsRedirectModalOpen}
         onRedirectionStarted={(updatedOrder) => {
           setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)))
-          loadCourierOrders({ force: true })
+          loadCourierOrders()
         }}
       />
 

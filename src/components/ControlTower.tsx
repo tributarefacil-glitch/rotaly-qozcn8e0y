@@ -509,6 +509,12 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
   // um debounce reiniciaria a cada evento e nunca dispararia durante o movimento da frota.
   const globalTransitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const globalTransitAliveRef = useRef(true)
+  // ECONOMIA DE DADOS: a consulta de pedidos em trânsito é pesada (até 500 pedidos com expand
+  // de 3 relações). lastUpdated dispara a cada flush de 2,5s com a frota em movimento — sem um
+  // piso mínimo entre buscas reais, a Torre re-baixava o mesmo conjunto a cada ~5s.
+  // Piso de 60s entre buscas; entre uma busca e outra a lista segue fresca via realtime de orders.
+  const lastGlobalTransitFetchRef = useRef<number>(0)
+  const GLOBAL_TRANSIT_MIN_FETCH_MS = 60 * 1000
 
   useEffect(() => {
     globalTransitAliveRef.current = true
@@ -525,6 +531,8 @@ const ControlTowerInner: React.FC<ControlTowerProps> = ({
     globalTransitTimerRef.current = setTimeout(async () => {
       globalTransitTimerRef.current = null
       if (!globalTransitAliveRef.current) return
+      if (Date.now() - lastGlobalTransitFetchRef.current < GLOBAL_TRANSIT_MIN_FETCH_MS) return
+      lastGlobalTransitFetchRef.current = Date.now()
       try {
         const globalTransitFilter = `route_started = true && (route_finished = false || route_finished = null)`
         const fetchedGlobal = await deliveryService.getOrders(
