@@ -122,9 +122,209 @@ onRecordBeforeUpdate((e) => {
   e.next()
 }, 'orders')
 
-// NOTA (2026-11-10): os endpoints de verificação de rota ativa que ficavam neste arquivo
-// foram movidos para courier_check_active_route.js e courier_check_active_route_legacy.js.
-// Motivo: o PocketBase executa handlers de routerAdd em um pool de VM separado do registro,
-// então um handler declarado no topo do arquivo e passado por referência quebra em runtime
-// (ReferenceError -> 404 "File not found"). Cada arquivo de hook agora tem exatamente um
-// routerAdd, com o handler inline e autocontido.
+// ---------------------------------------------------------------------------
+// Endpoints de verificação de rota ativa do entregador.
+//
+// CORREÇÃO 2026-11-10: estes handlers eram `const handleCheckActiveRoute = ...`
+// no topo do arquivo e passados por referência ao routerAdd. O PocketBase executa
+// callbacks em um pool de VM separado do registro, então identificadores de topo
+// não existem em runtime: a rota era registrada mas quebrava com ReferenceError
+// ao ser chamada, devolvendo 404 "File not found" ao app do entregador.
+// Agora cada handler é inline e autocontido, sem referência a nada de fora.
+// Contrato: SEMPRE 200 (has_active_route=false quando não há courier_id ou rota).
+// ---------------------------------------------------------------------------
+
+routerAdd('GET', '/backend/v1/check-active-route', (c) => {
+  let courierId = ''
+  try {
+    courierId = (c.request.url.query().get('courier_id') || '').trim()
+  } catch (_) {}
+
+  if (!courierId) {
+    try {
+      const info = c.requestInfo()
+      if (info && info.query && info.query.courier_id) {
+        courierId = String(info.query.courier_id).trim()
+      }
+    } catch (_) {}
+  }
+
+  if (!courierId) {
+    return c.json(200, {
+      active: false,
+      has_active_route: false,
+      route_id: null,
+      active_orders_count: 0,
+      pending_deliveries_count: 0,
+      active_batch_key: null,
+      route_started_at: null,
+      first_order_id: null,
+      message: 'courier_id não informado',
+    })
+  }
+
+  const safeId = String(courierId).replace(/[^a-zA-Z0-9]/g, '')
+  if (!safeId) {
+    return c.json(200, {
+      active: false,
+      has_active_route: false,
+      route_id: null,
+      active_orders_count: 0,
+      pending_deliveries_count: 0,
+      active_batch_key: null,
+      route_started_at: null,
+      first_order_id: null,
+      message: 'courier_id inválido',
+    })
+  }
+
+  try {
+    const activeOrders = $app.findRecordsByFilter(
+      'orders',
+      `courier_id = '${safeId}' && route_started = true && route_finished = false && status != 'cancelled'`,
+      '-route_started_at',
+      50,
+      0,
+    )
+
+    if (!activeOrders || activeOrders.length === 0) {
+      return c.json(200, {
+        active: false,
+        has_active_route: false,
+        route_id: null,
+        active_orders_count: 0,
+        pending_deliveries_count: 0,
+        active_batch_key: null,
+        route_started_at: null,
+        first_order_id: null,
+      })
+    }
+
+    const firstActive = activeOrders[0]
+    const batchKey = firstActive.getString('route_batch_key') || ''
+    const startedAt =
+      firstActive.getString('route_started_at') || firstActive.getString('created') || null
+
+    let pendingDeliveries = 0
+    for (let i = 0; i < activeOrders.length; i++) {
+      const st = activeOrders[i].getString('status')
+      if (st !== 'delivered' && st !== 'client_absent') pendingDeliveries++
+    }
+
+    return c.json(200, {
+      active: true,
+      has_active_route: true,
+      route_id: firstActive.id,
+      active_orders_count: activeOrders.length,
+      pending_deliveries_count: pendingDeliveries,
+      active_batch_key: batchKey,
+      route_started_at: startedAt,
+      first_order_id: firstActive.id,
+    })
+  } catch (err) {
+    console.error('[check-active-route] Erro ao consultar rota ativa:', err)
+    return c.json(200, {
+      active: false,
+      has_active_route: false,
+      error: 'Erro ao verificar rota ativa do entregador.',
+    })
+  }
+})
+
+// Alias mantido para o app do entregador que ainda consulta /courier/check-active-route.
+routerAdd('GET', '/backend/v1/courier/check-active-route', (c) => {
+  let courierId = ''
+  try {
+    courierId = (c.request.url.query().get('courier_id') || '').trim()
+  } catch (_) {}
+
+  if (!courierId) {
+    try {
+      const info = c.requestInfo()
+      if (info && info.query && info.query.courier_id) {
+        courierId = String(info.query.courier_id).trim()
+      }
+    } catch (_) {}
+  }
+
+  if (!courierId) {
+    return c.json(200, {
+      active: false,
+      has_active_route: false,
+      route_id: null,
+      active_orders_count: 0,
+      pending_deliveries_count: 0,
+      active_batch_key: null,
+      route_started_at: null,
+      first_order_id: null,
+      message: 'courier_id não informado',
+    })
+  }
+
+  const safeId = String(courierId).replace(/[^a-zA-Z0-9]/g, '')
+  if (!safeId) {
+    return c.json(200, {
+      active: false,
+      has_active_route: false,
+      route_id: null,
+      active_orders_count: 0,
+      pending_deliveries_count: 0,
+      active_batch_key: null,
+      route_started_at: null,
+      first_order_id: null,
+      message: 'courier_id inválido',
+    })
+  }
+
+  try {
+    const activeOrders = $app.findRecordsByFilter(
+      'orders',
+      `courier_id = '${safeId}' && route_started = true && route_finished = false && status != 'cancelled'`,
+      '-route_started_at',
+      50,
+      0,
+    )
+
+    if (!activeOrders || activeOrders.length === 0) {
+      return c.json(200, {
+        active: false,
+        has_active_route: false,
+        route_id: null,
+        active_orders_count: 0,
+        pending_deliveries_count: 0,
+        active_batch_key: null,
+        route_started_at: null,
+        first_order_id: null,
+      })
+    }
+
+    const firstActive = activeOrders[0]
+    const batchKey = firstActive.getString('route_batch_key') || ''
+    const startedAt =
+      firstActive.getString('route_started_at') || firstActive.getString('created') || null
+
+    let pendingDeliveries = 0
+    for (let i = 0; i < activeOrders.length; i++) {
+      const st = activeOrders[i].getString('status')
+      if (st !== 'delivered' && st !== 'client_absent') pendingDeliveries++
+    }
+
+    return c.json(200, {
+      active: true,
+      has_active_route: true,
+      route_id: firstActive.id,
+      active_orders_count: activeOrders.length,
+      pending_deliveries_count: pendingDeliveries,
+      active_batch_key: batchKey,
+      route_started_at: startedAt,
+      first_order_id: firstActive.id,
+    })
+  } catch (err) {
+    console.error('[courier/check-active-route] Erro ao consultar rota ativa:', err)
+    return c.json(200, {
+      active: false,
+      has_active_route: false,
+      error: 'Erro ao verificar rota ativa do entregador.',
+    })
+  }
+})
