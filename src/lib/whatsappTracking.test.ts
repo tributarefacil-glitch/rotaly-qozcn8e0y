@@ -1,226 +1,263 @@
-import { describe, it, expect } from 'vitest'
+/**
+ * src/lib/whatsappTracking.test.ts
+ *
+ * TESTES DE REGRESSÃO do conserto do WhatsApp no APK do entregador.
+ *
+ * Classe do erro: no WebView do APK (Capacitor), wa.me navegado dentro do próprio
+ * WebView não abre nada — o entregador tinha que copiar o número na mão. A cura tem
+ * duas camadas e ambas ficam travadas aqui:
+ *  1. Helper centralizado openCustomerWhatsApp: SEMPRE location.href (nunca window.open,
+ *     que o WebView engole) e URL https://wa.me/55..., que o MainActivity.java nativo
+ *     intercepta e lança como ACTION_VIEW externa.
+ *  2. Normalização centralizada: DDI 55 + DDD 21 do RJ + 9º dígito + limpeza de máscara
+ *     e de 0 de operadora — para o intent nativo abrir no contato certo.
+ *
+ * A varredura dos TRÊS pontos de contato do entregador (CourierApp.tsx,
+ * CourierChatModal.tsx, CourierDeliveryHistoryModal.tsx) usa `import.meta.glob` com
+ * `query: '?raw'`: o Vite entrega o texto integral dos arquivos em tempo de build,
+ * sem depender de tipos de node (fs/path), que o tsconfig do app (DOM) não enxerga.
+ */
+
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import {
   DEFAULT_DDD,
   normalizeCustomerPhone,
   normalizeWhatsAppPhone,
-  buildTrackingWhatsAppText,
-  buildTrackingWhatsAppUrl,
-  formatEtaFromRealDuration,
+  buildCourierCustomerMessage,
+  openCustomerWhatsApp,
 } from './whatsappTracking'
 
-// Referência fixa: 04/11/2026 14:00 no horário de Brasília (17:00 UTC)
-const FIXED_FROM = new Date('2026-11-04T17:00:00.000Z')
+// Códigos-fonte integrais dos três pontos de contato (string crua via ?raw)
+const fontesBrutas = import.meta.glob('/src/**/*.{tsx,ts}', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as unknown as Record<string, string>
 
-describe('whatsappTracking', () => {
-  describe('DEFAULT_DDD', () => {
-    it('deve ser 21 (todos os clientes são do RJ)', () => {
-      expect(DEFAULT_DDD).toBe('21')
-    })
+const lerFonte = (caminho: string): string => {
+  const chave = Object.keys(fontesBrutas).find((k) => k.endsWith(`/${caminho}`))
+  if (!chave) {
+    throw new Error(`Arquivo de ponto de contato não encontrado no glob: ${caminho}`)
+  }
+  return fontesBrutas[chave]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Normalização centralizada (classe do erro: número abria no contato errado)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('normalizeWhatsAppPhone — normalização para o wa.me do APK', () => {
+  it('DDI 55 anteposto a número com DDD 21 (celular RJ)', () => {
+    expect(normalizeWhatsAppPhone('21987654321')).toBe('5521987654321')
+    expect(normalizeWhatsAppPhone('(21) 98765-4321')).toBe('5521987654321')
   })
 
-  describe('normalizeWhatsAppPhone', () => {
-    it('deve retornar null para telefone vazio, nulo ou indefinido', () => {
-      expect(normalizeWhatsAppPhone(null)).toBeNull()
-      expect(normalizeWhatsAppPhone(undefined)).toBeNull()
-      expect(normalizeWhatsAppPhone('')).toBeNull()
-      expect(normalizeWhatsAppPhone('   ')).toBeNull()
-      expect(normalizeWhatsAppPhone('---')).toBeNull()
-    })
-
-    it('deve antepor DDD 21 para números de 9 dígitos sem DDD (celular RJ)', () => {
-      // Exemplo real do cliente GABY (971344477)
-      expect(normalizeWhatsAppPhone('971344477')).toBe('5521971344477')
-      expect(normalizeWhatsAppPhone('97134-4477')).toBe('5521971344477')
-      expect(normalizeWhatsAppPhone('98765-4321')).toBe('5521987654321')
-    })
-
-    it('deve antepor DDD 21 para números de 8 dígitos sem DDD (fixo RJ)', () => {
-      expect(normalizeWhatsAppPhone('26761499')).toBe('552126761499')
-      expect(normalizeWhatsAppPhone('2676-1499')).toBe('552126761499')
-    })
-
-    it('deve remover 0 inicial de DDD antigo (021)', () => {
-      expect(normalizeWhatsAppPhone('021987654321')).toBe('5521987654321')
-      expect(normalizeWhatsAppPhone('(021) 98765-4321')).toBe('5521987654321')
-      expect(normalizeWhatsAppPhone('02126761499')).toBe('552126761499')
-    })
-
-    it('deve aceitar número com DDD completo (10 ou 11 dígitos) sem alteração indevida', () => {
-      expect(normalizeWhatsAppPhone('21987654321')).toBe('5521987654321')
-      expect(normalizeWhatsAppPhone('(21) 98765-4321')).toBe('5521987654321')
-      expect(normalizeWhatsAppPhone('(11) 98765-4321')).toBe('5511987654321')
-      expect(normalizeWhatsAppPhone('22999364910')).toBe('5522999364910')
-    })
-
-    it('deve aceitar número que já começa com código 55', () => {
-      expect(normalizeWhatsAppPhone('5521987654321')).toBe('5521987654321')
-      expect(normalizeWhatsAppPhone('+55 (21) 98765-4321')).toBe('5521987654321')
-      expect(normalizeWhatsAppPhone('55021987654321')).toBe('5521987654321')
-    })
-
-    it('deve retornar null para números curtos inválidos (< 8 dígitos)', () => {
-      expect(normalizeWhatsAppPhone('12345')).toBeNull()
-      expect(normalizeWhatsAppPhone('123')).toBeNull()
-    })
+  it('8 ou 9 dígitos sem DDD recebem DDD 21 + DDI 55 (cliente GABY, 971344477)', () => {
+    expect(normalizeWhatsAppPhone('971344477')).toBe('5521971344477')
+    expect(normalizeWhatsAppPhone('97134-4477')).toBe('5521971344477')
+    expect(normalizeWhatsAppPhone('26761499')).toBe('552126761499')
   })
 
-  describe('normalizeCustomerPhone', () => {
-    it('deve retornar string vazia para valores vazios/nulos', () => {
-      expect(normalizeCustomerPhone('')).toBe('')
-      expect(normalizeCustomerPhone(null)).toBe('')
-      expect(normalizeCustomerPhone(undefined)).toBe('')
-      expect(normalizeCustomerPhone('   ')).toBe('')
-    })
-
-    it('deve antepor DDD 21 para números de 8 ou 9 dígitos sem DDD', () => {
-      expect(normalizeCustomerPhone('971344477')).toBe('21971344477')
-      expect(normalizeCustomerPhone('97134-4477')).toBe('21971344477')
-      expect(normalizeCustomerPhone('26761499')).toBe('2126761499')
-    })
-
-    it('deve remover 0 inicial de 021', () => {
-      expect(normalizeCustomerPhone('021971344477')).toBe('21971344477')
-      expect(normalizeCustomerPhone('(021) 97134-4477')).toBe('21971344477')
-    })
-
-    it('deve remover 55 de números com 12 ou 13 dígitos para padrão nacional', () => {
-      expect(normalizeCustomerPhone('5521971344477')).toBe('21971344477')
-    })
-
-    it('deve manter números com DDD 10 ou 11 dígitos limpos', () => {
-      expect(normalizeCustomerPhone('(21) 97134-4477')).toBe('21971344477')
-      expect(normalizeCustomerPhone('(11) 98765-4321')).toBe('11987654321')
-    })
+  it('9º dígito preservado; 0 de operadora (021) removido', () => {
+    expect(normalizeWhatsAppPhone('021987654321')).toBe('5521987654321')
+    expect(normalizeWhatsAppPhone('55021987654321')).toBe('5521987654321')
+    expect(normalizeWhatsAppPhone('5521987654321')).toBe('5521987654321')
   })
 
-  describe('formatEtaFromRealDuration', () => {
-    it('deve retornar null quando não há duração real (ausente, 0, negativa ou inválida)', () => {
-      expect(formatEtaFromRealDuration(undefined, FIXED_FROM)).toBeNull()
-      expect(formatEtaFromRealDuration(null, FIXED_FROM)).toBeNull()
-      expect(formatEtaFromRealDuration(0, FIXED_FROM)).toBeNull()
-      expect(formatEtaFromRealDuration(-10, FIXED_FROM)).toBeNull()
-      expect(formatEtaFromRealDuration(Number.NaN, FIXED_FROM)).toBeNull()
-    })
-
-    it('deve calcular "por volta das" somando a duração REAL ao momento do envio', () => {
-      // 14:00 em Brasília + 30 min = 14:30
-      expect(formatEtaFromRealDuration(30, FIXED_FROM)).toBe('14:30')
-      // 14:00 + 90 min = 15:30
-      expect(formatEtaFromRealDuration(90, FIXED_FROM)).toBe('15:30')
-      // 14:00 + 8 min = 14:08
-      expect(formatEtaFromRealDuration(8, FIXED_FROM)).toBe('14:08')
-    })
-
-    it('deve atravessar a virada do dia corretamente', () => {
-      // 23:50 em Brasília (02:50 UTC do dia 05) + 20 min = 00:10 do dia seguinte
-      const lateEvening = new Date('2026-11-05T02:50:00.000Z')
-      expect(formatEtaFromRealDuration(20, lateEvening)).toBe('00:10')
-    })
+  it('telefone vazio/inválido retorna null (caller decide o aviso ao entregador)', () => {
+    expect(normalizeWhatsAppPhone(null)).toBeNull()
+    expect(normalizeWhatsAppPhone('')).toBeNull()
+    expect(normalizeWhatsAppPhone('12345')).toBeNull()
   })
 
-  describe('buildTrackingWhatsAppText — regra de ETA (fonte da verdade é a página de rastreamento)', () => {
-    it('NUNCA cita horário quando não há duração real de trânsito (pedido recém-criado, sem rota)', () => {
-      const text = buildTrackingWhatsAppText({
-        customerName: 'Gaby Silva',
-        trackingCode: 'TRK-2026-04619274',
-      })
+  it('normalizeCustomerPhone mantém o padrão nacional com DDD 21 do RJ', () => {
+    expect(DEFAULT_DDD).toBe('21')
+    expect(normalizeCustomerPhone('971344477')).toBe('21971344477')
+    expect(normalizeCustomerPhone('5521971344477')).toBe('21971344477')
+  })
+})
 
-      expect(text).toContain('Olá, Gaby!')
-      expect(text).toContain('TRK-2026-04619274')
-      expect(text).toContain('https://www.rotaly.com.br/track/TRK-2026-04619274')
-      expect(text).toContain('previsão de chegada atualizada e o mapa ao vivo')
-      expect(text).toContain('avaliar seu vendedor e seu entregador')
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. openCustomerWhatsApp — camada JS do conserto (location.href, nunca window.open)
+// ─────────────────────────────────────────────────────────────────────────────
 
-      // Nenhuma frase de horário fechado
-      expect(text).not.toContain('Previsão estimada de entrega')
-      expect(text).not.toContain('por volta das')
+describe('openCustomerWhatsApp — abertura do WhatsApp no APK', () => {
+  const originalLocation = window.location
+  const hrefHistory: string[] = []
+
+  const installLocationStub = () => {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: false,
+      value: {
+        ...originalLocation,
+        get href() {
+          return 'https://app.rotaly.com.br/courier'
+        },
+        set href(v: string) {
+          hrefHistory.push(v)
+        },
+      },
     })
+  }
 
-    it('deve ignorar o estimated_arrival legado do placeholder (20+i*15) — nunca vira horário na mensagem', () => {
-      // Simula exatamente o cenário do bug: estimated_arrival salvo pelo placeholder
-      const text = buildTrackingWhatsAppText({
-        customerName: 'Gaby Silva',
-        trackingCode: 'TRK-2026-04619274',
-        estimatedArrival: '2026-11-04T20:30:00.000Z', // 17:30 em Brasília
-        includeEta: true,
-      })
-
-      expect(text).not.toContain('17:30')
-      expect(text).not.toContain('Previsão estimada de entrega')
-      expect(text).not.toContain('por volta das')
+  afterEach(() => {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: originalLocation,
     })
-
-    it('cita "por volta das X" SOMENTE quando há duração real de trânsito (rota liberada, Google)', () => {
-      const text = buildTrackingWhatsAppText({
-        customerName: 'Gaby Silva',
-        trackingCode: 'TRK-2026-04619274',
-        realTransitDurationMinutes: 45,
-        estimatedArrival: '2026-11-04T20:30:00.000Z', // legado presente: ainda assim ignorado
-      })
-
-      // 14:00 + 45 min = 14:40? não: 14:45
-      expect(text).toContain('Previsão de entrega: por volta das *14:45*.')
-      expect(text).not.toContain('Previsão estimada de entrega')
-      expect(text).not.toContain('17:30')
-    })
-
-    it('usa texto genérico (sem horário) quando a duração real é inválida mesmo com includeEta legado', () => {
-      const text = buildTrackingWhatsAppText({
-        customerName: 'Gaby',
-        trackingCode: 'TRK-2026-04619274',
-        realTransitDurationMinutes: 0,
-        includeEta: true,
-      })
-      expect(text).not.toContain('por volta das')
-      expect(text).toContain('previsão de chegada atualizada e o mapa ao vivo')
-    })
-
-    it('deve usar fallback "Cliente" quando não houver nome', () => {
-      const text = buildTrackingWhatsAppText({
-        trackingCode: 'TRK-2026-04619274',
-      })
-      expect(text).toContain('Olá, Cliente!')
-    })
+    hrefHistory.length = 0
+    vi.restoreAllMocks()
   })
 
-  describe('buildTrackingWhatsAppUrl', () => {
-    it('deve gerar url wa.me completa para número sem DDD aplicando 21', () => {
-      const url = buildTrackingWhatsAppUrl('971344477', {
-        customerName: 'Gaby',
-        trackingCode: 'TRK-2026-04619274',
-      })
-      expect(url).not.toBeNull()
-      expect(url).toContain('https://wa.me/5521971344477?text=')
-      expect(url).toContain(encodeURIComponent('https://www.rotaly.com.br/track/TRK-2026-04619274'))
-    })
+  it('usa location.href e NUNCA window.open (classe do erro do APK)', () => {
+    installLocationStub()
+    const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
 
-    it('não inclui horário na URL quando não há duração real', () => {
-      const url = buildTrackingWhatsAppUrl('971344477', {
-        customerName: 'Gaby',
-        trackingCode: 'TRK-2026-04619274',
-        estimatedArrival: '2026-11-04T20:30:00.000Z',
-        includeEta: true,
-      })
-      expect(url).not.toBeNull()
-      expect(url!).not.toContain(encodeURIComponent('por volta das'))
-    })
+    const destino = openCustomerWhatsApp('(21) 98765-4321')
 
-    it('inclui "por volta das" na URL quando há duração real de trânsito', () => {
-      const url = buildTrackingWhatsAppUrl('971344477', {
-        customerName: 'Gaby',
-        trackingCode: 'TRK-2026-04619274',
-        realTransitDurationMinutes: 30,
-      })
-      expect(url).not.toBeNull()
-      expect(url!).toContain(encodeURIComponent('por volta das *14:30*'))
-    })
+    expect(destino).toBe('5521987654321')
+    expect(hrefHistory).toHaveLength(1)
+    expect(hrefHistory[0]).toBe('https://wa.me/5521987654321')
+    expect(windowOpenSpy).not.toHaveBeenCalled()
+  })
 
-    it('deve retornar null se telefone for vazio', () => {
-      const url = buildTrackingWhatsAppUrl('', {
-        customerName: 'Gaby',
-        trackingCode: 'TRK-2026-04619274',
-      })
-      expect(url).toBeNull()
+  it('URL gerada é https://wa.me/ com DDI 55 (nunca http, nunca sem DDI)', () => {
+    installLocationStub()
+
+    openCustomerWhatsApp('97134-4477', 'Olá! Estou a caminho.')
+
+    expect(hrefHistory).toHaveLength(1)
+    const url = hrefHistory[0]
+    expect(url.startsWith('https://wa.me/55')).toBe(true)
+    expect(url).toContain('5521971344477')
+    expect(url).toContain(`text=${encodeURIComponent('Olá! Estou a caminho.')}`)
+  })
+
+  it('sem mensagem: navega para https://wa.me/<numero> sem query de texto', () => {
+    installLocationStub()
+
+    openCustomerWhatsApp('21987654321')
+
+    expect(hrefHistory[0]).toBe('https://wa.me/5521987654321')
+  })
+
+  it('mensagem só de espaços é tratada como ausente (sem ?text= vazio)', () => {
+    installLocationStub()
+
+    openCustomerWhatsApp('21987654321', '   ')
+
+    expect(hrefHistory[0]).toBe('https://wa.me/5521987654321')
+    expect(hrefHistory[0]).not.toContain('?text=')
+  })
+
+  it('telefone inválido NÃO navega e retorna null (nada de wa.me sem número)', () => {
+    installLocationStub()
+
+    const resultado = openCustomerWhatsApp('123')
+
+    expect(resultado).toBeNull()
+    expect(hrefHistory).toHaveLength(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. buildCourierCustomerMessage — mensagem padrão do entregador ao cliente
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('buildCourierCustomerMessage', () => {
+  const originalLocation = window.location
+  const hrefHistory: string[] = []
+
+  const installLocationStub = () => {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: false,
+      value: {
+        ...originalLocation,
+        get href() {
+          return 'https://app.rotaly.com.br/courier'
+        },
+        set href(v: string) {
+          hrefHistory.push(v)
+        },
+      },
     })
+  }
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: originalLocation,
+    })
+    hrefHistory.length = 0
+  })
+
+  it('inclui 1º nome do cliente e código de rastreio quando existem', () => {
+    const msg = buildCourierCustomerMessage('Gaby Silva', 'TRK-2026-55615302')
+    expect(msg).toBe(
+      'Olá, Gaby! Sou o entregador do seu pedido TRK-2026-55615302. Estou a caminho.',
+    )
+  })
+
+  it('sem código de rastreio, mensagem fica sem o código (nunca "undefined")', () => {
+    const msg = buildCourierCustomerMessage('Gaby Silva', null)
+    expect(msg).toBe('Olá, Gaby! Sou o entregador do seu pedido. Estou a caminho.')
+    expect(msg).not.toContain('undefined')
+  })
+
+  it('sem nome do cliente, usa fallback Cliente', () => {
+    const msg = buildCourierCustomerMessage(undefined, 'TRK-2026-41285998')
+    expect(msg).toBe(
+      'Olá, Cliente! Sou o entregador do seu pedido TRK-2026-41285998. Estou a caminho.',
+    )
+  })
+
+  it('mensagem url-encoded dentro do wa.me corresponde ao texto gerado', () => {
+    installLocationStub()
+    const texto = buildCourierCustomerMessage('Gaby Silva', 'TRK-2026-55615302')
+
+    openCustomerWhatsApp('97134-4477', texto)
+
+    expect(hrefHistory[0]).toBe(`https://wa.me/5521971344477?text=${encodeURIComponent(texto)}`)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. Varredura dos TRÊS pontos de contato do entregador — helper centralizado
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('pontos de contato do entregador usam o helper centralizado (varredura de código-fonte)', () => {
+  const pontos = [
+    'pages/CourierApp.tsx',
+    'components/CourierChatModal.tsx',
+    'components/CourierDeliveryHistoryModal.tsx',
+  ]
+
+  it.each(pontos)('%s importa openCustomerWhatsApp e buildCourierCustomerMessage', (rel) => {
+    const fonte = lerFonte(rel)
+    expect(fonte).toMatch(
+      /import\s*\{[^}]*openCustomerWhatsApp[^}]*\}\s*from\s*['"]@\/lib\/whatsappTracking/,
+    )
+    expect(fonte).toMatch(
+      /import\s*\{[^}]*buildCourierCustomerMessage[^}]*\}\s*from\s*['"]@\/lib\/whatsappTracking/,
+    )
+    expect(fonte).toContain('openCustomerWhatsApp(')
+    expect(fonte).toContain('buildCourierCustomerMessage(')
+  })
+
+  it('nenhum ponto de contato monta wa.me ad hoc nem usa window.open para WhatsApp', () => {
+    for (const rel of pontos) {
+      const fonte = lerFonte(rel)
+      // wa.me só pode aparecer dentro de comentários, nunca montado em código
+      const linhasComWaMe = fonte
+        .split('\n')
+        .filter((linha) => linha.includes('wa.me'))
+        .filter((linha) => !linha.trim().startsWith('//') && !linha.trim().startsWith('*'))
+      expect(linhasComWaMe).toEqual([])
+      expect(fonte).not.toMatch(/window\.open\(\s*[^)]*wa\.me/)
+    }
   })
 })

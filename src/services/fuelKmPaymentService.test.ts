@@ -19,7 +19,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { calculateFuelKmPayment } from '@/services/fuelKmPaymentService'
-import type { OrderRecord } from '@/types/delivery'
+import type { AppSettingsRecord, OrderRecord } from '@/types/delivery'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -51,6 +51,27 @@ function makeOrder(over: Partial<OrderRecord> & Record<string, unknown> = {}): O
 
 const MOTO = { vehicle_type: 'moto' as const }
 const BICICLETA = { vehicle_type: 'bicicleta' as const }
+
+/**
+ * app_settings mínimo, com apenas os campos que o motor de pagamento realmente lê
+ * (moto_consumption_kml / moto_fuel_price). O tipo real exige key + RecordModel;
+ * o cast isola o teste do resto do schema — mesmo padrão do makeOrder acima.
+ */
+function makeSettings(
+  over: Partial<AppSettingsRecord> & Record<string, unknown> = {},
+): AppSettingsRecord {
+  return {
+    id: 'settings_test',
+    collectionId: 'app_settings_col',
+    collectionName: 'app_settings',
+    key: 'fuel',
+    fuel_price_per_liter: 6.39,
+    fuel_consumption_kml: 30,
+    moto_fuel_price: 6.39,
+    moto_consumption_kml: 30,
+    ...over,
+  } as unknown as AppSettingsRecord
+}
 
 // Datas de referência (fuso Brasília, -03:00)
 const ANTES_DO_CORTE = new Date('2026-10-20T12:00:00-03:00') // 20/10 — sem desconto
@@ -319,7 +340,7 @@ describe('calculateFuelKmPayment — o valor em R$ que sai para o entregador', (
       courier: MOTO,
       periodFilter: 'all',
       referenceDate: DEPOIS_DO_CORTE,
-      settings: { moto_consumption_kml: 30, moto_fuel_price: 6.39 },
+      settings: makeSettings({ moto_consumption_kml: 30, moto_fuel_price: 6.39 }),
     })
 
     expect(r.kmViarioOficial).toBe(17.2)
@@ -341,11 +362,11 @@ describe('calculateFuelKmPayment — o valor em R$ que sai para o entregador', (
 
     const barato = calculateFuelKmPayment({
       ...base,
-      settings: { moto_consumption_kml: 30, moto_fuel_price: 5.0 },
+      settings: makeSettings({ moto_consumption_kml: 30, moto_fuel_price: 5.0 }),
     })
     const caro = calculateFuelKmPayment({
       ...base,
-      settings: { moto_consumption_kml: 30, moto_fuel_price: 7.0 },
+      settings: makeSettings({ moto_consumption_kml: 30, moto_fuel_price: 7.0 }),
     })
 
     // Se o parâmetro fosse ignorado (o bug de 10/11), os dois dariam o mesmo valor.
