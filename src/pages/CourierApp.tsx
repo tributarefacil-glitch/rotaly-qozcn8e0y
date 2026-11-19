@@ -50,7 +50,7 @@ import { deliveryService } from '@/services/deliveryService'
 import { offlineTelemetryBuffer } from '@/services/offlineTelemetryBuffer'
 import { offlineRouteStorage } from '@/services/offlineRouteStorage'
 import { syncAndValidateRouteCache } from '@/lib/activeRouteHelper'
-import { normalizeWhatsAppPhone } from '@/lib/whatsappTracking'
+import { buildCourierCustomerMessage, openCustomerWhatsApp } from '@/lib/whatsappTracking'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -3232,19 +3232,18 @@ export default function CourierApp() {
                       <button
                         type="button"
                         onClick={() => {
-                          const bruto = currentActiveDelivery.expand?.customer_id?.phone || ''
-                          const destino = normalizeWhatsAppPhone(bruto)
-                          if (!destino) {
+                          // Helper centralizado: normaliza DDI/9º dígito/máscara e abre
+                          // via location.href; o nativo intercepta wa.me e abre o app.
+                          const aberto = openCustomerWhatsApp(
+                            currentActiveDelivery.expand?.customer_id?.phone,
+                            buildCourierCustomerMessage(
+                              currentActiveDelivery.expand?.customer_id?.name,
+                              currentActiveDelivery.tracking_code,
+                            ),
+                          )
+                          if (!aberto) {
                             toast.error('Cliente sem telefone válido para WhatsApp.')
-                            return
                           }
-                          const nome = currentActiveDelivery.expand?.customer_id?.name || 'Cliente'
-                          const primeiroNome = nome.trim().split(' ')[0]
-                          const codigo = currentActiveDelivery.tracking_code || ''
-                          const texto = codigo
-                            ? `Olá, ${primeiroNome}! Sou o entregador do seu pedido ${codigo}. Estou a caminho.`
-                            : `Olá, ${primeiroNome}! Sou o entregador do seu pedido. Estou a caminho.`
-                          window.location.href = `https://wa.me/${destino}?text=${encodeURIComponent(texto)}`
                         }}
                         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/50 text-emerald-300 hover:bg-emerald-600/30 font-bold"
                       >

@@ -78,13 +78,45 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                if (url.startsWith("geo:") || url.startsWith("https://www.google.com/maps")) {
+                if (url == null || url.isEmpty()) {
+                    return false;
+                }
+                Uri uri = Uri.parse(url);
+                String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
+                String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
+
+                // WhatsApp: wa.me / api.whatsapp.com / chat.whatsapp.com / whatsapp://
+                boolean isWhatsAppLink = scheme.equals("whatsapp") || scheme.equals("whatsapp-send")
+                        || host.equals("wa.me") || host.endsWith(".wa.me")
+                        || host.equals("api.whatsapp.com")
+                        || host.endsWith(".whatsapp.com");
+                // Contato direto: telefone / SMS / e-mail (WebView Android não trata sozinho)
+                boolean isContactLink = scheme.equals("tel") || scheme.equals("sms") || scheme.equals("mailto");
+                // Google Maps (tratamento original preservado)
+                boolean isMapLink = scheme.equals("geo") || url.startsWith("https://www.google.com/maps");
+
+                if (isWhatsAppLink || isContactLink || isMapLink) {
                     try {
-                        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         startActivity(intent);
                         return true;
+                    } catch (android.content.ActivityNotFoundException e) {
+                        Log.w(TAG, "Nenhum app para tratar o link externo: " + url, e);
+                        // WhatsApp ausente: leva à Play Store; tel/sms sem discador: apenas consome o link
+                        if (isWhatsAppLink) {
+                            try {
+                                Intent store = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.whatsapp"));
+                                store.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                startActivity(store);
+                            } catch (Exception ex) {
+                                Log.w(TAG, "Falha ao abrir Play Store para instalar o WhatsApp: " + url, ex);
+                            }
+                        }
+                        return true;
                     } catch (Exception e) {
-                        Log.w(TAG, "Falha ao abrir intent de mapa externa: " + url, e);
+                        Log.w(TAG, "Falha ao abrir link externo no app nativo: " + url, e);
+                        return true;
                     }
                 }
                 return false;

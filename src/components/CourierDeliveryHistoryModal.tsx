@@ -38,6 +38,7 @@ import {
   Maximize2,
   Package,
   Layers,
+  MessageCircle,
 } from 'lucide-react'
 import type {
   UserRecord,
@@ -73,6 +74,8 @@ import {
   parseSafeTimestamp,
   getOperationalMonthStart,
 } from '@/lib/operationalWindow'
+import { buildCourierCustomerMessage, openCustomerWhatsApp } from '@/lib/whatsappTracking'
+import { toast } from 'sonner'
 
 export interface CourierDeliveryHistoryItem {
   order: OrderRecord
@@ -81,6 +84,7 @@ export interface CourierDeliveryHistoryItem {
   trackingCode: string
   customerName: string
   customerAddress: string
+  customerPhone: string
   status: string
   statusLabel: string
   statusColor: string
@@ -689,6 +693,7 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
         customerName: o.expand?.customer_id?.name || 'Cliente',
         customerAddress:
           o.expand?.customer_id?.address || o.start_base_address || 'Endereço não informado',
+        customerPhone: o.expand?.customer_id?.phone || '',
         status: o.status,
         statusLabel,
         statusColor,
@@ -1833,6 +1838,30 @@ export const CourierDeliveryHistoryModal: React.FC<CourierDeliveryHistoryModalPr
                     <MapPin className="h-3.5 w-3.5 text-rose-400 shrink-0 mt-0.5" />
                     <span>{selectedItemForDetails.customerAddress}</span>
                   </p>
+                  {selectedItemForDetails.customerPhone && (
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const aberto = openCustomerWhatsApp(
+                            selectedItemForDetails.customerPhone,
+                            buildCourierCustomerMessage(
+                              selectedItemForDetails.customerName,
+                              selectedItemForDetails.trackingCode,
+                            ),
+                          )
+                          if (!aberto) {
+                            toast.error('Cliente sem telefone válido para WhatsApp.')
+                          }
+                        }}
+                        className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2 py-1 rounded-md transition"
+                        title={`WhatsApp para ${selectedItemForDetails.customerName}`}
+                      >
+                        <MessageCircle className="h-3 w-3" />
+                        <span>WhatsApp</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Bloco de Entrega Conjunta se aplicável */}

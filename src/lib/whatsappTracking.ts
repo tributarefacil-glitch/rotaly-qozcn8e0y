@@ -181,3 +181,56 @@ export function buildTrackingWhatsAppUrl(
   const text = buildTrackingWhatsAppText(options)
   return `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(text)}`
 }
+
+/**
+ * PONTO ÚNICO de abertura do WhatsApp no app do entregador (e qualquer outra tela).
+ *
+ * POR QUE EXISTE (bug do APK): no WebView Android o wa.me/whatsapp:// não abre nada
+ * se navegado dentro do próprio WebView — o entregador tinha que copiar o número na mão.
+ * Duas camadas resolvem:
+ * 1. MainActivity.java (nativo) intercepta wa.me/api.whatsapp.com/whatsapp:// e lança
+ *    ACTION_VIEW externa — este helper monta o link e navega via location.href.
+ * 2. Normalização centralizada aqui (DDI 55, 9º dígito, máscara, 0 de operadora).
+ *
+ * SEMPRE usar este helper em qualquer ponto que toque no telefone do cliente.
+ * Nunca montar `https://wa.me/...` ad hoc em telas do app do entregador.
+ *
+ * Retorna o número normalizado (55...) quando a abertura foi disparada, ou null
+ * quando não havia telefone válido (caller decide o aviso ao entregador).
+ */
+export function openCustomerWhatsApp(
+  phone: string | null | undefined,
+  message?: string,
+): string | null {
+  const destino = normalizeWhatsAppPhone(phone)
+  if (!destino) return null
+
+  const texto = message && message.trim().length > 0 ? message : ''
+  const url = texto
+    ? `https://wa.me/${destino}?text=${encodeURIComponent(texto)}`
+    : `https://wa.me/${destino}`
+
+  // location.href (nunca window.open): o WebView do APK bloqueia popup e
+  // engolia o clique; o cliente nativo intercepta e lança o intent externo.
+  try {
+    window.location.href = url
+  } catch {
+    // ambiente sem window (testes): apenas retorna o destino sem navegar
+  }
+  return destino
+}
+
+/**
+ * Mensagem padrão do entregador ao cliente, com 1º nome e código de rastreio
+ * quando existir. Centralizada para todas as telas do app do entregador.
+ */
+export function buildCourierCustomerMessage(
+  customerName?: string | null,
+  trackingCode?: string | null,
+): string {
+  const primeiroNome = (customerName || 'Cliente').trim().split(' ')[0] || 'Cliente'
+  const codigo = (trackingCode || '').trim()
+  return codigo
+    ? `Olá, ${primeiroNome}! Sou o entregador do seu pedido ${codigo}. Estou a caminho.`
+    : `Olá, ${primeiroNome}! Sou o entregador do seu pedido. Estou a caminho.`
+}

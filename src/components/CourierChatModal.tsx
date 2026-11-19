@@ -33,6 +33,7 @@ import type {
   PendingOfflineChatMessage,
   UserRecord,
 } from '@/types/delivery'
+import { buildCourierCustomerMessage, openCustomerWhatsApp } from '@/lib/whatsappTracking'
 import { toast } from 'sonner'
 
 export interface CourierChatModalProps {
@@ -202,21 +203,22 @@ export const CourierChatModal: React.FC<CourierChatModalProps> = ({
     // 1. Grava no chat como quick_reply
     handleSend('Ligar para o cliente', 'quick_reply')
 
-    // 2. Oferece ação de ligar para o telefone do cliente do pedido atual
+    // 2. Disca o telefone do cliente do pedido atual (tel: tratado nativamente no APK)
     if (customerPhone) {
+      const telUrl = `tel:${customerPhone.replace(/[^\d+]/g, '')}`
       toast.info(`Discando para ${customerName} (${customerPhone})...`, {
         description: 'Toque para confirmar a chamada caso o discador não abra automaticamente.',
         action: {
           label: 'Ligar Agora',
           onClick: () => {
-            window.location.href = `tel:${customerPhone}`
+            window.location.href = telUrl
           },
         },
         duration: 8000,
       })
       // Disparo do protocolo tel:
       setTimeout(() => {
-        window.location.href = `tel:${customerPhone}`
+        window.location.href = telUrl
       }, 200)
     } else {
       toast.warning('O pedido atual não possui telefone de cliente cadastrado.')
@@ -301,13 +303,32 @@ export const CourierChatModal: React.FC<CourierChatModalProps> = ({
 
             {customerPhone && (
               <a
-                href={`tel:${customerPhone}`}
+                href={`tel:${customerPhone.replace(/[^\d+]/g, '')}`}
                 className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 rounded-md transition"
                 title={`Ligar para ${customerPhone}`}
               >
                 <Phone className="h-3 w-3" />
                 <span className="hidden sm:inline">Ligar</span>
               </a>
+            )}
+            {customerPhone && (
+              <button
+                type="button"
+                onClick={() => {
+                  const aberto = openCustomerWhatsApp(
+                    customerPhone,
+                    buildCourierCustomerMessage(customerName, currentActiveDelivery?.tracking_code),
+                  )
+                  if (!aberto) {
+                    toast.error('Cliente sem telefone válido para WhatsApp.')
+                  }
+                }}
+                className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 rounded-md transition"
+                title={`WhatsApp para ${customerName}`}
+              >
+                <MessageCircle className="h-3 w-3" />
+                <span className="hidden sm:inline">WhatsApp</span>
+              </button>
             )}
           </div>
         )}
