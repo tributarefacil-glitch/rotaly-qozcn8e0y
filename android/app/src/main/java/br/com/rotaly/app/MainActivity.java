@@ -95,6 +95,26 @@ public class MainActivity extends AppCompatActivity {
                 // Google Maps (tratamento original preservado)
                 boolean isMapLink = scheme.equals("geo") || url.startsWith("https://www.google.com/maps");
 
+                // REDE DE SEGURANÇA ANTI-VAZAMENTO (bug do print: net::ERR_UNKNOWN_URL_SCHEME):
+                // QUALQUER esquema que não seja http/https e não seja o app em si (ex.:
+                // whatsapp://, intent://, mailto:, tel:, market://) NUNCA pode ser carregado
+                // pelo WebView — cai sempre no ACTION_VIEW externo. Assim, mesmo que alguma
+                // página (ex.: wa.me) redirecione internamente para whatsapp://send/?...,
+                // o esquema nunca vaza para o erro "Página da Web não disponível".
+                boolean isWebScheme = scheme.equals("http") || scheme.equals("https");
+                boolean isAppInternalScheme = scheme.equals("about") || url.startsWith("javascript:");
+                if (!isWebScheme && !isAppInternalScheme) {
+                    try {
+                        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                        return true;
+                    } catch (Exception e) {
+                        Log.w(TAG, "Nenhum app para tratar o esquema externo " + scheme + ": " + url, e);
+                        return true;
+                    }
+                }
+
                 if (isWhatsAppLink || isContactLink || isMapLink) {
                     try {
                         Intent intent = new Intent(Intent.ACTION_VIEW, uri);

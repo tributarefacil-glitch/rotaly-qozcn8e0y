@@ -260,4 +260,78 @@ describe('pontos de contato do entregador usam o helper centralizado (varredura 
       expect(fonte).not.toMatch(/window\.open\(\s*[^)]*wa\.me/)
     }
   })
+
+  // REGRESSÃO DO BUG DO PRINT (APK v0.0.621, net::ERR_UNKNOWN_URL_SCHEME):
+  // o WebView carregou `whatsapp://send/?phone=...&type=phone_number` — esquema que
+  // o nativo não capturou. Nenhum código em src/ pode gerar/abrir whatsapp://.
+  it('nenhum arquivo do app emite ou monta o esquema whatsapp:// (só https://wa.me/)', () => {
+    for (const [caminho, fonte] of Object.entries(fontesBrutas)) {
+      if (caminho.endsWith('.test.ts')) continue
+      const linhas = fonte.split('\n')
+      linhas.forEach((linha, i) => {
+        const cortada = linha.trim()
+        // permitido apenas em comentário documentando a proibição
+        if (
+          cortada.includes('whatsapp://') &&
+          !cortada.startsWith('//') &&
+          !cortada.startsWith('*') &&
+          !cortada.startsWith('/*')
+        ) {
+          throw new Error(
+            `Esquema proibido whatsapp:// em código de ${caminho} (linha ${i + 1}): ${cortada}`,
+          )
+        }
+      })
+      expect(fonte).not.toMatch(/['"`]whatsapp:\/\/send/)
+      expect(fonte).not.toMatch(/location\.href\s*=\s*['"`]whatsapp:/)
+    }
+  })
+
+  it('openCustomerWhatsApp NUNCA emite whatsapp://: a URL é sempre https://wa.me/55...', () => {
+    const hrefHistory: string[] = []
+    const originalLocation = window.location
+    const stub = () => {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        writable: false,
+        value: {
+          ...originalLocation,
+          get href() {
+            return 'https://app.rotaly.com.br/courier'
+          },
+          set href(v: string) {
+            hrefHistory.push(v)
+          },
+        },
+      })
+    }
+    stub()
+    try {
+      // caso real do print: cliente com DDI+DDD+9º dígito (5521968058149)
+      const destino = openCustomerWhatsApp('5521968058149', 'Olá! Estou a caminho.')
+
+      expect(destino).toBe('5521968058149')
+      expect(hrefHistory).toHaveLength(1)
+      const url = hrefHistory[0]
+      expect(url.startsWith('https://wa.me/55')).toBe(true)
+      expect(url).not.toContain('whatsapp://')
+      expect(url).not.toContain('send/?phone=')
+      expect(url).not.toContain('type=phone_number')
+
+      // e qualquer entrada normalizada sai sempre com DDI 55 na URL
+      for (const entrada of ['21968058149', '(21) 96805-8149', '021968058149', '968058149']) {
+        openCustomerWhatsApp(entrada, 'teste')
+        const urlAtual = hrefHistory[hrefHistory.length - 1]
+        expect(urlAtual.startsWith('https://wa.me/55')).toBe(true)
+        expect(urlAtual).not.toContain('whatsapp://')
+      }
+    } finally {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        writable: true,
+        value: originalLocation,
+      })
+      hrefHistory.length = 0
+    }
+  })
 })
