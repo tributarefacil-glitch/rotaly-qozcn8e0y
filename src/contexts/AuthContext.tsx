@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import pb from '@/lib/pocketbase/client'
 import type { UserRecord, UserRole } from '@/types/delivery'
-import { safeSetLocalStorage } from '@/lib/safeStorage'
 
 interface AuthContextType {
   user: UserRecord | null

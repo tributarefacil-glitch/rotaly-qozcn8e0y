@@ -11,7 +11,7 @@ export default defineConfig({
     ],
   },
   test: {
-    environment: 'node',
+    environmentMatchGlobs: [['src/lib/safeStorage.test.ts', 'jsdom']],
     include: ['src/**/*.test.ts'],
   },
 } as never)
