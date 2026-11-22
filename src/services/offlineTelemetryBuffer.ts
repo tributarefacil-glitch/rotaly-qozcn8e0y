@@ -18,6 +18,7 @@
 import { haversineDistanceMeters } from '@/lib/geo'
 import { deliveryService, sanitizeLocationPayload } from './deliveryService'
 import { offlineRouteStorage, type OfflineLocationPoint } from './offlineRouteStorage'
+import { safeSetCacheItem, safeSetLocalStorage } from '@/lib/safeStorage'
 
 export type OfflineTelemetryPoint = OfflineLocationPoint
 
@@ -116,7 +117,11 @@ class OfflineTelemetryBufferService {
         const parsedLegacy = JSON.parse(legacyRaw)
         localStorage.removeItem(`${LEGACY_STORAGE_PREFIX}${userId}`)
         if (Array.isArray(parsedLegacy) && parsedLegacy.length > 0) {
-          localStorage.setItem(this.getStorageKey(userId), JSON.stringify(parsedLegacy))
+          safeSetCacheItem(
+            window.localStorage,
+            this.getStorageKey(userId),
+            JSON.stringify(parsedLegacy),
+          )
           return parsedLegacy
         }
       }
@@ -136,12 +141,8 @@ class OfflineTelemetryBufferService {
       trimmed.sort((a, b) => a.timestamp - b.timestamp)
       this.inMemoryCache.set(userId, trimmed)
 
-      // Salva de imediato no localStorage
-      try {
-        localStorage.setItem(this.getStorageKey(userId), JSON.stringify(trimmed))
-      } catch {
-        /* ignore */
-      }
+      // Salva de imediato no localStorage (com limite por chave: acima do limite, só memória)
+      safeSetCacheItem(window.localStorage, this.getStorageKey(userId), JSON.stringify(trimmed))
 
       this.notify(userId)
     } catch (err) {

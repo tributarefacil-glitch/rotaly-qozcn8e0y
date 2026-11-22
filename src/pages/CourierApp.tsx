@@ -65,6 +65,7 @@ import {
 } from '@/lib/notificationSound'
 import { ForcedPresenceAlert, ForcedPresenceReason } from '@/components/ForcedPresenceAlert'
 import { shouldDisplayToast } from '@/lib/notificationDedupe'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 import type { NotificationRecord } from '@/types/delivery'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -3355,7 +3356,7 @@ export default function CourierApp() {
                         try {
                           const hintSeen = localStorage.getItem(COURIER_POINT_A_HINT_KEY)
                           if (!hintSeen) {
-                            localStorage.setItem(COURIER_POINT_A_HINT_KEY, 'true')
+                            safeSetLocalStorage(COURIER_POINT_A_HINT_KEY, 'true')
                             toast.info('📍 Gravando Ponto A no local atual', {
                               description:
                                 'Sua posição GPS está sendo registrada para comprovar sua chegada física antes de ir ao novo endereço.',

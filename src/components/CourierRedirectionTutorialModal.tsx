@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 import {
   Dialog,
   DialogContent,
@@ -414,11 +415,7 @@ export const CourierRedirectionTutorialModal: React.FC<CourierRedirectionTutoria
 
   const handleFinish = () => {
     if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(COURIER_REDIRECTION_TUTORIAL_KEY, 'true')
-      } catch (err) {
-        console.warn('[CourierRedirectionTutorialModal] Erro ao gravar localStorage:', err)
-      }
+      safeSetLocalStorage(COURIER_REDIRECTION_TUTORIAL_KEY, 'true')
     }
     onComplete?.()
     onOpenChange(false)

@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { ShieldAlert, Settings, CheckCircle2, Navigation } from 'lucide-react'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 
 interface CourierBackgroundPermissionModalProps {
   open: boolean
@@ -36,11 +37,7 @@ export const CourierBackgroundPermissionModal: React.FC<CourierBackgroundPermiss
   }
 
   const handleUnderstand = () => {
-    try {
-      localStorage.setItem(BACKGROUND_PERMISSION_ACK_KEY, Date.now().toString())
-    } catch {
-      /* ignore */
-    }
+    safeSetLocalStorage(BACKGROUND_PERMISSION_ACK_KEY, Date.now().toString())
     if (onAcknowledge) onAcknowledge()
     onClose()
   }

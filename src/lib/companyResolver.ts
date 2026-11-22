@@ -10,6 +10,7 @@
  */
 import pb from '@/lib/pocketbase/client'
 import type { EmpresaRecord, MembroRecord, UserRecord } from '@/types/delivery'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 
 export const STORAGE_KEY = 'rotaly_active_empresa_id'
 
@@ -133,7 +134,7 @@ export async function getMyCompany(): Promise<ResolvedCompany> {
 
     // Default do master: SEMPRE na Matriz Real
     if (typeof window !== 'undefined' && matrizId) {
-      localStorage.setItem(STORAGE_KEY, matrizId)
+      safeSetLocalStorage(STORAGE_KEY, matrizId)
     }
 
     const fallbackMaster: ResolvedCompany = {
@@ -174,7 +175,7 @@ export async function getMyCompany(): Promise<ResolvedCompany> {
         }
 
         if (typeof window !== 'undefined') {
-          localStorage.setItem(STORAGE_KEY, primary.empresa_id)
+          safeSetLocalStorage(STORAGE_KEY, primary.empresa_id)
         }
 
         cachedCompany = resolved
@@ -193,7 +194,7 @@ export async function getMyCompany(): Promise<ResolvedCompany> {
     plano: matrizRecord?.plano || 'enterprise',
   }
   if (typeof window !== 'undefined' && matrizId) {
-    localStorage.setItem(STORAGE_KEY, matrizId)
+    safeSetLocalStorage(STORAGE_KEY, matrizId)
   }
   cachedCompany = fallback
   return fallback

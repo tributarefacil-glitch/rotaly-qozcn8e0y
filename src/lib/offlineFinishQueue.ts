@@ -9,6 +9,8 @@
  * automaticamente quando a conexão volta (listener de online no CourierApp), sem exigir novo toque.
  */
 
+import { safeSetLocalStorage } from '@/lib/safeStorage'
+
 const KEY = 'rotaly_pending_route_finish'
 
 export interface PendingRouteFinish {
@@ -61,7 +63,7 @@ export function enqueuePendingRouteFinish(
       existing.attempts = (existing.attempts || 0) + 1
       existing.lastError = entry.lastError
       existing.distanceToBaseMeters = entry.distanceToBaseMeters ?? existing.distanceToBaseMeters
-      localStorage.setItem(KEY, JSON.stringify(existing))
+      safeSetLocalStorage(KEY, JSON.stringify(existing))
       return
     }
     const payload: PendingRouteFinish = {
@@ -69,7 +71,7 @@ export function enqueuePendingRouteFinish(
       attempts: entry.attempts ?? (existing ? existing.attempts + 1 : 1),
       enqueuedAt: existing?.enqueuedAt || Date.now(),
     }
-    localStorage.setItem(KEY, JSON.stringify(payload))
+    safeSetLocalStorage(KEY, JSON.stringify(payload))
   } catch {
     /* ignore quota errors */
   }

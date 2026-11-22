@@ -9,6 +9,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Navigation, MapPin } from 'lucide-react'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 
 export interface NavigationWaypoint {
   lat?: number | string | null
@@ -64,7 +65,7 @@ export const NavigationAppChoiceModal: React.FC<NavigationAppChoiceModalProps> =
       try {
         const legacyNav = localStorage.getItem('preferred_navigation_app')
         if (legacyNav === 'waze') {
-          localStorage.setItem('preferred_navigation_app', 'google_maps')
+          safeSetLocalStorage('preferred_navigation_app', 'google_maps')
         }
       } catch {
         // Silencioso

@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { BatteryCharging, Smartphone, Settings, CheckCircle2, ShieldAlert } from 'lucide-react'
 import { nativeGpsBridge } from '@/services/nativeGpsBridge'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 
 interface CourierBatteryGuideModalProps {
   open: boolean
@@ -41,11 +42,7 @@ export const CourierBatteryGuideModal: React.FC<CourierBatteryGuideModalProps> =
   }
 
   const handleUnderstand = () => {
-    try {
-      localStorage.setItem(BATTERY_OPTIMIZATION_ACK_KEY, Date.now().toString())
-    } catch {
-      /* ignore */
-    }
+    safeSetLocalStorage(BATTERY_OPTIMIZATION_ACK_KEY, Date.now().toString())
     if (onAcknowledge) onAcknowledge()
     onClose()
   }

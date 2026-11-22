@@ -4,6 +4,16 @@ import App from './App.tsx'
 import './main.css'
 import { toast } from 'sonner'
 import { APP_VERSION, APP_BUILD_ID } from './lib/version'
+import {
+  safeSetSessionStorage,
+  safeSetLocalStorage,
+  installGlobalStorageQuotaGuard,
+} from './lib/safeStorage'
+
+// GUARDA DE COTA DE STORAGE (bug de produção: login travado por localStorage cheio).
+// Patch global em Storage.prototype.setItem: em QuotaExceededError, evicta o cache do
+// próprio app e tenta de novo; nunca propaga erro de cota para o authStore/login.
+installGlobalStorageQuotaGuard()
 
 // Blindagem defensiva anti-crash para extensões de tradução (ex: Google Translate)
 // Extensões envolvem nós de texto em <font> e alteram a hierarquia do DOM; quando o React tenta
@@ -82,7 +92,7 @@ if (typeof window !== 'undefined') {
       localStorage.removeItem('rotaly_active_empresa_id')
       localStorage.removeItem('rotaly_active_company')
       localStorage.removeItem('rotaly_empresa_id')
-      localStorage.setItem('rotaly_app_build_version', APP_BUILD_VERSION)
+      safeSetLocalStorage('rotaly_app_build_version', APP_BUILD_VERSION)
     }
   } catch {
     /* intentionally ignored */
@@ -163,7 +173,7 @@ if (typeof window !== 'undefined') {
         console.log(`[VersionManager] Recarga prevenida pelo guard para evitar loop (${reason})`)
         return
       }
-      sessionStorage.setItem(RELOAD_GUARD_KEY, 'true')
+      safeSetSessionStorage(RELOAD_GUARD_KEY, 'true')
     } catch {
       /* noop */
     }

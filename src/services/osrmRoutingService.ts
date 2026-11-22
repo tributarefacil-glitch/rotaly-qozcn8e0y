@@ -36,6 +36,8 @@ interface CacheEntry {
   timestamp: number
 }
 
+import { safeSetCacheItem } from '@/lib/safeStorage'
+
 const LOCAL_STORAGE_CACHE_PREFIX = 'rotaly_osrm_leg_cache_'
 const routeCache = new Map<string, CacheEntry>()
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 horas
@@ -85,11 +87,12 @@ function writePersistentCache(
   routeCache.set(cacheKey, entry)
 
   if (typeof window !== 'undefined' && window.localStorage && result.isRealStreetRoute) {
-    try {
-      window.localStorage.setItem(LOCAL_STORAGE_CACHE_PREFIX + cacheKey, JSON.stringify(entry))
-    } catch {
-      // Ignora se quota cheia
-    }
+    // Geometrias LineString podem ser enormes: limite por chave + eviction de quota
+    safeSetCacheItem(
+      window.localStorage,
+      LOCAL_STORAGE_CACHE_PREFIX + cacheKey,
+      JSON.stringify(entry),
+    )
   }
 }
 /**

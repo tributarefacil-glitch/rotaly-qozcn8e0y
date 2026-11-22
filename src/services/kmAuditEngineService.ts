@@ -15,6 +15,7 @@ import {
 } from '@/lib/routeBatchHelper'
 import { isPostFuelPaymentCutoff } from '@/services/canonicalCourierTotalsService'
 import { MapDataService } from '@/lib/mapDataService'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 import { haversineDistanceMeters } from '@/lib/geo'
 import { resolveFuelParams } from '@/lib/fuelDefaults'
 import {
@@ -154,7 +155,7 @@ export async function setManualFuelDiscountPct(
 ): Promise<void> {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(`rotaly_fuel_discount_${monthKey}`, String(pct))
+      safeSetLocalStorage(`rotaly_fuel_discount_${monthKey}`, String(pct))
       window.dispatchEvent(new CustomEvent(FUEL_DISCOUNT_EVENT, { detail: { monthKey, pct } }))
     }
   } catch {

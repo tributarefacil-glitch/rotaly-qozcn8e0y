@@ -6,6 +6,7 @@ import { calculateCourierFuelMetrics } from '@/hooks/useCourierFuelMetrics'
 import { recalcularLote, RecalcularLoteResult } from '@/services/recalcularLoteHelper'
 import { getOperationalWindow } from '../lib/operationalWindow'
 import { pbWriteRetry, sleepWithJitter } from '@/lib/pbWriteRetry'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 import type {
   OrderRecord,
   CustomerRecord,
@@ -484,7 +485,7 @@ export const deliveryService = {
 
   setActiveCompanyId(empresaId: string): void {
     if (typeof window !== 'undefined' && empresaId) {
-      localStorage.setItem('rotaly_active_empresa_id', empresaId)
+      safeSetLocalStorage('rotaly_active_empresa_id', empresaId)
     }
   },
 

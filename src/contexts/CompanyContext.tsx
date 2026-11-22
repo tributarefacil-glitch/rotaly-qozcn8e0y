@@ -3,6 +3,7 @@ import pb from '@/lib/pocketbase/client'
 import type { EmpresaRecord, MembroRecord } from '@/types/delivery'
 import { useAuth } from './AuthContext'
 import { getMyCompany, clearCompanyCache, resolveMatrizCompany } from '@/lib/companyResolver'
+import { safeSetLocalStorage } from '@/lib/safeStorage'
 
 interface CompanyContextType {
   currentCompany: EmpresaRecord | null
@@ -102,7 +103,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setCurrentMember(resolvedMember)
 
       if (resolvedCompany) {
-        localStorage.setItem(STORAGE_KEY, resolvedCompany.id)
+        safeSetLocalStorage(STORAGE_KEY, resolvedCompany.id)
         if (typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('rotaly_company_changed', {
@@ -127,7 +128,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setCurrentCompany = (company: EmpresaRecord) => {
     clearCompanyCache()
     setCurrentCompanyState(company)
-    localStorage.setItem(STORAGE_KEY, company.id)
+    safeSetLocalStorage(STORAGE_KEY, company.id)
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('rotaly_company_changed', {

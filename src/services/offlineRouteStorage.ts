@@ -14,6 +14,7 @@
  */
 
 import type { OrderRecord, PendingOfflineChatMessage } from '@/types/delivery'
+import { safeSetLocalStorage, safeSetCacheItem } from '@/lib/safeStorage'
 
 const DB_NAME = 'rotaly_offline_db'
 const DB_VERSION = 2
@@ -150,12 +151,12 @@ class OfflineRouteStorageService {
       source: 'online_cache',
     }
 
-    // 1. Sempre salvar também no localStorage como redundância imediata síncrona
-    try {
-      localStorage.setItem(`rotaly_cache_route_${courierId}`, JSON.stringify(payload))
-    } catch {
-      /* ignore quota errors */
-    }
+    // 1. Sempre salvar também no localStorage como redundância imediata síncrona (com eviction de quota)
+    safeSetCacheItem(
+      window.localStorage,
+      `rotaly_cache_route_${courierId}`,
+      JSON.stringify(payload),
+    )
 
     // 2. Salvar no IndexedDB
     try {
@@ -275,7 +276,7 @@ class OfflineRouteStorageService {
       const list: OfflineLocationPoint[] = existingRaw ? JSON.parse(existingRaw) : []
       list.push(point)
       // Mantém últimos 500
-      localStorage.setItem(key, JSON.stringify(list.slice(-500)))
+      safeSetLocalStorage(key, JSON.stringify(list.slice(-500)))
     } catch {
       /* ignore */
     }
@@ -364,7 +365,7 @@ class OfflineRouteStorageService {
       if (raw) {
         const fbList: OfflineLocationPoint[] = JSON.parse(raw)
         const updated = fbList.filter((p) => !idSet.has(p.id))
-        localStorage.setItem(fbKey, JSON.stringify(updated))
+        safeSetLocalStorage(fbKey, JSON.stringify(updated))
       }
     } catch {
       /* ignore */
@@ -405,7 +406,7 @@ class OfflineRouteStorageService {
       const existingRaw = localStorage.getItem(key)
       const list: OfflineRedirectionAction[] = existingRaw ? JSON.parse(existingRaw) : []
       list.push(action)
-      localStorage.setItem(key, JSON.stringify(list))
+      safeSetLocalStorage(key, JSON.stringify(list))
     } catch {
       /* ignore */
     }
@@ -480,7 +481,7 @@ class OfflineRouteStorageService {
       const existingRaw = localStorage.getItem(key)
       const list: PendingOfflineChatMessage[] = existingRaw ? JSON.parse(existingRaw) : []
       list.push(msg)
-      localStorage.setItem(key, JSON.stringify(list))
+      safeSetLocalStorage(key, JSON.stringify(list))
     } catch {
       /* ignore */
     }
@@ -555,7 +556,7 @@ class OfflineRouteStorageService {
       if (raw) {
         const fbList: PendingOfflineChatMessage[] = JSON.parse(raw)
         const updated = fbList.filter((m) => !idSet.has(m.localId))
-        localStorage.setItem(key, JSON.stringify(updated))
+        safeSetLocalStorage(key, JSON.stringify(updated))
       }
     } catch {
       /* ignore */
@@ -588,7 +589,7 @@ class OfflineRouteStorageService {
       if (raw) {
         const fbList: OfflineRedirectionAction[] = JSON.parse(raw)
         const updated = fbList.filter((a) => !idSet.has(a.id))
-        localStorage.setItem(fbKey, JSON.stringify(updated))
+        safeSetLocalStorage(fbKey, JSON.stringify(updated))
       }
     } catch {
       /* ignore */
