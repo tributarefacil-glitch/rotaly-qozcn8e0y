@@ -53,7 +53,6 @@ const STEPS: GuideStep[] = [
       'Toque no link de download abaixo (abra esta página no celular).',
       'Autorize a instalação do APK quando o Android perguntar (o app é da sua empresa).',
       'Abra o Rotaly e entre com o usuário e a senha que a base criou para você.',
-      'No iPhone, use o painel pelo navegador — o GPS tem guia próprio (link no fim da página).',
     ],
     destaque: {
       texto: 'Download oficial do APK (link fixo, sempre a versão mais recente)',
