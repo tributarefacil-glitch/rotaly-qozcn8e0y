@@ -1790,9 +1790,11 @@ export const deliveryService = {
   },
 
   // Users / Couriers / Sellers
-  // Consulta direta à coleção users com role='courier' && status != 'inactive',
+  // Consulta direta à coleção users com role='courier' (inclui BLOQUEADOS: status 'inactive'),
   // aceitando entregadores offline/idle/busy para viabilizar planejamento prévio de rota.
-  // Preserva o status real do usuário logado (inclusive offline).
+  // Preserva o status real do usuário logado (inclusive offline). A decisão de quem pode
+  // receber rota nova usa isCourierEligibleForAssignment; a coluna STATUS do painel usa
+  // getCourierStatusBadge — ambos de src/lib/courierStatus.ts.
   async getCouriers(empresaId?: string) {
     const authUser = pb.authStore.record as any
     const isMaster = authUser?.role === 'master'
@@ -1802,7 +1804,7 @@ export const deliveryService = {
       this.getActiveCompanyId() ||
       (await this.getMatrizCompanyId())
 
-    const filters: string[] = ["role = 'courier'", "status != 'inactive'"]
+    const filters: string[] = ["role = 'courier'"]
 
     // Aplicar filtro por empresa_id quando o campo existir no registro do usuário ou contexto
     if (!isMaster || (empresaId && empresaId !== 'ALL')) {
@@ -1842,10 +1844,10 @@ export const deliveryService = {
     } catch (err) {
       console.warn('Erro ao consultar users para getCouriers com filtro direto:', err)
 
-      // Fallback tolerante: consulta apenas por role = 'courier' && status != 'inactive'
+      // Fallback tolerante: consulta apenas por role = 'courier' (inclui bloqueados)
       try {
         const fallbackList = await pb.collection<UserRecord>('users').getFullList({
-          filter: "role = 'courier' && status != 'inactive'",
+          filter: "role = 'courier'",
           sort: '-created',
           requestKey: null,
         })

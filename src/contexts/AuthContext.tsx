@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import pb from '@/lib/pocketbase/client'
+import { BLOCKED_ACCOUNT_MESSAGE, isCourierBlocked } from '@/lib/courierStatus'
 import type { UserRecord, UserRole } from '@/types/delivery'
+
+// Bloqueio vale para qualquer papel: o admin bloqueia entregador, vendedor ou admin
+// pelo mesmo campo users.status = 'inactive'.
+const isUserBlocked = (u?: { status?: string | null } | null): boolean => isCourierBlocked(u?.status)
 
 interface AuthContextType {
   user: UserRecord | null
@@ -34,7 +40,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       pb.collection('users')
         .authRefresh({ requestKey: null })
         .then((res) => {
-          setUser(res.record as unknown as UserRecord)
+          const refreshed = res.record as unknown as UserRecord
+          if (isUserBlocked(refreshed)) {
+            // Usuário bloqueado com sessão guardada: encerra na hora.
+            pb.authStore.clear()
+            setUser(null)
+            setToken(null)
+            toast.error(BLOCKED_ACCOUNT_MESSAGE)
+            return
+          }
+          setUser(refreshed)
         })
         .catch((err) => {
           console.warn('[AuthContext] authRefresh falhou:', err)
@@ -70,6 +85,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .collection('users')
       .authWithPassword(cleanEmail, pass, { requestKey: null })
     const authUser = authData.record as unknown as UserRecord
+    if (isUserBlocked(authUser)) {
+      // Nunca propaga sessão de conta bloqueada.
+      pb.authStore.clear()
+      throw new Error(BLOCKED_ACCOUNT_MESSAGE)
+    }
     setUser(authUser)
     setToken(authData.token)
     return authUser

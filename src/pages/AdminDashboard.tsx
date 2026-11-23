@@ -538,6 +538,10 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
 
   // Status changing state
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null)
+  // Confirmação antes de bloquear entregador (evita toque acidental)
+  const [userToBlock, setUserToBlock] = useState<UserRecord | null>(null)
+
+  const handleConfirmBlockCourier = (target: UserRecord) => setUserToBlock(target)
 
   const loadData = async () => {
     try {
@@ -980,25 +984,35 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
   }
 
   // Change user status (approve pending -> active, deactivate active -> inactive, activate inactive -> active)
+  // CORREÇÃO DE BUG (bloqueio): atualiza TODAS as listas que alimentam telas (users, couriers
+  // e sellers) — antes só `users` era atualizado e a coluna STATUS da tabela de entregadores
+  // (que lê `couriers`) continuava "Ativo" após Bloquear. Atualização reativa, sem recarregar.
   const handleUpdateUserStatus = async (
     targetUser: UserRecord,
     newStatus: 'active' | 'inactive' | 'pending',
   ) => {
     setUpdatingUserId(targetUser.id)
     try {
-      await deliveryService.updateUser(targetUser.id, {
+      const updated = (await deliveryService.updateUser(targetUser.id, {
         status: newStatus,
-      })
+      })) as UserRecord | undefined
+      const effectiveStatus = (updated?.status as UserRecord['status']) || newStatus
 
-      // Update state locally
+      // Update state locally em todas as listas que exibem este usuário
       setUsers((prev) =>
-        prev.map((u) => (u.id === targetUser.id ? { ...u, status: newStatus } : u)),
+        prev.map((u) => (u.id === targetUser.id ? { ...u, status: effectiveStatus } : u)),
+      )
+      setCouriers((prev) =>
+        prev.map((c) => (c.id === targetUser.id ? { ...c, status: effectiveStatus } : c)),
+      )
+      setSellers((prev) =>
+        prev.map((s) => (s.id === targetUser.id ? { ...s, status: effectiveStatus } : s)),
       )
 
       if (newStatus === 'active') {
         toast.success(`Cadastro de ${targetUser.name || 'usuário'} aprovado e ativado!`)
       } else if (newStatus === 'inactive') {
-        toast.warning(`Usuário ${targetUser.name || 'usuário'} desativado/bloqueado.`)
+        toast.warning(`Usuário ${targetUser.name || 'usuário'} bloqueado.`)
       } else {
         toast.info(`Status alterado para ${newStatus}.`)
       }
@@ -3855,8 +3869,8 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                       </Badge>
                                     )}
                                     {isInactive && (
-                                      <Badge className="bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700 text-[10px] font-bold">
-                                        ⚪ Inativo
+                                      <Badge className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-300 dark:border-rose-700 text-[10px] font-bold">
+                                        Bloqueado
                                       </Badge>
                                     )}
                                   </td>
@@ -3920,7 +3934,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                         <Button
                                           variant="outline"
                                           size="sm"
-                                          onClick={() => handleUpdateUserStatus(c, 'inactive')}
+                                          onClick={() => handleConfirmBlockCourier(c)}
                                           disabled={updatingUserId === c.id}
                                           className="h-7 px-2 text-rose-600 border-rose-200 dark:border-rose-900 hover:bg-rose-50 text-[11px] gap-1"
                                         >
@@ -3938,7 +3952,7 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                                           className="h-7 px-2 text-emerald-600 border-emerald-200 dark:border-emerald-900 hover:bg-emerald-50 text-[11px] gap-1"
                                         >
                                           <UserCheck className="h-3 w-3" />
-                                          Reativar
+                                          Desbloquear
                                         </Button>
                                       )}
 
@@ -4999,6 +5013,32 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
         open={isChangePasswordModalOpen}
         onOpenChange={setIsChangePasswordModalOpen}
       />
+
+      {/* ================= MODAL: CONFIRMAR BLOQUEIO DE ENTREGADOR ================= */}
+      <AlertDialog open={!!userToBlock} onOpenChange={(open) => !open && setUserToBlock(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Bloquear entregador?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {userToBlock?.name || 'Este entregador'} não poderá mais fazer login no app e deixará
+              de receber novas atribuições de rota. Você pode desbloquear a qualquer momento.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-700 focus-visible:ring-rose-600"
+              onClick={() => {
+                const target = userToBlock
+                setUserToBlock(null)
+                if (target) void handleUpdateUserStatus(target, 'inactive')
+              }}
+            >
+              Bloquear
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
