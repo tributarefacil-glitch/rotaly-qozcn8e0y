@@ -1,4 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react'
+const CourierOnboardingGuidePage = lazy(() => import('@/pages/CourierOnboardingGuidePage'))
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, RefreshCw, Home, ShieldAlert } from 'lucide-react'
 import { Toaster } from '@/components/ui/toaster'
@@ -608,6 +609,14 @@ const App = () => (
 
               {/* Material de Treinamento e Guia em PDF (Acesso livre para WhatsApp dos entregadores) */}
               <Route path="/guia-entregador" element={<CourierRedirectionPdfGuidePage />} />
+              <Route
+                path="/guia-do-entregador"
+                element={
+                  <Suspense fallback={<PageSuspenseFallback />}>
+                    <CourierOnboardingGuidePage />
+                  </Suspense>
+                }
+              />
               <Route path="/guia-redirecionamento" element={<CourierRedirectionPdfGuidePage />} />
               <Route path="/courier/guia-pdf" element={<CourierRedirectionPdfGuidePage />} />
 

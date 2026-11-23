@@ -3731,6 +3731,17 @@ export default function AdminDashboard({ defaultTab = 'overview' }: AdminDashboa
                           <span>Guia PDF Redireção</span>
                         </a>
 
+                        <a
+                          href="/guia-do-entregador"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 font-bold text-xs shadow-xs transition"
+                          title="Abrir o Guia do Entregador ilustrado (onboarding do APK, imprime em PDF)"
+                        >
+                          <FileText className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+                          <span>Guia do Entregador</span>
+                        </a>
+
                         {/* Filter by status */}
                         <Select
                           value={courierStatusFilter}
