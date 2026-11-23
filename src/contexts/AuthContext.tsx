@@ -6,7 +6,8 @@ import type { UserRecord, UserRole } from '@/types/delivery'
 
 // Bloqueio vale para qualquer papel: o admin bloqueia entregador, vendedor ou admin
 // pelo mesmo campo users.status = 'inactive'.
-const isUserBlocked = (u?: { status?: string | null } | null): boolean => isCourierBlocked(u?.status)
+const isUserBlocked = (u?: { status?: string | null } | null): boolean =>
+  isCourierBlocked(u?.status)
 
 interface AuthContextType {
   user: UserRecord | null

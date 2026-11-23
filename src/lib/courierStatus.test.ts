@@ -68,10 +68,36 @@ describe('courierStatus - guarda de login de bloqueado (varredura AuthContext)',
 
   it('AuthContext recusa login de usuário bloqueado antes de propagar sessão', () => {
     expect(rawAuth).toContain('isUserBlocked(')
-    expect(rawAuth).toContain("throw new Error(BLOCKED_ACCOUNT_MESSAGE")
+    expect(rawAuth).toContain('throw new Error(BLOCKED_ACCOUNT_MESSAGE')
   })
 
   it('AuthContext também encerra sessão já ativa de usuário bloqueado', () => {
     expect(rawAuth).toContain('authStore.clear()')
+  })
+})
+
+describe('courierStatus - bloqueado nunca aparece em seletor manual de atribuição', () => {
+  // Varredura ?raw (padrão dos testes sob src/, sem fs/path/__dirname) para garantir que
+  // TODOS os seletores manuais de entregador filtram bloqueados — não só a sugestão automática.
+  const rawSources = import.meta.glob<string>(
+    '/src/components/{CreateOrderModal,RouteOptimizerModal}.tsx',
+    {
+      query: '?raw',
+      eager: true,
+    },
+  ) as Record<string, string>
+
+  it('CreateOrderModal filtra bloqueados no seletor "Atribuir Entregador"', () => {
+    const raw = rawSources['/src/components/CreateOrderModal.tsx'] || ''
+    expect(raw).toContain('isCourierBlocked')
+    expect(raw).toContain('rawCouriers.filter((c) => !isCourierBlocked(c?.status))')
+  })
+
+  it('RouteOptimizerModal ignora bloqueados na atribuição manual e automática', () => {
+    const raw = rawSources['/src/components/RouteOptimizerModal.tsx'] || ''
+    // Filtro de elegibilidade da lista manual de atribuição
+    expect(raw).toContain("status === 'inactive'")
+    // Reatribuição/planos automáticos também excluem bloqueados
+    expect(raw).toContain("c.status !== 'inactive'")
   })
 })

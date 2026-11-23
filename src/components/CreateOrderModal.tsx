@@ -77,6 +77,7 @@ import { FormErrorBoundary } from '@/components/FormErrorBoundary'
 import { CustomerSearchCombobox } from '@/components/CustomerSearchCombobox'
 import { WhatsAppTrackingPromptModal } from '@/components/WhatsAppTrackingPromptModal'
 import { buildTrackingWhatsAppUrl, normalizeCustomerPhone } from '@/lib/whatsappTracking'
+import { isCourierBlocked } from '@/lib/courierStatus'
 
 interface CreateOrderModalProps {
   open: boolean
@@ -93,9 +94,14 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   open,
   onOpenChange,
   customers: initialCustomers,
-  couriers,
+  couriers: rawCouriers,
   onOrderCreated,
 }) => {
+  // Bloqueio de entregador: o seletor manual "Atribuir Entregador" nunca lista bloqueado.
+  const couriers = React.useMemo(
+    () => rawCouriers.filter((c) => !isCourierBlocked(c?.status)),
+    [rawCouriers],
+  )
   const { user } = useAuth()
   const [localCustomers, setLocalCustomers] = useState<CustomerRecord[]>(initialCustomers)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -2495,7 +2501,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     </SelectItem>
                     {couriers.map((c) => (
                       <SelectItem key={c.id} value={c.id} className="text-xs">
-                        🛵 {c.name} ({c.status === 'busy' ? 'Ocupado' : 'Disponível'})
+                        {c.name} ({c.status === 'busy' ? 'Ocupado' : 'Disponível'})
                       </SelectItem>
                     ))}
                   </SelectContent>
