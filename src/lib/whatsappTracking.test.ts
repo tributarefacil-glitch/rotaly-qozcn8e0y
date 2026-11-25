@@ -3,13 +3,18 @@
  *
  * TESTES DE REGRESSÃO do conserto do WhatsApp no APK do entregador.
  *
- * Classe do erro: no WebView do APK (Capacitor), wa.me navegado dentro do próprio
- * WebView não abre nada — o entregador tinha que copiar o número na mão. A cura tem
- * duas camadas e ambas ficam travadas aqui:
- *  1. Helper centralizado openCustomerWhatsApp: SEMPRE location.href (nunca window.open,
- *     que o WebView engole) e URL https://wa.me/55..., que o MainActivity.java nativo
- *     intercepta e lança como ACTION_VIEW externa.
- *  2. Normalização centralizada: DDI 55 + DDD 21 do RJ + 9º dígito + limpeza de máscara
+ * Classe do erro: no WebView do APK, https://wa.me/55... redireciona INTERNAMENTE
+ * para whatsapp://send/... e redirecionamentos internos NÃO passam pelo
+ * shouldOverrideUrlLoading — estourava net::ERR_UNKNOWN_URL_SCHEME dentro do app.
+ * A cura DEFINITIVA tem três camadas e todas ficam travadas aqui:
+ *  1. Ponte NATIVA window.RotalyNativeGps.openWhatsApp(numero, mensagem) no
+ *     MainActivity.java (android/app e android-overlay): intent DIRETO com package
+ *     com.whatsapp, sem passar por navegação do WebView; se o WhatsApp não estiver
+ *     instalado, abre https://wa.me/... no navegador EXTERNO. O helper openCustomerWhatsApp
+ *     prefere a ponte quando ela existir.
+ *  2. Sem ponte (navegador comum): location.href com https://wa.me/55... (nunca
+ *     window.open, que popup-blockers e alguns WebViews engolem).
+ *  3. Normalização centralizada: DDI 55 + DDD 21 do RJ + 9º dígito + limpeza de máscara
  *     e de 0 de operadora — para o intent nativo abrir no contato certo.
  *
  * A varredura dos TRÊS pontos de contato do entregador (CourierApp.tsx,
@@ -33,6 +38,20 @@ const fontesBrutas = import.meta.glob('/src/**/*.{tsx,ts}', {
   import: 'default',
   eager: true,
 }) as unknown as Record<string, string>
+
+// Código NATIVO do APK (MainActivity.java dos dois apps) e builds, também cru:
+// a varredura precisa provar que a ponte openWhatsApp existe nos dois e que a
+// versão subiu (versionCode 5 / versionName 1.0.4) nos dois build.gradle.
+const fontesNativas = import.meta.glob(
+  '/android*/app/{build.gradle,src/main/java/**/MainActivity.java}',
+  {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  },
+) as unknown as Record<string, string>
+
+const TODAS_AS_FONTES: Record<string, string> = { ...fontesBrutas, ...fontesNativas }
 
 const lerFonte = (caminho: string): string => {
   const chave = Object.keys(fontesBrutas).find((k) => k.endsWith(`/${caminho}`))
@@ -163,6 +182,144 @@ describe('openCustomerWhatsApp — abertura do WhatsApp no APK', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 2b. Ponte NATIVA window.RotalyNativeGps.openWhatsApp (cura definitiva do APK)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('openCustomerWhatsApp — ponte nativa openWhatsApp (APK)', () => {
+  const originalLocation = window.location
+  const hrefHistory: string[] = []
+
+  const installLocationStub = () => {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: false,
+      value: {
+        ...originalLocation,
+        get href() {
+          return 'https://app.rotaly.com.br/courier'
+        },
+        set href(v: string) {
+          hrefHistory.push(v)
+        },
+      },
+    })
+  }
+
+  afterEach(() => {
+    delete (window as { RotalyNativeGps?: unknown }).RotalyNativeGps
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: originalLocation,
+    })
+    hrefHistory.length = 0
+    vi.restoreAllMocks()
+  })
+
+  it('QUANDO a ponte nativa existe, chama openWhatsApp(numero, mensagem) e NÃO navega no WebView', () => {
+    installLocationStub()
+    const chamadas: Array<{ phone: string; message: string }> = []
+    ;(window as { RotalyNativeGps?: unknown }).RotalyNativeGps = {
+      openWhatsApp: (phone: string, message?: string) => {
+        chamadas.push({ phone, message: message ?? '' })
+        return true
+      },
+    }
+
+    const destino = openCustomerWhatsApp(
+      '(21) 98765-4321',
+      'Olá, Gaby! Sou o entregador do seu pedido TRK-1. Estou a caminho.',
+    )
+
+    expect(destino).toBe('5521987654321')
+    expect(chamadas).toEqual([
+      {
+        phone: '5521987654321',
+        message: 'Olá, Gaby! Sou o entregador do seu pedido TRK-1. Estou a caminho.',
+      },
+    ])
+    // nada é carregado dentro do WebView, nem wa.me nem qualquer outro esquema
+    expect(hrefHistory).toHaveLength(0)
+  })
+
+  it('mensagem vazia chega à ponte como string vazia (sem ?text= vazio no intent nativo)', () => {
+    installLocationStub()
+    const chamadas: Array<{ phone: string; message: string }> = []
+    ;(window as { RotalyNativeGps?: unknown }).RotalyNativeGps = {
+      openWhatsApp: (phone: string, message?: string) => {
+        chamadas.push({ phone, message: message ?? '' })
+        return true
+      },
+    }
+
+    openCustomerWhatsApp('21987654321', '   ')
+
+    expect(chamadas).toEqual([{ phone: '5521987654321', message: '' }])
+    expect(hrefHistory).toHaveLength(0)
+  })
+
+  it('ponte existindo mas retornando false (WhatsApp ausente no aparelho): helper cai para wa.me no navegador', () => {
+    installLocationStub()
+    ;(window as { RotalyNativeGps?: unknown }).RotalyNativeGps = {
+      openWhatsApp: () => false,
+    }
+
+    const destino = openCustomerWhatsApp('97134-4477', 'Olá! Estou a caminho.')
+
+    expect(destino).toBe('5521971344477')
+    expect(hrefHistory).toHaveLength(1)
+    expect(hrefHistory[0]).toBe(
+      `https://wa.me/5521971344477?text=${encodeURIComponent('Olá! Estou a caminho.')}`,
+    )
+  })
+
+  it('ponte lançando exceção: helper não quebra e cai para wa.me no navegador', () => {
+    installLocationStub()
+    ;(window as { RotalyNativeGps?: unknown }).RotalyNativeGps = {
+      openWhatsApp: () => {
+        throw new Error('ponte indisponível')
+      },
+    }
+
+    const destino = openCustomerWhatsApp('21987654321')
+
+    expect(destino).toBe('5521987654321')
+    expect(hrefHistory).toHaveLength(1)
+    expect(hrefHistory[0]).toBe('https://wa.me/5521987654321')
+  })
+
+  it('ponte recebe SEMPRE o número já normalizado com DDI 55 (nunca número cru)', () => {
+    installLocationStub()
+    const phonesRecebidos: string[] = []
+    ;(window as { RotalyNativeGps?: unknown }).RotalyNativeGps = {
+      openWhatsApp: (phone: string) => {
+        phonesRecebidos.push(phone)
+        return true
+      },
+    }
+
+    for (const entrada of [
+      '21968058149',
+      '(21) 96805-8149',
+      '021968058149',
+      '968058149',
+      '5521968058149',
+    ]) {
+      openCustomerWhatsApp(entrada, 'teste')
+    }
+
+    expect(phonesRecebidos).toEqual([
+      '5521968058149',
+      '5521968058149',
+      '5521968058149',
+      '5521968058149',
+      '5521968058149',
+    ])
+    expect(hrefHistory).toHaveLength(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 3. buildCourierCustomerMessage — mensagem padrão do entregador ao cliente
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -284,6 +441,42 @@ describe('pontos de contato do entregador usam o helper centralizado (varredura 
       })
       expect(fonte).not.toMatch(/['"`]whatsapp:\/\/send/)
       expect(fonte).not.toMatch(/location\.href\s*=\s*['"`]whatsapp:/)
+    }
+  })
+
+  it('helper openCustomerWhatsApp consulta a ponte nativa no código-fonte (não só nos testes)', () => {
+    const fonte = lerFonte('lib/whatsappTracking.ts')
+    // helper referencia a ponte nativa (APK) antes do fallback do navegador
+    expect(fonte).toMatch(/RotalyNativeGps\?\.\s*openWhatsApp/)
+    // e a ordem do helper: ponte nativa PRIMEIRO, location.href wa.me DEPOIS
+    const idxPonte = fonte.indexOf('RotalyNativeGps')
+    const idxHref = fonte.indexOf('window.location.href')
+    expect(idxPonte).toBeGreaterThan(-1)
+    expect(idxHref).toBeGreaterThan(-1)
+    expect(idxPonte).toBeLessThan(idxHref)
+  })
+
+  it('MainActivity.java dos DOIS apps nativos expõem openWhatsApp com package com.whatsapp', () => {
+    const fontesJava = Object.entries(fontesNativas).filter(([caminho]) =>
+      caminho.endsWith('/MainActivity.java'),
+    )
+    expect(fontesJava.length, 'dois MainActivity.java (android/app e android-overlay/app)').toBe(2)
+    for (const [caminho, fonte] of fontesJava) {
+      expect(fonte, caminho).toContain('public boolean openWhatsApp(String phone, String message)')
+      expect(fonte, caminho).toContain('setPackage("com.whatsapp")')
+      // fallback: navegador EXTERNO com wa.me quando o WhatsApp não está instalado
+      expect(fonte, caminho).toMatch(/https:\/\/wa\.me\/" \+ digits/)
+    }
+  })
+
+  it('build.gradle dos DOIS apps nativos em versionCode 5 / versionName 1.0.4', () => {
+    const gradles = Object.entries(fontesNativas).filter(([caminho]) =>
+      caminho.endsWith('/app/build.gradle'),
+    )
+    expect(gradles.length, 'dois build.gradle (android/app e android-overlay/app)').toBe(2)
+    for (const [caminho, fonte] of gradles) {
+      expect(fonte, caminho).toMatch(/versionCode\s+5\b/)
+      expect(fonte, caminho).toMatch(/versionName\s+"1\.0\.4"/)
     }
   })
 

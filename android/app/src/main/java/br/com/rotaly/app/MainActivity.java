@@ -428,6 +428,70 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             } catch (Exception ignored) {}
         }
 
+        /**
+         * Abre o WhatsApp nativo direto com a conversa do cliente pronta.
+         *
+         * POR QUE EXISTE: dentro do WebView, https://wa.me/55... redireciona
+         * INTERNAMENTE para whatsapp://send/... e redirecionamentos internos não
+         * passam pelo shouldOverrideUrlLoading — estourava net::ERR_UNKNOWN_URL_SCHEME
+         * ("Página da Web não disponível") dentro do app. Aqui saímos do WebView
+         * antes de qualquer navegação: intent DIRETO com package com.whatsapp.
+         *
+         * Fallback: se o WhatsApp não estiver instalado, abre https://wa.me/...
+         * no NAVEGADOR EXTERNO (ACTION_VIEW fora do WebView).
+         *
+         * @param phone   número JÁ normalizado pelo helper JS (55 + DDD + número)
+         * @param message mensagem pronta (pode ser vazia/null)
+         * @return true se algum app externo foi aberto
+         */
+        @JavascriptInterface
+        public boolean openWhatsApp(String phone, String message) {
+            try {
+                String digits = (phone == null) ? "" : phone.replaceAll("[^0-9]", "");
+                if (digits.isEmpty()) {
+                    return false;
+                }
+                if (!digits.startsWith("55") && digits.length() >= 10 && digits.length() <= 13) {
+                    digits = "55" + digits;
+                }
+
+                // 1) WhatsApp instalado: intent direto no pacote com.whatsapp
+                //    (api.whatsapp.com/send é aceito pelo app do WhatsApp e abre a
+                //    conversa com número e texto prontos, sem passar pelo WebView).
+                try {
+                    String waUrl = "https://api.whatsapp.com/send?phone=" + digits
+                            + (message != null && !message.trim().isEmpty()
+                                    ? "&text=" + Uri.encode(message)
+                                    : "");
+                    Intent waIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(waUrl));
+                    waIntent.setPackage("com.whatsapp");
+                    waIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(waIntent);
+                    return true;
+                } catch (Exception e) {
+                    Log.i(TAG, "WhatsApp não disponível para intent direto, usando fallback externo: " + e);
+                }
+
+                // 2) Fallback: navegador EXTERNO com wa.me (nunca dentro do WebView)
+                try {
+                    String webUrl = "https://wa.me/" + digits
+                            + (message != null && !message.trim().isEmpty()
+                                    ? "?text=" + Uri.encode(message)
+                                    : "");
+                    Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(webUrl));
+                    browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(browserIntent);
+                    return true;
+                } catch (Exception e) {
+                    Log.e(TAG, "Falha ao abrir WhatsApp via navegador externo:", e);
+                    return false;
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Erro ao abrir WhatsApp pela ponte nativa:", e);
+                return false;
+            }
+        }
+
         @JavascriptInterface
         public boolean openNavigationApp(double lat, double lng, String appName, String label) {
             return openNavigationApp(lat, lng, appName, label, 0, 0, null);

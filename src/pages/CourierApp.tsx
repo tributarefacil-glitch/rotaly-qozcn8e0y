@@ -3227,14 +3227,15 @@ export default function CourierApp() {
                       </a>
 
                       {/* Abre direto na conversa do WhatsApp do cliente.
-                          Usa location.href (não window.open) porque o WebView do APK
-                          bloqueia popup: o clique era engolido e o entregador tinha
-                          que copiar o número na mão. wa.me resolve o app nativo. */}
+                          Helper centralizado openCustomerWhatsApp: no APK chama a
+                          ponte nativa window.RotalyNativeGps.openWhatsApp (intent
+                          direto no com.whatsapp, fora do WebView); no navegador
+                          comum usa location.href com https://wa.me/55... */}
                       <button
                         type="button"
                         onClick={() => {
-                          // Helper centralizado: normaliza DDI/9º dígito/máscara e abre
-                          // via location.href; o nativo intercepta wa.me e abre o app.
+                          // Helper centralizado: normaliza DDI/9º dígito/máscara e
+                          // prefere a ponte nativa (APK); navegador cai para wa.me.
                           const aberto = openCustomerWhatsApp(
                             currentActiveDelivery.expand?.customer_id?.phone,
                             buildCourierCustomerMessage(

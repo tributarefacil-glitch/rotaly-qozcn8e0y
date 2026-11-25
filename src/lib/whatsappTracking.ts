@@ -185,12 +185,22 @@ export function buildTrackingWhatsAppUrl(
 /**
  * PONTO ÚNICO de abertura do WhatsApp no app do entregador (e qualquer outra tela).
  *
- * POR QUE EXISTE (bug do APK): no WebView Android o wa.me/whatsapp:// não abre nada
- * se navegado dentro do próprio WebView — o entregador tinha que copiar o número na mão.
- * Duas camadas resolvem:
- * 1. MainActivity.java (nativo) intercepta wa.me/api.whatsapp.com/whatsapp:// e lança
- *    ACTION_VIEW externa — este helper monta o link e navega via location.href.
- * 2. Normalização centralizada aqui (DDI 55, 9º dígito, máscara, 0 de operadora).
+ * POR QUE EXISTE (bug do APK): dentro do WebView Android, o link https://wa.me/55...
+ * redireciona INTERNAMENTE para whatsapp://send/... e redirecionamentos internos
+ * NÃO passam pelo shouldOverrideUrlLoading do WebViewClient — resultado era
+ * net::ERR_UNKNOWN_URL_SCHEME ("Página da Web não disponível") dentro do app.
+ * Interceptar URL no JS/nativo não cura redirecionamento interno; a cura definitiva
+ * é sair do WebView antes de qualquer navegação:
+ *
+ * 1. APK (window.RotalyNativeGps.openWhatsApp existe): chama a ponte nativa
+ *    openWhatsApp(numero, mensagem) do MainActivity.java, que lança intent DIRETO
+ *    com package com.whatsapp (sem passar por navegação do WebView) e, se o app do
+ *    WhatsApp não estiver instalado, abre https://wa.me/... no navegador EXTERNO
+ *    (ACTION_VIEW fora do WebView). Nada é carregado dentro do app.
+ * 2. Navegador comum (sem ponte): mantém location.href com https://wa.me/55...
+ *    — comportamento web preservado (nunca window.open, que popup-blockers
+ *    e alguns WebViews engolem).
+ * 3. Normalização centralizada aqui (DDI 55, 9º dígito, máscara, 0 de operadora).
  *
  * SEMPRE usar este helper em qualquer ponto que toque no telefone do cliente.
  * Nunca montar `https://wa.me/...` ad hoc em telas do app do entregador.
@@ -206,12 +216,23 @@ export function openCustomerWhatsApp(
   if (!destino) return null
 
   const texto = message && message.trim().length > 0 ? message : ''
+
+  // Caminho 1 — APK: ponte nativa abre o intent direto no com.whatsapp
+  // (ou o navegador externo como fallback). Nenhuma navegação no WebView.
+  if (typeof window !== 'undefined' && typeof window.RotalyNativeGps?.openWhatsApp === 'function') {
+    try {
+      const abriu = window.RotalyNativeGps.openWhatsApp(destino, texto)
+      if (abriu) return destino
+      // Ponte existiu mas falhou (raro): cai para o caminho do navegador abaixo.
+    } catch {
+      // ponte lançou: cai para o caminho do navegador abaixo.
+    }
+  }
+
+  // Caminho 2 — navegador comum: location.href (nunca window.open).
   const url = texto
     ? `https://wa.me/${destino}?text=${encodeURIComponent(texto)}`
     : `https://wa.me/${destino}`
-
-  // location.href (nunca window.open): o WebView do APK bloqueia popup e
-  // engolia o clique; o cliente nativo intercepta e lança o intent externo.
   try {
     window.location.href = url
   } catch {

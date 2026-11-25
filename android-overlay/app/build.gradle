@@ -15,8 +15,8 @@ android {
         applicationId "br.com.rotaly.app"
         minSdk getVariable("minSdkVersion", 24)
         targetSdk getVariable("targetSdkVersion", 34)
-        versionCode 4
-        versionName "1.0.3"
+        versionCode 5
+        versionName "1.0.4"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 

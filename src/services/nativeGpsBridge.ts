@@ -60,6 +60,13 @@ declare global {
         originLng?: number,
         waypointsStr?: string,
       ) => boolean
+      /**
+       * Abre o WhatsApp nativo direto (intent com package com.whatsapp);
+       * fallback: navegador externo com https://wa.me/. Implementado no
+       * MainActivity.java (android/app e android-overlay). Opcional porque
+       * APKs antigos (versionCode <= 4) não o expõem.
+       */
+      openWhatsApp?: (phone: string, message?: string) => boolean
     }
     // Callback invocado pelo Android nativo a cada ponto de GPS coletado em segundo plano
     onRotalyNativeLocationReceived?: (payloadJson: string | NativeGpsCoordinate) => void
